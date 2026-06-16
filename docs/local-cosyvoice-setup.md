@@ -38,7 +38,33 @@ CosyVoice changes over time, so follow the official project for current model an
 - Official install guide: `https://github.com/FunAudioLLM/CosyVoice#install`
 - Official FastAPI runtime: `https://github.com/FunAudioLLM/CosyVoice/tree/main/runtime/python/fastapi`
 
-A typical Linux or WSL2 setup follows this shape:
+## Hardware Recommendations
+
+This plugin only controls text preparation and playback. Hardware requirements are determined by your local CosyVoice runtime, model size, and serving method.
+
+- CPU-only: suitable for smoke tests and short clips, but expect slow synthesis.
+- NVIDIA GPU: recommended for regular note reading, especially long notes or repeated use.
+- GPU memory: use the smallest model that meets your quality needs if VRAM is limited. Larger models and concurrent requests need more VRAM.
+- System memory: leave enough RAM for the model runtime, Python environment, and Obsidian running at the same time.
+- Storage: model files can be large. Put model caches on a fast local SSD when possible.
+
+Always check the upstream CosyVoice README for current model-specific requirements before publishing a setup guide for others.
+
+## System Recommendations
+
+- Linux: the simplest deployment target for CosyVoice. Use Conda, CUDA, and the upstream runtime directly.
+- Windows with NVIDIA GPU: WSL2 is recommended for the CosyVoice runtime. Keep the plugin and PowerShell wrapper on Windows, and let the wrapper call a local HTTP service exposed by WSL2.
+- Windows without NVIDIA GPU: use CPU mode only for testing, or run CosyVoice on another machine and point the wrapper to that local-network service.
+- macOS: upstream CosyVoice support is more Linux/CUDA-oriented. For reliable use, run CosyVoice on a Linux machine or server and call it through a local or LAN HTTP adapter.
+
+## Model And Runtime Recommendations
+
+- Start with the official CosyVoice examples before wiring the plugin.
+- Prefer a local HTTP adapter that accepts text and returns WAV bytes. It keeps the plugin wrapper simple and stable.
+- Keep model choice separate from the plugin. You can change models in your CosyVoice service without changing this plugin as long as the wrapper contract remains the same.
+- If you expose a LAN service, bind it only to trusted interfaces and avoid exposing it directly to the public internet.
+
+A typical Linux or WSL2 source setup follows this shape:
 
 ```bash
 git clone --recursive https://github.com/FunAudioLLM/CosyVoice.git

@@ -78,12 +78,16 @@ assert.deepStrictEqual(moduleObject.exports.__test.createReaderState(), {
 assert.deepStrictEqual(moduleObject.exports.__test.createDefaultSettings(), {
   cleanupCache: true,
   chunkLimits: '40,80,120,160,280,320',
+  mathReadingLanguage: 'english',
   scriptPath: '',
   speed: 1,
   stripMarkdown: true,
 });
 assert.strictEqual(moduleObject.exports.__test.resolveDefaultScriptPath(), '');
 assert.ok(!moduleObject.exports.__test.resolveDefaultScriptPath().toLowerCase().includes(['her', 'mes'].join('')));
+assert.strictEqual(moduleObject.exports.__test.normalizeMathReadingLanguage('chinese'), 'chinese');
+assert.strictEqual(moduleObject.exports.__test.normalizeMathReadingLanguage('skip'), 'skip');
+assert.strictEqual(moduleObject.exports.__test.normalizeMathReadingLanguage('bad'), 'english');
 const mutatedDefaults = moduleObject.exports.__test.createDefaultSettings();
 mutatedDefaults.chunkLimits = '999';
 assert.strictEqual(moduleObject.exports.__test.createDefaultSettings().chunkLimits, '40,80,120,160,280,320');
@@ -99,7 +103,7 @@ assert.strictEqual(
 );
 assert.strictEqual(
   moduleObject.exports.__test.sanitizeTextForSpeech('长公式 $\\int_0^1 x^2 + y^2 + z^2 dx$ 跳过，短公式 $a_b$ 读。'),
-  '长公式 跳过，短公式 a 下标 b 读。'
+  '长公式 跳过，短公式 a subscript b 读。'
 );
 assert.strictEqual(
   moduleObject.exports.__test.calculateCurrentChunkSeekTime({
@@ -130,6 +134,7 @@ assert.strictEqual(
   plugin.settings = {
     cleanupCache: false,
     chunkLimits: '999',
+    mathReadingLanguage: 'chinese',
     scriptPath: 'custom.ps1',
     speed: 2,
     stripMarkdown: false,

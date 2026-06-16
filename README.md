@@ -12,13 +12,15 @@ An Obsidian desktop plugin that reads the current note or selected text through 
 - Uses a local PowerShell wrapper script instead of a cloud TTS service.
 - Cleans Markdown before synthesis.
 - Provides a settings-page `Restore defaults` button for resetting all plugin settings.
-- Handles common LaTeX before synthesis:
+- Handles common LaTeX before synthesis with a configurable `Math reading language` setting:
   - Skips formulas longer than 12 non-space characters.
-  - Reads short formulas such as `$a_b$` as `a 下标 b`.
+  - `English` is the default for public releases, for example `$a_b$` -> `a subscript b`.
+  - `Chinese` keeps Chinese math words, for example `$a_b$` -> `a 下标 b`.
+  - `Skip math` skips short formulas as well as long formulas.
   - Leaves common Greek commands as English names, such as `\alpha` -> `alpha`, `\beta` -> `beta`, and `\pi` -> `pi`.
   - Reads common non-Greek symbols such as `\leq`, `\times`, and `_`.
   - Unwraps style commands such as `\textbf{...}`, `\mathbf{...}`, and `\boldsymbol{...}`.
-  - Reads short `\frac{a}{b}` as `a 分之 b`.
+  - Reads short `\frac{a}{b}` as `a over b` in English mode or `a 分之 b` in Chinese mode.
 
 ## Privacy
 
@@ -48,7 +50,7 @@ A recommended script path is:
 %LOCALAPPDATA%\note-reader-cosyvoice\cosyvoice-wrapper.ps1
 ```
 
-For local CosyVoice installation and wrapper examples, see [Local CosyVoice setup](docs/local-cosyvoice-setup.md).
+For local CosyVoice installation, hardware guidance, OS-specific notes, and wrapper examples, see [Local CosyVoice setup](docs/local-cosyvoice-setup.md).
 
 ## Commands
 
