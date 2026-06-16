@@ -27,8 +27,8 @@ The plugin is designed for local TTS. It does not send note text to Microsoft, O
 ## Disclosures
 
 - Network use: the plugin itself does not call any remote service. Your configured CosyVoice wrapper may talk to a local service such as `127.0.0.1`.
-- File access outside the vault: the plugin launches the configured local PowerShell wrapper script, which is commonly stored under `%LOCALAPPDATA%`.
-- File access inside the vault: temporary text and WAV files are written under this plugin's `cache` folder in the vault and can be deleted automatically.
+- Shell execution: the plugin launches the PowerShell wrapper script that you configure in settings. This is required to call a local TTS runtime.
+- Direct filesystem access: the plugin writes temporary text and WAV files under this plugin's `cache` folder in the vault, checks that the configured wrapper script exists, and can launch a wrapper stored outside the vault.
 - Telemetry: the plugin does not include client-side or server-side telemetry.
 - Updates: the plugin does not include a self-update mechanism.
 
@@ -42,7 +42,7 @@ The plugin is designed for local TTS. It does not send note text to Microsoft, O
 cosyvoice-wrapper.ps1 -InputPath <txt> -OutputPath <wav> -Speed <speed>
 ```
 
-The default script path is:
+A recommended script path is:
 
 ```text
 %LOCALAPPDATA%\note-reader-cosyvoice\cosyvoice-wrapper.ps1

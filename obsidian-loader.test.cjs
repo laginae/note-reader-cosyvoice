@@ -13,6 +13,7 @@ function mockSetIcon() {}
 const allowedBuiltins = new Set(['fs', 'path', 'child_process', 'url']);
 const mainPath = path.join(__dirname, 'main.js');
 const code = fs.readFileSync(mainPath, 'utf8');
+const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, 'manifest.json'), 'utf8'));
 const moduleObject = { exports: {} };
 
 function obsidianStyleRequire(request) {
@@ -41,6 +42,8 @@ pluginFactory(obsidianStyleRequire, moduleObject, moduleObject.exports);
 const PluginClass = moduleObject.exports.default || moduleObject.exports;
 const testVaultPath = path.resolve('test-vault');
 const testAudioPath = path.join(testVaultPath, '.obsidian', 'plugins', 'note-reader-cosyvoice', 'cache', 'a.wav');
+assert.ok(!/\bObsidian\b/.test(manifest.description));
+assert.ok(!/\bprocess\.env\b/.test(code));
 assert.strictEqual(typeof PluginClass, 'function');
 assert.strictEqual(Object.getPrototypeOf(PluginClass.prototype), MockPlugin.prototype);
 assert.strictEqual(
@@ -75,15 +78,11 @@ assert.deepStrictEqual(moduleObject.exports.__test.createReaderState(), {
 assert.deepStrictEqual(moduleObject.exports.__test.createDefaultSettings(), {
   cleanupCache: true,
   chunkLimits: '40,80,120,160,280,320',
-  scriptPath: moduleObject.exports.__test.resolveDefaultScriptPath(),
+  scriptPath: '',
   speed: 1,
   stripMarkdown: true,
 });
-assert.ok(
-  moduleObject.exports.__test.resolveDefaultScriptPath().endsWith(
-    path.join('note-reader-cosyvoice', 'cosyvoice-wrapper.ps1')
-  )
-);
+assert.strictEqual(moduleObject.exports.__test.resolveDefaultScriptPath(), '');
 assert.ok(!moduleObject.exports.__test.resolveDefaultScriptPath().toLowerCase().includes(['her', 'mes'].join('')));
 const mutatedDefaults = moduleObject.exports.__test.createDefaultSettings();
 mutatedDefaults.chunkLimits = '999';

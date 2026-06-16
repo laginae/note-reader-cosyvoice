@@ -22,13 +22,13 @@ The plugin passes `Speed` to the wrapper. Your wrapper or local service may use 
 
 ## Recommended File Location
 
-The default plugin setting points to:
+The plugin does not auto-detect this path because community review tools warn on identity-related environment variable reads. A recommended location is:
 
 ```text
 %LOCALAPPDATA%\note-reader-cosyvoice\cosyvoice-wrapper.ps1
 ```
 
-You can use any path. If you store the wrapper elsewhere, update `Settings -> Note Reader CosyVoice -> CosyVoice script`.
+You can use any path. Configure it in `Settings -> Note Reader CosyVoice -> CosyVoice script`.
 
 ## Install CosyVoice Locally
 

@@ -7,6 +7,7 @@ const { pathToFileURL } = require('url');
 const PLUGIN_ID = 'note-reader-cosyvoice';
 const VIEW_TYPE = 'note-reader-cosyvoice-control';
 const DEFAULT_CHUNK_LIMITS = [40, 80, 120, 160, 280, 320];
+const RECOMMENDED_SCRIPT_PATH = '%LOCALAPPDATA%\\note-reader-cosyvoice\\cosyvoice-wrapper.ps1';
 const SPEED_PRESETS = [1, 1.25, 1.5, 2];
 const LATEX_FORMULA_MAX_CHARS = 12;
 const LATEX_COMMAND_REPLACEMENTS = [
@@ -248,11 +249,7 @@ function chooseChunkCut(text, limit) {
 }
 
 function resolveDefaultScriptPath() {
-  const localAppData =
-    process.env.LOCALAPPDATA ||
-    (process.env.USERPROFILE ? path.join(process.env.USERPROFILE, 'AppData', 'Local') : '');
-
-  return path.join(localAppData, 'note-reader-cosyvoice', 'cosyvoice-wrapper.ps1');
+  return '';
 }
 
 function normalizeSpeed(value) {
@@ -398,13 +395,6 @@ function getAudioUrlForFile(adapter, basePath, filePath) {
 }
 
 function resolvePowerShellExecutable() {
-  const windowsRoot = process.env.SystemRoot || process.env.WINDIR || 'C:\\Windows';
-  const windowsPowerShell = path.join(windowsRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
-
-  if (fs.existsSync(windowsPowerShell)) {
-    return windowsPowerShell;
-  }
-
   return 'powershell.exe';
 }
 
@@ -1317,7 +1307,7 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
       .setDesc('PowerShell wrapper used to call your local CosyVoice service.')
       .addText((text) => {
         text
-          .setPlaceholder(resolveDefaultScriptPath())
+          .setPlaceholder(RECOMMENDED_SCRIPT_PATH)
           .setValue(this.plugin.settings.scriptPath)
           .onChange(async (value) => {
             this.plugin.settings.scriptPath = value.trim();

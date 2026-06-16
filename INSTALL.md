@@ -2,7 +2,7 @@
 
 ## Install From ZIP
 
-1. Unzip `note-reader-cosyvoice-0.1.4-install.zip`.
+1. Unzip `note-reader-cosyvoice-0.1.5-install.zip`.
 2. Copy the `note-reader-cosyvoice` folder into your vault:
 
 ```text
@@ -29,6 +29,8 @@ The wrapper must accept:
 ```
 
 Use `Restore defaults` on the plugin settings page to reset all plugin settings to their default values and save them immediately.
+
+`Restore defaults` clears the script path. Set `CosyVoice script` again before reading.
 
 For a local CosyVoice setup guide and PowerShell wrapper examples, see `docs/local-cosyvoice-setup.md` in the source repository.
 

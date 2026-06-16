@@ -233,11 +233,7 @@ function chooseChunkCut(text, limit) {
 }
 
 function resolveDefaultScriptPath() {
-  const localAppData =
-    process.env.LOCALAPPDATA ||
-    (process.env.USERPROFILE ? path.join(process.env.USERPROFILE, 'AppData', 'Local') : '');
-
-  return path.join(localAppData, 'note-reader-cosyvoice', 'cosyvoice-wrapper.ps1');
+  return '';
 }
 
 function normalizeSpeed(value) {
