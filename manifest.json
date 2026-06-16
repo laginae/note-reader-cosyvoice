@@ -1,0 +1,9 @@
+{
+  "id": "note-reader-cosyvoice",
+  "name": "Note Reader CosyVoice",
+  "version": "0.1.3",
+  "minAppVersion": "1.5.0",
+  "description": "Read Obsidian notes through the local Hermes CosyVoice TTS pipeline.",
+  "author": "Note Reader CosyVoice Contributors",
+  "isDesktopOnly": true
+}
