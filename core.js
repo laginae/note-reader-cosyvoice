@@ -237,7 +237,7 @@ function resolveDefaultScriptPath() {
     process.env.LOCALAPPDATA ||
     (process.env.USERPROFILE ? path.join(process.env.USERPROFILE, 'AppData', 'Local') : '');
 
-  return path.join(localAppData, 'hermes', 'tts', 'cosyvoice3', 'cosyvoice3-hermes.ps1');
+  return path.join(localAppData, 'note-reader-cosyvoice', 'cosyvoice-wrapper.ps1');
 }
 
 function normalizeSpeed(value) {

@@ -1,6 +1,6 @@
 # Note Reader CosyVoice
 
-An Obsidian desktop plugin that reads the current note or selected text through a local Hermes CosyVoice TTS pipeline.
+An Obsidian desktop plugin that reads the current note or selected text through a local CosyVoice TTS pipeline.
 
 ## Features
 
@@ -22,11 +22,11 @@ An Obsidian desktop plugin that reads the current note or selected text through 
 
 ## Privacy
 
-The plugin is designed for local TTS. It does not send note text to Microsoft, OpenAI, or any remote TTS service. Text is written to a temporary file under the plugin cache and passed to the configured local Hermes/CosyVoice wrapper.
+The plugin is designed for local TTS. It does not send note text to Microsoft, OpenAI, or any remote TTS service. Text is written to a temporary file under the plugin cache and passed to the configured local CosyVoice wrapper.
 
 ## Disclosures
 
-- Network use: the plugin itself does not call any remote service. Your configured Hermes/CosyVoice wrapper may talk to a local service such as `127.0.0.1`.
+- Network use: the plugin itself does not call any remote service. Your configured CosyVoice wrapper may talk to a local service such as `127.0.0.1`.
 - File access outside the vault: the plugin launches the configured local PowerShell wrapper script, which is commonly stored under `%LOCALAPPDATA%`.
 - File access inside the vault: temporary text and WAV files are written under this plugin's `cache` folder in the vault and can be deleted automatically.
 - Telemetry: the plugin does not include client-side or server-side telemetry.
@@ -35,18 +35,20 @@ The plugin is designed for local TTS. It does not send note text to Microsoft, O
 ## Requirements
 
 - Obsidian desktop.
-- A working local Hermes CosyVoice setup.
+- A working local CosyVoice setup.
 - A PowerShell wrapper compatible with:
 
 ```powershell
-cosyvoice3-hermes.ps1 -InputPath <txt> -OutputPath <wav> -Speed <speed>
+cosyvoice-wrapper.ps1 -InputPath <txt> -OutputPath <wav> -Speed <speed>
 ```
 
 The default script path is:
 
 ```text
-%LOCALAPPDATA%\hermes\tts\cosyvoice3\cosyvoice3-hermes.ps1
+%LOCALAPPDATA%\note-reader-cosyvoice\cosyvoice-wrapper.ps1
 ```
+
+For local CosyVoice installation and wrapper examples, see [Local CosyVoice setup](docs/local-cosyvoice-setup.md).
 
 ## Commands
 
@@ -70,6 +72,7 @@ The install package contains only:
 - `styles.css`
 - `README.md`
 - `INSTALL.md`
+- `LICENSE`
 
 It intentionally excludes `data.json`, `cache`, `last-error.log`, and local test files.
 

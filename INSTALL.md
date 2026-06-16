@@ -2,7 +2,7 @@
 
 ## Install From ZIP
 
-1. Unzip `note-reader-cosyvoice-0.1.3-install.zip`.
+1. Unzip `note-reader-cosyvoice-0.1.4-install.zip`.
 2. Copy the `note-reader-cosyvoice` folder into your vault:
 
 ```text
@@ -14,12 +14,12 @@
 5. Enable `Note Reader CosyVoice`.
 6. Run `Open CosyVoice reader controls` from the command palette, or click the ribbon icon.
 
-## Configure Hermes CosyVoice
+## Configure Local CosyVoice
 
-Open `Settings -> Note Reader CosyVoice` and set `Hermes CosyVoice script` if your wrapper is not at:
+Open `Settings -> Note Reader CosyVoice` and set `CosyVoice script` if your wrapper is not at:
 
 ```text
-%LOCALAPPDATA%\hermes\tts\cosyvoice3\cosyvoice3-hermes.ps1
+%LOCALAPPDATA%\note-reader-cosyvoice\cosyvoice-wrapper.ps1
 ```
 
 The wrapper must accept:
@@ -29,6 +29,8 @@ The wrapper must accept:
 ```
 
 Use `Restore defaults` on the plugin settings page to reset all plugin settings to their default values and save them immediately.
+
+For a local CosyVoice setup guide and PowerShell wrapper examples, see `docs/local-cosyvoice-setup.md` in the source repository.
 
 ## Usage
 

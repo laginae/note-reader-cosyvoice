@@ -7,14 +7,14 @@ This repository is prepared for public GitHub publishing and Obsidian Community 
 - Replace `author` in `manifest.json` with your GitHub username, organization, or preferred public name.
 - Review `LICENSE`. The current draft uses MIT.
 - Confirm the `id` is unique in the Obsidian Community Plugins directory.
-- Confirm the local Hermes/CosyVoice wrapper path in the README is only an example and not a personal path.
+- Confirm the local CosyVoice wrapper path in the README is only an example and not a personal path.
 
 ## GitHub Release
 
 Create a GitHub release whose tag exactly matches `manifest.json`:
 
 ```text
-0.1.3
+0.1.4
 ```
 
 Attach these files as binary assets:

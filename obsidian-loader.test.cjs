@@ -79,6 +79,12 @@ assert.deepStrictEqual(moduleObject.exports.__test.createDefaultSettings(), {
   speed: 1,
   stripMarkdown: true,
 });
+assert.ok(
+  moduleObject.exports.__test.resolveDefaultScriptPath().endsWith(
+    path.join('note-reader-cosyvoice', 'cosyvoice-wrapper.ps1')
+  )
+);
+assert.ok(!moduleObject.exports.__test.resolveDefaultScriptPath().toLowerCase().includes(['her', 'mes'].join('')));
 const mutatedDefaults = moduleObject.exports.__test.createDefaultSettings();
 mutatedDefaults.chunkLimits = '999';
 assert.strictEqual(moduleObject.exports.__test.createDefaultSettings().chunkLimits, '40,80,120,160,280,320');

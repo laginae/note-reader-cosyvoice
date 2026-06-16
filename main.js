@@ -252,7 +252,7 @@ function resolveDefaultScriptPath() {
     process.env.LOCALAPPDATA ||
     (process.env.USERPROFILE ? path.join(process.env.USERPROFILE, 'AppData', 'Local') : '');
 
-  return path.join(localAppData, 'hermes', 'tts', 'cosyvoice3', 'cosyvoice3-hermes.ps1');
+  return path.join(localAppData, 'note-reader-cosyvoice', 'cosyvoice-wrapper.ps1');
 }
 
 function normalizeSpeed(value) {
@@ -1313,8 +1313,8 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
     containerEl.createEl('h2', { text: 'Note Reader CosyVoice' });
 
     new Setting(containerEl)
-      .setName('Hermes CosyVoice script')
-      .setDesc('PowerShell wrapper used by Hermes to call the local WSL CosyVoice server.')
+      .setName('CosyVoice script')
+      .setDesc('PowerShell wrapper used to call your local CosyVoice service.')
       .addText((text) => {
         text
           .setPlaceholder(resolveDefaultScriptPath())
@@ -1328,7 +1328,7 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName('Speed')
-      .setDesc('Speech speed passed to the Hermes CosyVoice wrapper.')
+      .setDesc('Speech speed passed to the local CosyVoice wrapper.')
       .addSlider((slider) => {
         slider
           .setLimits(0.5, 2, 0.05)
