@@ -1,5 +1,7 @@
 # Note Reader CosyVoice
 
+[中文说明](README.zh-CN.md)
+
 An Obsidian desktop plugin that reads the current note or selected text through a local CosyVoice TTS pipeline.
 
 ## Features
