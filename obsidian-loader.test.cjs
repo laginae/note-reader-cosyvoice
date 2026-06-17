@@ -91,11 +91,12 @@ assert.strictEqual(moduleObject.exports.__test.normalizeMathReadingLanguage('bad
 const mutatedDefaults = moduleObject.exports.__test.createDefaultSettings();
 mutatedDefaults.chunkLimits = '999';
 assert.strictEqual(moduleObject.exports.__test.createDefaultSettings().chunkLimits, '40,80,120,160,280,320');
-assert.deepStrictEqual(moduleObject.exports.__test.getSpeedPresets(), [1, 1.25, 1.5, 2]);
+assert.deepStrictEqual(moduleObject.exports.__test.getSpeedPresets(), [1, 1.25, 1.5, 2, 1.1, 1.2, 1.3, 1.4]);
 const mutatedSpeedPresets = moduleObject.exports.__test.getSpeedPresets();
 mutatedSpeedPresets.push(99);
-assert.deepStrictEqual(moduleObject.exports.__test.getSpeedPresets(), [1, 1.25, 1.5, 2]);
+assert.deepStrictEqual(moduleObject.exports.__test.getSpeedPresets(), [1, 1.25, 1.5, 2, 1.1, 1.2, 1.3, 1.4]);
 assert.strictEqual(moduleObject.exports.__test.formatSpeedLabel(1), '1x');
+assert.strictEqual(moduleObject.exports.__test.formatSpeedLabel(1.1), '1.1x');
 assert.strictEqual(moduleObject.exports.__test.formatSpeedLabel(1.25), '1.25x');
 assert.strictEqual(
   moduleObject.exports.__test.formatProgressLabel({ currentChunk: 2, totalChunks: 5 }),

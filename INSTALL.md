@@ -2,7 +2,7 @@
 
 ## Install From ZIP
 
-1. Unzip `note-reader-cosyvoice-0.1.6-install.zip`.
+1. Unzip `note-reader-cosyvoice-0.1.7-install.zip`.
 2. Copy the `note-reader-cosyvoice` folder into your vault:
 
 ```text
@@ -42,7 +42,7 @@ For a local CosyVoice setup guide and PowerShell wrapper examples, see `docs/loc
 - Select a start point and click `Read from selection` to read from that selection start to the end of the active note.
 - Click `Read note` to read the active note.
 - Use `Pause`, `Resume`, and `Stop` from the right-side control panel.
-- Use the right-side `Speed` buttons to select `1x`, `1.25x`, `1.5x`, or `2x`. The current audio keeps its original speed; later synthesized chunks use the newly saved speed.
+- Use the right-side `Speed` buttons to select `1x`, `1.25x`, `1.5x`, `2x`, `1.1x`, `1.2x`, `1.3x`, or `1.4x`. The current audio keeps its original speed; later synthesized chunks use the newly saved speed.
 - The progress bar shows whole-reading progress. It can be clicked or dragged while the current audio chunk is playing; seeking is clamped to the currently loaded chunk.
 
 ## Troubleshooting

@@ -8,7 +8,7 @@ An Obsidian desktop plugin that reads the current note or selected text through 
 - Opens a right-side `CosyVoice Reader` control panel.
 - Shows synthesis/playback phase, whole-reading progress, percentage, and text preview.
 - Supports pause, resume, stop, and progress dragging while the current audio chunk is playing.
-- Provides right-panel speed presets: `1x`, `1.25x`, `1.5x`, and `2x`.
+- Provides right-panel speed presets: `1x`, `1.25x`, `1.5x`, `2x`, `1.1x`, `1.2x`, `1.3x`, and `1.4x`.
 - Uses a local PowerShell wrapper script instead of a cloud TTS service.
 - Cleans Markdown before synthesis.
 - Provides a settings-page `Restore defaults` button for resetting all plugin settings.
