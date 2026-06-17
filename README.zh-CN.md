@@ -4,6 +4,16 @@
 
 Note Reader CosyVoice 是一个桌面端 Obsidian 插件，用于把当前笔记、选中文本，或从选中位置开始的后续内容交给本地 CosyVoice 语音合成流程朗读。插件本身不包含 CosyVoice、语音模型或云端语音服务，它只负责文本清理、分块、调用本地脚本、播放音频和提供控制面板。
 
+## 界面截图
+
+右侧朗读控制面板：
+
+![CosyVoice Reader 控制面板](docs/images/reader-controls.png)
+
+插件设置页。截图中的脚本路径是脱敏示例：
+
+![Note Reader CosyVoice 设置页](docs/images/plugin-settings.png)
+
 ## 功能
 
 - 朗读当前笔记、当前选中文本，或从选中位置开始朗读到笔记结尾。

@@ -4,6 +4,16 @@
 
 An Obsidian desktop plugin that reads the current note or selected text through a local CosyVoice TTS pipeline.
 
+## Screenshots
+
+Reader control panel:
+
+![CosyVoice Reader control panel](docs/images/reader-controls.png)
+
+Plugin settings. The script path shown here is a redacted example:
+
+![Note Reader CosyVoice settings](docs/images/plugin-settings.png)
+
 ## Features
 
 - Reads the current note, current selection, or from the current selection start to the end of the note.
