@@ -54,6 +54,23 @@ A recommended script path is:
 
 For local CosyVoice installation, hardware guidance, OS-specific notes, and wrapper examples, see [Local CosyVoice setup](docs/local-cosyvoice-setup.md).
 
+## Model Storage, Other TTS Engines, And Chunk Limits
+
+This plugin does not download models. Plan storage for the local TTS runtime before installing a voice model:
+
+- Current CosyVoice model repositories are often several GB each. As of 2026-06, public Hugging Face examples range from about `2.5 GB` for a 300M model to about `9 GB` for a 0.5B CosyVoice3 model.
+- Reserve more than the raw model size. A practical starting point is `10-20 GB` for one model and `30 GB+` if you keep multiple models, source checkouts, Conda environments, and caches.
+- Put model files and caches on a local SSD when possible. Avoid syncing model folders through cloud-drive clients.
+
+The configured script can call another local TTS engine instead of CosyVoice if it follows the same wrapper contract: read UTF-8 text from `-InputPath`, write a valid WAV file to `-OutputPath`, accept `-Speed`, and exit non-zero with a clear error on failure. Check the other model's license, language coverage, audio format, speed controls, startup latency, and whether it sends text outside your machine or trusted local network.
+
+Use `Chunk limits` to balance startup latency and synthesis stability:
+
+- CPU-only or low-end GPU: start with `30,60,90,120,160,200`.
+- Mid-range GPU: use the default `40,80,120,160,280,320`.
+- Faster GPU or low-latency local service: try `80,140,220,320,480,640`.
+- If synthesis times out, fails, or the first audio takes too long, lower the numbers. If speech sounds too fragmented and your model is stable, raise them gradually.
+
 ## Commands
 
 - `Open CosyVoice reader controls`

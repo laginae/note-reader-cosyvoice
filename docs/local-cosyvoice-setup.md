@@ -50,6 +50,27 @@ This plugin only controls text preparation and playback. Hardware requirements a
 
 Always check the upstream CosyVoice README for current model-specific requirements before publishing a setup guide for others.
 
+## Storage Planning
+
+The plugin does not download model files, but users still need enough local storage for the model runtime. Model sizes change over time, so check the model page's file list before download.
+
+Current public Hugging Face examples, checked in 2026-06:
+
+- [`FunAudioLLM/CosyVoice-300M`](https://huggingface.co/FunAudioLLM/CosyVoice-300M): about `2.5 GB` of model repository files.
+- [`FunAudioLLM/CosyVoice2-0.5B`](https://huggingface.co/FunAudioLLM/CosyVoice2-0.5B): about `4.6 GB` of model repository files.
+- [`FunAudioLLM/Fun-CosyVoice3-0.5B-2512`](https://huggingface.co/FunAudioLLM/Fun-CosyVoice3-0.5B-2512): about `9.1 GB` of model repository files.
+
+Use those only as examples, not as fixed requirements. Real disk usage can be higher because of Git LFS pointers, download caches, Conda environments, Python wheels, source checkouts, logs, and multiple model copies.
+
+Practical starting points:
+
+- One small test model: reserve at least `10 GB`.
+- One regular-use model plus a Conda or Python environment: reserve `15-25 GB`.
+- Multiple models, experimental checkpoints, or both Hugging Face and ModelScope caches: reserve `30-50 GB+`.
+- Shared workstation or server with several voices and checkpoints: reserve `50 GB+` and monitor cache growth.
+
+Avoid placing model directories in cloud-sync folders. Large model files can cause slow sync, duplicate storage, partial downloads, or accidental sharing.
+
 ## System Recommendations
 
 - Linux: the simplest deployment target for CosyVoice. Use Conda, CUDA, and the upstream runtime directly.
@@ -63,6 +84,58 @@ Always check the upstream CosyVoice README for current model-specific requiremen
 - Prefer a local HTTP adapter that accepts text and returns WAV bytes. It keeps the plugin wrapper simple and stable.
 - Keep model choice separate from the plugin. You can change models in your CosyVoice service without changing this plugin as long as the wrapper contract remains the same.
 - If you expose a LAN service, bind it only to trusted interfaces and avoid exposing it directly to the public internet.
+
+## Using A Different Local TTS Engine
+
+The plugin UI and settings use the CosyVoice name, but the runtime boundary is the wrapper script. You can connect another local TTS engine if the wrapper keeps the same command-line contract:
+
+```powershell
+custom-tts-wrapper.ps1 -InputPath <text-file> -OutputPath <wav-file> -Speed <number>
+```
+
+The wrapper should:
+
+- Convert the plugin's UTF-8 text input into whatever request format the model needs.
+- Save a playable WAV file at `OutputPath`. If the model returns MP3, FLAC, or raw PCM, convert it before returning.
+- Map `Speed` to the model's own speed or duration control, or document that speed is ignored.
+- Keep voice, speaker, prompt, language, and sampling settings inside the wrapper or local service config.
+- Return a non-zero exit code and a clear message if the model server is unavailable or synthesis fails.
+
+Before sharing a wrapper for another model, check:
+
+- License: whether the model permits your intended personal, academic, or commercial use.
+- Privacy: whether text stays on the local machine or trusted LAN.
+- Language quality: whether the model handles your note language, formulas, punctuation, and mixed Chinese/English text.
+- Latency: whether the model can synthesize each chunk quickly enough for interactive reading.
+- Stability: whether long requests fail, truncate output, or return unsupported audio formats.
+
+If the engine exposes an HTTP API, the simplest pattern is still a small PowerShell wrapper that sends `{ "text": "...", "speed": 1.25 }` to a local endpoint and writes WAV bytes to `OutputPath`.
+
+## Chunk Limits By Hardware
+
+`Chunk limits` is a comma-separated list of character limits. The first chunks are intentionally smaller so playback can start sooner. After the list is exhausted, the last number is reused for the remaining text.
+
+Smaller chunks:
+
+- Start playback sooner.
+- Reduce per-request memory and timeout risk.
+- Create more HTTP or model calls.
+- Can sound less continuous.
+
+Larger chunks:
+
+- Can improve sentence continuity and reduce request overhead.
+- Increase the first-play delay.
+- Increase the chance of timeout, truncation, or failed synthesis on weaker hardware.
+
+Suggested starting values:
+
+- CPU-only or low-end GPU: `30,60,90,120,160,200`.
+- Mid-range GPU: `40,80,120,160,280,320`.
+- Faster GPU or very stable local service: `80,140,220,320,480,640`.
+- Remote workstation on a trusted LAN: start with the mid-range values, then increase only if network and synthesis latency are stable.
+
+Tune in small steps. If the first audio arrives too slowly, lower the first two numbers. If later chunks fail, lower the later numbers. If playback is stable but sounds too fragmented, raise the later numbers first.
 
 A typical Linux or WSL2 source setup follows this shape:
 
