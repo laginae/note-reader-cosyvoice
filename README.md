@@ -67,6 +67,53 @@ For local CosyVoice installation, hardware guidance, OS-specific notes, and wrap
 
 For `Microsoft Edge online voice`: install the `edge-tts` CLI and make sure the `edge-tts` command is on PATH. The plugin calls it with `--file`, `--write-media`, `--voice`, and `--rate`.
 
+### Install And Configure Microsoft Edge Online Voice
+
+[`edge-tts`](https://github.com/rany2/edge-tts) is a third-party Python package published on [PyPI](https://pypi.org/project/edge-tts/) that calls Microsoft Edge's online text-to-speech service. It is not bundled with this plugin and is not a local voice model.
+
+Recommended command-line-only install:
+
+```powershell
+pipx install edge-tts
+```
+
+If `pipx` is not installed yet:
+
+```powershell
+py -m pip install --user pipx
+py -m pipx ensurepath
+```
+
+Then open a new PowerShell window and run `pipx install edge-tts`.
+
+Alternative install if you manage Python packages directly:
+
+```powershell
+py -m pip install --user edge-tts
+```
+
+After installation, open a new PowerShell window and verify that the command is available:
+
+```powershell
+edge-tts --help
+```
+
+To list available voices:
+
+```powershell
+edge-tts --list-voices
+```
+
+Then open `Settings -> Note Reader CosyVoice`:
+
+1. Set `Speech engine` to `Microsoft Edge online voice`.
+2. Set `Edge TTS voice` to a voice id, for example `zh-CN-XiaoxiaoNeural`.
+3. Adjust `Speed` if needed. The plugin converts this to the `edge-tts --rate` option.
+
+If Obsidian cannot find `edge-tts`, make sure `edge-tts --help` works in a normal PowerShell window, then fully restart Obsidian. The plugin does not use the Codex/Hermes internal `edge-tts.exe` path.
+
+Privacy note: Edge mode sends each text chunk to Microsoft Edge TTS. Keep `Speech engine` set to `Local CosyVoice` for private or sensitive notes.
+
 ## Model Storage, Other TTS Engines, And Chunk Limits
 
 This plugin does not download models. Plan storage for the local TTS runtime before installing a voice model:

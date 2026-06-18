@@ -100,7 +100,50 @@ cosyvoice-wrapper.ps1 -InputPath <txt> -OutputPath <wav> -Speed <speed>
 
 如果在设置页把 `Speech engine` 改为 `Microsoft Edge online voice`，插件会跳过本地 CosyVoice 脚本，直接调用 `edge-tts` 生成 MP3 音频。你需要先安装 `edge-tts` CLI，并确保 PowerShell 或 Obsidian 能找到 `edge-tts` 命令。
 
-设置页中的 `Edge TTS voice` 用来填写 Edge 语音 ID，例如默认的 `zh-CN-XiaoxiaoNeural`。语速设置会转换为 `edge-tts` 的 `--rate` 参数。
+[`edge-tts`](https://github.com/rany2/edge-tts) 是发布在 [PyPI](https://pypi.org/project/edge-tts/) 上的第三方 Python 包，用来调用 Microsoft Edge 的在线文本转语音服务。它不是本插件自带的程序，也不是本地离线语音模型。
+
+推荐使用 `pipx` 安装命令行工具：
+
+```powershell
+pipx install edge-tts
+```
+
+如果还没有安装 `pipx`：
+
+```powershell
+py -m pip install --user pipx
+py -m pipx ensurepath
+```
+
+然后重新打开 PowerShell，再运行 `pipx install edge-tts`。
+
+如果你直接管理 Python 包，也可以使用：
+
+```powershell
+py -m pip install --user edge-tts
+```
+
+安装后重新打开 PowerShell，先确认命令可用：
+
+```powershell
+edge-tts --help
+```
+
+列出可用语音：
+
+```powershell
+edge-tts --list-voices
+```
+
+然后进入 `Settings -> Note Reader CosyVoice`：
+
+1. 把 `Speech engine` 改为 `Microsoft Edge online voice`。
+2. 把 `Edge TTS voice` 填为某个语音 ID，例如 `zh-CN-XiaoxiaoNeural`。
+3. 按需调整 `Speed`。插件会把它转换为 `edge-tts --rate` 参数。
+
+如果 Obsidian 找不到 `edge-tts`，请先确认普通 PowerShell 中 `edge-tts --help` 可以运行，然后完全重启 Obsidian。本插件不会使用 Codex/Hermes 内部虚拟环境里的 `edge-tts.exe` 路径。
+
+隐私提醒：Edge 模式会把每个文本分段发送给 Microsoft Edge TTS。私密或敏感笔记建议继续使用默认的 `Local CosyVoice`。
 
 ## 模型存储空间、其他语音模型与 Chunk limits
 
