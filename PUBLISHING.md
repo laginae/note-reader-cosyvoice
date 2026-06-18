@@ -14,7 +14,7 @@ This repository is prepared for public GitHub publishing and Obsidian Community 
 Create a GitHub release whose tag exactly matches `manifest.json`:
 
 ```text
-0.1.9
+0.1.10
 ```
 
 Attach these files as binary assets:

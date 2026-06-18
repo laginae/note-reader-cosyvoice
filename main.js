@@ -449,7 +449,30 @@ function isInteractiveKeyboardTarget(target) {
   }
 
   const tagName = String(target.tagName).toLowerCase();
-  return ['button', 'input', 'select', 'textarea'].includes(tagName);
+  if (tagName === 'textarea' || tagName === 'select') {
+    return true;
+  }
+
+  if (tagName !== 'input') {
+    return false;
+  }
+
+  const type = String(
+    target.type ||
+      (target.attributes && target.attributes.type) ||
+      'text'
+  ).toLowerCase();
+  return !['button', 'checkbox', 'radio', 'range', 'reset', 'submit'].includes(type);
+}
+
+function getChunkNavigationState(currentChunk, totalChunks) {
+  const total = Math.max(0, Math.floor(Number(totalChunks) || 0));
+  const current = Math.max(0, Math.min(total || Number.MAX_SAFE_INTEGER, Math.floor(Number(currentChunk) || 0)));
+
+  return {
+    canNextChunk: Boolean(current && current < total),
+    canPreviousChunk: current > 1,
+  };
 }
 
 function previewText(text) {
@@ -802,6 +825,12 @@ class CosyVoiceReaderPlugin extends Plugin {
           break;
         }
 
+        if (Number.isInteger(session.requestedChunkIndex) && session.requestedChunkIndex !== index) {
+          index = Math.max(0, Math.min(chunks.length - 1, session.requestedChunkIndex));
+          session.requestedChunkIndex = null;
+          continue;
+        }
+
         if (index + 1 < chunks.length) {
           getPreparedChunk(index + 1);
         }
@@ -869,8 +898,7 @@ class CosyVoiceReaderPlugin extends Plugin {
 
     this.updateStatus(`CosyVoice synth ${index + 1}/${session.totalChunks || 0}`, {
       canPause: true,
-      canNextChunk: false,
-      canPreviousChunk: false,
+      ...getChunkNavigationState(index + 1, session.totalChunks),
       canSeek: false,
       canStop: true,
       currentChunk: index + 1,
@@ -1077,6 +1105,7 @@ class CosyVoiceReaderPlugin extends Plugin {
     while (this.isActive(session) && this.pauseRequested) {
       this.updateStatus('CosyVoice paused', {
         canPause: true,
+        ...getChunkNavigationState(this.readerState.currentChunk, this.readerState.totalChunks),
         canSeek: Boolean(this.currentAudio),
         canStop: true,
         isPaused: true,
@@ -1177,6 +1206,7 @@ class CosyVoiceReaderPlugin extends Plugin {
       this.pauseRequested = !this.pauseRequested;
       this.updateStatus(this.pauseRequested ? 'CosyVoice paused' : 'CosyVoice waiting', {
         canPause: true,
+        ...getChunkNavigationState(this.readerState.currentChunk, this.readerState.totalChunks),
         canSeek: false,
         canStop: true,
         isPaused: this.pauseRequested,
@@ -1191,6 +1221,7 @@ class CosyVoiceReaderPlugin extends Plugin {
       await audio.play();
       this.updateStatus('CosyVoice playing', {
         canPause: true,
+        ...getChunkNavigationState(this.readerState.currentChunk, this.readerState.totalChunks),
         canSeek: true,
         canStop: true,
         isPaused: false,
@@ -1202,6 +1233,7 @@ class CosyVoiceReaderPlugin extends Plugin {
       audio.pause();
       this.updateStatus('CosyVoice paused', {
         canPause: true,
+        ...getChunkNavigationState(this.readerState.currentChunk, this.readerState.totalChunks),
         canSeek: true,
         canStop: true,
         isPaused: true,

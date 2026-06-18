@@ -336,13 +336,33 @@ root.dispatchEvent(rightArrowEvent);
 assert.deepStrictEqual(seekBySecondsCalls, [-5, 5]);
 assert.strictEqual(root.focusCount, 2);
 
+const nextChunkButton = findElementByAriaLabel(root, 'Next chunk');
+assert.ok(nextChunkButton);
+const buttonArrowEvent = createKeyboardEvent({
+  code: 'ArrowRight',
+  key: 'ArrowRight',
+  target: nextChunkButton,
+});
+root.dispatchEvent(buttonArrowEvent);
+assert.deepStrictEqual(seekBySecondsCalls, [-5, 5, 5]);
+
+const progressInput = findElementByAriaLabel(root, 'Reading progress');
+assert.ok(progressInput);
+const progressArrowEvent = createKeyboardEvent({
+  code: 'ArrowLeft',
+  key: 'ArrowLeft',
+  target: progressInput,
+});
+root.dispatchEvent(progressArrowEvent);
+assert.deepStrictEqual(seekBySecondsCalls, [-5, 5, 5, -5]);
+
 const inputArrowEvent = createKeyboardEvent({
   code: 'ArrowRight',
   key: 'ArrowRight',
   target: new FakeElement('input'),
 });
 root.dispatchEvent(inputArrowEvent);
-assert.deepStrictEqual(seekBySecondsCalls, [-5, 5]);
+assert.deepStrictEqual(seekBySecondsCalls, [-5, 5, 5, -5]);
 assert.strictEqual(inputArrowEvent.defaultPrevented, false);
 
 const pauseButton = findElementByAriaLabel(root, 'Pause');
@@ -357,8 +377,6 @@ assert.ok(previousChunkButton);
 previousChunkButton.dispatchEvent(createPointerEvent({ type: 'click' }));
 assert.deepStrictEqual(chunkNavigationCalls, [-1]);
 
-const nextChunkButton = findElementByAriaLabel(root, 'Next chunk');
-assert.ok(nextChunkButton);
 nextChunkButton.dispatchEvent(createPointerEvent({ type: 'click' }));
 assert.deepStrictEqual(chunkNavigationCalls, [-1, 1]);
 
@@ -455,6 +473,53 @@ assert.deepStrictEqual(chunkNavigationCalls, [-1, 1]);
   jumpPlugin.activeSession.requestedChunkIndex = null;
   assert.strictEqual(jumpPlugin.jumpToAdjacentChunk(-1), false);
   assert.strictEqual(jumpPlugin.activeSession.requestedChunkIndex, null);
+
+  const preparePlugin = Object.create(PluginClass.prototype);
+  const prepareSession = {
+    files: [],
+    id: 7,
+    stopped: false,
+    totalChunks: 4,
+  };
+  const prepareStatuses = [];
+  const prepareTempDir = path.join(__dirname, '.test-cache');
+  fs.mkdirSync(prepareTempDir, { recursive: true });
+  preparePlugin.activeSession = prepareSession;
+  preparePlugin.app = {
+    vault: {
+      adapter: {
+        getResourcePath: (vaultPath) => `app://local/${vaultPath}`,
+      },
+    },
+  };
+  preparePlugin.cacheDir = prepareTempDir;
+  preparePlugin.readerState = moduleObject.exports.__test.createReaderState();
+  preparePlugin.sequence = 7;
+  preparePlugin.vaultBasePath = __dirname;
+  preparePlugin.isActive = PluginClass.prototype.isActive;
+  preparePlugin.writeRuntimeLog = async () => {};
+  preparePlugin.updateStatus = (label, patch) => {
+    prepareStatuses.push({ label, patch });
+    preparePlugin.readerState = moduleObject.exports.__test.createReaderState({
+      ...preparePlugin.readerState,
+      label,
+      ...patch,
+    });
+  };
+  preparePlugin.runCosyVoice = async (inputPath, outputPath) => {
+    assert.ok(fs.existsSync(inputPath));
+    fs.writeFileSync(outputPath, Buffer.alloc(45));
+  };
+
+  const preparedChunk = await preparePlugin.prepareChunk('chunk text', 1, prepareSession);
+  assert.ok(preparedChunk.outputPath.endsWith('.wav'));
+  const synthStatus = prepareStatuses.find((entry) => entry.patch.phase === 'synthesizing');
+  assert.strictEqual(synthStatus.patch.canPreviousChunk, true);
+  assert.strictEqual(synthStatus.patch.canNextChunk, true);
+  for (const filePath of prepareSession.files) {
+    fs.rmSync(filePath, { force: true });
+  }
+  fs.rmSync(prepareTempDir, { force: true, recursive: true });
 
   console.log('obsidian loader tests passed');
 })().catch((error) => {
