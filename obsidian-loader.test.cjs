@@ -21,6 +21,8 @@ class FakeElement {
     this.textContent = '';
     this.value = '';
     this.disabled = false;
+    this.focusCount = 0;
+    this.focusOptions = [];
   }
 
   empty() {
@@ -88,6 +90,11 @@ class FakeElement {
     for (const listener of this.listeners[event.type] || []) {
       listener(event);
     }
+  }
+
+  focus(options = {}) {
+    this.focusCount += 1;
+    this.focusOptions.push(options);
   }
 }
 
@@ -197,6 +204,8 @@ assert.ok(moduleObject.exports.__test.resolvePowerShellExecutable().toLowerCase(
 assert.strictEqual(moduleObject.exports.__test.VIEW_TYPE, 'note-reader-cosyvoice-control');
 assert.deepStrictEqual(moduleObject.exports.__test.createReaderState(), {
   canPause: false,
+  canNextChunk: false,
+  canPreviousChunk: false,
   canStop: false,
   currentChunk: 0,
   currentText: '',
@@ -267,19 +276,25 @@ assert.strictEqual(
 const root = new FakeElement('section');
 let pauseOrResumeCalls = 0;
 const seekBySecondsCalls = [];
+const chunkNavigationCalls = [];
 const readerView = new moduleObject.exports.__test.CosyVoiceReaderView({}, {
   readerState: moduleObject.exports.__test.createReaderState({
+    canNextChunk: true,
     canPause: true,
+    canPreviousChunk: true,
     canSeek: true,
     canStop: true,
-    currentChunk: 1,
+    currentChunk: 2,
     isPaused: false,
     label: 'CosyVoice playing',
     phase: 'playing',
     status: 'running',
-    totalChunks: 2,
+    totalChunks: 4,
   }),
   settings: moduleObject.exports.__test.createDefaultSettings(),
+  jumpToAdjacentChunk: (deltaChunks) => {
+    chunkNavigationCalls.push(deltaChunks);
+  },
   pauseOrResume: async () => {
     pauseOrResumeCalls += 1;
   },
@@ -314,10 +329,12 @@ root.dispatchEvent(leftArrowEvent);
 assert.deepStrictEqual(seekBySecondsCalls, [-5]);
 assert.strictEqual(leftArrowEvent.defaultPrevented, true);
 assert.strictEqual(leftArrowEvent.propagationStopped, true);
+assert.strictEqual(root.focusCount, 1);
 
 const rightArrowEvent = createKeyboardEvent({ code: 'ArrowRight', key: 'ArrowRight' });
 root.dispatchEvent(rightArrowEvent);
 assert.deepStrictEqual(seekBySecondsCalls, [-5, 5]);
+assert.strictEqual(root.focusCount, 2);
 
 const inputArrowEvent = createKeyboardEvent({
   code: 'ArrowRight',
@@ -334,6 +351,16 @@ const pausePointerEvent = createPointerEvent();
 pauseButton.dispatchEvent(pausePointerEvent);
 assert.strictEqual(pauseOrResumeCalls, 2);
 assert.strictEqual(pausePointerEvent.defaultPrevented, true);
+
+const previousChunkButton = findElementByAriaLabel(root, 'Previous chunk');
+assert.ok(previousChunkButton);
+previousChunkButton.dispatchEvent(createPointerEvent({ type: 'click' }));
+assert.deepStrictEqual(chunkNavigationCalls, [-1]);
+
+const nextChunkButton = findElementByAriaLabel(root, 'Next chunk');
+assert.ok(nextChunkButton);
+nextChunkButton.dispatchEvent(createPointerEvent({ type: 'click' }));
+assert.deepStrictEqual(chunkNavigationCalls, [-1, 1]);
 
 (async () => {
   const plugin = Object.create(PluginClass.prototype);
@@ -392,6 +419,42 @@ assert.strictEqual(pausePointerEvent.defaultPrevented, true);
   assert.strictEqual(seekPlugin.seekCurrentAudioBySeconds(-30), true);
   assert.strictEqual(seekPlugin.currentAudio.currentTime, 0);
   assert.deepStrictEqual(seekStates.pop(), { progress: 0.5 });
+
+  const jumpPlugin = Object.create(PluginClass.prototype);
+  let pausedForJump = false;
+  let endedForJump = false;
+  jumpPlugin.activeSession = {
+    requestedChunkIndex: null,
+    stopped: false,
+    totalChunks: 4,
+  };
+  jumpPlugin.readerState = moduleObject.exports.__test.createReaderState({
+    canNextChunk: true,
+    canPreviousChunk: true,
+    currentChunk: 3,
+    totalChunks: 4,
+  });
+  jumpPlugin.currentAudio = {
+    pause: () => {
+      pausedForJump = true;
+    },
+    onended: () => {
+      endedForJump = true;
+    },
+  };
+
+  assert.strictEqual(jumpPlugin.jumpToAdjacentChunk(-1), true);
+  assert.strictEqual(jumpPlugin.activeSession.requestedChunkIndex, 1);
+  assert.strictEqual(pausedForJump, true);
+  assert.strictEqual(endedForJump, true);
+
+  jumpPlugin.readerState = moduleObject.exports.__test.createReaderState({
+    currentChunk: 1,
+    totalChunks: 4,
+  });
+  jumpPlugin.activeSession.requestedChunkIndex = null;
+  assert.strictEqual(jumpPlugin.jumpToAdjacentChunk(-1), false);
+  assert.strictEqual(jumpPlugin.activeSession.requestedChunkIndex, null);
 
   console.log('obsidian loader tests passed');
 })().catch((error) => {

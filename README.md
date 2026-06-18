@@ -19,7 +19,7 @@ Plugin settings. The script path shown here is a redacted example:
 - Reads the current note, current selection, or from the current selection start to the end of the note.
 - Opens a right-side `CosyVoice Reader` control panel.
 - Shows synthesis/playback phase, whole-reading progress, percentage, and text preview.
-- Supports pause, resume, stop, Space to pause or resume in the control panel, Left/Right Arrow to seek by 5 seconds, and progress dragging while the current audio chunk is playing.
+- Supports pause, resume, stop, Space to pause or resume in the control panel, repeated Left/Right Arrow 5-second seeking, previous/next chunk buttons, and progress dragging while the current audio chunk is playing.
 - Provides right-panel speed presets: `1x`, `1.25x`, `1.5x`, `2x`, `1.1x`, `1.2x`, `1.3x`, and `1.4x`.
 - Uses a local PowerShell wrapper script instead of a cloud TTS service.
 - Cleans Markdown before synthesis.
@@ -92,7 +92,9 @@ Use `Chunk limits` to balance startup latency and synthesis stability:
 
 ## Keyboard And Progress Seeking
 
-When the `CosyVoice Reader` control panel is focused, Space pauses or resumes reading. Left Arrow seeks 5 seconds backward and Right Arrow seeks 5 seconds forward in the current audio chunk.
+When the `CosyVoice Reader` control panel is focused, Space pauses or resumes reading. Repeated Left Arrow or Right Arrow presses seek backward or forward in 5-second steps in the current audio chunk.
+
+The triangle buttons beside the progress bar jump to the previous text chunk or the next text chunk. Already synthesized chunks are reused when possible; otherwise the target chunk is synthesized before playback.
 
 The progress bar shows whole-reading progress across all chunks. While audio is playing, the bar can be clicked or dragged. Seeking is limited to the currently loaded audio chunk; dragging outside that chunk is clamped to the nearest point in the current chunk.
 

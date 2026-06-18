@@ -332,6 +332,8 @@ function createDefaultSettings() {
 function createReaderState(overrides = {}) {
   return normalizeReaderState({
     canPause: false,
+    canNextChunk: false,
+    canPreviousChunk: false,
     canSeek: false,
     canStop: false,
     currentChunk: 0,
@@ -354,6 +356,8 @@ function normalizeReaderState(state) {
 
   return {
     canPause: Boolean(state.canPause),
+    canNextChunk: Boolean(state.canNextChunk),
+    canPreviousChunk: Boolean(state.canPreviousChunk),
     canSeek: Boolean(state.canSeek),
     canStop: Boolean(state.canStop),
     currentChunk,
@@ -748,12 +752,15 @@ class CosyVoiceReaderPlugin extends Plugin {
       id: ++this.sequence,
       stopped: false,
       files: [],
+      requestedChunkIndex: null,
       totalChunks: chunks.length,
     };
 
     this.activeSession = session;
     this.updateStatus(`CosyVoice 0/${chunks.length}`, {
       canPause: false,
+      canNextChunk: false,
+      canPreviousChunk: false,
       canSeek: false,
       canStop: true,
       currentChunk: 0,
@@ -774,24 +781,48 @@ class CosyVoiceReaderPlugin extends Plugin {
     new Notice(`CosyVoice: reading ${sourceLabel}. First synthesis may take a while.`, 6000);
 
     try {
-      let nextPrepared = this.queuePrepareChunk(chunks[0], 0, session);
+      const preparedChunks = new Map();
+      const getPreparedChunk = (index) => {
+        if (!preparedChunks.has(index)) {
+          preparedChunks.set(index, this.queuePrepareChunk(chunks[index], index, session));
+        }
 
-      for (let index = 0; index < chunks.length; index += 1) {
+        return preparedChunks.get(index);
+      };
+
+      getPreparedChunk(0);
+      let index = 0;
+      while (index < chunks.length) {
         if (!this.isActive(session)) {
           break;
         }
 
-        const prepared = await nextPrepared;
-        const nextIndex = index + 1;
-        nextPrepared =
-          nextIndex < chunks.length ? this.queuePrepareChunk(chunks[nextIndex], nextIndex, session) : null;
+        const prepared = await getPreparedChunk(index);
+        if (!this.isActive(session)) {
+          break;
+        }
 
+        if (index + 1 < chunks.length) {
+          getPreparedChunk(index + 1);
+        }
+
+        session.currentChunkIndex = index;
+        session.requestedChunkIndex = null;
         await this.playPreparedAudio(prepared, session, index, chunks.length);
+
+        if (Number.isInteger(session.requestedChunkIndex)) {
+          index = Math.max(0, Math.min(chunks.length - 1, session.requestedChunkIndex));
+          session.requestedChunkIndex = null;
+        } else {
+          index += 1;
+        }
       }
 
       if (this.isActive(session)) {
         this.updateStatus('CosyVoice complete', {
           canPause: false,
+          canNextChunk: false,
+          canPreviousChunk: false,
           canStop: false,
           isPaused: false,
           phase: 'complete',
@@ -804,6 +835,8 @@ class CosyVoiceReaderPlugin extends Plugin {
       if (this.isActive(session)) {
         this.updateStatus('CosyVoice error', {
           canPause: false,
+          canNextChunk: false,
+          canPreviousChunk: false,
           canStop: false,
           error: messageFromError(error),
           isPaused: false,
@@ -836,6 +869,8 @@ class CosyVoiceReaderPlugin extends Plugin {
 
     this.updateStatus(`CosyVoice synth ${index + 1}/${session.totalChunks || 0}`, {
       canPause: true,
+      canNextChunk: false,
+      canPreviousChunk: false,
       canSeek: false,
       canStop: true,
       currentChunk: index + 1,
@@ -976,6 +1011,8 @@ class CosyVoiceReaderPlugin extends Plugin {
         this.currentAudio = audio;
         this.updateStatus(`CosyVoice play ${index + 1}/${total}`, {
           canPause: true,
+          canNextChunk: index + 1 < total,
+          canPreviousChunk: index > 0,
           canSeek: true,
           canStop: true,
           currentChunk: index + 1,
@@ -1010,6 +1047,8 @@ class CosyVoiceReaderPlugin extends Plugin {
           }
           this.setReaderState({
             canPause: false,
+            canNextChunk: false,
+            canPreviousChunk: false,
             canSeek: false,
             isPaused: false,
             progress: total ? (index + 1) / total : 1,
@@ -1093,6 +1132,36 @@ class CosyVoiceReaderPlugin extends Plugin {
     this.setReaderState({
       progress: this.readerState.totalChunks ? (chunkIndex + chunkProgress) / this.readerState.totalChunks : 0,
     });
+    return true;
+  }
+
+  jumpToAdjacentChunk(deltaChunks) {
+    const session = this.activeSession;
+    const total = Math.max(0, Math.floor(Number(this.readerState.totalChunks) || 0));
+    const currentChunk = Math.max(0, Math.floor(Number(this.readerState.currentChunk) || 0));
+    const delta = Math.trunc(Number(deltaChunks) || 0);
+
+    if (!this.isActive(session) || !total || !currentChunk || !delta) {
+      return false;
+    }
+
+    const currentIndex = Math.max(0, Math.min(total - 1, currentChunk - 1));
+    const targetIndex = Math.max(0, Math.min(total - 1, currentIndex + delta));
+    if (targetIndex === currentIndex) {
+      return false;
+    }
+
+    session.requestedChunkIndex = targetIndex;
+    this.pauseRequested = false;
+
+    const audio = this.currentAudio;
+    if (audio && typeof audio.pause === 'function') {
+      audio.pause();
+    }
+    if (audio && typeof audio.onended === 'function') {
+      audio.onended();
+    }
+
     return true;
   }
 
@@ -1274,7 +1343,11 @@ class CosyVoiceReaderView extends ItemView {
     header.createDiv({ cls: `note-reader-cosyvoice-state is-${state.status}`, text: state.label });
 
     const progressWrap = root.createDiv({ cls: 'note-reader-cosyvoice-progress-wrap' });
-    const progressTrack = progressWrap.createDiv({
+    const progressControls = progressWrap.createDiv({ cls: 'note-reader-cosyvoice-progress-controls' });
+    this.createIconButton(progressControls, 'skip-back', 'Previous chunk', () => {
+      this.plugin.jumpToAdjacentChunk(-1);
+    }, !state.canPreviousChunk);
+    const progressTrack = progressControls.createDiv({
       cls: `note-reader-cosyvoice-progress-track${state.canSeek ? ' is-seekable' : ''}`,
     });
     const progressFill = progressTrack.createDiv({ cls: 'note-reader-cosyvoice-progress-fill' });
@@ -1299,6 +1372,9 @@ class CosyVoiceReaderView extends ItemView {
       const requestedProgress = Number(progressInput.value) / 1000;
       this.plugin.seekToProgress(requestedProgress);
     });
+    this.createIconButton(progressControls, 'skip-forward', 'Next chunk', () => {
+      this.plugin.jumpToAdjacentChunk(1);
+    }, !state.canNextChunk);
 
     const meta = progressWrap.createDiv({ cls: 'note-reader-cosyvoice-meta' });
     meta.createSpan({ text: formatProgressLabel(state) });
@@ -1394,6 +1470,7 @@ class CosyVoiceReaderView extends ItemView {
       event.preventDefault();
       event.stopPropagation();
       this.plugin.seekCurrentAudioBySeconds(seekDeltaSeconds);
+      this.focusPanel(event.currentTarget);
       return;
     }
 
@@ -1407,7 +1484,40 @@ class CosyVoiceReaderView extends ItemView {
 
     event.preventDefault();
     event.stopPropagation();
-    void this.plugin.pauseOrResume();
+    const panel = event.currentTarget;
+    void Promise.resolve(this.plugin.pauseOrResume()).finally(() => {
+      this.focusPanel(panel);
+    });
+  }
+
+  focusPanel(panel) {
+    if (!panel || typeof panel.focus !== 'function') {
+      return;
+    }
+
+    try {
+      panel.focus({ preventScroll: true });
+    } catch (error) {
+      panel.focus();
+    }
+  }
+
+  createIconButton(parent, icon, label, onClick, disabled = false) {
+    const button = parent.createEl('button', {
+      cls: 'note-reader-cosyvoice-icon-button',
+      attr: {
+        'aria-label': label,
+        title: label,
+      },
+    });
+    button.disabled = disabled;
+
+    if (typeof setIcon === 'function') {
+      setIcon(button, icon);
+    }
+
+    button.addEventListener('click', onClick);
+    return button;
   }
 
   createActionButton(parent, icon, label, onClick, disabled = false, options = {}) {
