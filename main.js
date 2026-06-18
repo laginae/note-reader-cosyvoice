@@ -10,6 +10,7 @@ const DEFAULT_CHUNK_LIMITS = [40, 80, 120, 160, 280, 320];
 const DEFAULT_MATH_READING_LANGUAGE = 'english';
 const RECOMMENDED_SCRIPT_PATH = '%LOCALAPPDATA%\\note-reader-cosyvoice\\cosyvoice-wrapper.ps1';
 const SPEED_PRESETS = [1, 1.25, 1.5, 2, 1.1, 1.2, 1.3, 1.4];
+const KEYBOARD_SEEK_SECONDS = 5;
 const LATEX_FORMULA_MAX_CHARS = 12;
 const MATH_READING_LANGUAGES = ['english', 'chinese', 'skip'];
 const LATEX_COMMAND_REPLACEMENTS = {
@@ -412,6 +413,39 @@ function formatProgressLabel(state) {
   const currentChunk = Math.max(0, Math.floor(Number(state.currentChunk) || 0));
   const totalChunks = Math.max(0, Math.floor(Number(state.totalChunks) || 0));
   return `${currentChunk} / ${totalChunks}`;
+}
+
+function isSpaceKeyEvent(event) {
+  return event && (event.code === 'Space' || event.key === ' ' || event.key === 'Spacebar');
+}
+
+function getKeyboardSeekDeltaSeconds(event) {
+  if (!event) {
+    return 0;
+  }
+
+  if (event.code === 'ArrowLeft' || event.key === 'ArrowLeft') {
+    return -KEYBOARD_SEEK_SECONDS;
+  }
+
+  if (event.code === 'ArrowRight' || event.key === 'ArrowRight') {
+    return KEYBOARD_SEEK_SECONDS;
+  }
+
+  return 0;
+}
+
+function isInteractiveKeyboardTarget(target) {
+  if (!target || !target.tagName) {
+    return false;
+  }
+
+  if (target.isContentEditable) {
+    return true;
+  }
+
+  const tagName = String(target.tagName).toLowerCase();
+  return ['button', 'input', 'select', 'textarea'].includes(tagName);
 }
 
 function previewText(text) {
@@ -1031,10 +1065,31 @@ class CosyVoiceReaderPlugin extends Plugin {
       return false;
     }
 
-    audio.currentTime = seekTime;
+    return this.seekCurrentAudioToTime(seekTime);
+  }
+
+  seekCurrentAudioBySeconds(deltaSeconds) {
+    const audio = this.currentAudio;
+    const delta = Number(deltaSeconds);
+    if (!audio || !Number.isFinite(audio.duration) || audio.duration <= 0 || !Number.isFinite(delta)) {
+      return false;
+    }
+
+    const currentTime = Number.isFinite(audio.currentTime) ? audio.currentTime : 0;
+    return this.seekCurrentAudioToTime(currentTime + delta);
+  }
+
+  seekCurrentAudioToTime(seekTime) {
+    const audio = this.currentAudio;
+    const requestedTime = Number(seekTime);
+    if (!audio || !Number.isFinite(audio.duration) || audio.duration <= 0 || !Number.isFinite(requestedTime)) {
+      return false;
+    }
+
+    audio.currentTime = Math.min(audio.duration, Math.max(0, requestedTime));
     const chunkIndex = Math.max(0, (this.readerState.currentChunk || 1) - 1);
     const duration = Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : 0;
-    const chunkProgress = duration ? seekTime / duration : 0;
+    const chunkProgress = duration ? audio.currentTime / duration : 0;
     this.setReaderState({
       progress: this.readerState.totalChunks ? (chunkIndex + chunkProgress) / this.readerState.totalChunks : 0,
     });
@@ -1181,6 +1236,7 @@ class CosyVoiceReaderView extends ItemView {
   constructor(leaf, plugin) {
     super(leaf);
     this.plugin = plugin;
+    this.handlePanelKeydown = this.handlePanelKeydown.bind(this);
   }
 
   getViewType() {
@@ -1209,6 +1265,9 @@ class CosyVoiceReaderView extends ItemView {
 
     root.empty();
     root.addClass('note-reader-cosyvoice-view');
+    root.setAttribute('tabindex', '0');
+    root.setAttribute('aria-label', 'CosyVoice reader controls');
+    root.addEventListener('keydown', this.handlePanelKeydown);
 
     const header = root.createDiv({ cls: 'note-reader-cosyvoice-panel-header' });
     header.createEl('h3', { text: 'CosyVoice Reader' });
@@ -1264,7 +1323,8 @@ class CosyVoiceReaderView extends ItemView {
       () => {
         void this.plugin.pauseOrResume();
       },
-      !state.canPause
+      !state.canPause,
+      { triggerOnPointerDown: true }
     );
     this.createActionButton(
       actions,
@@ -1319,7 +1379,38 @@ class CosyVoiceReaderView extends ItemView {
     }
   }
 
-  createActionButton(parent, icon, label, onClick, disabled = false) {
+  handlePanelKeydown(event) {
+    const state = this.plugin.readerState || createReaderState();
+
+    if (
+      event.defaultPrevented ||
+      isInteractiveKeyboardTarget(event.target)
+    ) {
+      return;
+    }
+
+    const seekDeltaSeconds = state.canSeek ? getKeyboardSeekDeltaSeconds(event) : 0;
+    if (seekDeltaSeconds) {
+      event.preventDefault();
+      event.stopPropagation();
+      this.plugin.seekCurrentAudioBySeconds(seekDeltaSeconds);
+      return;
+    }
+
+    if (
+      event.repeat ||
+      !state.canPause ||
+      !isSpaceKeyEvent(event)
+    ) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    void this.plugin.pauseOrResume();
+  }
+
+  createActionButton(parent, icon, label, onClick, disabled = false, options = {}) {
     const button = parent.createEl('button', {
       cls: 'note-reader-cosyvoice-action',
       attr: {
@@ -1335,7 +1426,29 @@ class CosyVoiceReaderView extends ItemView {
     }
 
     button.createSpan({ cls: 'note-reader-cosyvoice-action-label', text: label });
-    button.addEventListener('click', onClick);
+    let pointerHandled = false;
+    if (options.triggerOnPointerDown) {
+      button.addEventListener('pointerdown', (event) => {
+        if (button.disabled || event.defaultPrevented || (Number.isFinite(event.button) && event.button !== 0)) {
+          return;
+        }
+
+        pointerHandled = true;
+        event.preventDefault();
+        event.stopPropagation();
+        onClick(event);
+      });
+    }
+
+    button.addEventListener('click', (event) => {
+      if (pointerHandled) {
+        pointerHandled = false;
+        event.preventDefault();
+        return;
+      }
+
+      onClick(event);
+    });
     return button;
   }
 }

@@ -10,6 +10,136 @@ class MockNotice {}
 class MockMarkdownView {}
 function mockSetIcon() {}
 
+class FakeElement {
+  constructor(tagName = 'div') {
+    this.tagName = tagName.toUpperCase();
+    this.attributes = {};
+    this.children = [];
+    this.classNames = [];
+    this.listeners = {};
+    this.style = {};
+    this.textContent = '';
+    this.value = '';
+    this.disabled = false;
+  }
+
+  empty() {
+    this.children = [];
+  }
+
+  addClass(className) {
+    this.classNames.push(...String(className || '').split(/\s+/).filter(Boolean));
+  }
+
+  createDiv(options = {}) {
+    return this.createEl('div', options);
+  }
+
+  createSpan(options = {}) {
+    return this.createEl('span', options);
+  }
+
+  createEl(tagName, options = {}) {
+    const child = new FakeElement(tagName);
+
+    if (options.cls) {
+      child.addClass(options.cls);
+    }
+
+    if (Object.prototype.hasOwnProperty.call(options, 'text')) {
+      child.textContent = String(options.text);
+    }
+
+    if (options.attr) {
+      for (const [name, value] of Object.entries(options.attr)) {
+        child.setAttribute(name, value);
+      }
+    }
+
+    this.children.push(child);
+    return child;
+  }
+
+  setAttribute(name, value) {
+    this.attributes[name] = String(value);
+
+    if (name === 'value') {
+      this.value = String(value);
+    }
+  }
+
+  addEventListener(type, listener) {
+    if (!this.listeners[type]) {
+      this.listeners[type] = [];
+    }
+
+    if (!this.listeners[type].includes(listener)) {
+      this.listeners[type].push(listener);
+    }
+  }
+
+  dispatchEvent(event) {
+    if (!event.target) {
+      event.target = this;
+    }
+
+    event.currentTarget = this;
+
+    for (const listener of this.listeners[event.type] || []) {
+      listener(event);
+    }
+  }
+}
+
+function createKeyboardEvent(overrides = {}) {
+  return {
+    code: 'Space',
+    defaultPrevented: false,
+    key: ' ',
+    propagationStopped: false,
+    repeat: false,
+    type: 'keydown',
+    preventDefault() {
+      this.defaultPrevented = true;
+    },
+    stopPropagation() {
+      this.propagationStopped = true;
+    },
+    ...overrides,
+  };
+}
+
+function createPointerEvent(overrides = {}) {
+  return {
+    button: 0,
+    defaultPrevented: false,
+    propagationStopped: false,
+    type: 'pointerdown',
+    preventDefault() {
+      this.defaultPrevented = true;
+    },
+    stopPropagation() {
+      this.propagationStopped = true;
+    },
+    ...overrides,
+  };
+}
+
+function findElementByAriaLabel(root, label) {
+  if (root.attributes && root.attributes['aria-label'] === label) {
+    return root;
+  }
+
+  for (const child of root.children || []) {
+    const result = findElementByAriaLabel(child, label);
+    if (result) {
+      return result;
+    }
+  }
+
+  return null;
+}
+
 const allowedBuiltins = new Set(['fs', 'path', 'child_process', 'url']);
 const mainPath = path.join(__dirname, 'main.js');
 const code = fs.readFileSync(mainPath, 'utf8');
@@ -36,7 +166,12 @@ function obsidianStyleRequire(request) {
   throw new Error(`Obsidian-style loader cannot resolve ${request}`);
 }
 
-const pluginFactory = new Function('require', 'module', 'exports', `${code}\n//# sourceURL=plugin:note-reader-cosyvoice`);
+const pluginFactory = new Function(
+  'require',
+  'module',
+  'exports',
+  `${code}\nmodule.exports.__test.CosyVoiceReaderView = CosyVoiceReaderView;\n//# sourceURL=plugin:note-reader-cosyvoice`
+);
 pluginFactory(obsidianStyleRequire, moduleObject, moduleObject.exports);
 
 const PluginClass = moduleObject.exports.default || moduleObject.exports;
@@ -129,6 +264,77 @@ assert.strictEqual(
   '行内容\n第三行'
 );
 
+const root = new FakeElement('section');
+let pauseOrResumeCalls = 0;
+const seekBySecondsCalls = [];
+const readerView = new moduleObject.exports.__test.CosyVoiceReaderView({}, {
+  readerState: moduleObject.exports.__test.createReaderState({
+    canPause: true,
+    canSeek: true,
+    canStop: true,
+    currentChunk: 1,
+    isPaused: false,
+    label: 'CosyVoice playing',
+    phase: 'playing',
+    status: 'running',
+    totalChunks: 2,
+  }),
+  settings: moduleObject.exports.__test.createDefaultSettings(),
+  pauseOrResume: async () => {
+    pauseOrResumeCalls += 1;
+  },
+  readCurrentNote: () => {},
+  readFromSelection: () => {},
+  readSelection: () => {},
+  seekCurrentAudioBySeconds: (deltaSeconds) => {
+    seekBySecondsCalls.push(deltaSeconds);
+  },
+  seekToProgress: () => {},
+  setSpeechSpeed: () => {},
+  stopReading: () => {},
+});
+readerView.contentEl = root;
+readerView.containerEl = { children: [null, root] };
+readerView.render();
+
+assert.strictEqual(root.attributes.tabindex, '0');
+const spaceEvent = createKeyboardEvent();
+root.dispatchEvent(spaceEvent);
+assert.strictEqual(pauseOrResumeCalls, 1);
+assert.strictEqual(spaceEvent.defaultPrevented, true);
+assert.strictEqual(spaceEvent.propagationStopped, true);
+
+const inputSpaceEvent = createKeyboardEvent({ target: new FakeElement('input') });
+root.dispatchEvent(inputSpaceEvent);
+assert.strictEqual(pauseOrResumeCalls, 1);
+assert.strictEqual(inputSpaceEvent.defaultPrevented, false);
+
+const leftArrowEvent = createKeyboardEvent({ code: 'ArrowLeft', key: 'ArrowLeft' });
+root.dispatchEvent(leftArrowEvent);
+assert.deepStrictEqual(seekBySecondsCalls, [-5]);
+assert.strictEqual(leftArrowEvent.defaultPrevented, true);
+assert.strictEqual(leftArrowEvent.propagationStopped, true);
+
+const rightArrowEvent = createKeyboardEvent({ code: 'ArrowRight', key: 'ArrowRight' });
+root.dispatchEvent(rightArrowEvent);
+assert.deepStrictEqual(seekBySecondsCalls, [-5, 5]);
+
+const inputArrowEvent = createKeyboardEvent({
+  code: 'ArrowRight',
+  key: 'ArrowRight',
+  target: new FakeElement('input'),
+});
+root.dispatchEvent(inputArrowEvent);
+assert.deepStrictEqual(seekBySecondsCalls, [-5, 5]);
+assert.strictEqual(inputArrowEvent.defaultPrevented, false);
+
+const pauseButton = findElementByAriaLabel(root, 'Pause');
+assert.ok(pauseButton);
+const pausePointerEvent = createPointerEvent();
+pauseButton.dispatchEvent(pausePointerEvent);
+assert.strictEqual(pauseOrResumeCalls, 2);
+assert.strictEqual(pausePointerEvent.defaultPrevented, true);
+
 (async () => {
   const plugin = Object.create(PluginClass.prototype);
   let savedSettings = null;
@@ -159,6 +365,34 @@ assert.strictEqual(
   assert.deepStrictEqual(plugin.settings, moduleObject.exports.__test.createDefaultSettings());
   assert.deepStrictEqual(savedSettings, moduleObject.exports.__test.createDefaultSettings());
   assert.notStrictEqual(savedSettings, moduleObject.exports.__test.createDefaultSettings());
+
+  const seekPlugin = Object.create(PluginClass.prototype);
+  const seekStates = [];
+  seekPlugin.currentAudio = {
+    currentTime: 8,
+    duration: 20,
+  };
+  seekPlugin.readerState = moduleObject.exports.__test.createReaderState({
+    canSeek: true,
+    currentChunk: 3,
+    totalChunks: 4,
+  });
+  seekPlugin.setReaderState = (patch) => {
+    seekStates.push(patch);
+    seekPlugin.readerState = moduleObject.exports.__test.createReaderState({
+      ...seekPlugin.readerState,
+      ...patch,
+    });
+  };
+
+  assert.strictEqual(seekPlugin.seekCurrentAudioBySeconds(5), true);
+  assert.strictEqual(seekPlugin.currentAudio.currentTime, 13);
+  assert.deepStrictEqual(seekStates.pop(), { progress: 0.6625 });
+
+  assert.strictEqual(seekPlugin.seekCurrentAudioBySeconds(-30), true);
+  assert.strictEqual(seekPlugin.currentAudio.currentTime, 0);
+  assert.deepStrictEqual(seekStates.pop(), { progress: 0.5 });
+
   console.log('obsidian loader tests passed');
 })().catch((error) => {
   console.error(error);
