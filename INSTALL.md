@@ -2,7 +2,7 @@
 
 ## Install From ZIP
 
-1. Unzip `note-reader-cosyvoice-0.2.1-install.zip`.
+1. Unzip `note-reader-cosyvoice-0.2.2-install.zip`.
 2. Copy the `note-reader-cosyvoice` folder into your vault:
 
 ```text

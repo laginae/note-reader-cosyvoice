@@ -97,7 +97,7 @@ Use `Chunk limits` to balance startup latency and synthesis stability:
 
 ## Keyboard And Progress Seeking
 
-Space pauses or resumes reading when the `CosyVoice Reader` control panel is focused. Left Arrow or Right Arrow seek backward or forward in 5-second steps while audio is available; the plugin also listens at the document level, but skips text inputs and Markdown editing areas so normal editing keys are not hijacked.
+When the `CosyVoice Reader` control panel is focused, Space pauses or resumes reading, and Left Arrow or Right Arrow seek backward or forward in 5-second steps while audio is available.
 
 The triangle buttons beside the progress bar jump to the previous text chunk or the next text chunk. Already synthesized chunks are reused when possible; otherwise the target chunk is synthesized before playback.
 

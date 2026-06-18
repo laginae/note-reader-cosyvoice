@@ -401,6 +401,46 @@ nextChunkButton.dispatchEvent(createPointerEvent({ type: 'click' }));
 assert.deepStrictEqual(chunkNavigationCalls, [-1, 1]);
 
 (async () => {
+  const startupVaultDir = path.join(__dirname, '.test-startup-vault');
+  fs.mkdirSync(startupVaultDir, { recursive: true });
+  const startupPlugin = Object.create(PluginClass.prototype);
+  let startupDomEvents = 0;
+  startupPlugin.app = {
+    vault: {
+      adapter: {
+        getBasePath: () => startupVaultDir,
+      },
+    },
+    workspace: {
+      detachLeavesOfType: () => {},
+      getActiveViewOfType: () => null,
+      getLeavesOfType: () => [],
+      getRightLeaf: () => ({
+        setViewState: async () => {},
+      }),
+      on: () => ({}),
+      revealLeaf: async () => {},
+    },
+  };
+  startupPlugin.addCommand = () => {};
+  startupPlugin.addRibbonIcon = () => {};
+  startupPlugin.addSettingTab = () => {};
+  startupPlugin.addStatusBarItem = () => ({ setText: () => {} });
+  startupPlugin.loadData = async () => ({});
+  startupPlugin.register = () => {};
+  startupPlugin.registerDomEvent = () => {
+    startupDomEvents += 1;
+  };
+  startupPlugin.registerEvent = () => {};
+  startupPlugin.registerView = () => {};
+  startupPlugin.saveData = async () => {};
+
+  await startupPlugin.onload();
+
+  assert.strictEqual(startupDomEvents, 0);
+  await startupPlugin.onunload();
+  fs.rmSync(startupVaultDir, { force: true, recursive: true });
+
   const plugin = Object.create(PluginClass.prototype);
   let savedSettings = null;
   plugin.settings = {

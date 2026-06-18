@@ -574,15 +574,11 @@ class CosyVoiceReaderPlugin extends Plugin {
     this.cacheDir = null;
     this.logPath = null;
     this.statusBar = this.addStatusBarItem();
-    this.handleReaderKeydown = this.handleReaderKeydown.bind(this);
 
     await this.loadSettings();
     await this.ensureCacheDir();
 
     this.registerView(VIEW_TYPE, (leaf) => new CosyVoiceReaderView(leaf, this));
-    this.registerDomEvent(document, 'keydown', (event) => {
-      this.handleReaderKeydown(event, { allowPause: false });
-    }, true);
     this.lastMarkdownView = this.app.workspace.getActiveViewOfType(MarkdownView);
     this.registerEvent(
       this.app.workspace.on('active-leaf-change', () => {
