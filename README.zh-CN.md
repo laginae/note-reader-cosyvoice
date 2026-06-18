@@ -2,7 +2,7 @@
 
 [English README](README.md)
 
-Note Reader CosyVoice 是一个桌面端 Obsidian 插件，用于把当前笔记、选中文本，或从选中位置开始的后续内容交给本地 CosyVoice 语音合成流程朗读。插件本身不包含 CosyVoice、语音模型或云端语音服务，它只负责文本清理、分块、调用本地脚本、播放音频和提供控制面板。
+Note Reader CosyVoice 是一个桌面端 Obsidian 插件，用于把当前笔记、选中文本，或从选中位置开始的后续内容交给本地 CosyVoice 语音合成流程朗读，也可以在设置中显式切换为 Microsoft Edge 在线语音模式。插件本身不包含 CosyVoice、语音模型或云端语音服务，它只负责文本清理、分块、调用语音引擎、播放音频和提供控制面板。
 
 ## 界面截图
 
@@ -21,7 +21,7 @@ Note Reader CosyVoice 是一个桌面端 Obsidian 插件，用于把当前笔记
 - 显示合成、播放状态、整体朗读进度、百分比和当前文本预览。
 - 支持暂停、继续、停止；控制面板获得焦点时可用空格暂停/继续，可连续按左右方向键按 5 秒步进前后跳转；进度条两侧提供上一段/下一段按钮；也支持在当前已加载音频块内点击或拖动进度条。
 - 右侧边栏提供语速按钮：`1x`、`1.25x`、`1.5x`、`2x`、`1.1x`、`1.2x`、`1.3x`、`1.4x`。
-- 通过本地 PowerShell 包装脚本调用 CosyVoice，不直接使用云端 TTS。
+- 设置页可以选择 `Local CosyVoice` 或 `Microsoft Edge online voice`。默认是本地 CosyVoice。
 - 在合成前清理 Markdown 和常见 LaTeX 标记。
 - 设置页提供 `Restore defaults` 按钮，可以把插件设置恢复为默认值。
 - 提供 `Math reading language` 设置：
@@ -35,13 +35,15 @@ Note Reader CosyVoice 是一个桌面端 Obsidian 插件，用于把当前笔记
 
 ## 安全与隐私
 
-插件按本地语音合成场景设计，不会把笔记内容发送到 Microsoft、OpenAI 或其他远程 TTS 服务。文本会先写入插件缓存目录中的临时文本文件，然后传给你在设置中指定的本地 CosyVoice 包装脚本。
+插件默认按本地语音合成场景工作。在 `Local CosyVoice` 模式下，它不会把笔记内容发送到 Microsoft、OpenAI 或其他远程 TTS 服务。文本会先写入插件缓存目录中的临时文本文件，然后传给你在设置中指定的本地 CosyVoice 包装脚本。
+
+如果你在设置中选择 `Microsoft Edge online voice`，插件会调用 `edge-tts` 命令行工具，并把每个文本分段发送给 Microsoft Edge TTS 生成语音。只有在你接受这种在线处理方式时才应启用该模式。
 
 需要注意：
 
-- 网络请求：插件本身不直接访问远程服务。你配置的 CosyVoice 包装脚本可能会访问本机服务，例如 `127.0.0.1`。
-- Shell 执行：插件会启动你在设置中配置的 PowerShell 脚本，这是调用本地 TTS 运行时所必需的。
-- 文件访问：插件会在库内插件目录的 `cache` 文件夹下写入临时文本和 WAV 文件，并检查配置的脚本路径是否存在。
+- 网络请求：`Local CosyVoice` 模式不直接访问远程服务。你配置的 CosyVoice 包装脚本可能会访问本机服务，例如 `127.0.0.1`。`Microsoft Edge online voice` 模式会通过 `edge-tts` 访问 Microsoft Edge TTS。
+- Shell 执行：本地模式会启动你在设置中配置的 PowerShell 脚本；Edge 模式会启动 `edge-tts` 命令。
+- 文件访问：插件会在库内插件目录的 `cache` 文件夹下写入临时文本和音频文件，并在本地模式下检查配置的脚本路径是否存在。
 - 遥测：插件不包含客户端或服务端遥测。
 - 自动更新：插件不包含自更新机制。
 
@@ -68,11 +70,11 @@ LICENSE
 ```
 
 4. 重新打开 Obsidian，进入 `Settings -> Community plugins`，启用 `Note Reader CosyVoice`。
-5. 进入插件设置，填写本地 CosyVoice 包装脚本路径。
+5. 进入插件设置，选择 `Speech engine`。默认本地模式需要填写本地 CosyVoice 包装脚本路径；如果选择 Edge 在线模式，需要先安装 `edge-tts` 命令行工具。
 
 ## 本地 CosyVoice 要求
 
-插件要求你先准备好一个本地 CosyVoice 运行环境，并提供一个 PowerShell 包装脚本。插件调用脚本时使用以下参数：
+如果使用默认的 `Local CosyVoice` 模式，需要先准备好一个本地 CosyVoice 运行环境，并提供一个 PowerShell 包装脚本。插件调用脚本时使用以下参数：
 
 ```powershell
 cosyvoice-wrapper.ps1 -InputPath <txt> -OutputPath <wav> -Speed <speed>
@@ -94,6 +96,12 @@ cosyvoice-wrapper.ps1 -InputPath <txt> -OutputPath <wav> -Speed <speed>
 
 你也可以使用其他路径，只要在插件设置页中正确填写即可。更完整的本地安装、硬件建议、系统建议和脚本示例见 [Local CosyVoice setup](docs/local-cosyvoice-setup.md)。
 
+## Microsoft Edge 在线语音模式
+
+如果在设置页把 `Speech engine` 改为 `Microsoft Edge online voice`，插件会跳过本地 CosyVoice 脚本，直接调用 `edge-tts` 生成 MP3 音频。你需要先安装 `edge-tts` CLI，并确保 PowerShell 或 Obsidian 能找到 `edge-tts` 命令。
+
+设置页中的 `Edge TTS voice` 用来填写 Edge 语音 ID，例如默认的 `zh-CN-XiaoxiaoNeural`。语速设置会转换为 `edge-tts` 的 `--rate` 参数。
+
 ## 模型存储空间、其他语音模型与 Chunk limits
 
 插件不会下载模型。安装本地语音模型前，需要先为模型、运行环境和缓存预留磁盘空间：
@@ -103,6 +111,8 @@ cosyvoice-wrapper.ps1 -InputPath <txt> -OutputPath <wav> -Speed <speed>
 - 模型和缓存建议放在本地 SSD 上，不建议放在会自动同步的大型网盘目录中。
 
 这个插件名字里包含 CosyVoice，但底层只要求“输入文本文件、输出 WAV 文件”的包装脚本。因此也可以接入其他本地语音模型，只要脚本满足同一调用约定：读取 `-InputPath` 的 UTF-8 文本，把有效 WAV 写到 `-OutputPath`，接受 `-Speed` 参数，失败时返回非零退出码并输出清晰错误。更换模型时需要注意模型许可证、中文/英文支持、输出音频格式、语速控制方式、首次启动延迟，以及是否会把文本发送到本机以外的服务。
+
+`Microsoft Edge online voice` 是和本地包装脚本并列的在线语音模式，不走上述 WAV 包装脚本约定。它通过 `edge-tts` 写出 MP3 音频，并使用 `Edge TTS voice` 设置中的语音 ID。
 
 `Chunk limits` 用来控制文本分块大小。它影响首段音频出现速度、合成稳定性和朗读连贯性：
 
@@ -141,7 +151,7 @@ cosyvoice-wrapper.ps1 -InputPath <txt> -OutputPath <wav> -Speed <speed>
 
 ## 键盘与进度条说明
 
-右侧边栏 `CosyVoice Reader` 控制面板获得焦点时，空格可以暂停或继续朗读，连续按左方向键或右方向键会按 5 秒步进后退或前进。方向键跳转范围限制在当前已加载音频块内。
+右侧边栏 `CosyVoice Reader` 控制面板获得焦点时，空格可以暂停或继续朗读。播放中只要当前音频可用，左方向键或右方向键会按 5 秒步进后退或前进；插件也会在文档级监听这些方向键，但会跳过文本输入框和 Markdown 编辑区域，避免影响正常编辑。
 
 进度条两侧的三角按钮可以跳到上一段文本分段或下一段文本分段。已经合成过的分段会尽量复用；如果目标分段尚未合成，插件会先合成再播放。
 
@@ -150,7 +160,8 @@ cosyvoice-wrapper.ps1 -InputPath <txt> -OutputPath <wav> -Speed <speed>
 ## 常见问题
 
 - 提示脚本不存在：检查插件设置中的脚本路径是否正确。
-- 提示无法朗读：先在 PowerShell 中单独测试包装脚本，确认它能生成有效 WAV 文件。
+- 本地模式提示无法朗读：先在 PowerShell 中单独测试包装脚本，确认它能生成有效 WAV 文件。
+- Edge 模式提示无法朗读：在 PowerShell 中运行 `edge-tts --help`，确认 `edge-tts` 已安装且 Obsidian 能找到这个命令。
 - 生成速度慢：本地模型首次加载和首次推理可能较慢，CPU-only 环境也会明显变慢。
 - 语速按钮无效：检查你的包装脚本或本地服务是否真正使用了 `-Speed` 参数。
 - 公式朗读不符合预期：在插件设置中切换 `Math reading language`，或使用 `Skip math` 跳过公式。

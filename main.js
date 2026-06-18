@@ -8,11 +8,13 @@ const PLUGIN_ID = 'note-reader-cosyvoice';
 const VIEW_TYPE = 'note-reader-cosyvoice-control';
 const DEFAULT_CHUNK_LIMITS = [40, 80, 120, 160, 280, 320];
 const DEFAULT_MATH_READING_LANGUAGE = 'english';
+const DEFAULT_EDGE_TTS_VOICE = 'zh-CN-XiaoxiaoNeural';
 const RECOMMENDED_SCRIPT_PATH = '%LOCALAPPDATA%\\note-reader-cosyvoice\\cosyvoice-wrapper.ps1';
 const SPEED_PRESETS = [1, 1.25, 1.5, 2, 1.1, 1.2, 1.3, 1.4];
 const KEYBOARD_SEEK_SECONDS = 5;
 const LATEX_FORMULA_MAX_CHARS = 12;
 const MATH_READING_LANGUAGES = ['english', 'chinese', 'skip'];
+const SPEECH_ENGINES = ['local-cosyvoice', 'edge-tts'];
 const LATEX_COMMAND_REPLACEMENTS = {
   chinese: [
     ['\\rightarrow', '到'],
@@ -82,6 +84,8 @@ const LATEX_COMMAND_REPLACEMENTS = {
 
 const DEFAULT_SETTINGS = {
   scriptPath: resolveDefaultScriptPath(),
+  speechEngine: 'local-cosyvoice',
+  edgeTtsVoice: DEFAULT_EDGE_TTS_VOICE,
   speed: 1,
   stripMarkdown: true,
   cleanupCache: true,
@@ -310,6 +314,37 @@ function normalizeMathReadingLanguage(value) {
   return MATH_READING_LANGUAGES.includes(language) ? language : DEFAULT_MATH_READING_LANGUAGE;
 }
 
+function normalizeSpeechEngine(value) {
+  const engine = String(value || DEFAULT_SETTINGS.speechEngine).toLowerCase();
+  return SPEECH_ENGINES.includes(engine) ? engine : DEFAULT_SETTINGS.speechEngine;
+}
+
+function normalizeEdgeTtsVoice(value) {
+  const voice = String(value || '').trim();
+  return voice || DEFAULT_EDGE_TTS_VOICE;
+}
+
+function formatEdgeTtsRate(speed) {
+  const rate = Math.round((normalizeSpeed(speed) - 1) * 100);
+  return `${rate >= 0 ? '+' : ''}${rate}%`;
+}
+
+function buildEdgeTtsArgs(inputPath, outputPath, settings = {}) {
+  return [
+    '--voice',
+    normalizeEdgeTtsVoice(settings.edgeTtsVoice),
+    `--rate=${formatEdgeTtsRate(settings.speed)}`,
+    '--file',
+    inputPath,
+    '--write-media',
+    outputPath,
+  ];
+}
+
+function getSpeechEngineLabel(settings = {}) {
+  return normalizeSpeechEngine(settings.speechEngine) === 'edge-tts' ? 'Edge TTS' : 'CosyVoice';
+}
+
 function getSpeedPresets() {
   return SPEED_PRESETS.slice();
 }
@@ -322,8 +357,10 @@ function createDefaultSettings() {
   return {
     cleanupCache: DEFAULT_SETTINGS.cleanupCache,
     chunkLimits: parseChunkLimits(DEFAULT_SETTINGS.chunkLimits).join(','),
+    edgeTtsVoice: normalizeEdgeTtsVoice(DEFAULT_SETTINGS.edgeTtsVoice),
     mathReadingLanguage: normalizeMathReadingLanguage(DEFAULT_SETTINGS.mathReadingLanguage),
     scriptPath: resolveDefaultScriptPath(),
+    speechEngine: normalizeSpeechEngine(DEFAULT_SETTINGS.speechEngine),
     speed: normalizeSpeed(DEFAULT_SETTINGS.speed),
     stripMarkdown: DEFAULT_SETTINGS.stripMarkdown,
   };
@@ -448,6 +485,10 @@ function isInteractiveKeyboardTarget(target) {
     return true;
   }
 
+  if (typeof target.closest === 'function' && target.closest('.cm-editor, .markdown-source-view, [contenteditable="true"]')) {
+    return true;
+  }
+
   const tagName = String(target.tagName).toLowerCase();
   if (tagName === 'textarea' || tagName === 'select') {
     return true;
@@ -481,6 +522,18 @@ function previewText(text) {
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function focusElementWithoutScroll(element) {
+  if (!element || typeof element.focus !== 'function') {
+    return;
+  }
+
+  try {
+    element.focus({ preventScroll: true });
+  } catch (error) {
+    element.focus();
+  }
 }
 
 function toVaultRelativePath(basePath, filePath) {
@@ -521,11 +574,15 @@ class CosyVoiceReaderPlugin extends Plugin {
     this.cacheDir = null;
     this.logPath = null;
     this.statusBar = this.addStatusBarItem();
+    this.handleReaderKeydown = this.handleReaderKeydown.bind(this);
 
     await this.loadSettings();
     await this.ensureCacheDir();
 
     this.registerView(VIEW_TYPE, (leaf) => new CosyVoiceReaderView(leaf, this));
+    this.registerDomEvent(document, 'keydown', (event) => {
+      this.handleReaderKeydown(event, { allowPause: false });
+    }, true);
     this.lastMarkdownView = this.app.workspace.getActiveViewOfType(MarkdownView);
     this.registerEvent(
       this.app.workspace.on('active-leaf-change', () => {
@@ -604,6 +661,8 @@ class CosyVoiceReaderPlugin extends Plugin {
     const defaults = createDefaultSettings();
     this.settings = Object.assign({}, defaults, await this.loadData());
     this.settings.speed = normalizeSpeed(this.settings.speed);
+    this.settings.speechEngine = normalizeSpeechEngine(this.settings.speechEngine);
+    this.settings.edgeTtsVoice = normalizeEdgeTtsVoice(this.settings.edgeTtsVoice);
     this.settings.mathReadingLanguage = normalizeMathReadingLanguage(this.settings.mathReadingLanguage);
     this.settings.scriptPath = String(this.settings.scriptPath || defaults.scriptPath);
     this.settings.chunkLimits = parseChunkLimits(this.settings.chunkLimits).join(',');
@@ -611,6 +670,8 @@ class CosyVoiceReaderPlugin extends Plugin {
 
   async saveSettings() {
     this.settings.speed = normalizeSpeed(this.settings.speed);
+    this.settings.speechEngine = normalizeSpeechEngine(this.settings.speechEngine);
+    this.settings.edgeTtsVoice = normalizeEdgeTtsVoice(this.settings.edgeTtsVoice);
     this.settings.mathReadingLanguage = normalizeMathReadingLanguage(this.settings.mathReadingLanguage);
     await this.saveData(this.settings);
   }
@@ -761,8 +822,10 @@ class CosyVoiceReaderPlugin extends Plugin {
       return;
     }
 
+    const speechEngine = normalizeSpeechEngine(this.settings.speechEngine);
+    const engineLabel = getSpeechEngineLabel(this.settings);
     const scriptPath = this.settings.scriptPath.trim();
-    if (!scriptPath || !fs.existsSync(scriptPath)) {
+    if (speechEngine === 'local-cosyvoice' && (!scriptPath || !fs.existsSync(scriptPath))) {
       new Notice(`CosyVoice: script not found: ${scriptPath || '(empty)'}`, 8000);
       return;
     }
@@ -780,7 +843,7 @@ class CosyVoiceReaderPlugin extends Plugin {
     };
 
     this.activeSession = session;
-    this.updateStatus(`CosyVoice 0/${chunks.length}`, {
+    this.updateStatus(`${engineLabel} 0/${chunks.length}`, {
       canPause: false,
       canNextChunk: false,
       canPreviousChunk: false,
@@ -801,7 +864,7 @@ class CosyVoiceReaderPlugin extends Plugin {
       source: sourceLabel,
       textLength: text.length,
     });
-    new Notice(`CosyVoice: reading ${sourceLabel}. First synthesis may take a while.`, 6000);
+    new Notice(`${engineLabel}: reading ${sourceLabel}. First synthesis may take a while.`, 6000);
 
     try {
       const preparedChunks = new Map();
@@ -848,7 +911,7 @@ class CosyVoiceReaderPlugin extends Plugin {
       }
 
       if (this.isActive(session)) {
-        this.updateStatus('CosyVoice complete', {
+        this.updateStatus(`${engineLabel} complete`, {
           canPause: false,
           canNextChunk: false,
           canPreviousChunk: false,
@@ -862,7 +925,7 @@ class CosyVoiceReaderPlugin extends Plugin {
       }
     } catch (error) {
       if (this.isActive(session)) {
-        this.updateStatus('CosyVoice error', {
+        this.updateStatus(`${engineLabel} error`, {
           canPause: false,
           canNextChunk: false,
           canPreviousChunk: false,
@@ -875,7 +938,7 @@ class CosyVoiceReaderPlugin extends Plugin {
         await this.writeRuntimeLog('failed', {
           message: messageFromError(error),
         });
-        new Notice(`CosyVoice failed: ${messageFromError(error)}`, 10000);
+        new Notice(`${engineLabel} failed: ${messageFromError(error)}`, 10000);
       }
     } finally {
       if (this.settings.cleanupCache) {
@@ -889,14 +952,17 @@ class CosyVoiceReaderPlugin extends Plugin {
       throw new Error('Reading stopped.');
     }
 
+    const speechEngine = normalizeSpeechEngine(this.settings.speechEngine);
+    const engineLabel = getSpeechEngineLabel(this.settings);
+    const outputExtension = speechEngine === 'edge-tts' ? 'mp3' : 'wav';
     const basename = `${Date.now()}-${session.id}-${index}`;
     const inputPath = path.join(this.cacheDir, `${basename}.txt`);
-    const outputPath = path.join(this.cacheDir, `${basename}.wav`);
+    const outputPath = path.join(this.cacheDir, `${basename}.${outputExtension}`);
 
     session.files.push(inputPath, outputPath);
     await fs.promises.writeFile(inputPath, chunkText, 'utf8');
 
-    this.updateStatus(`CosyVoice synth ${index + 1}/${session.totalChunks || 0}`, {
+    this.updateStatus(`${engineLabel} synth ${index + 1}/${session.totalChunks || 0}`, {
       canPause: true,
       ...getChunkNavigationState(index + 1, session.totalChunks),
       canSeek: false,
@@ -909,11 +975,11 @@ class CosyVoiceReaderPlugin extends Plugin {
       status: 'running',
       totalChunks: session.totalChunks || 0,
     });
-    await this.runCosyVoice(inputPath, outputPath, session);
+    await this.runSpeechEngine(inputPath, outputPath, session, speechEngine);
 
     const outputStat = await fs.promises.stat(outputPath);
     if (outputStat.size <= 44) {
-      throw new Error(`CosyVoice generated an invalid WAV file: ${outputStat.size} bytes.`);
+      throw new Error(`${engineLabel} generated an invalid audio file: ${outputStat.size} bytes.`);
     }
 
     if (!this.isActive(session)) {
@@ -937,6 +1003,14 @@ class CosyVoiceReaderPlugin extends Plugin {
     const promise = this.prepareChunk(chunkText, index, session);
     promise.catch(() => {});
     return promise;
+  }
+
+  runSpeechEngine(inputPath, outputPath, session, speechEngine = normalizeSpeechEngine(this.settings.speechEngine)) {
+    if (speechEngine === 'edge-tts') {
+      return this.runEdgeTts(inputPath, outputPath, session);
+    }
+
+    return this.runCosyVoice(inputPath, outputPath, session);
   }
 
   runCosyVoice(inputPath, outputPath, session) {
@@ -1021,6 +1095,74 @@ class CosyVoiceReaderPlugin extends Plugin {
     });
   }
 
+  runEdgeTts(inputPath, outputPath, session) {
+    const args = buildEdgeTtsArgs(inputPath, outputPath, this.settings);
+
+    return new Promise((resolve, reject) => {
+      const child = spawn('edge-tts', args, {
+        windowsHide: true,
+      });
+      let stdout = '';
+      let stderr = '';
+      let settled = false;
+
+      this.currentProcess = child;
+
+      const timeout = setTimeout(() => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        child.kill();
+        reject(new Error('Edge TTS synthesis timed out after 10 minutes.'));
+      }, 10 * 60 * 1000);
+
+      child.stdout.on('data', (data) => {
+        stdout += data.toString();
+      });
+
+      child.stderr.on('data', (data) => {
+        stderr += data.toString();
+      });
+
+      child.on('error', (error) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        clearTimeout(timeout);
+        if (this.currentProcess === child) {
+          this.currentProcess = null;
+        }
+        reject(new Error(`Edge TTS command failed. Install the edge-tts CLI and make sure it is on PATH. ${messageFromError(error)}`));
+      });
+
+      child.on('close', (code) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        clearTimeout(timeout);
+        if (this.currentProcess === child) {
+          this.currentProcess = null;
+        }
+
+        if (!this.isActive(session)) {
+          reject(new Error('Reading stopped.'));
+          return;
+        }
+
+        if (code === 0 && fs.existsSync(outputPath)) {
+          resolve();
+          return;
+        }
+
+        const detail = [stderr.trim(), stdout.trim()].filter(Boolean).join('\n');
+        reject(new Error(detail || `Edge TTS exited with code ${code}.`));
+      });
+    });
+  }
+
   playPreparedAudio(prepared, session, index, total) {
     return new Promise((resolve, reject) => {
       if (!this.isActive(session)) {
@@ -1037,7 +1179,7 @@ class CosyVoiceReaderPlugin extends Plugin {
         const audio = new Audio(prepared.url);
         audio.preload = 'auto';
         this.currentAudio = audio;
-        this.updateStatus(`CosyVoice play ${index + 1}/${total}`, {
+        this.updateStatus(`${getSpeechEngineLabel(this.settings)} play ${index + 1}/${total}`, {
           canPause: true,
           canNextChunk: index + 1 < total,
           canPreviousChunk: index > 0,
@@ -1116,6 +1258,49 @@ class CosyVoiceReaderPlugin extends Plugin {
     }
   }
 
+  handleReaderKeydown(event, options = {}) {
+    if (
+      !event ||
+      event.defaultPrevented ||
+      isInteractiveKeyboardTarget(event.target)
+    ) {
+      return false;
+    }
+
+    const seekDeltaSeconds = getKeyboardSeekDeltaSeconds(event);
+    if (seekDeltaSeconds) {
+      if (!this.seekCurrentAudioBySeconds(seekDeltaSeconds)) {
+        return false;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+      if (options.focusPanel) {
+        focusElementWithoutScroll(options.focusPanel);
+      }
+      return true;
+    }
+
+    const state = this.readerState || createReaderState();
+    if (
+      options.allowPause === false ||
+      event.repeat ||
+      !state.canPause ||
+      !isSpaceKeyEvent(event)
+    ) {
+      return false;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    void Promise.resolve(this.pauseOrResume()).finally(() => {
+      if (options.focusPanel) {
+        focusElementWithoutScroll(options.focusPanel);
+      }
+    });
+    return true;
+  }
+
   seekToProgress(progress) {
     const audio = this.currentAudio;
     if (!audio || !Number.isFinite(audio.duration) || audio.duration <= 0) {
@@ -1139,7 +1324,7 @@ class CosyVoiceReaderPlugin extends Plugin {
   seekCurrentAudioBySeconds(deltaSeconds) {
     const audio = this.currentAudio;
     const delta = Number(deltaSeconds);
-    if (!audio || !Number.isFinite(audio.duration) || audio.duration <= 0 || !Number.isFinite(delta)) {
+    if (!audio || !Number.isFinite(delta)) {
       return false;
     }
 
@@ -1150,13 +1335,24 @@ class CosyVoiceReaderPlugin extends Plugin {
   seekCurrentAudioToTime(seekTime) {
     const audio = this.currentAudio;
     const requestedTime = Number(seekTime);
-    if (!audio || !Number.isFinite(audio.duration) || audio.duration <= 0 || !Number.isFinite(requestedTime)) {
+    if (!audio || !Number.isFinite(requestedTime)) {
       return false;
     }
 
-    audio.currentTime = Math.min(audio.duration, Math.max(0, requestedTime));
-    const chunkIndex = Math.max(0, (this.readerState.currentChunk || 1) - 1);
     const duration = Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : 0;
+    try {
+      audio.currentTime = duration
+        ? Math.min(duration, Math.max(0, requestedTime))
+        : Math.max(0, requestedTime);
+    } catch (error) {
+      return false;
+    }
+
+    if (!duration) {
+      return true;
+    }
+
+    const chunkIndex = Math.max(0, (this.readerState.currentChunk || 1) - 1);
     const chunkProgress = duration ? audio.currentTime / duration : 0;
     this.setReaderState({
       progress: this.readerState.totalChunks ? (chunkIndex + chunkProgress) / this.readerState.totalChunks : 0,
@@ -1190,6 +1386,19 @@ class CosyVoiceReaderPlugin extends Plugin {
     if (audio && typeof audio.onended === 'function') {
       audio.onended();
     }
+
+    this.updateStatus(`${getSpeechEngineLabel(this.settings)} jump ${targetIndex + 1}/${total}`, {
+      canPause: true,
+      ...getChunkNavigationState(targetIndex + 1, total),
+      canSeek: false,
+      canStop: true,
+      currentChunk: targetIndex + 1,
+      isPaused: false,
+      phase: 'queued',
+      progress: total ? targetIndex / total : 0,
+      status: 'running',
+      totalChunks: total,
+    });
 
     return true;
   }
@@ -1378,7 +1587,7 @@ class CosyVoiceReaderView extends ItemView {
     const progressControls = progressWrap.createDiv({ cls: 'note-reader-cosyvoice-progress-controls' });
     this.createIconButton(progressControls, 'skip-back', 'Previous chunk', () => {
       this.plugin.jumpToAdjacentChunk(-1);
-    }, !state.canPreviousChunk);
+    }, !state.canPreviousChunk, { triggerOnPointerDown: true });
     const progressTrack = progressControls.createDiv({
       cls: `note-reader-cosyvoice-progress-track${state.canSeek ? ' is-seekable' : ''}`,
     });
@@ -1406,7 +1615,7 @@ class CosyVoiceReaderView extends ItemView {
     });
     this.createIconButton(progressControls, 'skip-forward', 'Next chunk', () => {
       this.plugin.jumpToAdjacentChunk(1);
-    }, !state.canNextChunk);
+    }, !state.canNextChunk, { triggerOnPointerDown: true });
 
     const meta = progressWrap.createDiv({ cls: 'note-reader-cosyvoice-meta' });
     meta.createSpan({ text: formatProgressLabel(state) });
@@ -1488,53 +1697,14 @@ class CosyVoiceReaderView extends ItemView {
   }
 
   handlePanelKeydown(event) {
-    const state = this.plugin.readerState || createReaderState();
-
-    if (
-      event.defaultPrevented ||
-      isInteractiveKeyboardTarget(event.target)
-    ) {
-      return;
-    }
-
-    const seekDeltaSeconds = state.canSeek ? getKeyboardSeekDeltaSeconds(event) : 0;
-    if (seekDeltaSeconds) {
-      event.preventDefault();
-      event.stopPropagation();
-      this.plugin.seekCurrentAudioBySeconds(seekDeltaSeconds);
-      this.focusPanel(event.currentTarget);
-      return;
-    }
-
-    if (
-      event.repeat ||
-      !state.canPause ||
-      !isSpaceKeyEvent(event)
-    ) {
-      return;
-    }
-
-    event.preventDefault();
-    event.stopPropagation();
-    const panel = event.currentTarget;
-    void Promise.resolve(this.plugin.pauseOrResume()).finally(() => {
-      this.focusPanel(panel);
-    });
+    this.plugin.handleReaderKeydown(event, { allowPause: true, focusPanel: event.currentTarget });
   }
 
   focusPanel(panel) {
-    if (!panel || typeof panel.focus !== 'function') {
-      return;
-    }
-
-    try {
-      panel.focus({ preventScroll: true });
-    } catch (error) {
-      panel.focus();
-    }
+    focusElementWithoutScroll(panel);
   }
 
-  createIconButton(parent, icon, label, onClick, disabled = false) {
+  createIconButton(parent, icon, label, onClick, disabled = false, options = {}) {
     const button = parent.createEl('button', {
       cls: 'note-reader-cosyvoice-icon-button',
       attr: {
@@ -1548,7 +1718,7 @@ class CosyVoiceReaderView extends ItemView {
       setIcon(button, icon);
     }
 
-    button.addEventListener('click', onClick);
+    this.wireButtonAction(button, onClick, options);
     return button;
   }
 
@@ -1568,6 +1738,11 @@ class CosyVoiceReaderView extends ItemView {
     }
 
     button.createSpan({ cls: 'note-reader-cosyvoice-action-label', text: label });
+    this.wireButtonAction(button, onClick, options);
+    return button;
+  }
+
+  wireButtonAction(button, onClick, options = {}) {
     let pointerHandled = false;
     if (options.triggerOnPointerDown) {
       button.addEventListener('pointerdown', (event) => {
@@ -1591,7 +1766,6 @@ class CosyVoiceReaderView extends ItemView {
 
       onClick(event);
     });
-    return button;
   }
 }
 
@@ -1608,8 +1782,22 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
     containerEl.createEl('h2', { text: 'Note Reader CosyVoice' });
 
     new Setting(containerEl)
+      .setName('Speech engine')
+      .setDesc('Choose local CosyVoice or Microsoft Edge online voice. Edge mode sends text to Microsoft Edge TTS.')
+      .addDropdown((dropdown) => {
+        dropdown
+          .addOption('local-cosyvoice', 'Local CosyVoice')
+          .addOption('edge-tts', 'Microsoft Edge online voice')
+          .setValue(normalizeSpeechEngine(this.plugin.settings.speechEngine))
+          .onChange(async (value) => {
+            this.plugin.settings.speechEngine = normalizeSpeechEngine(value);
+            await this.plugin.saveSettings();
+          });
+      });
+
+    new Setting(containerEl)
       .setName('CosyVoice script')
-      .setDesc('PowerShell wrapper used to call your local CosyVoice service.')
+      .setDesc('PowerShell wrapper used in Local CosyVoice mode.')
       .addText((text) => {
         text
           .setPlaceholder(RECOMMENDED_SCRIPT_PATH)
@@ -1622,8 +1810,21 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
       });
 
     new Setting(containerEl)
+      .setName('Edge TTS voice')
+      .setDesc('Voice id used in Microsoft Edge online voice mode, for example zh-CN-XiaoxiaoNeural.')
+      .addText((text) => {
+        text
+          .setPlaceholder(DEFAULT_EDGE_TTS_VOICE)
+          .setValue(normalizeEdgeTtsVoice(this.plugin.settings.edgeTtsVoice))
+          .onChange(async (value) => {
+            this.plugin.settings.edgeTtsVoice = normalizeEdgeTtsVoice(value);
+            await this.plugin.saveSettings();
+          });
+      });
+
+    new Setting(containerEl)
       .setName('Speed')
-      .setDesc('Speech speed passed to the local CosyVoice wrapper.')
+      .setDesc('Speech speed passed to the selected speech engine.')
       .addSlider((slider) => {
         slider
           .setLimits(0.5, 2, 0.05)
@@ -1705,6 +1906,7 @@ module.exports = {
   default: CosyVoiceReaderPlugin,
   __test: {
     VIEW_TYPE,
+    buildEdgeTtsArgs,
     calculateCurrentChunkSeekTime,
     createDefaultSettings,
     createReaderState,
@@ -1713,7 +1915,9 @@ module.exports = {
     getTextFromPositionToEnd,
     getAudioUrlForFile,
     getSpeedPresets,
+    normalizeEdgeTtsVoice,
     normalizeMathReadingLanguage,
+    normalizeSpeechEngine,
     resolveDefaultScriptPath,
     resolvePowerShellExecutable,
     sanitizeTextForSpeech,

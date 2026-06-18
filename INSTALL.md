@@ -2,7 +2,7 @@
 
 ## Install From ZIP
 
-1. Unzip `note-reader-cosyvoice-0.1.10-install.zip`.
+1. Unzip `note-reader-cosyvoice-0.2.1-install.zip`.
 2. Copy the `note-reader-cosyvoice` folder into your vault:
 
 ```text
@@ -13,6 +13,13 @@
 4. Turn off Restricted mode if required.
 5. Enable `Note Reader CosyVoice`.
 6. Run `Open CosyVoice reader controls` from the command palette, or click the ribbon icon.
+
+## Choose Speech Engine
+
+Open `Settings -> Note Reader CosyVoice` and choose `Speech engine`.
+
+- `Local CosyVoice` is the default and uses your configured PowerShell wrapper.
+- `Microsoft Edge online voice` calls the `edge-tts` command-line tool and sends text to Microsoft Edge TTS.
 
 ## Configure Local CosyVoice
 
@@ -36,6 +43,16 @@ Use `Math reading language` to choose `English`, `Chinese`, or `Skip math` for s
 
 For a local CosyVoice setup guide and PowerShell wrapper examples, see `docs/local-cosyvoice-setup.md` in the source repository.
 
+## Configure Microsoft Edge Online Voice
+
+Install the `edge-tts` CLI and make sure the `edge-tts` command is on PATH before selecting `Microsoft Edge online voice`.
+
+Set `Edge TTS voice` to the desired voice id. The default is:
+
+```text
+zh-CN-XiaoxiaoNeural
+```
+
 ## Usage
 
 - Select text and click `Read selection` to read only the selected text.
@@ -55,10 +72,12 @@ If reading fails, check:
 <your-vault>/.obsidian/plugins/note-reader-cosyvoice/last-error.log
 ```
 
-Also verify the local service:
+For `Local CosyVoice`, also verify the local service:
 
 ```text
 http://127.0.0.1:8765/health
 ```
 
-The first synthesis after starting the model may take longer than later reads.
+For `Microsoft Edge online voice`, run `edge-tts --help` in PowerShell to confirm the command is installed and visible to Obsidian.
+
+The first synthesis after starting the local model may take longer than later reads.

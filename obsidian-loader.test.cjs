@@ -222,8 +222,10 @@ assert.deepStrictEqual(moduleObject.exports.__test.createReaderState(), {
 assert.deepStrictEqual(moduleObject.exports.__test.createDefaultSettings(), {
   cleanupCache: true,
   chunkLimits: '40,80,120,160,280,320',
+  edgeTtsVoice: 'zh-CN-XiaoxiaoNeural',
   mathReadingLanguage: 'english',
   scriptPath: '',
+  speechEngine: 'local-cosyvoice',
   speed: 1,
   stripMarkdown: true,
 });
@@ -232,6 +234,17 @@ assert.ok(!moduleObject.exports.__test.resolveDefaultScriptPath().toLowerCase().
 assert.strictEqual(moduleObject.exports.__test.normalizeMathReadingLanguage('chinese'), 'chinese');
 assert.strictEqual(moduleObject.exports.__test.normalizeMathReadingLanguage('skip'), 'skip');
 assert.strictEqual(moduleObject.exports.__test.normalizeMathReadingLanguage('bad'), 'english');
+assert.strictEqual(moduleObject.exports.__test.normalizeSpeechEngine('edge-tts'), 'edge-tts');
+assert.strictEqual(moduleObject.exports.__test.normalizeSpeechEngine('bad'), 'local-cosyvoice');
+assert.strictEqual(moduleObject.exports.__test.normalizeEdgeTtsVoice('  '), 'zh-CN-XiaoxiaoNeural');
+const edgeArgs = moduleObject.exports.__test.buildEdgeTtsArgs('in.txt', 'out.mp3', {
+  edgeTtsVoice: 'zh-CN-XiaoyiNeural',
+  speed: 1.25,
+});
+assert.ok(edgeArgs.some((arg) => arg.includes('+25%')));
+assert.ok(edgeArgs.includes('--file'));
+assert.ok(edgeArgs.includes('in.txt'));
+assert.ok(!edgeArgs.includes('--text'));
 const mutatedDefaults = moduleObject.exports.__test.createDefaultSettings();
 mutatedDefaults.chunkLimits = '999';
 assert.strictEqual(moduleObject.exports.__test.createDefaultSettings().chunkLimits, '40,80,120,160,280,320');
@@ -292,6 +305,9 @@ const readerView = new moduleObject.exports.__test.CosyVoiceReaderView({}, {
     totalChunks: 4,
   }),
   settings: moduleObject.exports.__test.createDefaultSettings(),
+  handleReaderKeydown(event, options) {
+    return PluginClass.prototype.handleReaderKeydown.call(this, event, options);
+  },
   jumpToAdjacentChunk: (deltaChunks) => {
     chunkNavigationCalls.push(deltaChunks);
   },
@@ -303,6 +319,7 @@ const readerView = new moduleObject.exports.__test.CosyVoiceReaderView({}, {
   readSelection: () => {},
   seekCurrentAudioBySeconds: (deltaSeconds) => {
     seekBySecondsCalls.push(deltaSeconds);
+    return true;
   },
   seekToProgress: () => {},
   setSpeechSpeed: () => {},
@@ -374,6 +391,9 @@ assert.strictEqual(pausePointerEvent.defaultPrevented, true);
 
 const previousChunkButton = findElementByAriaLabel(root, 'Previous chunk');
 assert.ok(previousChunkButton);
+previousChunkButton.dispatchEvent(createPointerEvent());
+assert.deepStrictEqual(chunkNavigationCalls, [-1]);
+
 previousChunkButton.dispatchEvent(createPointerEvent({ type: 'click' }));
 assert.deepStrictEqual(chunkNavigationCalls, [-1]);
 
@@ -386,8 +406,10 @@ assert.deepStrictEqual(chunkNavigationCalls, [-1, 1]);
   plugin.settings = {
     cleanupCache: false,
     chunkLimits: '999',
+    edgeTtsVoice: 'zh-CN-XiaoyiNeural',
     mathReadingLanguage: 'chinese',
     scriptPath: 'custom.ps1',
+    speechEngine: 'edge-tts',
     speed: 2,
     stripMarkdown: false,
   };
@@ -438,6 +460,45 @@ assert.deepStrictEqual(chunkNavigationCalls, [-1, 1]);
   assert.strictEqual(seekPlugin.currentAudio.currentTime, 0);
   assert.deepStrictEqual(seekStates.pop(), { progress: 0.5 });
 
+  seekPlugin.currentAudio = {
+    currentTime: 8,
+    duration: Number.NaN,
+  };
+  assert.strictEqual(seekPlugin.seekCurrentAudioBySeconds(5), true);
+  assert.strictEqual(seekPlugin.currentAudio.currentTime, 13);
+
+  const globalSeekPlugin = Object.create(PluginClass.prototype);
+  const globalSeekCalls = [];
+  globalSeekPlugin.readerState = moduleObject.exports.__test.createReaderState({
+    canPause: true,
+    canSeek: true,
+    currentChunk: 1,
+    totalChunks: 2,
+  });
+  globalSeekPlugin.seekCurrentAudioBySeconds = (deltaSeconds) => {
+    globalSeekCalls.push(deltaSeconds);
+    return true;
+  };
+  assert.strictEqual(typeof globalSeekPlugin.handleReaderKeydown, 'function');
+  const globalRightArrowEvent = createKeyboardEvent({
+    code: 'ArrowRight',
+    currentTarget: null,
+    key: 'ArrowRight',
+    target: new FakeElement('body'),
+  });
+  globalSeekPlugin.handleReaderKeydown(globalRightArrowEvent, { focusPanel: null });
+  assert.deepStrictEqual(globalSeekCalls, [5]);
+  assert.strictEqual(globalRightArrowEvent.defaultPrevented, true);
+
+  const globalSpaceEvent = createKeyboardEvent({
+    target: new FakeElement('body'),
+  });
+  globalSeekPlugin.pauseOrResume = () => {
+    throw new Error('Global Space should not pause reading.');
+  };
+  assert.strictEqual(globalSeekPlugin.handleReaderKeydown(globalSpaceEvent, { allowPause: false }), false);
+  assert.strictEqual(globalSpaceEvent.defaultPrevented, false);
+
   const jumpPlugin = Object.create(PluginClass.prototype);
   let pausedForJump = false;
   let endedForJump = false;
@@ -452,6 +513,15 @@ assert.deepStrictEqual(chunkNavigationCalls, [-1, 1]);
     currentChunk: 3,
     totalChunks: 4,
   });
+  const jumpStatuses = [];
+  jumpPlugin.updateStatus = (label, patch) => {
+    jumpStatuses.push({ label, patch });
+    jumpPlugin.readerState = moduleObject.exports.__test.createReaderState({
+      ...jumpPlugin.readerState,
+      label,
+      ...patch,
+    });
+  };
   jumpPlugin.currentAudio = {
     pause: () => {
       pausedForJump = true;
@@ -465,6 +535,7 @@ assert.deepStrictEqual(chunkNavigationCalls, [-1, 1]);
   assert.strictEqual(jumpPlugin.activeSession.requestedChunkIndex, 1);
   assert.strictEqual(pausedForJump, true);
   assert.strictEqual(endedForJump, true);
+  assert.strictEqual(jumpStatuses.pop().patch.currentChunk, 2);
 
   jumpPlugin.readerState = moduleObject.exports.__test.createReaderState({
     currentChunk: 1,
@@ -493,6 +564,7 @@ assert.deepStrictEqual(chunkNavigationCalls, [-1, 1]);
     },
   };
   preparePlugin.cacheDir = prepareTempDir;
+  preparePlugin.settings = moduleObject.exports.__test.createDefaultSettings();
   preparePlugin.readerState = moduleObject.exports.__test.createReaderState();
   preparePlugin.sequence = 7;
   preparePlugin.vaultBasePath = __dirname;
@@ -516,7 +588,42 @@ assert.deepStrictEqual(chunkNavigationCalls, [-1, 1]);
   const synthStatus = prepareStatuses.find((entry) => entry.patch.phase === 'synthesizing');
   assert.strictEqual(synthStatus.patch.canPreviousChunk, true);
   assert.strictEqual(synthStatus.patch.canNextChunk, true);
+
+  const edgeSession = {
+    files: [],
+    id: 7,
+    stopped: false,
+    totalChunks: 2,
+  };
+  const edgePlugin = Object.create(PluginClass.prototype);
+  edgePlugin.activeSession = edgeSession;
+  edgePlugin.app = preparePlugin.app;
+  edgePlugin.cacheDir = prepareTempDir;
+  edgePlugin.readerState = moduleObject.exports.__test.createReaderState();
+  edgePlugin.sequence = 7;
+  edgePlugin.settings = {
+    ...moduleObject.exports.__test.createDefaultSettings(),
+    speechEngine: 'edge-tts',
+  };
+  edgePlugin.vaultBasePath = __dirname;
+  edgePlugin.isActive = PluginClass.prototype.isActive;
+  edgePlugin.writeRuntimeLog = async () => {};
+  edgePlugin.updateStatus = () => {};
+  edgePlugin.runCosyVoice = async () => {
+    throw new Error('local model unavailable');
+  };
+  edgePlugin.runEdgeTts = async (inputPath, outputPath) => {
+    assert.ok(fs.existsSync(inputPath));
+    assert.ok(outputPath.endsWith('.mp3'));
+    fs.writeFileSync(outputPath, Buffer.alloc(64));
+  };
+
+  const edgeChunk = await edgePlugin.prepareChunk('edge chunk', 0, edgeSession);
+  assert.ok(edgeChunk.outputPath.endsWith('.mp3'));
   for (const filePath of prepareSession.files) {
+    fs.rmSync(filePath, { force: true });
+  }
+  for (const filePath of edgeSession.files) {
     fs.rmSync(filePath, { force: true });
   }
   fs.rmSync(prepareTempDir, { force: true, recursive: true });

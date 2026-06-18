@@ -2,7 +2,7 @@
 
 [中文说明](README.zh-CN.md)
 
-An Obsidian desktop plugin that reads the current note or selected text through a local CosyVoice TTS pipeline.
+An Obsidian desktop plugin that reads the current note or selected text through either a local CosyVoice TTS pipeline or an explicitly selected Microsoft Edge online voice mode.
 
 ## Screenshots
 
@@ -21,7 +21,7 @@ Plugin settings. The script path shown here is a redacted example:
 - Shows synthesis/playback phase, whole-reading progress, percentage, and text preview.
 - Supports pause, resume, stop, Space to pause or resume in the control panel, repeated Left/Right Arrow 5-second seeking, previous/next chunk buttons, and progress dragging while the current audio chunk is playing.
 - Provides right-panel speed presets: `1x`, `1.25x`, `1.5x`, `2x`, `1.1x`, `1.2x`, `1.3x`, and `1.4x`.
-- Uses a local PowerShell wrapper script instead of a cloud TTS service.
+- Lets you choose `Local CosyVoice` or `Microsoft Edge online voice` in settings. Local CosyVoice is the default.
 - Cleans Markdown before synthesis.
 - Provides a settings-page `Restore defaults` button for resetting all plugin settings.
 - Handles common LaTeX before synthesis with a configurable `Math reading language` setting:
@@ -36,21 +36,22 @@ Plugin settings. The script path shown here is a redacted example:
 
 ## Privacy
 
-The plugin is designed for local TTS. It does not send note text to Microsoft, OpenAI, or any remote TTS service. Text is written to a temporary file under the plugin cache and passed to the configured local CosyVoice wrapper.
+By default, the plugin uses local TTS. In `Local CosyVoice` mode, it does not send note text to Microsoft, OpenAI, or any remote TTS service. Text is written to a temporary file under the plugin cache and passed to the configured local CosyVoice wrapper.
+
+If you select `Microsoft Edge online voice`, the plugin calls the `edge-tts` command-line tool and sends the chunk text to Microsoft Edge TTS. Use this mode only for notes whose text you are comfortable processing through that online service.
 
 ## Disclosures
 
-- Network use: the plugin itself does not call any remote service. Your configured CosyVoice wrapper may talk to a local service such as `127.0.0.1`.
-- Shell execution: the plugin launches the PowerShell wrapper script that you configure in settings. This is required to call a local TTS runtime.
-- Direct filesystem access: the plugin writes temporary text and WAV files under this plugin's `cache` folder in the vault, checks that the configured wrapper script exists, and can launch a wrapper stored outside the vault.
+- Network use: `Local CosyVoice` mode does not call a remote service directly. Your configured CosyVoice wrapper may talk to a local service such as `127.0.0.1`. `Microsoft Edge online voice` mode calls Microsoft Edge TTS through `edge-tts`.
+- Shell execution: the plugin launches the PowerShell wrapper script in local mode, or the `edge-tts` command in Edge mode.
+- Direct filesystem access: the plugin writes temporary text and audio files under this plugin's `cache` folder in the vault, checks the configured wrapper script in local mode, and can launch a wrapper stored outside the vault.
 - Telemetry: the plugin does not include client-side or server-side telemetry.
 - Updates: the plugin does not include a self-update mechanism.
 
 ## Requirements
 
 - Obsidian desktop.
-- A working local CosyVoice setup.
-- A PowerShell wrapper compatible with:
+- For `Local CosyVoice`: a working local CosyVoice setup and a PowerShell wrapper compatible with:
 
 ```powershell
 cosyvoice-wrapper.ps1 -InputPath <txt> -OutputPath <wav> -Speed <speed>
@@ -64,6 +65,8 @@ A recommended script path is:
 
 For local CosyVoice installation, hardware guidance, OS-specific notes, and wrapper examples, see [Local CosyVoice setup](docs/local-cosyvoice-setup.md).
 
+For `Microsoft Edge online voice`: install the `edge-tts` CLI and make sure the `edge-tts` command is on PATH. The plugin calls it with `--file`, `--write-media`, `--voice`, and `--rate`.
+
 ## Model Storage, Other TTS Engines, And Chunk Limits
 
 This plugin does not download models. Plan storage for the local TTS runtime before installing a voice model:
@@ -73,6 +76,8 @@ This plugin does not download models. Plan storage for the local TTS runtime bef
 - Put model files and caches on a local SSD when possible. Avoid syncing model folders through cloud-drive clients.
 
 The configured script can call another local TTS engine instead of CosyVoice if it follows the same wrapper contract: read UTF-8 text from `-InputPath`, write a valid WAV file to `-OutputPath`, accept `-Speed`, and exit non-zero with a clear error on failure. Check the other model's license, language coverage, audio format, speed controls, startup latency, and whether it sends text outside your machine or trusted local network.
+
+`Microsoft Edge online voice` mode is separate from the local wrapper contract. It writes MP3 files with `edge-tts` and uses the `Edge TTS voice` setting, for example `zh-CN-XiaoxiaoNeural`.
 
 Use `Chunk limits` to balance startup latency and synthesis stability:
 
@@ -92,7 +97,7 @@ Use `Chunk limits` to balance startup latency and synthesis stability:
 
 ## Keyboard And Progress Seeking
 
-When the `CosyVoice Reader` control panel is focused, Space pauses or resumes reading. Repeated Left Arrow or Right Arrow presses seek backward or forward in 5-second steps in the current audio chunk.
+Space pauses or resumes reading when the `CosyVoice Reader` control panel is focused. Left Arrow or Right Arrow seek backward or forward in 5-second steps while audio is available; the plugin also listens at the document level, but skips text inputs and Markdown editing areas so normal editing keys are not hijacked.
 
 The triangle buttons beside the progress bar jump to the previous text chunk or the next text chunk. Already synthesized chunks are reused when possible; otherwise the target chunk is synthesized before playback.
 
