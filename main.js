@@ -1,5 +1,8 @@
-const { ItemView, MarkdownView, Notice, Plugin, PluginSettingTab, Setting, setIcon } = require('obsidian');
+const { ItemView, MarkdownView, Notice, Plugin, PluginSettingTab, SecretComponent, Setting, setIcon } = require('obsidian');
+const crypto = require('crypto');
 const fs = require('fs');
+const https = require('https');
+const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
 const { pathToFileURL } = require('url');
@@ -8,13 +11,285 @@ const PLUGIN_ID = 'note-reader-cosyvoice';
 const VIEW_TYPE = 'note-reader-cosyvoice-control';
 const DEFAULT_CHUNK_LIMITS = [40, 80, 120, 160, 280, 320];
 const DEFAULT_MATH_READING_LANGUAGE = 'english';
-const DEFAULT_EDGE_TTS_VOICE = 'zh-CN-XiaoxiaoNeural';
+const DEFAULT_EDGE_TTS_VOICE = 'en-GB-RyanNeural';
+const DEFAULT_EDGE_TTS_EXECUTABLE = 'edge-tts';
+const DEFAULT_AZURE_SPEECH_VOICE = 'en-GB-RyanNeural';
+const DEFAULT_OPENROUTER_TTS_MODEL = 'hexgrad/kokoro-82m';
+const DEFAULT_OPENROUTER_TTS_VOICE = 'bm_george';
+const AZURE_SPEECH_OUTPUT_FORMAT = 'audio-24khz-48kbitrate-mono-mp3';
+const OPENROUTER_TTS_ENDPOINT = 'https://openrouter.ai/api/v1/audio/speech';
 const RECOMMENDED_SCRIPT_PATH = '%LOCALAPPDATA%\\note-reader-cosyvoice\\cosyvoice-wrapper.ps1';
 const SPEED_PRESETS = [1, 1.25, 1.5, 2, 1.1, 1.2, 1.3, 1.4];
 const KEYBOARD_SEEK_SECONDS = 5;
 const LATEX_FORMULA_MAX_CHARS = 12;
 const MATH_READING_LANGUAGES = ['english', 'chinese', 'skip'];
-const SPEECH_ENGINES = ['local-cosyvoice', 'edge-tts'];
+const SETTINGS_LANGUAGES = ['english', 'chinese'];
+const CREDENTIAL_SOURCES = ['obsidian-secret', 'key-file'];
+const SPEECH_ENGINES = ['local-cosyvoice', 'edge-tts', 'azure-speech', 'openrouter-tts'];
+const AZURE_SPEECH_CLOUDS = ['public', 'china'];
+const REMOTE_TTS_MAX_AUDIO_BYTES = 20 * 1024 * 1024;
+const RUNTIME_LOG_MAX_BYTES = 1024 * 1024;
+const OWNED_CACHE_FILE_PATTERN = /^\d{10,}-\d+-\d+\.(?:txt|wav|mp3)$/i;
+const MICROSOFT_VOICE_PRESETS = [
+  ['zh-CN-XiaoxiaoNeural', 'Mandarin Chinese - Xiaoxiao (female, warm)', '中文普通话 - 小晓（女声，温暖）'],
+  ['zh-CN-XiaoyiNeural', 'Mandarin Chinese - Xiaoyi (female, lively)', '中文普通话 - 小艺（女声，活泼）'],
+  ['zh-CN-YunxiNeural', 'Mandarin Chinese - Yunxi (male, lively)', '中文普通话 - 云希（男声，活泼）'],
+  ['zh-CN-YunyangNeural', 'Mandarin Chinese - Yunyang (male, professional)', '中文普通话 - 云扬（男声，专业）'],
+  ['zh-HK-HiuMaanNeural', 'Cantonese Chinese - HiuMaan (female)', '中文粤语 - 晓曼（女声）'],
+  ['zh-TW-HsiaoChenNeural', 'Taiwan Chinese - HsiaoChen (female)', '中文台湾 - 晓臻（女声）'],
+  ['en-US-JennyNeural', 'English (US) - Jenny (female)', '美式英语 - Jenny（女声）'],
+  ['en-US-GuyNeural', 'English (US) - Guy (male)', '美式英语 - Guy（男声）'],
+  ['en-US-AriaNeural', 'English (US) - Aria (female)', '美式英语 - Aria（女声）'],
+  ['en-GB-SoniaNeural', 'English (UK) - Sonia (female)', '英式英语 - Sonia（女声）'],
+  ['en-GB-RyanNeural', 'English (UK) - Ryan (male)', '英式英语 - Ryan（男声）'],
+];
+const OPENROUTER_TTS_MODELS = [
+  [
+    'microsoft/mai-voice-2-flash',
+    'en-US-Harper:MAI-Voice-2',
+    'Microsoft MAI-Voice-2 Flash - low latency, 4 listed voices',
+    'Microsoft MAI-Voice-2 Flash - 低延迟、当前公开 4 个音色',
+    'A low-latency Microsoft model for responsive playback. OpenRouter currently lists only four voices: US English, Mexican Spanish, French, and German; no Chinese or UK English voice IDs are exposed.',
+    '微软低延迟语音模型，适合快速开始播放。OpenRouter 当前只列出 4 个音色：美式英语、墨西哥西班牙语、法语和德语，未公开中文或英式英语音色 ID。',
+  ],
+  [
+    'microsoft/mai-voice-2',
+    'en-US-Harper:MAI-Voice-2',
+    'Microsoft MAI-Voice-2 - expressive, 4 listed voices',
+    'Microsoft MAI-Voice-2 - 表现力强、当前公开 4 个音色',
+    'An expressive Microsoft model for natural long-form narration. OpenRouter currently lists only four voices: US English, Mexican Spanish, French, and German; no Chinese or UK English voice IDs are exposed.',
+    '微软表现力语音模型，适合自然长文叙述。OpenRouter 当前只列出 4 个音色：美式英语、墨西哥西班牙语、法语和德语，未公开中文或英式英语音色 ID。',
+  ],
+  [
+    'google/gemini-3.1-flash-tts-preview',
+    'Kore',
+    'Google Gemini 3.1 Flash TTS Preview - 30 multilingual voices',
+    'Google Gemini 3.1 Flash TTS 预览版 - 30 个多语言音色',
+    'OpenRouter lists 30 multilingual voices. Google describes them by delivery style rather than fixed gender or US/UK accent, so the presets use official style labels only.',
+    'OpenRouter 列出 30 个多语言音色。Google 按朗读风格而非固定性别或英美口音描述这些音色，因此预设只使用官方风格标签。',
+  ],
+  [
+    'hexgrad/kokoro-82m',
+    'bm_george',
+    'Kokoro 82M - lightweight, low cost, many preset voices',
+    'Kokoro 82M - 轻量、低成本、预设音色丰富',
+    'OpenRouter lists 54 voices. The plugin provides 12 curated presets covering Chinese, US English, and UK English, with both female and male voices in every group. George remains the restrained academic-reading default.',
+    'OpenRouter 列出 54 个音色。本插件提供 12 个精选预设，完整覆盖中文、美式英语和英式英语的男女声；默认 George 男声适合较克制的学术朗读。',
+  ],
+];
+// Voice IDs verified against OpenRouter's speech + ZDR models API on 2026-08-26.
+const OPENROUTER_TTS_PRESETS = [
+  ['microsoft/mai-voice-2-flash', 'en-US-Harper:MAI-Voice-2', 'Harper (US English)', 'Harper（美式英语）'],
+  ['microsoft/mai-voice-2-flash', 'es-MX-Valeria:MAI-Voice-2', 'Valeria (Mexican Spanish)', 'Valeria（墨西哥西班牙语）'],
+  ['microsoft/mai-voice-2-flash', 'fr-FR-Soleil:MAI-Voice-2', 'Soleil (French)', 'Soleil（法语）'],
+  ['microsoft/mai-voice-2-flash', 'de-DE-Klaus:MAI-Voice-2', 'Klaus (German)', 'Klaus（德语）'],
+  ['microsoft/mai-voice-2', 'en-US-Harper:MAI-Voice-2', 'Harper (US English)', 'Harper（美式英语）'],
+  ['microsoft/mai-voice-2', 'es-MX-Valeria:MAI-Voice-2', 'Valeria (Mexican Spanish)', 'Valeria（墨西哥西班牙语）'],
+  ['microsoft/mai-voice-2', 'fr-FR-Soleil:MAI-Voice-2', 'Soleil (French)', 'Soleil（法语）'],
+  ['microsoft/mai-voice-2', 'de-DE-Klaus:MAI-Voice-2', 'Klaus (German)', 'Klaus（德语）'],
+  ['google/gemini-3.1-flash-tts-preview', 'Charon', 'Charon (multilingual, informative)', 'Charon（多语言，信息型）'],
+  ['google/gemini-3.1-flash-tts-preview', 'Rasalgethi', 'Rasalgethi (multilingual, informative)', 'Rasalgethi（多语言，信息型）'],
+  ['google/gemini-3.1-flash-tts-preview', 'Sadaltager', 'Sadaltager (multilingual, knowledgeable)', 'Sadaltager（多语言，博学）'],
+  ['google/gemini-3.1-flash-tts-preview', 'Schedar', 'Schedar (multilingual, even)', 'Schedar（多语言，平稳）'],
+  ['google/gemini-3.1-flash-tts-preview', 'Iapetus', 'Iapetus (multilingual, clear)', 'Iapetus（多语言，清晰）'],
+  ['google/gemini-3.1-flash-tts-preview', 'Erinome', 'Erinome (multilingual, clear)', 'Erinome（多语言，清晰）'],
+  ['google/gemini-3.1-flash-tts-preview', 'Kore', 'Kore (multilingual, firm)', 'Kore（多语言，坚定）'],
+  ['google/gemini-3.1-flash-tts-preview', 'Orus', 'Orus (multilingual, firm)', 'Orus（多语言，坚定）'],
+  ['google/gemini-3.1-flash-tts-preview', 'Gacrux', 'Gacrux (multilingual, mature)', 'Gacrux（多语言，成熟）'],
+  ['google/gemini-3.1-flash-tts-preview', 'Sulafat', 'Sulafat (multilingual, warm)', 'Sulafat（多语言，温暖）'],
+  ['google/gemini-3.1-flash-tts-preview', 'Vindemiatrix', 'Vindemiatrix (multilingual, gentle)', 'Vindemiatrix（多语言，温和）'],
+  ['google/gemini-3.1-flash-tts-preview', 'Aoede', 'Aoede (multilingual, breezy)', 'Aoede（多语言，轻快）'],
+  ['hexgrad/kokoro-82m', 'zf_xiaoxiao', 'Xiaoxiao (Chinese female)', '小晓（中文女声）'],
+  ['hexgrad/kokoro-82m', 'zf_xiaoyi', 'Xiaoyi (Chinese female)', '小艺（中文女声）'],
+  ['hexgrad/kokoro-82m', 'zm_yunjian', 'Yunjian (Chinese male)', '云健（中文男声）'],
+  ['hexgrad/kokoro-82m', 'zm_yunyang', 'Yunyang (Chinese male)', '云扬（中文男声）'],
+  ['hexgrad/kokoro-82m', 'af_heart', 'Heart (US English female)', 'Heart（美式英语女声）'],
+  ['hexgrad/kokoro-82m', 'af_bella', 'Bella (US English female)', 'Bella（美式英语女声）'],
+  ['hexgrad/kokoro-82m', 'am_michael', 'Michael (US English male)', 'Michael（美式英语男声）'],
+  ['hexgrad/kokoro-82m', 'am_fenrir', 'Fenrir (US English male)', 'Fenrir（美式英语男声）'],
+  ['hexgrad/kokoro-82m', 'bf_emma', 'Emma (UK English female)', 'Emma（英式英语女声）'],
+  ['hexgrad/kokoro-82m', 'bf_isabella', 'Isabella (UK English female)', 'Isabella（英式英语女声）'],
+  ['hexgrad/kokoro-82m', 'bm_george', 'George (UK English male)', 'George（英式英语男声）'],
+  ['hexgrad/kokoro-82m', 'bm_fable', 'Fable (UK English male)', 'Fable（英式英语男声）'],
+];
+const SETTINGS_UI_TEXT = {
+  english: {
+    settingsLanguageName: 'Settings language',
+    settingsLanguageDesc: 'Choose the language used on this plugin settings page.',
+    settingsLanguageEnglish: 'English',
+    settingsLanguageChinese: '中文',
+    speechEngineName: 'Speech engine',
+    speechEngineDesc: 'Choose local CosyVoice, Microsoft Edge online voice, Microsoft Azure Speech, or OpenRouter TTS. Online modes send text to their service providers.',
+    speechEngineLocal: 'Local CosyVoice',
+    speechEngineEdge: 'Microsoft Edge online voice',
+    speechEngineAzure: 'Microsoft Azure Speech',
+    speechEngineOpenRouter: 'OpenRouter TTS',
+    localScriptName: 'CosyVoice script',
+    localScriptDesc: 'PowerShell wrapper used in Local CosyVoice mode.',
+    edgeConsentName: 'Allow Edge online processing',
+    edgeConsentDesc: 'Required for Edge mode. When enabled, each text chunk is sent to Microsoft Edge TTS. Keep this off for private or sensitive notes.',
+    edgeExecutableName: 'Edge TTS executable',
+    edgeExecutableDesc: 'Use an absolute edge-tts.exe path to avoid PATH ambiguity. The default value resolves edge-tts from the Obsidian process PATH.',
+    edgeCommonVoicesName: 'Common Edge TTS voices',
+    edgeCommonVoicesDesc: 'Common Chinese, US English, and UK English online voices. Selecting one fills the Voice ID below.',
+    customVoiceOption: 'Custom voice ID',
+    edgeVoiceName: 'Edge TTS voice',
+    edgeVoiceDesc: 'Voice ID used by Edge mode. Keep a preset above or enter any ID returned by edge-tts --list-voices.',
+    azureConsentName: 'Allow Azure online processing',
+    azureConsentDesc: 'Required for Azure mode. Each text chunk is sent by HTTPS to the selected Azure Speech cloud and region. Keep this off for private notes unless that processing is acceptable.',
+    credentialSourceName: 'API key storage',
+    credentialSourceDesc: 'Use Obsidian SecretStorage on Obsidian 1.11.4 or later, or keep a one-line key file outside the vault as a compatibility fallback.',
+    credentialSourceSecret: 'Obsidian SecretStorage (recommended)',
+    credentialSourceFile: 'External one-line key file',
+    secretStorageUnavailableName: 'Obsidian SecretStorage unavailable',
+    secretStorageUnavailableDesc: 'Update Obsidian to 1.11.4 or later, or select the external key-file option.',
+    azureCloudName: 'Azure cloud',
+    azureCloudDesc: 'Select the cloud that owns the Speech resource and subscription key.',
+    azurePublicCloud: 'Azure public cloud',
+    azureChinaCloud: 'Azure China operated by 21Vianet',
+    azureRegionName: 'Azure Speech region',
+    azureRegionDesc: 'Region identifier from the Azure resource, for example eastasia, southeastasia, chinaeast2, or chinanorth3.',
+    azureKeyFileName: 'Azure Speech key file',
+    azureKeyFileDesc: 'Compatibility fallback: absolute path to a one-line Speech resource key file outside the Obsidian vault. The key itself is not saved in data.json.',
+    azureSecretName: 'Azure Speech secret',
+    azureSecretDesc: 'Select or create an Obsidian secret containing the Speech resource key. Only the secret name is saved in data.json.',
+    azureCommonVoicesName: 'Common Azure Speech voices',
+    azureCommonVoicesDesc: 'Common Chinese, US English, and UK English Azure voices. Selecting one fills the Voice ID below.',
+    azureVoiceName: 'Azure Speech voice',
+    azureVoiceDesc: 'Prebuilt Azure Speech voice ID, for example zh-CN-XiaoxiaoNeural or en-US-JennyNeural.',
+    openRouterConsentName: 'Allow OpenRouter online processing',
+    openRouterConsentDesc: 'Required for OpenRouter mode. This permits sending text to OpenRouter and an eligible upstream TTS provider, but never relaxes ZDR routing.',
+    openRouterKeyFileName: 'OpenRouter API key file',
+    openRouterKeyFileDesc: 'Compatibility fallback: absolute path to a one-line OpenRouter API key file outside the Obsidian vault. The key itself is not saved in data.json.',
+    openRouterSecretName: 'OpenRouter API secret',
+    openRouterSecretDesc: 'Select or create an Obsidian secret containing the OpenRouter API key. Only the secret name is saved in data.json.',
+    openRouterModelsName: 'ZDR-compatible OpenRouter TTS models',
+    openRouterModelsDesc: 'Built-in choices verified against OpenRouter\'s speech and ZDR model filter for this release. Availability can change; every request still enforces ZDR.',
+    customModelOption: 'Custom model ID',
+    openRouterModelName: 'OpenRouter TTS model',
+    openRouterModelDesc: 'Speech-output model ID. A custom model works only when OpenRouter has an eligible ZDR endpoint for it.',
+    openRouterModelInfoName: 'Selected model characteristics',
+    customModelInfo: 'Custom model: check its language, voice, and speech-output support in OpenRouter. The request fails if no ZDR endpoint is eligible.',
+    openRouterVoicesName: 'Common voices for this model',
+    openRouterVoicesDesc: 'Only model-compatible voice IDs currently published by OpenRouter are listed. Gemini labels use official delivery styles; Kokoro labels use language and gender. MAI currently exposes only four voices.',
+    openRouterVoiceName: 'OpenRouter TTS voice',
+    openRouterVoiceDesc: 'Voice ID supported by the selected model. Voice catalogs differ between models.',
+    openRouterPrivacyName: 'OpenRouter privacy routing',
+    openRouterPrivacyDesc: 'Always enforced: provider.zdr is true and provider data collection is denied. The plugin never falls back to a non-ZDR endpoint. Keep OpenRouter account-level input/output logging and data sharing disabled for private content.',
+    speedName: 'Speed',
+    speedDesc: 'Speech speed passed to the selected speech engine.',
+    chunkLimitsName: 'Chunk limits',
+    chunkLimitsDesc: 'Comma-separated character limits. Earlier chunks are shorter so playback starts sooner.',
+    stripMarkdownName: 'Strip Markdown',
+    stripMarkdownDesc: 'Remove frontmatter, links, headings, embeds, and common formatting before synthesis.',
+    mathLanguageName: 'Math reading language',
+    mathLanguageDesc: 'Choose how short LaTeX formulas are verbalized. Long formulas are skipped in all modes.',
+    mathEnglish: 'English',
+    mathChinese: 'Chinese',
+    mathSkip: 'Skip math',
+    cleanupName: 'Clean temporary audio',
+    cleanupDesc: 'Delete temporary text and audio after reading, and clear stale files when the plugin starts. Temporary data is stored outside the Obsidian vault.',
+    diagnosticName: 'Diagnostic logging',
+    diagnosticDesc: 'Off by default. When enabled, only bounded failure metadata is stored in the system temporary directory; note names and child-process output are excluded.',
+    clearTemporaryName: 'Clear temporary data',
+    clearTemporaryDesc: 'Stop reading and remove plugin-owned temporary text, audio, legacy cache files, and diagnostic logs now.',
+    clearNowButton: 'Clear now',
+    restoreDefaultsName: 'Restore default settings',
+    restoreDefaultsDesc: 'Reset every setting on this page to its default value and save immediately.',
+    restoreDefaultsButton: 'Restore defaults',
+    settingsRestoredNotice: 'CosyVoice: settings restored to defaults.',
+    temporaryDataClearedNotice: 'CosyVoice: temporary text, audio, and diagnostic logs cleared.',
+    commandsFooter: 'Commands: read current note, read selection, pause or resume, and stop.',
+  },
+  chinese: {
+    settingsLanguageName: '设置界面语言',
+    settingsLanguageDesc: '选择本插件设置页面使用的语言。',
+    settingsLanguageEnglish: 'English',
+    settingsLanguageChinese: '中文',
+    speechEngineName: '语音引擎',
+    speechEngineDesc: '选择本地 CosyVoice、Microsoft Edge 在线语音、Microsoft Azure Speech 或 OpenRouter TTS。在线模式会把文本发送给相应服务商。',
+    speechEngineLocal: '本地 CosyVoice',
+    speechEngineEdge: 'Microsoft Edge 在线语音',
+    speechEngineAzure: 'Microsoft Azure Speech',
+    speechEngineOpenRouter: 'OpenRouter TTS',
+    localScriptName: 'CosyVoice 脚本',
+    localScriptDesc: '本地 CosyVoice 模式使用的 PowerShell 包装脚本。',
+    edgeConsentName: '允许 Edge 在线处理',
+    edgeConsentDesc: 'Edge 模式必须开启。开启后，每个文本分段都会发送给 Microsoft Edge TTS。私密或敏感笔记建议保持关闭。',
+    edgeExecutableName: 'Edge TTS 可执行文件',
+    edgeExecutableDesc: '建议填写 edge-tts.exe 的绝对路径，避免 PATH 指向不明确。默认值从 Obsidian 进程的 PATH 中查找 edge-tts。',
+    edgeCommonVoicesName: '常用 Edge TTS 音色',
+    edgeCommonVoicesDesc: '常用中文、美式英语和英式英语在线音色。选择后会自动填写下方的音色 ID。',
+    customVoiceOption: '自定义音色 ID',
+    edgeVoiceName: 'Edge TTS 音色',
+    edgeVoiceDesc: 'Edge 模式使用的音色 ID。可使用上方预设，或填写 edge-tts --list-voices 返回的任意 ID。',
+    azureConsentName: '允许 Azure 在线处理',
+    azureConsentDesc: 'Azure 模式必须开启。每个文本分段会通过 HTTPS 发送到所选 Azure Speech 云环境和区域。除非可以接受该处理，否则私密笔记应保持关闭。',
+    credentialSourceName: 'API 密钥存储方式',
+    credentialSourceDesc: 'Obsidian 1.11.4 及以上版本建议使用 SecretStorage；也可以继续使用 Obsidian 库外的单行密钥文件作为兼容回退。',
+    credentialSourceSecret: 'Obsidian SecretStorage（推荐）',
+    credentialSourceFile: '库外单行密钥文件',
+    secretStorageUnavailableName: 'Obsidian SecretStorage 不可用',
+    secretStorageUnavailableDesc: '请把 Obsidian 更新到 1.11.4 或更高版本，或改选库外密钥文件。',
+    azureCloudName: 'Azure 云环境',
+    azureCloudDesc: '选择 Speech 资源和订阅密钥所属的云环境。',
+    azurePublicCloud: 'Azure 公有云',
+    azureChinaCloud: '由世纪互联运营的 Azure 中国区',
+    azureRegionName: 'Azure Speech 区域',
+    azureRegionDesc: 'Azure 资源中的区域标识，例如 eastasia、southeastasia、chinaeast2 或 chinanorth3。',
+    azureKeyFileName: 'Azure Speech 密钥文件',
+    azureKeyFileDesc: '兼容回退方式：填写 Obsidian 库外单行 Speech 资源密钥文件的绝对路径。密钥本身不会保存到 data.json。',
+    azureSecretName: 'Azure Speech 秘密',
+    azureSecretDesc: '选择或创建一个保存 Speech 资源密钥的 Obsidian 秘密。data.json 只保存秘密名称，不保存密钥值。',
+    azureCommonVoicesName: '常用 Azure Speech 音色',
+    azureCommonVoicesDesc: '常用中文、美式英语和英式英语 Azure 音色。选择后会自动填写下方的音色 ID。',
+    azureVoiceName: 'Azure Speech 音色',
+    azureVoiceDesc: 'Azure Speech 预构建音色 ID，例如 zh-CN-XiaoxiaoNeural 或 en-US-JennyNeural。',
+    openRouterConsentName: '允许 OpenRouter 在线处理',
+    openRouterConsentDesc: 'OpenRouter 模式必须开启。它只表示允许把文本发送给 OpenRouter 及符合条件的上游 TTS 服务商，不会放宽 ZDR 路由。',
+    openRouterKeyFileName: 'OpenRouter API 密钥文件',
+    openRouterKeyFileDesc: '兼容回退方式：填写 Obsidian 库外单行 OpenRouter API 密钥文件的绝对路径。密钥本身不会保存到 data.json。',
+    openRouterSecretName: 'OpenRouter API 秘密',
+    openRouterSecretDesc: '选择或创建一个保存 OpenRouter API 密钥的 Obsidian 秘密。data.json 只保存秘密名称，不保存密钥值。',
+    openRouterModelsName: '支持 ZDR 的 OpenRouter TTS 模型',
+    openRouterModelsDesc: '内置选项已按本版本发布时 OpenRouter 的语音与 ZDR 模型过滤结果核对。可用性可能变化，但每次请求仍会强制使用 ZDR。',
+    customModelOption: '自定义模型 ID',
+    openRouterModelName: 'OpenRouter TTS 模型',
+    openRouterModelDesc: '支持语音输出的模型 ID。自定义模型只有在 OpenRouter 存在符合条件的 ZDR 端点时才能使用。',
+    openRouterModelInfoName: '所选模型特点',
+    customModelInfo: '自定义模型：请在 OpenRouter 核对其语言、音色和语音输出能力；如果没有符合条件的 ZDR 端点，请求会失败。',
+    openRouterVoicesName: '该模型的常用音色',
+    openRouterVoicesDesc: '这里只列出 OpenRouter 当前公开且与所选模型兼容的音色 ID。Gemini 按官方朗读风格标注，Kokoro 按语言和性别标注；MAI 当前只公开 4 个音色。',
+    openRouterVoiceName: 'OpenRouter TTS 音色',
+    openRouterVoiceDesc: '所选模型支持的音色 ID。不同模型的音色目录并不相同。',
+    openRouterPrivacyName: 'OpenRouter 隐私路由',
+    openRouterPrivacyDesc: '始终强制执行：provider.zdr 为 true，并拒绝供应商收集数据。插件不会降级到非 ZDR 端点。朗读私密内容时，还应关闭 OpenRouter 账户级输入输出日志和数据共享。',
+    speedName: '语速',
+    speedDesc: '传递给当前语音引擎的朗读速度。',
+    chunkLimitsName: '分段长度',
+    chunkLimitsDesc: '用英文逗号分隔的字符数上限。前几个分段较短，可更快开始播放。',
+    stripMarkdownName: '移除 Markdown 格式',
+    stripMarkdownDesc: '合成前移除 frontmatter、链接、标题、嵌入内容和常见格式标记。',
+    mathLanguageName: '数学公式朗读语言',
+    mathLanguageDesc: '选择短 LaTeX 公式的朗读方式。所有模式都会跳过过长公式。',
+    mathEnglish: '英语',
+    mathChinese: '中文',
+    mathSkip: '跳过公式',
+    cleanupName: '清理临时音频',
+    cleanupDesc: '朗读后删除临时文本和音频，并在插件启动时清理过期文件。临时数据保存在 Obsidian 库外。',
+    diagnosticName: '诊断日志',
+    diagnosticDesc: '默认关闭。开启后只在系统临时目录保存有大小限制的失败元数据，不包含笔记名称或子进程输出。',
+    clearTemporaryName: '清除临时数据',
+    clearTemporaryDesc: '立即停止朗读，并删除本插件产生的临时文本、音频、旧缓存文件和诊断日志。',
+    clearNowButton: '立即清除',
+    restoreDefaultsName: '恢复默认设置',
+    restoreDefaultsDesc: '把本页面的所有设置恢复为默认值并立即保存。',
+    restoreDefaultsButton: '恢复默认值',
+    settingsRestoredNotice: 'CosyVoice：设置已恢复为默认值。',
+    temporaryDataClearedNotice: 'CosyVoice：临时文本、音频和诊断日志已清除。',
+    commandsFooter: '命令：朗读当前笔记、朗读选中内容、暂停或继续、停止。',
+  },
+};
 const LATEX_COMMAND_REPLACEMENTS = {
   chinese: [
     ['\\rightarrow', '到'],
@@ -83,12 +358,29 @@ const LATEX_COMMAND_REPLACEMENTS = {
 };
 
 const DEFAULT_SETTINGS = {
+  settingsLanguage: 'english',
   scriptPath: resolveDefaultScriptPath(),
   speechEngine: 'local-cosyvoice',
+  edgeTtsConsent: false,
+  edgeTtsExecutable: DEFAULT_EDGE_TTS_EXECUTABLE,
   edgeTtsVoice: DEFAULT_EDGE_TTS_VOICE,
+  azureSpeechCloud: 'public',
+  azureSpeechConsent: false,
+  azureSpeechCredentialSource: 'obsidian-secret',
+  azureSpeechKeyPath: '',
+  azureSpeechRegion: '',
+  azureSpeechSecretName: '',
+  azureSpeechVoice: DEFAULT_AZURE_SPEECH_VOICE,
+  openRouterConsent: false,
+  openRouterCredentialSource: 'obsidian-secret',
+  openRouterKeyPath: '',
+  openRouterModel: DEFAULT_OPENROUTER_TTS_MODEL,
+  openRouterSecretName: '',
+  openRouterVoice: DEFAULT_OPENROUTER_TTS_VOICE,
   speed: 1,
   stripMarkdown: true,
   cleanupCache: true,
+  diagnosticLogging: false,
   mathReadingLanguage: DEFAULT_MATH_READING_LANGUAGE,
   chunkLimits: DEFAULT_CHUNK_LIMITS.join(','),
 };
@@ -314,6 +606,20 @@ function normalizeMathReadingLanguage(value) {
   return MATH_READING_LANGUAGES.includes(language) ? language : DEFAULT_MATH_READING_LANGUAGE;
 }
 
+function normalizeSettingsLanguage(value) {
+  const language = String(value || DEFAULT_SETTINGS.settingsLanguage).toLowerCase();
+  return SETTINGS_LANGUAGES.includes(language) ? language : DEFAULT_SETTINGS.settingsLanguage;
+}
+
+function normalizeCredentialSource(value) {
+  const source = String(value || 'obsidian-secret').trim().toLowerCase();
+  return CREDENTIAL_SOURCES.includes(source) ? source : 'obsidian-secret';
+}
+
+function getSettingsUiText(language) {
+  return SETTINGS_UI_TEXT[normalizeSettingsLanguage(language)];
+}
+
 function normalizeSpeechEngine(value) {
   const engine = String(value || DEFAULT_SETTINGS.speechEngine).toLowerCase();
   return SPEECH_ENGINES.includes(engine) ? engine : DEFAULT_SETTINGS.speechEngine;
@@ -322,6 +628,265 @@ function normalizeSpeechEngine(value) {
 function normalizeEdgeTtsVoice(value) {
   const voice = String(value || '').trim();
   return voice || DEFAULT_EDGE_TTS_VOICE;
+}
+
+function normalizeEdgeTtsExecutable(value) {
+  const executable = String(value || '').trim();
+  return executable || DEFAULT_EDGE_TTS_EXECUTABLE;
+}
+
+function normalizeAzureSpeechCloud(value) {
+  const cloud = String(value || '').trim().toLowerCase();
+  return AZURE_SPEECH_CLOUDS.includes(cloud) ? cloud : 'public';
+}
+
+function normalizeAzureSpeechRegion(value) {
+  const region = String(value || '').trim().toLowerCase();
+  return /^[a-z0-9]{2,32}$/.test(region) ? region : '';
+}
+
+function normalizeAzureSpeechVoice(value) {
+  const voice = String(value || '').trim();
+  return /^[a-z]{2,3}-[a-z]{2}-[a-z0-9][a-z0-9._:-]{1,190}$/i.test(voice)
+    ? voice
+    : DEFAULT_AZURE_SPEECH_VOICE;
+}
+
+function normalizeOpenRouterModel(value) {
+  const model = String(value || '').trim();
+  return /^[a-z0-9][a-z0-9._-]{0,79}\/[a-z0-9][a-z0-9._-]{1,149}(?::[a-z0-9._-]+)?$/i.test(model)
+    ? model
+    : DEFAULT_OPENROUTER_TTS_MODEL;
+}
+
+function normalizeOpenRouterVoice(value) {
+  const voice = String(value || '').trim();
+  return /^[a-z0-9][a-z0-9._:-]{0,199}$/i.test(voice) ? voice : DEFAULT_OPENROUTER_TTS_VOICE;
+}
+
+function hasObsidianSecretStorage(app) {
+  return Boolean(app && app.secretStorage && typeof app.secretStorage.getSecret === 'function');
+}
+
+function hasObsidianSecretStorageUi(app) {
+  return hasObsidianSecretStorage(app) && typeof SecretComponent === 'function';
+}
+
+function getCredentialValueError(value, serviceLabel) {
+  const secret = String(value || '').replace(/^\uFEFF/, '').trim();
+  if (!secret) {
+    return `${serviceLabel} secret is empty or unavailable.`;
+  }
+  if (/[\r\n]/.test(secret)) {
+    return `${serviceLabel} secret must contain exactly one non-empty line.`;
+  }
+  return '';
+}
+
+function readObsidianSecretValue(secretNameValue, app, serviceLabel) {
+  const secretName = String(secretNameValue || '').trim();
+  if (!secretName) {
+    throw new Error(`Select or create an Obsidian SecretStorage entry for ${serviceLabel}.`);
+  }
+  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(secretName)) {
+    throw new Error(`${serviceLabel} secret name must use lowercase letters, numbers, and dashes.`);
+  }
+  if (!hasObsidianSecretStorage(app)) {
+    throw new Error('Obsidian SecretStorage requires Obsidian 1.11.4 or later. Select the external key-file option on older versions.');
+  }
+
+  let value;
+  try {
+    value = app.secretStorage.getSecret(secretName);
+  } catch (error) {
+    throw new Error(`Could not read the ${serviceLabel} secret from Obsidian SecretStorage.`);
+  }
+  const valueError = getCredentialValueError(value, serviceLabel);
+  if (valueError) {
+    throw new Error(valueError);
+  }
+  return String(value).trim();
+}
+
+function getObsidianSecretConfigurationError(secretNameValue, app, serviceLabel) {
+  try {
+    readObsidianSecretValue(secretNameValue, app, serviceLabel);
+    return '';
+  } catch (error) {
+    return error && error.message ? String(error.message) : `Could not read the ${serviceLabel} secret from Obsidian SecretStorage.`;
+  }
+}
+
+function getSecretFileConfigurationError(keyPathValue, vaultBasePath, serviceLabel) {
+  const keyPath = String(keyPathValue || '').trim();
+  if (!keyPath || !path.isAbsolute(keyPath)) {
+    return `Set an absolute ${serviceLabel} key file path in the plugin settings.`;
+  }
+  if (vaultBasePath && isInsideDirectory(keyPath, vaultBasePath)) {
+    return `The ${serviceLabel} key file must be stored outside the Obsidian vault.`;
+  }
+  if (!fs.existsSync(keyPath)) {
+    return `${serviceLabel} key file not found: ${keyPath}`;
+  }
+
+  return '';
+}
+
+function getRemoteCredentialConfigurationError({ credentialSource, secretName, keyPath }, vaultBasePath, app, serviceLabel) {
+  if (normalizeCredentialSource(credentialSource) === 'obsidian-secret') {
+    return getObsidianSecretConfigurationError(secretName, app, serviceLabel);
+  }
+  return getSecretFileConfigurationError(keyPath, vaultBasePath, serviceLabel);
+}
+
+function buildAzureSpeechEndpoint(settings = {}) {
+  const cloud = String(settings.azureSpeechCloud || 'public').trim().toLowerCase();
+  const region = normalizeAzureSpeechRegion(settings.azureSpeechRegion);
+  if (!AZURE_SPEECH_CLOUDS.includes(cloud)) {
+    throw new Error('Invalid Azure Speech cloud.');
+  }
+  if (!region) {
+    throw new Error('Invalid Azure Speech region.');
+  }
+  const domain = cloud === 'china'
+    ? 'tts.speech.azure.cn'
+    : 'tts.speech.microsoft.com';
+  return `https://${region}.${domain}/cognitiveservices/v1`;
+}
+
+function escapeXml(value) {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
+function buildAzureSpeechSsml(text, settings = {}) {
+  const voice = normalizeAzureSpeechVoice(settings.azureSpeechVoice);
+  const locale = voice.split('-').slice(0, 2).join('-');
+  const rate = formatEdgeTtsRate(settings.speed);
+  return `<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="${escapeXml(locale)}"><voice name="${escapeXml(voice)}"><prosody rate="${rate}">${escapeXml(text)}</prosody></voice></speak>`;
+}
+
+function getAzureSpeechConfigurationError(settings = {}, vaultBasePath = '', app = null) {
+  const cloud = String(settings.azureSpeechCloud || 'public').trim().toLowerCase();
+  if (!AZURE_SPEECH_CLOUDS.includes(cloud)) {
+    return 'Select a valid Azure Speech cloud in the plugin settings.';
+  }
+  const region = String(settings.azureSpeechRegion || '').trim().toLowerCase();
+  if (!region || normalizeAzureSpeechRegion(region) !== region) {
+    return 'Set a valid Azure Speech region in the plugin settings.';
+  }
+  if (normalizeAzureSpeechVoice(settings.azureSpeechVoice) !== String(settings.azureSpeechVoice || '').trim()) {
+    return 'Set a valid Azure Speech voice ID in the plugin settings.';
+  }
+
+  return getRemoteCredentialConfigurationError({
+    credentialSource: settings.azureSpeechCredentialSource,
+    secretName: settings.azureSpeechSecretName,
+    keyPath: settings.azureSpeechKeyPath,
+  }, vaultBasePath, app, 'Azure Speech');
+}
+
+function getOpenRouterConfigurationError(settings = {}, vaultBasePath = '', app = null) {
+  if (normalizeOpenRouterModel(settings.openRouterModel) !== String(settings.openRouterModel || '').trim()) {
+    return 'Set a valid OpenRouter TTS model ID in the plugin settings.';
+  }
+  if (normalizeOpenRouterVoice(settings.openRouterVoice) !== String(settings.openRouterVoice || '').trim()) {
+    return 'Set a valid OpenRouter TTS voice ID in the plugin settings.';
+  }
+
+  return getRemoteCredentialConfigurationError({
+    credentialSource: settings.openRouterCredentialSource,
+    secretName: settings.openRouterSecretName,
+    keyPath: settings.openRouterKeyPath,
+  }, vaultBasePath, app, 'OpenRouter API');
+}
+
+function buildOpenRouterTtsRequestBody(text, settings = {}) {
+  return JSON.stringify({
+    model: normalizeOpenRouterModel(settings.openRouterModel),
+    input: String(text || ''),
+    voice: normalizeOpenRouterVoice(settings.openRouterVoice),
+    response_format: 'mp3',
+    speed: normalizeSpeed(settings.speed),
+    provider: {
+      data_collection: 'deny',
+      zdr: true,
+    },
+  });
+}
+
+function getMicrosoftVoicePresets(language) {
+  const labelIndex = normalizeSettingsLanguage(language) === 'chinese' ? 2 : 1;
+  return MICROSOFT_VOICE_PRESETS.map((preset) => [preset[0], preset[labelIndex]]);
+}
+
+function getEdgeTtsVoicePresets(language) {
+  return getMicrosoftVoicePresets(language);
+}
+
+function getAzureSpeechVoicePresets(language) {
+  return getMicrosoftVoicePresets(language);
+}
+
+function getOpenRouterTtsModels(language) {
+  const normalizedLanguage = normalizeSettingsLanguage(language);
+  const labelIndex = normalizedLanguage === 'chinese' ? 3 : 2;
+  const infoIndex = normalizedLanguage === 'chinese' ? 5 : 4;
+  return OPENROUTER_TTS_MODELS.map((model) => [model[0], model[1], model[labelIndex], model[infoIndex]]);
+}
+
+function getDefaultOpenRouterVoiceForModel(modelId) {
+  const selected = OPENROUTER_TTS_MODELS.find(([model]) => model === String(modelId || '').trim());
+  return selected ? selected[1] : DEFAULT_OPENROUTER_TTS_VOICE;
+}
+
+function getOpenRouterTtsPresets(language) {
+  const labelIndex = normalizeSettingsLanguage(language) === 'chinese' ? 3 : 2;
+  return OPENROUTER_TTS_PRESETS.map((preset) => [preset[0], preset[1], preset[labelIndex]]);
+}
+
+function getOpenRouterTtsVoicePresets(modelId, language) {
+  const selectedModel = String(modelId || '').trim();
+  return getOpenRouterTtsPresets(language).filter(([model]) => model === selectedModel);
+}
+
+function hasEdgeTtsConsent(settings = {}) {
+  return normalizeSpeechEngine(settings.speechEngine) !== 'edge-tts' || settings.edgeTtsConsent === true;
+}
+
+function hasAzureSpeechConsent(settings = {}) {
+  return normalizeSpeechEngine(settings.speechEngine) !== 'azure-speech' || settings.azureSpeechConsent === true;
+}
+
+function hasOpenRouterConsent(settings = {}) {
+  return normalizeSpeechEngine(settings.speechEngine) !== 'openrouter-tts' || settings.openRouterConsent === true;
+}
+
+function getPluginTempCacheDir(vaultBasePath, tempBasePath = os.tmpdir()) {
+  const resolvedVaultPath = path.resolve(String(vaultBasePath || ''));
+  const vaultKey = crypto.createHash('sha256').update(resolvedVaultPath).digest('hex').slice(0, 16);
+  return path.join(tempBasePath, PLUGIN_ID, vaultKey);
+}
+
+function isOwnedCacheFileName(fileName) {
+  const name = String(fileName || '');
+  return OWNED_CACHE_FILE_PATTERN.test(name) || name === 'diagnostic.log';
+}
+
+function createSafeRuntimeLogEvent(stage, settings = {}, timestamp = new Date().toISOString()) {
+  if (stage !== 'failed') {
+    return null;
+  }
+
+  return {
+    time: timestamp,
+    stage: 'failed',
+    engine: getSpeechEngineLabel(settings),
+  };
 }
 
 function formatEdgeTtsRate(speed) {
@@ -342,7 +907,17 @@ function buildEdgeTtsArgs(inputPath, outputPath, settings = {}) {
 }
 
 function getSpeechEngineLabel(settings = {}) {
-  return normalizeSpeechEngine(settings.speechEngine) === 'edge-tts' ? 'Edge TTS' : 'CosyVoice';
+  const speechEngine = normalizeSpeechEngine(settings.speechEngine);
+  if (speechEngine === 'edge-tts') {
+    return 'Edge TTS';
+  }
+  if (speechEngine === 'azure-speech') {
+    return 'Azure Speech';
+  }
+  if (speechEngine === 'openrouter-tts') {
+    return 'OpenRouter TTS';
+  }
+  return 'CosyVoice';
 }
 
 function getSpeedPresets() {
@@ -353,12 +928,37 @@ function formatSpeedLabel(speed) {
   return `${normalizeSpeed(speed).toString()}x`;
 }
 
+function selectKnownSettings(defaults, candidate) {
+  const source = candidate && typeof candidate === 'object' ? candidate : {};
+  return Object.fromEntries(Object.entries(defaults).map(([key, defaultValue]) => [
+    key,
+    Object.prototype.hasOwnProperty.call(source, key) ? source[key] : defaultValue,
+  ]));
+}
+
 function createDefaultSettings() {
   return {
+    azureSpeechCloud: normalizeAzureSpeechCloud(DEFAULT_SETTINGS.azureSpeechCloud),
+    azureSpeechConsent: DEFAULT_SETTINGS.azureSpeechConsent,
+    azureSpeechCredentialSource: normalizeCredentialSource(DEFAULT_SETTINGS.azureSpeechCredentialSource),
+    azureSpeechKeyPath: DEFAULT_SETTINGS.azureSpeechKeyPath,
+    azureSpeechRegion: DEFAULT_SETTINGS.azureSpeechRegion,
+    azureSpeechSecretName: DEFAULT_SETTINGS.azureSpeechSecretName,
+    azureSpeechVoice: normalizeAzureSpeechVoice(DEFAULT_SETTINGS.azureSpeechVoice),
     cleanupCache: DEFAULT_SETTINGS.cleanupCache,
     chunkLimits: parseChunkLimits(DEFAULT_SETTINGS.chunkLimits).join(','),
+    diagnosticLogging: DEFAULT_SETTINGS.diagnosticLogging,
+    edgeTtsConsent: DEFAULT_SETTINGS.edgeTtsConsent,
+    edgeTtsExecutable: normalizeEdgeTtsExecutable(DEFAULT_SETTINGS.edgeTtsExecutable),
     edgeTtsVoice: normalizeEdgeTtsVoice(DEFAULT_SETTINGS.edgeTtsVoice),
     mathReadingLanguage: normalizeMathReadingLanguage(DEFAULT_SETTINGS.mathReadingLanguage),
+    openRouterConsent: DEFAULT_SETTINGS.openRouterConsent,
+    openRouterCredentialSource: normalizeCredentialSource(DEFAULT_SETTINGS.openRouterCredentialSource),
+    openRouterKeyPath: DEFAULT_SETTINGS.openRouterKeyPath,
+    openRouterModel: normalizeOpenRouterModel(DEFAULT_SETTINGS.openRouterModel),
+    openRouterSecretName: DEFAULT_SETTINGS.openRouterSecretName,
+    openRouterVoice: normalizeOpenRouterVoice(DEFAULT_SETTINGS.openRouterVoice),
+    settingsLanguage: normalizeSettingsLanguage(DEFAULT_SETTINGS.settingsLanguage),
     scriptPath: resolveDefaultScriptPath(),
     speechEngine: normalizeSpeechEngine(DEFAULT_SETTINGS.speechEngine),
     speed: normalizeSpeed(DEFAULT_SETTINGS.speed),
@@ -556,6 +1156,65 @@ function getAudioUrlForFile(adapter, basePath, filePath) {
   return pathToFileURL(filePath).href;
 }
 
+function getAudioMimeType(filePath) {
+  return path.extname(String(filePath || '')).toLowerCase() === '.wav'
+    ? 'audio/wav'
+    : 'audio/mpeg';
+}
+
+function createBlobAudioSource(audioBytes, filePath, runtime = globalThis) {
+  if (!audioBytes || typeof audioBytes.length !== 'number' || audioBytes.length === 0) {
+    return null;
+  }
+
+  const BlobConstructor = runtime && runtime.Blob;
+  const urlApi = runtime && runtime.URL;
+  if (typeof BlobConstructor !== 'function'
+    || !urlApi
+    || typeof urlApi.createObjectURL !== 'function'
+    || typeof urlApi.revokeObjectURL !== 'function') {
+    return null;
+  }
+
+  try {
+    const mimeType = getAudioMimeType(filePath);
+    const objectUrl = urlApi.createObjectURL(new BlobConstructor([audioBytes], { type: mimeType }));
+    if (!objectUrl) {
+      return null;
+    }
+
+    let released = false;
+    return {
+      mimeType,
+      url: String(objectUrl),
+      release() {
+        if (released) {
+          return;
+        }
+        released = true;
+        try {
+          urlApi.revokeObjectURL(objectUrl);
+        } catch (error) {
+          console.warn(`[${PLUGIN_ID}] Could not release temporary audio URL`, error);
+        }
+      },
+    };
+  } catch (error) {
+    return null;
+  }
+}
+
+function describeMediaError(mediaError) {
+  const code = Number(mediaError && mediaError.code) || 0;
+  const descriptions = {
+    1: 'playback was aborted',
+    2: 'the audio source could not be loaded',
+    3: 'the audio could not be decoded',
+    4: 'the audio source or format is unsupported',
+  };
+  return code ? ` (media error ${code}: ${descriptions[code] || 'unknown media failure'})` : '';
+}
+
 function resolvePowerShellExecutable() {
   return 'powershell.exe';
 }
@@ -566,12 +1225,15 @@ class CosyVoiceReaderPlugin extends Plugin {
     this.activeSession = null;
     this.currentAudio = null;
     this.currentProcess = null;
+    this.currentRequests = new Set();
     this.lastMarkdownView = null;
     this.pauseRequested = false;
     this.readerState = createReaderState();
     this.readerViews = new Set();
     this.vaultBasePath = null;
     this.cacheDir = null;
+    this.legacyCacheDir = null;
+    this.legacyLogPath = null;
     this.logPath = null;
     this.statusBar = this.addStatusBarItem();
 
@@ -655,20 +1317,72 @@ class CosyVoiceReaderPlugin extends Plugin {
 
   async loadSettings() {
     const defaults = createDefaultSettings();
-    this.settings = Object.assign({}, defaults, await this.loadData());
+    const savedSettings = await this.loadData();
+    const source = savedSettings && typeof savedSettings === 'object' ? savedSettings : {};
+    const removedObsoleteSettings = Object.keys(source).some(
+      (key) => !Object.prototype.hasOwnProperty.call(defaults, key)
+    );
+    const missingKnownSettings = Object.keys(defaults).some(
+      (key) => !Object.prototype.hasOwnProperty.call(source, key)
+    );
+    const hadAzureCredentialSource = Object.prototype.hasOwnProperty.call(source, 'azureSpeechCredentialSource');
+    const hadOpenRouterCredentialSource = Object.prototype.hasOwnProperty.call(source, 'openRouterCredentialSource');
+    this.settings = selectKnownSettings(defaults, source);
     this.settings.speed = normalizeSpeed(this.settings.speed);
     this.settings.speechEngine = normalizeSpeechEngine(this.settings.speechEngine);
+    this.settings.azureSpeechCloud = normalizeAzureSpeechCloud(this.settings.azureSpeechCloud);
+    this.settings.azureSpeechConsent = this.settings.azureSpeechConsent === true;
+    this.settings.azureSpeechCredentialSource = !hadAzureCredentialSource && String(source.azureSpeechKeyPath || '').trim()
+      ? 'key-file'
+      : normalizeCredentialSource(this.settings.azureSpeechCredentialSource);
+    this.settings.azureSpeechKeyPath = String(this.settings.azureSpeechKeyPath || '').trim();
+    this.settings.azureSpeechRegion = normalizeAzureSpeechRegion(this.settings.azureSpeechRegion);
+    this.settings.azureSpeechSecretName = String(this.settings.azureSpeechSecretName || '').trim();
+    this.settings.azureSpeechVoice = normalizeAzureSpeechVoice(this.settings.azureSpeechVoice);
+    this.settings.edgeTtsConsent = this.settings.edgeTtsConsent === true;
+    this.settings.edgeTtsExecutable = normalizeEdgeTtsExecutable(this.settings.edgeTtsExecutable);
     this.settings.edgeTtsVoice = normalizeEdgeTtsVoice(this.settings.edgeTtsVoice);
+    this.settings.diagnosticLogging = this.settings.diagnosticLogging === true;
     this.settings.mathReadingLanguage = normalizeMathReadingLanguage(this.settings.mathReadingLanguage);
+    this.settings.openRouterConsent = this.settings.openRouterConsent === true;
+    this.settings.openRouterCredentialSource = !hadOpenRouterCredentialSource && String(source.openRouterKeyPath || '').trim()
+      ? 'key-file'
+      : normalizeCredentialSource(this.settings.openRouterCredentialSource);
+    this.settings.openRouterKeyPath = String(this.settings.openRouterKeyPath || '').trim();
+    this.settings.openRouterModel = normalizeOpenRouterModel(this.settings.openRouterModel);
+    this.settings.openRouterSecretName = String(this.settings.openRouterSecretName || '').trim();
+    this.settings.openRouterVoice = normalizeOpenRouterVoice(this.settings.openRouterVoice);
+    this.settings.settingsLanguage = normalizeSettingsLanguage(this.settings.settingsLanguage);
     this.settings.scriptPath = String(this.settings.scriptPath || defaults.scriptPath);
     this.settings.chunkLimits = parseChunkLimits(this.settings.chunkLimits).join(',');
+    if (removedObsoleteSettings || missingKnownSettings) {
+      await this.saveData(this.settings);
+    }
   }
 
   async saveSettings() {
+    this.settings = selectKnownSettings(createDefaultSettings(), this.settings);
     this.settings.speed = normalizeSpeed(this.settings.speed);
     this.settings.speechEngine = normalizeSpeechEngine(this.settings.speechEngine);
+    this.settings.azureSpeechCloud = normalizeAzureSpeechCloud(this.settings.azureSpeechCloud);
+    this.settings.azureSpeechConsent = this.settings.azureSpeechConsent === true;
+    this.settings.azureSpeechCredentialSource = normalizeCredentialSource(this.settings.azureSpeechCredentialSource);
+    this.settings.azureSpeechKeyPath = String(this.settings.azureSpeechKeyPath || '').trim();
+    this.settings.azureSpeechRegion = normalizeAzureSpeechRegion(this.settings.azureSpeechRegion);
+    this.settings.azureSpeechSecretName = String(this.settings.azureSpeechSecretName || '').trim();
+    this.settings.azureSpeechVoice = normalizeAzureSpeechVoice(this.settings.azureSpeechVoice);
+    this.settings.edgeTtsConsent = this.settings.edgeTtsConsent === true;
+    this.settings.edgeTtsExecutable = normalizeEdgeTtsExecutable(this.settings.edgeTtsExecutable);
     this.settings.edgeTtsVoice = normalizeEdgeTtsVoice(this.settings.edgeTtsVoice);
+    this.settings.diagnosticLogging = this.settings.diagnosticLogging === true;
     this.settings.mathReadingLanguage = normalizeMathReadingLanguage(this.settings.mathReadingLanguage);
+    this.settings.openRouterConsent = this.settings.openRouterConsent === true;
+    this.settings.openRouterCredentialSource = normalizeCredentialSource(this.settings.openRouterCredentialSource);
+    this.settings.openRouterKeyPath = String(this.settings.openRouterKeyPath || '').trim();
+    this.settings.openRouterModel = normalizeOpenRouterModel(this.settings.openRouterModel);
+    this.settings.openRouterSecretName = String(this.settings.openRouterSecretName || '').trim();
+    this.settings.openRouterVoice = normalizeOpenRouterVoice(this.settings.openRouterVoice);
+    this.settings.settingsLanguage = normalizeSettingsLanguage(this.settings.settingsLanguage);
     await this.saveData(this.settings);
   }
 
@@ -696,9 +1410,81 @@ class CosyVoiceReaderPlugin extends Plugin {
     }
 
     this.vaultBasePath = adapter.getBasePath();
-    this.cacheDir = path.join(this.vaultBasePath, '.obsidian', 'plugins', PLUGIN_ID, 'cache');
-    this.logPath = path.join(this.vaultBasePath, '.obsidian', 'plugins', PLUGIN_ID, 'last-error.log');
+    this.legacyCacheDir = path.join(this.vaultBasePath, '.obsidian', 'plugins', PLUGIN_ID, 'cache');
+    this.legacyLogPath = path.join(this.vaultBasePath, '.obsidian', 'plugins', PLUGIN_ID, 'last-error.log');
+    this.cacheDir = getPluginTempCacheDir(this.vaultBasePath);
+    this.logPath = path.join(this.cacheDir, 'diagnostic.log');
     await fs.promises.mkdir(this.cacheDir, { recursive: true });
+
+    if (this.settings.cleanupCache) {
+      await this.cleanupStaleTemporaryData();
+    }
+  }
+
+  async cleanupOwnedFilesInDirectory(directoryPath) {
+    if (!directoryPath) {
+      return;
+    }
+
+    let entries;
+    try {
+      entries = await fs.promises.readdir(directoryPath, { withFileTypes: true });
+    } catch (error) {
+      if (error && error.code === 'ENOENT') {
+        return;
+      }
+      throw error;
+    }
+
+    for (const entry of entries) {
+      if (!entry.isFile() || !isOwnedCacheFileName(entry.name)) {
+        continue;
+      }
+
+      try {
+        await fs.promises.unlink(path.join(directoryPath, entry.name));
+      } catch (error) {
+        if (!error || error.code !== 'ENOENT') {
+          console.warn(`[${PLUGIN_ID}] Could not remove stale temporary file`, entry.name, error);
+        }
+      }
+    }
+  }
+
+  async removeLegacyRuntimeLog() {
+    if (!this.legacyLogPath) {
+      return;
+    }
+
+    try {
+      await fs.promises.unlink(this.legacyLogPath);
+    } catch (error) {
+      if (!error || error.code !== 'ENOENT') {
+        console.warn(`[${PLUGIN_ID}] Could not remove legacy runtime log`, error);
+      }
+    }
+  }
+
+  async cleanupStaleTemporaryData() {
+    await this.cleanupOwnedFilesInDirectory(this.cacheDir);
+    await this.cleanupOwnedFilesInDirectory(this.legacyCacheDir);
+    await this.removeLegacyRuntimeLog();
+
+    if (this.legacyCacheDir) {
+      try {
+        await fs.promises.rmdir(this.legacyCacheDir);
+      } catch (error) {
+        if (!error || !['ENOENT', 'ENOTEMPTY'].includes(error.code)) {
+          console.warn(`[${PLUGIN_ID}] Could not remove empty legacy cache directory`, error);
+        }
+      }
+    }
+  }
+
+  async clearTemporaryData() {
+    await this.stopReading({ silent: true });
+    await this.cleanupStaleTemporaryData();
+    new Notice(getSettingsUiText(this.settings.settingsLanguage).temporaryDataClearedNotice);
   }
 
   async activateControlView() {
@@ -821,6 +1607,32 @@ class CosyVoiceReaderPlugin extends Plugin {
     const speechEngine = normalizeSpeechEngine(this.settings.speechEngine);
     const engineLabel = getSpeechEngineLabel(this.settings);
     const scriptPath = this.settings.scriptPath.trim();
+    if (speechEngine === 'edge-tts' && !hasEdgeTtsConsent(this.settings)) {
+      new Notice('Edge TTS sends text to Microsoft. Enable online processing consent in the plugin settings before reading.', 10000);
+      return;
+    }
+    if (speechEngine === 'azure-speech' && !hasAzureSpeechConsent(this.settings)) {
+      new Notice('Azure Speech sends text to your Microsoft Azure Speech resource. Enable Azure online processing consent before reading.', 10000);
+      return;
+    }
+    if (speechEngine === 'azure-speech') {
+      const configurationError = getAzureSpeechConfigurationError(this.settings, this.vaultBasePath, this.app);
+      if (configurationError) {
+        new Notice(`Azure Speech: ${configurationError}`, 10000);
+        return;
+      }
+    }
+    if (speechEngine === 'openrouter-tts' && !hasOpenRouterConsent(this.settings)) {
+      new Notice('OpenRouter TTS sends text to OpenRouter and an eligible upstream provider. Enable OpenRouter online processing consent before reading.', 10000);
+      return;
+    }
+    if (speechEngine === 'openrouter-tts') {
+      const configurationError = getOpenRouterConfigurationError(this.settings, this.vaultBasePath, this.app);
+      if (configurationError) {
+        new Notice(`OpenRouter TTS: ${configurationError}`, 10000);
+        return;
+      }
+    }
     if (speechEngine === 'local-cosyvoice' && (!scriptPath || !fs.existsSync(scriptPath))) {
       new Notice(`CosyVoice: script not found: ${scriptPath || '(empty)'}`, 8000);
       return;
@@ -935,6 +1747,8 @@ class CosyVoiceReaderPlugin extends Plugin {
           message: messageFromError(error),
         });
         new Notice(`${engineLabel} failed: ${messageFromError(error)}`, 10000);
+        session.stopped = true;
+        this.activeSession = null;
       }
     } finally {
       if (this.settings.cleanupCache) {
@@ -950,13 +1764,13 @@ class CosyVoiceReaderPlugin extends Plugin {
 
     const speechEngine = normalizeSpeechEngine(this.settings.speechEngine);
     const engineLabel = getSpeechEngineLabel(this.settings);
-    const outputExtension = speechEngine === 'edge-tts' ? 'mp3' : 'wav';
+    const outputExtension = speechEngine === 'local-cosyvoice' ? 'wav' : 'mp3';
     const basename = `${Date.now()}-${session.id}-${index}`;
     const inputPath = path.join(this.cacheDir, `${basename}.txt`);
     const outputPath = path.join(this.cacheDir, `${basename}.${outputExtension}`);
 
     session.files.push(inputPath, outputPath);
-    await fs.promises.writeFile(inputPath, chunkText, 'utf8');
+    await fs.promises.writeFile(inputPath, chunkText, { encoding: 'utf8', mode: 0o600 });
 
     this.updateStatus(`${engineLabel} synth ${index + 1}/${session.totalChunks || 0}`, {
       canPause: true,
@@ -971,7 +1785,13 @@ class CosyVoiceReaderPlugin extends Plugin {
       status: 'running',
       totalChunks: session.totalChunks || 0,
     });
-    await this.runSpeechEngine(inputPath, outputPath, session, speechEngine);
+    try {
+      await this.runSpeechEngine(inputPath, outputPath, session, speechEngine);
+    } finally {
+      if (this.settings.cleanupCache) {
+        await this.removeTempFile(inputPath);
+      }
+    }
 
     const outputStat = await fs.promises.stat(outputPath);
     if (outputStat.size <= 44) {
@@ -979,6 +1799,9 @@ class CosyVoiceReaderPlugin extends Plugin {
     }
 
     if (!this.isActive(session)) {
+      if (this.settings.cleanupCache) {
+        await this.removeTempFile(outputPath);
+      }
       throw new Error('Reading stopped.');
     }
 
@@ -1004,6 +1827,12 @@ class CosyVoiceReaderPlugin extends Plugin {
   runSpeechEngine(inputPath, outputPath, session, speechEngine = normalizeSpeechEngine(this.settings.speechEngine)) {
     if (speechEngine === 'edge-tts') {
       return this.runEdgeTts(inputPath, outputPath, session);
+    }
+    if (speechEngine === 'azure-speech') {
+      return this.runAzureSpeech(inputPath, outputPath, session);
+    }
+    if (speechEngine === 'openrouter-tts') {
+      return this.runOpenRouterTts(inputPath, outputPath, session);
     }
 
     return this.runCosyVoice(inputPath, outputPath, session);
@@ -1093,9 +1922,10 @@ class CosyVoiceReaderPlugin extends Plugin {
 
   runEdgeTts(inputPath, outputPath, session) {
     const args = buildEdgeTtsArgs(inputPath, outputPath, this.settings);
+    const executable = normalizeEdgeTtsExecutable(this.settings.edgeTtsExecutable);
 
     return new Promise((resolve, reject) => {
-      const child = spawn('edge-tts', args, {
+      const child = spawn(executable, args, {
         windowsHide: true,
       });
       let stdout = '';
@@ -1130,7 +1960,7 @@ class CosyVoiceReaderPlugin extends Plugin {
         if (this.currentProcess === child) {
           this.currentProcess = null;
         }
-        reject(new Error(`Edge TTS command failed. Install the edge-tts CLI and make sure it is on PATH. ${messageFromError(error)}`));
+        reject(new Error(`Edge TTS command failed at ${executable}. Check the configured executable path. ${messageFromError(error)}`));
       });
 
       child.on('close', (code) => {
@@ -1159,20 +1989,256 @@ class CosyVoiceReaderPlugin extends Plugin {
     });
   }
 
-  playPreparedAudio(prepared, session, index, total) {
-    return new Promise((resolve, reject) => {
-      if (!this.isActive(session)) {
-        resolve();
-        return;
-      }
+  async readSecretFileOutsideVault(configuredPathValue, serviceLabel) {
+    const configuredPath = String(configuredPathValue || '').trim();
+    const keyPath = await fs.promises.realpath(configuredPath);
+    const vaultPath = await fs.promises.realpath(this.vaultBasePath).catch(() => path.resolve(this.vaultBasePath));
+    if (isInsideDirectory(keyPath, vaultPath)) {
+      throw new Error(`${serviceLabel} key file must be stored outside the Obsidian vault.`);
+    }
 
-      this.waitWhilePaused(session).then(() => {
-        if (!this.isActive(session)) {
-          resolve();
+    const stat = await fs.promises.stat(keyPath);
+    if (!stat.isFile() || stat.size <= 0 || stat.size > 8192) {
+      throw new Error(`${serviceLabel} key file must be a non-empty text file smaller than 8 KB.`);
+    }
+
+    const key = (await fs.promises.readFile(keyPath, 'utf8')).replace(/^\uFEFF/, '').trim();
+    if (!key || /[\r\n]/.test(key)) {
+      throw new Error(`${serviceLabel} key file must contain exactly one non-empty line.`);
+    }
+    return key;
+  }
+
+  readObsidianSecret(secretNameValue, serviceLabel) {
+    return readObsidianSecretValue(secretNameValue, this.app, serviceLabel);
+  }
+
+  async readOpenRouterKey() {
+    if (normalizeCredentialSource(this.settings.openRouterCredentialSource) === 'obsidian-secret') {
+      return this.readObsidianSecret(this.settings.openRouterSecretName, 'OpenRouter API');
+    }
+    return this.readSecretFileOutsideVault(this.settings.openRouterKeyPath, 'OpenRouter API');
+  }
+
+  async readAzureSpeechKey() {
+    if (normalizeCredentialSource(this.settings.azureSpeechCredentialSource) === 'obsidian-secret') {
+      return this.readObsidianSecret(this.settings.azureSpeechSecretName, 'Azure Speech');
+    }
+    return this.readSecretFileOutsideVault(this.settings.azureSpeechKeyPath, 'Azure Speech');
+  }
+
+  async requestRemoteAudio({ endpoint, headers, body, outputPath, session, serviceLabel, expectedContentType, failureHint }) {
+    if (!(this.currentRequests instanceof Set)) {
+      this.currentRequests = new Set();
+    }
+
+    await new Promise((resolve, reject) => {
+      let settled = false;
+      const finish = (callback, value) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        this.currentRequests.delete(request);
+        callback(value);
+      };
+
+      const request = https.request(endpoint, {
+        method: 'POST',
+        headers,
+      }, (response) => {
+        const statusCode = Number(response.statusCode) || 0;
+        if (statusCode !== 200) {
+          response.resume();
+          finish(reject, new Error(`${serviceLabel} returned HTTP ${statusCode}. ${failureHint || 'Check the service configuration and account status.'}`));
           return;
         }
 
-        const audio = new Audio(prepared.url);
+        const contentType = String(response.headers['content-type'] || '').split(';')[0].trim().toLowerCase();
+        if (expectedContentType && contentType !== expectedContentType) {
+          response.resume();
+          finish(reject, new Error(`${serviceLabel} returned unexpected content type ${contentType || '(missing)'}.`));
+          return;
+        }
+
+        const contentLength = Number(response.headers['content-length']) || 0;
+        if (contentLength > REMOTE_TTS_MAX_AUDIO_BYTES) {
+          response.resume();
+          finish(reject, new Error(`${serviceLabel} response exceeded the 20 MB safety limit.`));
+          request.destroy();
+          return;
+        }
+
+        const chunks = [];
+        let totalBytes = 0;
+        response.on('data', (chunk) => {
+          if (settled) {
+            return;
+          }
+          totalBytes += chunk.length;
+          if (totalBytes > REMOTE_TTS_MAX_AUDIO_BYTES) {
+            response.destroy();
+            finish(reject, new Error(`${serviceLabel} response exceeded the 20 MB safety limit.`));
+            request.destroy();
+            return;
+          }
+          chunks.push(chunk);
+        });
+        response.on('aborted', () => {
+          finish(reject, new Error(`${serviceLabel} response was interrupted.`));
+        });
+        response.on('error', (error) => {
+          finish(reject, error);
+        });
+        response.on('end', async () => {
+          if (settled) {
+            return;
+          }
+          if (!this.isActive(session)) {
+            finish(reject, new Error('Reading stopped.'));
+            return;
+          }
+
+          try {
+            await fs.promises.writeFile(outputPath, Buffer.concat(chunks), { mode: 0o600 });
+            finish(resolve);
+          } catch (error) {
+            finish(reject, error);
+          }
+        });
+      });
+
+      this.currentRequests.add(request);
+      request.setTimeout(2 * 60 * 1000, () => {
+        finish(reject, new Error(`${serviceLabel} synthesis timed out after 2 minutes.`));
+        request.destroy();
+      });
+      request.on('error', (error) => {
+        finish(reject, error);
+      });
+      request.on('close', () => {
+        if (!settled && !this.isActive(session)) {
+          finish(reject, new Error('Reading stopped.'));
+        }
+      });
+      request.end(body);
+    });
+  }
+
+  async runAzureSpeech(inputPath, outputPath, session) {
+    const [text, subscriptionKey] = await Promise.all([
+      fs.promises.readFile(inputPath, 'utf8'),
+      this.readAzureSpeechKey(),
+    ]);
+    if (!this.isActive(session)) {
+      throw new Error('Reading stopped.');
+    }
+
+    const body = buildAzureSpeechSsml(text, this.settings);
+    await this.requestRemoteAudio({
+      endpoint: new URL(buildAzureSpeechEndpoint(this.settings)),
+      headers: {
+        Accept: 'audio/mpeg',
+        'Content-Length': Buffer.byteLength(body, 'utf8'),
+        'Content-Type': 'application/ssml+xml',
+        'Ocp-Apim-Subscription-Key': subscriptionKey,
+        'User-Agent': 'note-reader-cosyvoice/0.2.3',
+        'X-Microsoft-OutputFormat': AZURE_SPEECH_OUTPUT_FORMAT,
+      },
+      body,
+      outputPath,
+      session,
+      serviceLabel: 'Azure Speech',
+      expectedContentType: 'audio/mpeg',
+      failureHint: 'Check the selected API credential, cloud, region, voice, resource status, and quota.',
+    });
+  }
+
+  async runOpenRouterTts(inputPath, outputPath, session) {
+    const [text, apiKey] = await Promise.all([
+      fs.promises.readFile(inputPath, 'utf8'),
+      this.readOpenRouterKey(),
+    ]);
+    if (!this.isActive(session)) {
+      throw new Error('Reading stopped.');
+    }
+
+    const body = buildOpenRouterTtsRequestBody(text, this.settings);
+    await this.requestRemoteAudio({
+      endpoint: new URL(OPENROUTER_TTS_ENDPOINT),
+      headers: {
+        Accept: 'audio/mpeg',
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Length': Buffer.byteLength(body, 'utf8'),
+        'Content-Type': 'application/json',
+        'User-Agent': 'note-reader-cosyvoice/0.2.3',
+      },
+      body,
+      outputPath,
+      session,
+      serviceLabel: 'OpenRouter TTS',
+      expectedContentType: 'audio/mpeg',
+      failureHint: 'Check the selected API credential, model, voice, account balance, and privacy settings.',
+    });
+  }
+
+  async createPlayableAudioSource(prepared) {
+    const audioBytes = await fs.promises.readFile(prepared.outputPath);
+    const blobSource = createBlobAudioSource(audioBytes, prepared.outputPath);
+    if (blobSource) {
+      return blobSource;
+    }
+
+    return {
+      mimeType: getAudioMimeType(prepared.outputPath),
+      url: prepared.url,
+      release() {},
+    };
+  }
+
+  releaseAudioSource(audio) {
+    if (!audio || typeof audio.noteReaderReleaseSource !== 'function') {
+      return;
+    }
+    const release = audio.noteReaderReleaseSource;
+    audio.noteReaderReleaseSource = null;
+    release();
+  }
+
+  async playPreparedAudio(prepared, session, index, total) {
+    if (!this.isActive(session)) {
+      return;
+    }
+
+    await this.waitWhilePaused(session);
+    if (!this.isActive(session)) {
+      return;
+    }
+
+    const source = await this.createPlayableAudioSource(prepared);
+    if (!this.isActive(session)) {
+      source.release();
+      return;
+    }
+
+    await new Promise((resolve, reject) => {
+      let audio;
+      let settled = false;
+      const finish = (callback, value) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        if (this.currentAudio === audio) {
+          this.currentAudio = null;
+        }
+        this.releaseAudioSource(audio);
+        callback(value);
+      };
+
+      try {
+        audio = new Audio();
+        audio.noteReaderReleaseSource = source.release;
         audio.preload = 'auto';
         this.currentAudio = audio;
         this.updateStatus(`${getSpeechEngineLabel(this.settings)} play ${index + 1}/${total}`, {
@@ -1190,7 +2256,7 @@ class CosyVoiceReaderPlugin extends Plugin {
         });
         void this.writeRuntimeLog('play', {
           index,
-          urlScheme: String(prepared.url).split(':')[0],
+          urlScheme: String(source.url).split(':')[0],
         });
 
         let lastProgressUpdate = 0;
@@ -1208,9 +2274,6 @@ class CosyVoiceReaderPlugin extends Plugin {
         };
 
         audio.onended = () => {
-          if (this.currentAudio === audio) {
-            this.currentAudio = null;
-          }
           this.setReaderState({
             canPause: false,
             canNextChunk: false,
@@ -1219,23 +2282,25 @@ class CosyVoiceReaderPlugin extends Plugin {
             isPaused: false,
             progress: total ? (index + 1) / total : 1,
           });
-          resolve();
+          finish(resolve);
         };
 
         audio.onerror = () => {
-          if (this.currentAudio === audio) {
-            this.currentAudio = null;
-          }
-          reject(new Error(`Unable to play ${prepared.outputPath}`));
+          finish(reject, new Error(`Unable to play ${prepared.outputPath}${describeMediaError(audio.error)}`));
         };
 
-        audio.play().catch((error) => {
-          if (this.currentAudio === audio) {
-            this.currentAudio = null;
-          }
-          reject(error);
+        audio.src = source.url;
+        Promise.resolve(audio.play()).catch((error) => {
+          finish(reject, error);
         });
-      }).catch(reject);
+      } catch (error) {
+        if (audio) {
+          finish(reject, error);
+        } else {
+          source.release();
+          reject(error);
+        }
+      }
     });
   }
 
@@ -1462,8 +2527,16 @@ class CosyVoiceReaderPlugin extends Plugin {
       this.currentProcess = null;
     }
 
+    if (this.currentRequests instanceof Set) {
+      for (const request of Array.from(this.currentRequests)) {
+        request.destroy();
+      }
+      this.currentRequests.clear();
+    }
+
     if (this.currentAudio) {
       this.currentAudio.pause();
+      this.releaseAudioSource(this.currentAudio);
       this.currentAudio.removeAttribute('src');
       this.currentAudio.load();
       this.currentAudio = null;
@@ -1519,19 +2592,29 @@ class CosyVoiceReaderPlugin extends Plugin {
     });
   }
 
-  async writeRuntimeLog(stage, details = {}) {
-    if (!this.logPath) {
+  async writeRuntimeLog(stage, _details = {}) {
+    if (!this.logPath || !this.settings || !this.settings.diagnosticLogging) {
       return;
     }
 
-    const event = {
-      time: new Date().toISOString(),
-      stage,
-      ...details,
-    };
+    const event = createSafeRuntimeLogEvent(stage, this.settings);
+    if (!event) {
+      return;
+    }
+
+    const line = `${JSON.stringify(event)}\n`;
 
     try {
-      await fs.promises.appendFile(this.logPath, `${JSON.stringify(event)}\n`, 'utf8');
+      const stat = await fs.promises.stat(this.logPath).catch((error) => {
+        if (error && error.code === 'ENOENT') {
+          return null;
+        }
+        throw error;
+      });
+      if (stat && stat.size + Buffer.byteLength(line, 'utf8') > RUNTIME_LOG_MAX_BYTES) {
+        await fs.promises.unlink(this.logPath);
+      }
+      await fs.promises.appendFile(this.logPath, line, { encoding: 'utf8', mode: 0o600 });
     } catch (error) {
       console.warn(`[${PLUGIN_ID}] Could not write runtime log`, error);
     }
@@ -1776,51 +2859,386 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
     containerEl.empty();
 
     containerEl.createEl('h2', { text: 'Note Reader CosyVoice' });
+    const settingsLanguage = normalizeSettingsLanguage(this.plugin.settings.settingsLanguage);
+    const ui = getSettingsUiText(settingsLanguage);
+    const selectedSpeechEngine = normalizeSpeechEngine(this.plugin.settings.speechEngine);
+    const microsoftVoicePresets = getMicrosoftVoicePresets(settingsLanguage);
+    const commonVoiceIds = new Set(microsoftVoicePresets.map(([id]) => id));
 
     new Setting(containerEl)
-      .setName('Speech engine')
-      .setDesc('Choose local CosyVoice or Microsoft Edge online voice. Edge mode sends text to Microsoft Edge TTS.')
+      .setName(ui.settingsLanguageName)
+      .setDesc(ui.settingsLanguageDesc)
       .addDropdown((dropdown) => {
         dropdown
-          .addOption('local-cosyvoice', 'Local CosyVoice')
-          .addOption('edge-tts', 'Microsoft Edge online voice')
-          .setValue(normalizeSpeechEngine(this.plugin.settings.speechEngine))
+          .addOption('english', ui.settingsLanguageEnglish)
+          .addOption('chinese', ui.settingsLanguageChinese)
+          .setValue(settingsLanguage)
+          .onChange(async (value) => {
+            this.plugin.settings.settingsLanguage = normalizeSettingsLanguage(value);
+            await this.plugin.saveSettings();
+            this.display();
+          });
+      });
+
+    new Setting(containerEl)
+      .setName(ui.speechEngineName)
+      .setDesc(ui.speechEngineDesc)
+      .addDropdown((dropdown) => {
+        dropdown
+          .addOption('local-cosyvoice', ui.speechEngineLocal)
+          .addOption('edge-tts', ui.speechEngineEdge)
+          .addOption('azure-speech', ui.speechEngineAzure)
+          .addOption('openrouter-tts', ui.speechEngineOpenRouter)
+          .setValue(selectedSpeechEngine)
           .onChange(async (value) => {
             this.plugin.settings.speechEngine = normalizeSpeechEngine(value);
             await this.plugin.saveSettings();
+            this.display();
           });
       });
 
-    new Setting(containerEl)
-      .setName('CosyVoice script')
-      .setDesc('PowerShell wrapper used in Local CosyVoice mode.')
-      .addText((text) => {
-        text
-          .setPlaceholder(RECOMMENDED_SCRIPT_PATH)
-          .setValue(this.plugin.settings.scriptPath)
-          .onChange(async (value) => {
-            this.plugin.settings.scriptPath = value.trim();
+    if (selectedSpeechEngine === 'local-cosyvoice') {
+      new Setting(containerEl)
+        .setName(ui.localScriptName)
+        .setDesc(ui.localScriptDesc)
+        .addText((text) => {
+          text
+            .setPlaceholder(RECOMMENDED_SCRIPT_PATH)
+            .setValue(this.plugin.settings.scriptPath)
+            .onChange(async (value) => {
+              this.plugin.settings.scriptPath = value.trim();
+              await this.plugin.saveSettings();
+            });
+          text.inputEl.addClass('note-reader-cosyvoice-script-input');
+        });
+    }
+
+    if (selectedSpeechEngine === 'edge-tts') {
+      new Setting(containerEl)
+        .setName(ui.edgeConsentName)
+        .setDesc(ui.edgeConsentDesc)
+        .addToggle((toggle) => {
+          toggle.setValue(this.plugin.settings.edgeTtsConsent === true).onChange(async (value) => {
+            this.plugin.settings.edgeTtsConsent = value;
             await this.plugin.saveSettings();
           });
-        text.inputEl.addClass('note-reader-cosyvoice-script-input');
-      });
+        });
 
-    new Setting(containerEl)
-      .setName('Edge TTS voice')
-      .setDesc('Voice id used in Microsoft Edge online voice mode, for example zh-CN-XiaoxiaoNeural.')
-      .addText((text) => {
-        text
-          .setPlaceholder(DEFAULT_EDGE_TTS_VOICE)
-          .setValue(normalizeEdgeTtsVoice(this.plugin.settings.edgeTtsVoice))
-          .onChange(async (value) => {
-            this.plugin.settings.edgeTtsVoice = normalizeEdgeTtsVoice(value);
+      new Setting(containerEl)
+        .setName(ui.edgeExecutableName)
+        .setDesc(ui.edgeExecutableDesc)
+        .addText((text) => {
+          text
+            .setPlaceholder(DEFAULT_EDGE_TTS_EXECUTABLE)
+            .setValue(normalizeEdgeTtsExecutable(this.plugin.settings.edgeTtsExecutable))
+            .onChange(async (value) => {
+              this.plugin.settings.edgeTtsExecutable = normalizeEdgeTtsExecutable(value);
+              await this.plugin.saveSettings();
+            });
+          text.inputEl.addClass('note-reader-cosyvoice-script-input');
+        });
+
+      const currentEdgeVoice = normalizeEdgeTtsVoice(this.plugin.settings.edgeTtsVoice);
+      new Setting(containerEl)
+        .setName(ui.edgeCommonVoicesName)
+        .setDesc(ui.edgeCommonVoicesDesc)
+        .addDropdown((dropdown) => {
+          for (const [voiceId, label] of microsoftVoicePresets) {
+            dropdown.addOption(voiceId, label);
+          }
+          dropdown
+            .addOption('__custom__', ui.customVoiceOption)
+            .setValue(commonVoiceIds.has(currentEdgeVoice) ? currentEdgeVoice : '__custom__')
+            .onChange(async (value) => {
+              if (value === '__custom__') {
+                return;
+              }
+              this.plugin.settings.edgeTtsVoice = value;
+              await this.plugin.saveSettings();
+              this.display();
+            });
+        });
+
+      new Setting(containerEl)
+        .setName(ui.edgeVoiceName)
+        .setDesc(ui.edgeVoiceDesc)
+        .addText((text) => {
+          text
+            .setPlaceholder(DEFAULT_EDGE_TTS_VOICE)
+            .setValue(normalizeEdgeTtsVoice(this.plugin.settings.edgeTtsVoice))
+            .onChange(async (value) => {
+              this.plugin.settings.edgeTtsVoice = normalizeEdgeTtsVoice(value);
+              await this.plugin.saveSettings();
+            });
+        });
+    }
+
+    if (selectedSpeechEngine === 'azure-speech') {
+      new Setting(containerEl)
+        .setName(ui.azureConsentName)
+        .setDesc(ui.azureConsentDesc)
+        .addToggle((toggle) => {
+          toggle.setValue(this.plugin.settings.azureSpeechConsent === true).onChange(async (value) => {
+            this.plugin.settings.azureSpeechConsent = value;
             await this.plugin.saveSettings();
           });
-      });
+        });
+
+      new Setting(containerEl)
+        .setName(ui.azureCloudName)
+        .setDesc(ui.azureCloudDesc)
+        .addDropdown((dropdown) => {
+          dropdown
+            .addOption('public', ui.azurePublicCloud)
+            .addOption('china', ui.azureChinaCloud)
+            .setValue(normalizeAzureSpeechCloud(this.plugin.settings.azureSpeechCloud))
+            .onChange(async (value) => {
+              this.plugin.settings.azureSpeechCloud = normalizeAzureSpeechCloud(value);
+              await this.plugin.saveSettings();
+            });
+        });
+
+      new Setting(containerEl)
+        .setName(ui.azureRegionName)
+        .setDesc(ui.azureRegionDesc)
+        .addText((text) => {
+          text
+            .setPlaceholder('eastasia')
+            .setValue(this.plugin.settings.azureSpeechRegion || '')
+            .onChange(async (value) => {
+              this.plugin.settings.azureSpeechRegion = normalizeAzureSpeechRegion(value);
+              await this.plugin.saveSettings();
+            });
+        });
+
+      const azureCredentialSource = normalizeCredentialSource(this.plugin.settings.azureSpeechCredentialSource);
+      new Setting(containerEl)
+        .setName(ui.credentialSourceName)
+        .setDesc(ui.credentialSourceDesc)
+        .addDropdown((dropdown) => {
+          dropdown
+            .addOption('obsidian-secret', ui.credentialSourceSecret)
+            .addOption('key-file', ui.credentialSourceFile)
+            .setValue(azureCredentialSource)
+            .onChange(async (value) => {
+              this.plugin.settings.azureSpeechCredentialSource = normalizeCredentialSource(value);
+              await this.plugin.saveSettings();
+              this.display();
+            });
+        });
+
+      if (azureCredentialSource === 'obsidian-secret') {
+        if (hasObsidianSecretStorageUi(this.app)) {
+          new Setting(containerEl)
+            .setName(ui.azureSecretName)
+            .setDesc(ui.azureSecretDesc)
+            .addComponent((element) => new SecretComponent(this.app, element)
+              .setValue(this.plugin.settings.azureSpeechSecretName || '')
+              .onChange(async (value) => {
+                this.plugin.settings.azureSpeechSecretName = String(value || '').trim();
+                await this.plugin.saveSettings();
+              }));
+        } else {
+          new Setting(containerEl)
+            .setName(ui.secretStorageUnavailableName)
+            .setDesc(ui.secretStorageUnavailableDesc);
+        }
+      } else {
+        new Setting(containerEl)
+          .setName(ui.azureKeyFileName)
+          .setDesc(ui.azureKeyFileDesc)
+          .addText((text) => {
+            text
+              .setPlaceholder('C:\\Users\\you\\AppData\\Local\\note-reader-cosyvoice\\azure-speech-key.txt')
+              .setValue(this.plugin.settings.azureSpeechKeyPath || '')
+              .onChange(async (value) => {
+                this.plugin.settings.azureSpeechKeyPath = value.trim();
+                await this.plugin.saveSettings();
+              });
+            text.inputEl.addClass('note-reader-cosyvoice-script-input');
+          });
+      }
+
+      const currentAzureVoice = normalizeAzureSpeechVoice(this.plugin.settings.azureSpeechVoice);
+      new Setting(containerEl)
+        .setName(ui.azureCommonVoicesName)
+        .setDesc(ui.azureCommonVoicesDesc)
+        .addDropdown((dropdown) => {
+          for (const [voiceId, label] of microsoftVoicePresets) {
+            dropdown.addOption(voiceId, label);
+          }
+          dropdown
+            .addOption('__custom__', ui.customVoiceOption)
+            .setValue(commonVoiceIds.has(currentAzureVoice) ? currentAzureVoice : '__custom__')
+            .onChange(async (value) => {
+              if (value === '__custom__') {
+                return;
+              }
+              this.plugin.settings.azureSpeechVoice = value;
+              await this.plugin.saveSettings();
+              this.display();
+            });
+        });
+
+      new Setting(containerEl)
+        .setName(ui.azureVoiceName)
+        .setDesc(ui.azureVoiceDesc)
+        .addText((text) => {
+          text
+            .setPlaceholder(DEFAULT_AZURE_SPEECH_VOICE)
+            .setValue(currentAzureVoice)
+            .onChange(async (value) => {
+              this.plugin.settings.azureSpeechVoice = normalizeAzureSpeechVoice(value);
+              await this.plugin.saveSettings();
+            });
+        });
+    }
+
+    if (selectedSpeechEngine === 'openrouter-tts') {
+      new Setting(containerEl)
+        .setName(ui.openRouterConsentName)
+        .setDesc(ui.openRouterConsentDesc)
+        .addToggle((toggle) => {
+          toggle.setValue(this.plugin.settings.openRouterConsent === true).onChange(async (value) => {
+            this.plugin.settings.openRouterConsent = value;
+            await this.plugin.saveSettings();
+          });
+        });
+
+      const openRouterCredentialSource = normalizeCredentialSource(this.plugin.settings.openRouterCredentialSource);
+      new Setting(containerEl)
+        .setName(ui.credentialSourceName)
+        .setDesc(ui.credentialSourceDesc)
+        .addDropdown((dropdown) => {
+          dropdown
+            .addOption('obsidian-secret', ui.credentialSourceSecret)
+            .addOption('key-file', ui.credentialSourceFile)
+            .setValue(openRouterCredentialSource)
+            .onChange(async (value) => {
+              this.plugin.settings.openRouterCredentialSource = normalizeCredentialSource(value);
+              await this.plugin.saveSettings();
+              this.display();
+            });
+        });
+
+      if (openRouterCredentialSource === 'obsidian-secret') {
+        if (hasObsidianSecretStorageUi(this.app)) {
+          new Setting(containerEl)
+            .setName(ui.openRouterSecretName)
+            .setDesc(ui.openRouterSecretDesc)
+            .addComponent((element) => new SecretComponent(this.app, element)
+              .setValue(this.plugin.settings.openRouterSecretName || '')
+              .onChange(async (value) => {
+                this.plugin.settings.openRouterSecretName = String(value || '').trim();
+                await this.plugin.saveSettings();
+              }));
+        } else {
+          new Setting(containerEl)
+            .setName(ui.secretStorageUnavailableName)
+            .setDesc(ui.secretStorageUnavailableDesc);
+        }
+      } else {
+        new Setting(containerEl)
+          .setName(ui.openRouterKeyFileName)
+          .setDesc(ui.openRouterKeyFileDesc)
+          .addText((text) => {
+            text
+              .setPlaceholder('C:\\Users\\you\\AppData\\Local\\note-reader-cosyvoice\\openrouter-api-key.txt')
+              .setValue(this.plugin.settings.openRouterKeyPath || '')
+              .onChange(async (value) => {
+                this.plugin.settings.openRouterKeyPath = value.trim();
+                await this.plugin.saveSettings();
+              });
+            text.inputEl.addClass('note-reader-cosyvoice-script-input');
+          });
+      }
+
+      const currentOpenRouterModel = normalizeOpenRouterModel(this.plugin.settings.openRouterModel);
+      const currentOpenRouterVoice = normalizeOpenRouterVoice(this.plugin.settings.openRouterVoice);
+      const openRouterModels = getOpenRouterTtsModels(settingsLanguage);
+      const selectedOpenRouterModel = openRouterModels.find(([model]) => model === currentOpenRouterModel);
+      new Setting(containerEl)
+        .setName(ui.openRouterModelsName)
+        .setDesc(ui.openRouterModelsDesc)
+        .addDropdown((dropdown) => {
+          for (const [model, , label] of openRouterModels) {
+            dropdown.addOption(model, label);
+          }
+          dropdown
+            .addOption('__custom__', ui.customModelOption)
+            .setValue(selectedOpenRouterModel ? currentOpenRouterModel : '__custom__')
+            .onChange(async (value) => {
+              if (value === '__custom__') {
+                return;
+              }
+              this.plugin.settings.openRouterModel = value;
+              this.plugin.settings.openRouterVoice = getDefaultOpenRouterVoiceForModel(value);
+              await this.plugin.saveSettings();
+              this.display();
+            });
+        });
+
+      new Setting(containerEl)
+        .setName(ui.openRouterModelName)
+        .setDesc(ui.openRouterModelDesc)
+        .addText((text) => {
+          text
+            .setPlaceholder(DEFAULT_OPENROUTER_TTS_MODEL)
+            .setValue(currentOpenRouterModel)
+            .onChange(async (value) => {
+              this.plugin.settings.openRouterModel = normalizeOpenRouterModel(value);
+              await this.plugin.saveSettings();
+            });
+          text.inputEl.addClass('note-reader-cosyvoice-script-input');
+        });
+
+      new Setting(containerEl)
+        .setName(ui.openRouterModelInfoName)
+        .setDesc(selectedOpenRouterModel ? selectedOpenRouterModel[3] : ui.customModelInfo);
+
+      const openRouterVoicePresets = getOpenRouterTtsVoicePresets(currentOpenRouterModel, settingsLanguage);
+      const openRouterVoiceIds = new Set(openRouterVoicePresets.map(([, voice]) => voice));
+      new Setting(containerEl)
+        .setName(ui.openRouterVoicesName)
+        .setDesc(ui.openRouterVoicesDesc)
+        .addDropdown((dropdown) => {
+          for (const [, voice, label] of openRouterVoicePresets) {
+            dropdown.addOption(voice, label);
+          }
+          dropdown
+            .addOption('__custom__', ui.customVoiceOption)
+            .setValue(openRouterVoiceIds.has(currentOpenRouterVoice) ? currentOpenRouterVoice : '__custom__')
+            .onChange(async (value) => {
+              if (value === '__custom__') {
+                return;
+              }
+              this.plugin.settings.openRouterVoice = value;
+              await this.plugin.saveSettings();
+              this.display();
+            });
+        });
+
+      new Setting(containerEl)
+        .setName(ui.openRouterVoiceName)
+        .setDesc(ui.openRouterVoiceDesc)
+        .addText((text) => {
+          text
+            .setPlaceholder(DEFAULT_OPENROUTER_TTS_VOICE)
+            .setValue(currentOpenRouterVoice)
+            .onChange(async (value) => {
+              this.plugin.settings.openRouterVoice = normalizeOpenRouterVoice(value);
+              await this.plugin.saveSettings();
+            });
+        });
+
+      new Setting(containerEl)
+        .setName(ui.openRouterPrivacyName)
+        .setDesc(ui.openRouterPrivacyDesc);
+    }
 
     new Setting(containerEl)
-      .setName('Speed')
-      .setDesc('Speech speed passed to the selected speech engine.')
+      .setName(ui.speedName)
+      .setDesc(ui.speedDesc)
       .addSlider((slider) => {
         slider
           .setLimits(0.5, 2, 0.05)
@@ -1833,8 +3251,8 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
       });
 
     new Setting(containerEl)
-      .setName('Chunk limits')
-      .setDesc('Comma-separated character limits. Earlier chunks are shorter so playback starts sooner.')
+      .setName(ui.chunkLimitsName)
+      .setDesc(ui.chunkLimitsDesc)
       .addText((text) => {
         text.setValue(this.plugin.settings.chunkLimits).onChange(async (value) => {
           this.plugin.settings.chunkLimits = parseChunkLimits(value).join(',');
@@ -1843,8 +3261,8 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
       });
 
     new Setting(containerEl)
-      .setName('Strip Markdown')
-      .setDesc('Remove frontmatter, links, headings, embeds, and common formatting before synthesis.')
+      .setName(ui.stripMarkdownName)
+      .setDesc(ui.stripMarkdownDesc)
       .addToggle((toggle) => {
         toggle.setValue(this.plugin.settings.stripMarkdown).onChange(async (value) => {
           this.plugin.settings.stripMarkdown = value;
@@ -1853,13 +3271,13 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
       });
 
     new Setting(containerEl)
-      .setName('Math reading language')
-      .setDesc('Choose how short LaTeX formulas are verbalized. Long formulas are skipped in all modes.')
+      .setName(ui.mathLanguageName)
+      .setDesc(ui.mathLanguageDesc)
       .addDropdown((dropdown) => {
         dropdown
-          .addOption('english', 'English')
-          .addOption('chinese', 'Chinese')
-          .addOption('skip', 'Skip math')
+          .addOption('english', ui.mathEnglish)
+          .addOption('chinese', ui.mathChinese)
+          .addOption('skip', ui.mathSkip)
           .setValue(normalizeMathReadingLanguage(this.plugin.settings.mathReadingLanguage))
           .onChange(async (value) => {
             this.plugin.settings.mathReadingLanguage = normalizeMathReadingLanguage(value);
@@ -1868,8 +3286,8 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
       });
 
     new Setting(containerEl)
-      .setName('Clean temporary audio')
-      .setDesc('Delete generated text and WAV files after reading finishes or stops.')
+      .setName(ui.cleanupName)
+      .setDesc(ui.cleanupDesc)
       .addToggle((toggle) => {
         toggle.setValue(this.plugin.settings.cleanupCache).onChange(async (value) => {
           this.plugin.settings.cleanupCache = value;
@@ -1878,22 +3296,44 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
       });
 
     new Setting(containerEl)
-      .setName('Restore default settings')
-      .setDesc('Reset every setting on this page to its default value and save immediately.')
+      .setName(ui.diagnosticName)
+      .setDesc(ui.diagnosticDesc)
+      .addToggle((toggle) => {
+        toggle.setValue(this.plugin.settings.diagnosticLogging === true).onChange(async (value) => {
+          this.plugin.settings.diagnosticLogging = value;
+          await this.plugin.saveSettings();
+        });
+      });
+
+    new Setting(containerEl)
+      .setName(ui.clearTemporaryName)
+      .setDesc(ui.clearTemporaryDesc)
       .addButton((button) => {
         button
-          .setButtonText('Restore defaults')
+          .setButtonText(ui.clearNowButton)
+          .setWarning()
+          .onClick(async () => {
+            await this.plugin.clearTemporaryData();
+          });
+      });
+
+    new Setting(containerEl)
+      .setName(ui.restoreDefaultsName)
+      .setDesc(ui.restoreDefaultsDesc)
+      .addButton((button) => {
+        button
+          .setButtonText(ui.restoreDefaultsButton)
           .setWarning()
           .onClick(async () => {
             await this.plugin.resetSettingsToDefaults();
-            new Notice('CosyVoice: settings restored to defaults.');
+            new Notice(ui.settingsRestoredNotice);
             this.display();
           });
       });
 
     containerEl.createEl('p', {
       cls: 'note-reader-cosyvoice-muted',
-      text: 'Commands: read current note, read selection, pause or resume, and stop.',
+      text: ui.commandsFooter,
     });
   }
 }
@@ -1902,22 +3342,54 @@ module.exports = {
   default: CosyVoiceReaderPlugin,
   __test: {
     VIEW_TYPE,
+    buildAzureSpeechEndpoint,
+    buildAzureSpeechSsml,
     buildEdgeTtsArgs,
+    buildOpenRouterTtsRequestBody,
     calculateCurrentChunkSeekTime,
+    createBlobAudioSource,
     createDefaultSettings,
     createReaderState,
+    createSafeRuntimeLogEvent,
+    describeMediaError,
     formatProgressLabel,
     formatSpeedLabel,
+    getAzureSpeechConfigurationError,
+    getAzureSpeechVoicePresets,
+    getDefaultOpenRouterVoiceForModel,
+    getEdgeTtsVoicePresets,
+    getObsidianSecretConfigurationError,
+    getOpenRouterConfigurationError,
+    getOpenRouterTtsModels,
+    getOpenRouterTtsPresets,
+    getOpenRouterTtsVoicePresets,
+    getPluginTempCacheDir,
+    getSettingsUiText,
     getTextFromPositionToEnd,
     getAudioUrlForFile,
     getSpeedPresets,
+    hasAzureSpeechConsent,
+    hasEdgeTtsConsent,
+    hasObsidianSecretStorage,
+    hasOpenRouterConsent,
+    isOwnedCacheFileName,
+    normalizeAzureSpeechCloud,
+    normalizeAzureSpeechRegion,
+    normalizeAzureSpeechVoice,
+    normalizeCredentialSource,
+    normalizeEdgeTtsExecutable,
     normalizeEdgeTtsVoice,
     normalizeMathReadingLanguage,
+    normalizeOpenRouterModel,
+    normalizeOpenRouterVoice,
+    normalizeSettingsLanguage,
     normalizeSpeechEngine,
     resolveDefaultScriptPath,
     resolvePowerShellExecutable,
+    readObsidianSecretValue,
     sanitizeTextForSpeech,
     sanitizeLatexForSpeech,
+    selectKnownSettings,
     toVaultRelativePath,
     verbalizeShortLatex,
   },

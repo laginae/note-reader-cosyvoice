@@ -171,6 +171,8 @@ Then edit the `$url` in the script, or set:
 $env:COSYVOICE_TTS_URL = 'http://127.0.0.1:8765/tts'
 ```
 
+The example wrapper permits plain HTTP only for loopback hosts (`127.0.0.1`, `localhost`, or `::1`). A LAN or remote host must use HTTPS so note text is not sent across the network in cleartext. If the service is currently HTTP-only, keep it bound to loopback or place it behind a correctly validated HTTPS reverse proxy.
+
 The example sends JSON:
 
 ```json

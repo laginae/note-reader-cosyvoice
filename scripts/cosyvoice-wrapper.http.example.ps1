@@ -28,6 +28,20 @@ if ($outputDir -and -not (Test-Path -LiteralPath $outputDir)) {
 # The endpoint is expected to return WAV bytes directly.
 $url = if ($env:COSYVOICE_TTS_URL) { $env:COSYVOICE_TTS_URL } else { 'http://127.0.0.1:8765/tts' }
 
+try {
+  $uri = [System.Uri] $url
+} catch {
+  throw "COSYVOICE_TTS_URL is not a valid absolute URL: $url"
+}
+
+if (-not $uri.IsAbsoluteUri -or $uri.Scheme -notin @('http', 'https')) {
+  throw 'COSYVOICE_TTS_URL must use http:// or https://.'
+}
+
+if ($uri.Scheme -eq 'http' -and -not $uri.IsLoopback) {
+  throw 'Refusing to send note text over cleartext HTTP to a non-loopback host. Use HTTPS for LAN or remote services.'
+}
+
 $payload = @{
   text = $text
   speed = $Speed
