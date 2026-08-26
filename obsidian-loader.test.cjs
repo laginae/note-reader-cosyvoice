@@ -196,7 +196,7 @@ const testVaultPath = path.resolve('test-vault');
 const testAudioPath = path.join(testVaultPath, '.obsidian', 'plugins', 'note-reader-cosyvoice', 'cache', 'a.wav');
 assert.strictEqual(manifest.id, 'note-reader-cosyvoice');
 assert.strictEqual(manifest.name, 'Note and PDF Voice Reader');
-assert.strictEqual(manifest.version, '0.3.1');
+assert.strictEqual(manifest.version, '0.4.0');
 assert.ok(!/\bObsidian\b/.test(manifest.description));
 assert.ok(!code.includes('Note Reader CosyVoice'));
 assert.ok(!code.includes('CosyVoice Reader'));
@@ -284,6 +284,8 @@ assert.deepStrictEqual(moduleObject.exports.__test.createDefaultSettings(), {
   chunkLimits: '40,80,120,160,280,320',
   onlineChunkLimits: '200,400,800',
   onlinePrefetchChunks: 1,
+  readingPositions: {},
+  rememberReadingPosition: false,
   diagnosticLogging: false,
   edgeTtsConsent: false,
   edgeTtsExecutable: 'edge-tts',
@@ -920,6 +922,7 @@ assert.deepStrictEqual(chunkNavigationCalls, [-1, 1]);
   assert.ok(startupCommandIds.includes('seek-forward-5-seconds'));
   assert.ok(startupCommandIds.includes('previous-reading-chunk'));
   assert.ok(startupCommandIds.includes('next-reading-chunk'));
+  assert.ok(startupCommandIds.includes('resume-current-file'));
   assert.strictEqual(fs.existsSync(legacyOwnedFile), false);
   assert.strictEqual(fs.existsSync(legacyKeepFile), true);
   assert.strictEqual(fs.existsSync(legacyLogFile), false);
@@ -1067,7 +1070,7 @@ assert.deepStrictEqual(chunkNavigationCalls, [-1, 1]);
   assert.deepStrictEqual(
     progressivePdfSession.chunks,
     moduleObject.exports.__test.splitTextForSpeechChunks(
-      `${'A'.repeat(210)} ${'B'.repeat(500)}`,
+      `${'A'.repeat(210)}\n\n${'B'.repeat(500)}`,
       [200, 400, 800]
     )
   );
@@ -1154,6 +1157,55 @@ assert.deepStrictEqual(chunkNavigationCalls, [-1, 1]);
   await prefetchPlugin.runSpeechSession(prefetchSession);
   assert.deepStrictEqual(prefetchEvents, ['prepare:0', 'prepare:1', 'play:0', 'play:1']);
 
+  const arrivingPrefetchPlugin = Object.create(PluginClass.prototype);
+  arrivingPrefetchPlugin.sequence = 77;
+  arrivingPrefetchPlugin.settings = {
+    ...moduleObject.exports.__test.createDefaultSettings(),
+    cleanupCache: false,
+    speechEngine: 'openrouter-tts',
+  };
+  arrivingPrefetchPlugin.readerState = moduleObject.exports.__test.createReaderState();
+  arrivingPrefetchPlugin.setReaderState = () => {};
+  arrivingPrefetchPlugin.updateStatus = () => {};
+  const arrivingPrefetchEvents = [];
+  arrivingPrefetchPlugin.queuePrepareChunk = (_text, index) => {
+    arrivingPrefetchEvents.push(`prepare:${index}`);
+    return Promise.resolve({ outputPath: `${index}.mp3` });
+  };
+  arrivingPrefetchPlugin.playPreparedAudio = async (_prepared, session, index) => {
+    arrivingPrefetchEvents.push(`play:${index}`);
+    if (index === 0) {
+      assert.strictEqual(arrivingPrefetchPlugin.appendSessionChunks(
+        session,
+        [{ metadata: { pageNumber: 2 }, text: 'second page chunk' }]
+      ), 1);
+      arrivingPrefetchPlugin.completeSessionChunks(session);
+      await Promise.resolve();
+      assert.ok(arrivingPrefetchEvents.includes('prepare:1'));
+    }
+  };
+  const arrivingPrefetchSession = arrivingPrefetchPlugin.createSpeechSession(
+    ['first page chunk'],
+    'paper.pdf',
+    {
+      engineLabel: 'OpenRouter TTS',
+      prefetchChunks: 1,
+      speechEngine: 'openrouter-tts',
+    },
+    { kind: 'pdf-progressive', productionComplete: false }
+  );
+  arrivingPrefetchPlugin.activeSession = arrivingPrefetchSession;
+  await arrivingPrefetchPlugin.runSpeechSession(arrivingPrefetchSession);
+  assert.deepStrictEqual(
+    arrivingPrefetchEvents,
+    ['prepare:0', 'play:0', 'prepare:1', 'play:1']
+  );
+  arrivingPrefetchSession.stopped = true;
+  assert.strictEqual(arrivingPrefetchPlugin.appendSessionChunks(
+    arrivingPrefetchSession,
+    ['stale chunk']
+  ), 0);
+
   const waitingPlugin = Object.create(PluginClass.prototype);
   waitingPlugin.sequence = 80;
   waitingPlugin.settings = {
@@ -1230,6 +1282,104 @@ assert.deepStrictEqual(chunkNavigationCalls, [-1, 1]);
   assert.strictEqual(migratedSettings.openRouterCredentialSource, 'key-file');
   assert.strictEqual(migratedSettings.azureSpeechSecretName, '');
   assert.strictEqual(migratedSettings.openRouterSecretName, '');
+
+  const positionPlugin = Object.create(PluginClass.prototype);
+  let savedPositionSettings = null;
+  positionPlugin.settings = {
+    ...moduleObject.exports.__test.createDefaultSettings(),
+    rememberReadingPosition: true,
+  };
+  positionPlugin.saveData = async (value) => {
+    savedPositionSettings = value;
+  };
+  positionPlugin.renderReaderViews = () => {};
+  const positionSession = {
+    chunkPageNumbers: [4, 4],
+    chunks: [
+      'A private paragraph anchor that is long enough to find again. '.repeat(8),
+      'The next paragraph.',
+    ],
+    currentChunkIndex: 0,
+    fileMtime: 123,
+    filePath: 'papers/private.pdf',
+    lastCompletedChunkIndex: null,
+    sourceKind: 'pdf',
+  };
+  assert.strictEqual(await positionPlugin.saveSessionReadingPosition(positionSession), true);
+  const savedPdfPosition = savedPositionSettings.readingPositions['papers/private.pdf'];
+  assert.strictEqual(savedPdfPosition.pageNumber, 4);
+  assert.strictEqual(savedPdfPosition.chunkIndex, 0);
+  assert.ok(savedPdfPosition.anchor.length <= 180);
+  assert.ok(savedPdfPosition.anchor.length < positionSession.chunks[0].length);
+  assert.strictEqual(await positionPlugin.clearSessionReadingPosition(positionSession), true);
+  assert.strictEqual(savedPositionSettings.readingPositions['papers/private.pdf'], undefined);
+
+  const resumeFile = {
+    basename: 'resume-note',
+    extension: 'md',
+    name: 'resume-note.md',
+    path: 'notes/resume-note.md',
+    stat: { mtime: 123 },
+  };
+  const resumePlugin = Object.create(PluginClass.prototype);
+  resumePlugin.settings = {
+    ...moduleObject.exports.__test.createDefaultSettings(),
+    readingPositions: {
+      [resumeFile.path]: {
+        anchor: 'Saved anchor begins here and continues.',
+        chunkIndex: 1,
+        filePath: resumeFile.path,
+        kind: 'markdown',
+        updatedAt: 100,
+      },
+    },
+    rememberReadingPosition: true,
+    stripMarkdown: false,
+  };
+  resumePlugin.app = {
+    workspace: {
+      getActiveFile: () => resumeFile,
+    },
+  };
+  resumePlugin.getActiveMarkdownView = () => ({
+    editor: {
+      getValue: () => 'Earlier text.\n\nSaved anchor begins here and continues. Final text.',
+    },
+    file: resumeFile,
+  });
+  resumePlugin.activateControlView = async () => {};
+  let resumedMarkdown = null;
+  resumePlugin.startReading = async (text, source, options) => {
+    resumedMarkdown = { options, source, text };
+  };
+  await resumePlugin.resumeCurrentFile();
+  assert.ok(resumedMarkdown.text.startsWith('Saved anchor begins here'));
+  assert.strictEqual(resumedMarkdown.options.file, resumeFile);
+
+  const resumePdfFile = {
+    basename: 'resume-paper',
+    extension: 'pdf',
+    name: 'resume-paper.pdf',
+    path: 'papers/resume-paper.pdf',
+  };
+  resumePlugin.app.workspace.getActiveFile = () => resumePdfFile;
+  resumePlugin.settings.readingPositions = {
+    [resumePdfFile.path]: {
+      anchor: 'Saved PDF anchor text',
+      chunkIndex: 3,
+      filePath: resumePdfFile.path,
+      kind: 'pdf',
+      pageNumber: 7,
+      updatedAt: 200,
+    },
+  };
+  let resumedPdf = null;
+  resumePlugin.readCurrentPdf = async (file, options) => {
+    resumedPdf = { file, options };
+  };
+  await resumePlugin.resumeCurrentFile();
+  assert.strictEqual(resumedPdf.file, resumePdfFile);
+  assert.strictEqual(resumedPdf.options.resumePosition.pageNumber, 7);
 
   const runtimeLogDir = path.join(__dirname, '.test-runtime-log');
   const runtimeLogPath = path.join(runtimeLogDir, 'diagnostic.log');
@@ -1540,6 +1690,18 @@ assert.deepStrictEqual(chunkNavigationCalls, [-1, 1]);
   const synthStatus = prepareStatuses.find((entry) => entry.patch.phase === 'synthesizing');
   assert.strictEqual(synthStatus.patch.canPreviousChunk, true);
   assert.strictEqual(synthStatus.patch.canNextChunk, true);
+
+  prepareSession.currentChunkIndex = 0;
+  preparePlugin.currentAudio = {};
+  prepareStatuses.length = 0;
+  const backgroundPreparedChunk = await preparePlugin.prepareChunk(
+    'background prefetched chunk',
+    2,
+    prepareSession
+  );
+  assert.ok(backgroundPreparedChunk.outputPath.endsWith('.wav'));
+  assert.strictEqual(prepareStatuses.length, 0);
+  preparePlugin.currentAudio = null;
 
   const edgeSession = {
     files: [],

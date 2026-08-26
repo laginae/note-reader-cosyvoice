@@ -1,4 +1,9 @@
 const path = require('path');
+const {
+  createIncrementalSpeechChunker,
+  parseChunkLimits,
+  splitTextForSpeechChunks,
+} = require('./src/semantic-chunker');
 
 const DEFAULT_CHUNK_LIMITS = [40, 80, 120, 160, 280, 320];
 const DEFAULT_ONLINE_CHUNK_LIMITS = [200, 400, 800];
@@ -383,124 +388,6 @@ function cleanupLatexSpeechPreservingLines(text) {
 
 function escapeRegExp(text) {
   return String(text).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-function parseChunkLimits(value, fallback = DEFAULT_CHUNK_LIMITS) {
-  const list = Array.isArray(value)
-    ? value
-    : String(value || '')
-        .split(',')
-        .map((item) => item.trim());
-
-  const limits = list
-    .map((item) => Math.floor(Number(item)))
-    .filter((item) => Number.isFinite(item) && item > 0);
-
-  const fallbackLimits = Array.isArray(fallback)
-    ? fallback.filter((item) => Number.isFinite(item) && item > 0)
-    : [];
-  return limits.length
-    ? limits
-    : (fallbackLimits.length ? fallbackLimits.slice() : DEFAULT_CHUNK_LIMITS.slice());
-}
-
-function splitTextForSpeechChunks(text, maxLengths = DEFAULT_CHUNK_LIMITS) {
-  const limits = parseChunkLimits(maxLengths);
-  const normalized = String(text || '').replace(/\s+/g, ' ').trim();
-
-  if (!normalized) {
-    return [];
-  }
-
-  const chunks = [];
-  let remaining = normalized;
-
-  while (remaining.length > 0) {
-    const limit = limits[Math.min(chunks.length, limits.length - 1)];
-
-    if (remaining.length <= limit) {
-      chunks.push(remaining);
-      break;
-    }
-
-    const cut = chooseChunkCut(remaining, limit);
-    const chunk = remaining.slice(0, cut).trim();
-    if (chunk) {
-      chunks.push(chunk);
-    }
-    remaining = remaining.slice(cut).trim();
-  }
-
-  return chunks;
-}
-
-function createIncrementalSpeechChunker(maxLengths = DEFAULT_CHUNK_LIMITS) {
-  const limits = parseChunkLimits(maxLengths);
-  let buffer = '';
-  let chunkCount = 0;
-
-  const takeReadyChunks = (flush) => {
-    const chunks = [];
-
-    while (buffer) {
-      const limit = limits[Math.min(chunkCount, limits.length - 1)];
-      if (buffer.length <= limit) {
-        if (flush) {
-          chunks.push(buffer);
-          buffer = '';
-          chunkCount += 1;
-        }
-        break;
-      }
-
-      const cut = chooseChunkCut(buffer, limit);
-      const chunk = buffer.slice(0, cut).trim();
-      buffer = buffer.slice(cut).trim();
-      if (chunk) {
-        chunks.push(chunk);
-        chunkCount += 1;
-      }
-    }
-
-    return chunks;
-  };
-
-  return {
-    push(text) {
-      const normalized = String(text || '').replace(/\s+/g, ' ').trim();
-      if (normalized) {
-        buffer = buffer ? `${buffer} ${normalized}` : normalized;
-      }
-      return takeReadyChunks(false);
-    },
-    finish() {
-      return takeReadyChunks(true);
-    },
-  };
-}
-
-function chooseChunkCut(text, limit) {
-  const minUsefulCut = Math.floor(limit * 0.45);
-  const search = text.slice(0, limit + 1);
-
-  for (const pattern of [/[。！？!?]\s?/g, /[，,；;：:]\s?/g, /\s/g]) {
-    let match;
-    let best = -1;
-    pattern.lastIndex = 0;
-
-    while ((match = pattern.exec(search)) !== null) {
-      const end = match.index + match[0].length;
-      if (end > 0 && end <= limit) {
-        best = end;
-      }
-    }
-
-    if (best >= minUsefulCut) {
-      return best;
-    }
-  }
-
-  return limit;
 }
 
 function resolveDefaultScriptPath() {

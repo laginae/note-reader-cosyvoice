@@ -1,480 +1,1033 @@
-const { ItemView, MarkdownView, Notice, Plugin, PluginSettingTab, SecretComponent, Setting, loadPdfJs, setIcon } = require('obsidian');
-const crypto = require('crypto');
-const fs = require('fs');
-const https = require('https');
-const os = require('os');
-const path = require('path');
-const { spawn } = require('child_process');
-const { pathToFileURL } = require('url');
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __commonJS = (cb, mod) => function __require() {
+  return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
+};
 
-const PLUGIN_ID = 'note-reader-cosyvoice';
-const VIEW_TYPE = 'note-reader-cosyvoice-control';
-const DEFAULT_CHUNK_LIMITS = [40, 80, 120, 160, 280, 320];
-const DEFAULT_ONLINE_CHUNK_LIMITS = [200, 400, 800];
-const MAX_ONLINE_PREFETCH_CHUNKS = 1;
-const DEFAULT_MATH_READING_LANGUAGE = 'english';
-const DEFAULT_EDGE_TTS_VOICE = 'en-GB-RyanNeural';
-const DEFAULT_EDGE_TTS_EXECUTABLE = 'edge-tts';
-const DEFAULT_AZURE_SPEECH_VOICE = 'en-GB-RyanNeural';
-const DEFAULT_OPENROUTER_TTS_MODEL = 'hexgrad/kokoro-82m';
-const DEFAULT_OPENROUTER_TTS_VOICE = 'bm_george';
-const AZURE_SPEECH_OUTPUT_FORMAT = 'audio-24khz-48kbitrate-mono-mp3';
-const OPENROUTER_TTS_ENDPOINT = 'https://openrouter.ai/api/v1/audio/speech';
-const RECOMMENDED_SCRIPT_PATH = '%LOCALAPPDATA%\\note-reader-cosyvoice\\cosyvoice-wrapper.ps1';
-const SPEED_PRESETS = [1, 1.25, 1.5, 2, 1.1, 1.2, 1.3, 1.4];
-const KEYBOARD_SEEK_SECONDS = 5;
-const LATEX_FORMULA_MAX_CHARS = 12;
-const MATH_READING_LANGUAGES = ['english', 'chinese', 'skip'];
-const SETTINGS_LANGUAGES = ['english', 'chinese'];
-const CREDENTIAL_SOURCES = ['obsidian-secret', 'key-file'];
-const SPEECH_ENGINES = ['local-cosyvoice', 'edge-tts', 'azure-speech', 'openrouter-tts'];
-const AZURE_SPEECH_CLOUDS = ['public', 'china'];
-const REMOTE_TTS_MAX_AUDIO_BYTES = 20 * 1024 * 1024;
-const REMOTE_TTS_MAX_ATTEMPTS = 3;
-const REMOTE_TTS_RETRY_DELAYS_MS = [750, 1500];
-const REMOTE_TTS_RETRY_AFTER_MAX_MS = 10_000;
-const REMOTE_TTS_RETRYABLE_STATUS_CODES = new Set([408, 425, 429, 500, 502, 503, 504]);
-const REMOTE_TTS_RETRYABLE_ERROR_CODES = new Set([
-  'EAI_AGAIN',
-  'ECONNREFUSED',
-  'ECONNRESET',
-  'EHOSTUNREACH',
-  'ENETDOWN',
-  'ENETRESET',
-  'ENETUNREACH',
-  'EPIPE',
-  'ETIMEDOUT',
+// src/pdf-layout.js
+var require_pdf_layout = __commonJS({
+  "src/pdf-layout.js"(exports2, module2) {
+    "use strict";
+    function normalizeLineBreaks2(text) {
+      return String(text || "").replace(/\r\n?/g, "\n");
+    }
+    function isCjkCharacter(character) {
+      return /[\u3040-\u30ff\u3400-\u9fff\uf900-\ufaff]/.test(String(character || ""));
+    }
+    function shouldJoinPdfTextTokens(currentLine, token) {
+      const previous = currentLine.slice(-1);
+      const next = token.charAt(0);
+      if (!previous || !next) {
+        return true;
+      }
+      if (/[([{\u3008-\u3010\u3014\uff08]/.test(previous)) {
+        return true;
+      }
+      if (/[),.;:!?%\]}\u3001\u3002\u3009-\u3011\u3015\uff01\uff09\uff0c\uff0e\uff1a\uff1b\uff1f]/.test(next)) {
+        return true;
+      }
+      return isCjkCharacter(previous) && isCjkCharacter(next);
+    }
+    function joinTokens(tokens) {
+      let line = "";
+      for (const token of tokens) {
+        const value = String(token || "").replace(/[ \t]+/g, " ").trim();
+        if (!value) {
+          continue;
+        }
+        line = line && !shouldJoinPdfTextTokens(line, value) ? `${line} ${value}` : `${line}${value}`;
+      }
+      return line.trim();
+    }
+    function cleanupExtractedText(lines) {
+      return (Array.isArray(lines) ? lines : []).map((line) => String(line || "").trim()).filter(Boolean).join("\n").replace(/([A-Za-z])-\n(?=[a-z])/g, "$1").replace(/\n{3,}/g, "\n\n").trim();
+    }
+    function extractTextInItemOrder(items) {
+      const lines = [];
+      let currentLine = "";
+      const flushLine = () => {
+        const line = currentLine.trim();
+        if (line) {
+          lines.push(line);
+        }
+        currentLine = "";
+      };
+      for (const item of Array.isArray(items) ? items : []) {
+        if (!item || typeof item.str !== "string") {
+          continue;
+        }
+        const parts = normalizeLineBreaks2(item.str).split("\n");
+        parts.forEach((part, index) => {
+          const token = part.replace(/[ \t]+/g, " ").trim();
+          if (token) {
+            currentLine = currentLine && !shouldJoinPdfTextTokens(currentLine, token) ? `${currentLine} ${token}` : `${currentLine}${token}`;
+          }
+          if (index < parts.length - 1) {
+            flushLine();
+          }
+        });
+        if (item.hasEOL) {
+          flushLine();
+        }
+      }
+      flushLine();
+      return cleanupExtractedText(lines);
+    }
+    function median(values) {
+      const sorted = values.filter(Number.isFinite).sort((left, right) => left - right);
+      if (!sorted.length) {
+        return 0;
+      }
+      const middle = Math.floor(sorted.length / 2);
+      return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
+    }
+    function normalizePositionedItem(item) {
+      if (!item || typeof item.str !== "string" || !item.str.trim()) {
+        return null;
+      }
+      const transform = Array.isArray(item.transform) || ArrayBuffer.isView(item.transform) ? item.transform : null;
+      const rawX = typeof item.x !== "undefined" ? item.x : transform ? transform[4] : void 0;
+      const rawY = typeof item.y !== "undefined" ? item.y : transform ? transform[5] : void 0;
+      if (rawX === null || rawY === null || typeof rawX === "undefined" || typeof rawY === "undefined") {
+        return null;
+      }
+      const x = Number(rawX);
+      const y = Number(rawY);
+      if (!Number.isFinite(x) || !Number.isFinite(y)) {
+        return null;
+      }
+      const transformHeight = transform ? Math.max(Math.abs(Number(transform[1]) || 0), Math.abs(Number(transform[3]) || 0)) : 0;
+      const height = Math.max(1, Math.abs(Number(item.height) || 0), transformHeight);
+      const width = Math.max(0, Math.abs(Number(item.width) || 0));
+      return { height, str: item.str, width, x, y };
+    }
+    function groupItemsIntoLines(items, requestedPageWidth = 0) {
+      const positioned = (Array.isArray(items) ? items : []).map(normalizePositionedItem).filter(Boolean);
+      if (positioned.length < 2) {
+        return [];
+      }
+      const tolerance = Math.max(2, median(positioned.map((item) => item.height)) * 0.5);
+      const pageWidth = Number.isFinite(Number(requestedPageWidth)) && Number(requestedPageWidth) > 0 ? Number(requestedPageWidth) : Math.max(...positioned.map((item) => item.x + item.width), 1);
+      positioned.sort((left, right) => right.y - left.y || left.x - right.x);
+      const baselines = [];
+      for (const item of positioned) {
+        let line = baselines.find((candidate) => Math.abs(candidate.y - item.y) <= tolerance);
+        if (!line) {
+          line = { items: [], y: item.y };
+          baselines.push(line);
+        }
+        line.items.push(item);
+        line.y = (line.y * (line.items.length - 1) + item.y) / line.items.length;
+      }
+      const lineClusters = [];
+      for (const baseline of baselines) {
+        baseline.items.sort((left, right) => left.x - right.x);
+        let cluster = [];
+        for (const item of baseline.items) {
+          const previous = cluster[cluster.length - 1];
+          const gap = previous ? item.x - (previous.x + previous.width) : 0;
+          const crossesMidpoint = previous && previous.x + previous.width < pageWidth * 0.48 && item.x > pageWidth * 0.52;
+          if (previous && crossesMidpoint && gap > Math.max(24, pageWidth * 0.06)) {
+            lineClusters.push({ items: cluster, y: baseline.y });
+            cluster = [];
+          }
+          cluster.push(item);
+        }
+        if (cluster.length) {
+          lineClusters.push({ items: cluster, y: baseline.y });
+        }
+      }
+      return lineClusters.map((line) => {
+        const xMin = Math.min(...line.items.map((item) => item.x));
+        const xMax = Math.max(...line.items.map((item) => item.x + item.width));
+        return {
+          text: joinTokens(line.items.map((item) => item.str)),
+          xMax,
+          xMin,
+          y: line.y
+        };
+      }).filter((line) => line.text).sort((left, right) => right.y - left.y || left.xMin - right.xMin);
+    }
+    function classifyLine(line, pageWidth) {
+      const midpoint = pageWidth / 2;
+      const gutter = pageWidth * 0.035;
+      const lineWidth = Math.max(0, line.xMax - line.xMin);
+      if (lineWidth >= pageWidth * 0.58 || line.xMin < midpoint - gutter && line.xMax > midpoint + gutter) {
+        return "full";
+      }
+      if (line.xMax <= midpoint + gutter && (line.xMin + line.xMax) / 2 < midpoint) {
+        return "left";
+      }
+      if (line.xMin >= midpoint - gutter && (line.xMin + line.xMax) / 2 >= midpoint) {
+        return "right";
+      }
+      return "full";
+    }
+    function hasTwoColumnLayout(lines, pageWidth) {
+      const left = lines.filter((line) => classifyLine(line, pageWidth) === "left");
+      const right = lines.filter((line) => classifyLine(line, pageWidth) === "right");
+      if (left.length < 2 || right.length < 2) {
+        return false;
+      }
+      const leftTop = Math.max(...left.map((line) => line.y));
+      const leftBottom = Math.min(...left.map((line) => line.y));
+      const rightTop = Math.max(...right.map((line) => line.y));
+      const rightBottom = Math.min(...right.map((line) => line.y));
+      return Math.min(leftTop, rightTop) > Math.max(leftBottom, rightBottom);
+    }
+    function orderTwoColumnLines(lines, pageWidth) {
+      const output = [];
+      let band = [];
+      const flushBand = () => {
+        if (!band.length) {
+          return;
+        }
+        const left = band.filter((line) => classifyLine(line, pageWidth) === "left").sort((a, b) => b.y - a.y);
+        const right = band.filter((line) => classifyLine(line, pageWidth) === "right").sort((a, b) => b.y - a.y);
+        output.push(...left, ...right);
+        band = [];
+      };
+      for (const line of lines) {
+        if (classifyLine(line, pageWidth) === "full") {
+          flushBand();
+          output.push(line);
+        } else {
+          band.push(line);
+        }
+      }
+      flushBand();
+      return output;
+    }
+    function extractTextFromPdfItems2(items, options = {}) {
+      const textItems = (Array.isArray(items) ? items : []).filter((item) => item && typeof item.str === "string" && item.str.trim());
+      const positionedCount = textItems.filter((item) => normalizePositionedItem(item)).length;
+      if (positionedCount < Math.max(2, Math.ceil(textItems.length * 0.7))) {
+        return extractTextInItemOrder(items);
+      }
+      const viewportWidth = Number(options.viewport && options.viewport.width);
+      const positionedItems = textItems.map(normalizePositionedItem).filter(Boolean);
+      const requestedPageWidth = Number.isFinite(viewportWidth) && viewportWidth > 0 ? viewportWidth : Math.max(...positionedItems.map((item) => item.x + item.width), 1);
+      const lines = groupItemsIntoLines(items, requestedPageWidth);
+      if (!lines.length) {
+        return extractTextInItemOrder(items);
+      }
+      const pageWidth = Number.isFinite(viewportWidth) && viewportWidth > 0 ? viewportWidth : Math.max(...lines.map((line) => line.xMax), 1);
+      const ordered = hasTwoColumnLayout(lines, pageWidth) ? orderTwoColumnLines(lines, pageWidth) : lines;
+      return cleanupExtractedText(ordered.map((line) => line.text));
+    }
+    module2.exports = {
+      extractTextFromPdfItems: extractTextFromPdfItems2,
+      extractTextInItemOrder,
+      groupItemsIntoLines,
+      hasTwoColumnLayout,
+      orderTwoColumnLines
+    };
+  }
+});
+
+// src/reading-position.js
+var require_reading_position = __commonJS({
+  "src/reading-position.js"(exports2, module2) {
+    "use strict";
+    var MAX_READING_POSITIONS = 100;
+    var MAX_ANCHOR_LENGTH = 180;
+    function normalizeAnchorText(text) {
+      return String(text || "").normalize("NFKC").replace(/\u00ad/g, "").replace(/([A-Za-z])-\s+(?=[a-z])/g, "$1").replace(/\s+/g, " ").trim();
+    }
+    function createReadingAnchor2(text) {
+      return normalizeAnchorText(text).slice(0, MAX_ANCHOR_LENGTH);
+    }
+    function normalizeReadingPosition(value, filePath = "") {
+      if (!value || typeof value !== "object") {
+        return null;
+      }
+      const normalizedPath = String(filePath || value.filePath || "").trim().slice(0, 1024);
+      const anchor = createReadingAnchor2(value.anchor);
+      const kind = value.kind === "pdf" ? "pdf" : value.kind === "markdown" ? "markdown" : "";
+      if (!normalizedPath || !anchor || !kind) {
+        return null;
+      }
+      const pageNumber = kind === "pdf" ? Math.max(1, Math.floor(Number(value.pageNumber) || 1)) : null;
+      return {
+        anchor,
+        chunkIndex: Math.max(0, Math.floor(Number(value.chunkIndex) || 0)),
+        fileMtime: Math.max(0, Math.floor(Number(value.fileMtime) || 0)),
+        filePath: normalizedPath,
+        kind,
+        pageNumber,
+        updatedAt: Math.max(0, Math.floor(Number(value.updatedAt) || Date.now()))
+      };
+    }
+    function normalizeReadingPositions2(value, maxEntries = MAX_READING_POSITIONS) {
+      const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+      const normalized = Object.entries(source).map(([filePath, position]) => normalizeReadingPosition(position, filePath)).filter(Boolean).sort((left, right) => right.updatedAt - left.updatedAt).slice(0, Math.max(1, Math.floor(Number(maxEntries) || MAX_READING_POSITIONS)));
+      return Object.fromEntries(normalized.map((position) => [position.filePath, position]));
+    }
+    function upsertReadingPosition2(positions, position, maxEntries = MAX_READING_POSITIONS) {
+      const normalized = normalizeReadingPosition(position, position && position.filePath);
+      if (!normalized) {
+        return normalizeReadingPositions2(positions, maxEntries);
+      }
+      return normalizeReadingPositions2({
+        ...normalizeReadingPositions2(positions, maxEntries),
+        [normalized.filePath]: normalized
+      }, maxEntries);
+    }
+    function removeReadingPosition2(positions, filePath) {
+      const normalized = normalizeReadingPositions2(positions);
+      delete normalized[String(filePath || "")];
+      return normalized;
+    }
+    function sliceTextFromReadingPosition2(text, position) {
+      const normalizedText = normalizeAnchorText(text);
+      const anchor = createReadingAnchor2(position && position.anchor);
+      if (!normalizedText || !anchor) {
+        return { matched: false, text: normalizedText };
+      }
+      const candidateLengths = [anchor.length, 140, 100, 72, 48, 32, 20, 12].map((length) => Math.min(anchor.length, length)).filter((length, index, values) => length >= 12 && values.indexOf(length) === index);
+      const lowerText = normalizedText.toLocaleLowerCase();
+      for (const length of candidateLengths) {
+        const candidate = anchor.slice(0, length);
+        let index = normalizedText.indexOf(candidate);
+        if (index < 0) {
+          index = lowerText.indexOf(candidate.toLocaleLowerCase());
+        }
+        if (index >= 0) {
+          return { matched: true, text: normalizedText.slice(index) };
+        }
+      }
+      return { matched: false, text: normalizedText };
+    }
+    module2.exports = {
+      MAX_ANCHOR_LENGTH,
+      MAX_READING_POSITIONS,
+      createReadingAnchor: createReadingAnchor2,
+      normalizeAnchorText,
+      normalizeReadingPosition,
+      normalizeReadingPositions: normalizeReadingPositions2,
+      removeReadingPosition: removeReadingPosition2,
+      sliceTextFromReadingPosition: sliceTextFromReadingPosition2,
+      upsertReadingPosition: upsertReadingPosition2
+    };
+  }
+});
+
+// src/semantic-chunker.js
+var require_semantic_chunker = __commonJS({
+  "src/semantic-chunker.js"(exports2, module2) {
+    "use strict";
+    var DEFAULT_CHUNK_LIMITS2 = [40, 80, 120, 160, 280, 320];
+    function parseChunkLimits2(value, fallback = DEFAULT_CHUNK_LIMITS2) {
+      const list = Array.isArray(value) ? value : String(value || "").split(",").map((item) => item.trim());
+      const limits = list.map((item) => Math.floor(Number(item))).filter((item) => Number.isFinite(item) && item > 0);
+      const fallbackLimits = Array.isArray(fallback) ? fallback.filter((item) => Number.isFinite(item) && item > 0) : [];
+      return limits.length ? limits : fallbackLimits.length ? fallbackLimits.slice() : DEFAULT_CHUNK_LIMITS2.slice();
+    }
+    function normalizeChunkText(text) {
+      return String(text || "").replace(/\r\n?/g, "\n").replace(/[ \t]+/g, " ").replace(/ *\n */g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+    }
+    function findLastBoundary(search, pattern, limit) {
+      let match;
+      let best = -1;
+      pattern.lastIndex = 0;
+      while ((match = pattern.exec(search)) !== null) {
+        const end = match.index + match[0].length;
+        if (end > 0 && end <= limit) {
+          best = end;
+        }
+        if (match[0].length === 0) {
+          pattern.lastIndex += 1;
+        }
+      }
+      return best;
+    }
+    function chooseChunkCut(text, limit) {
+      const safeLimit = Math.max(1, Math.floor(Number(limit) || 1));
+      const search = String(text || "").slice(0, safeLimit + 1);
+      const minUsefulCut = Math.max(1, Math.floor(safeLimit * 0.35));
+      const boundaries = [
+        /\n{2,}/g,
+        /\n/g,
+        /[。！？!?](?:["'\u2019\u201d\u3009-\u3011\u3015\uff09])?\s*/g,
+        /\.(?!\d)(?:["'\u2019\u201d])?\s+/g,
+        /[，,；;：:]\s*/g,
+        /\s+/g
+      ];
+      for (const pattern of boundaries) {
+        const cut = findLastBoundary(search, pattern, safeLimit);
+        if (cut >= minUsefulCut) {
+          return cut;
+        }
+      }
+      return safeLimit;
+    }
+    function splitTextForSpeechChunks2(text, maxLengths = DEFAULT_CHUNK_LIMITS2) {
+      const limits = parseChunkLimits2(maxLengths);
+      let remaining = normalizeChunkText(text);
+      const chunks = [];
+      while (remaining) {
+        const limit = limits[Math.min(chunks.length, limits.length - 1)];
+        if (remaining.length <= limit) {
+          chunks.push(remaining);
+          break;
+        }
+        const cut = chooseChunkCut(remaining, limit);
+        const chunk = remaining.slice(0, cut).trim();
+        remaining = remaining.slice(cut).trim();
+        if (chunk) {
+          chunks.push(chunk);
+        }
+      }
+      return chunks;
+    }
+    function createIncrementalSpeechChunker2(maxLengths = DEFAULT_CHUNK_LIMITS2, options = {}) {
+      const limits = parseChunkLimits2(maxLengths);
+      const detailed = options && options.detailed === true;
+      let buffer = "";
+      let chunkCount = 0;
+      let spans = [];
+      const appendSpan = (length, metadata) => {
+        if (length <= 0) {
+          return;
+        }
+        const previous = spans[spans.length - 1];
+        if (previous && previous.metadata === metadata) {
+          previous.length += length;
+        } else {
+          spans.push({ length, metadata });
+        }
+      };
+      const consumeSpans = (count) => {
+        let remaining = count;
+        while (remaining > 0 && spans.length) {
+          if (remaining >= spans[0].length) {
+            remaining -= spans[0].length;
+            spans.shift();
+          } else {
+            spans[0].length -= remaining;
+            remaining = 0;
+          }
+        }
+      };
+      const consumeBuffer = (count) => {
+        let next = buffer.slice(count);
+        const leadingWhitespace = /^\s*/.exec(next)[0].length;
+        consumeSpans(count + leadingWhitespace);
+        buffer = next.slice(leadingWhitespace);
+      };
+      const firstMetadata = () => {
+        const span = spans.find((entry) => entry.metadata !== null && typeof entry.metadata !== "undefined");
+        return span ? span.metadata : null;
+      };
+      const formatChunk = (text) => detailed ? { metadata: firstMetadata(), text } : text;
+      const takeReadyChunks = (flush) => {
+        const chunks = [];
+        while (buffer) {
+          const limit = limits[Math.min(chunkCount, limits.length - 1)];
+          if (buffer.length <= limit) {
+            if (flush) {
+              const chunk2 = buffer.trim();
+              if (chunk2) {
+                chunks.push(formatChunk(chunk2));
+                chunkCount += 1;
+              }
+              buffer = "";
+              spans = [];
+            }
+            break;
+          }
+          const cut = chooseChunkCut(buffer, limit);
+          const chunk = buffer.slice(0, cut).trim();
+          if (chunk) {
+            chunks.push(formatChunk(chunk));
+            chunkCount += 1;
+          }
+          consumeBuffer(cut);
+        }
+        return chunks;
+      };
+      return {
+        push(text, metadata = null) {
+          const normalized = normalizeChunkText(text);
+          if (normalized) {
+            if (buffer) {
+              buffer += "\n\n";
+              appendSpan(2, null);
+            }
+            buffer += normalized;
+            appendSpan(normalized.length, metadata);
+          }
+          return takeReadyChunks(false);
+        },
+        finish() {
+          return takeReadyChunks(true);
+        }
+      };
+    }
+    module2.exports = {
+      DEFAULT_CHUNK_LIMITS: DEFAULT_CHUNK_LIMITS2,
+      chooseChunkCut,
+      createIncrementalSpeechChunker: createIncrementalSpeechChunker2,
+      normalizeChunkText,
+      parseChunkLimits: parseChunkLimits2,
+      splitTextForSpeechChunks: splitTextForSpeechChunks2
+    };
+  }
+});
+
+// src/task-state.js
+var require_task_state = __commonJS({
+  "src/task-state.js"(exports2, module2) {
+    "use strict";
+    var PHASE_TRANSITIONS = {
+      idle: /* @__PURE__ */ new Set(["extracting", "queued"]),
+      extracting: /* @__PURE__ */ new Set(["complete", "error", "paused", "playing", "queued", "stopping", "synthesizing"]),
+      queued: /* @__PURE__ */ new Set(["complete", "error", "extracting", "paused", "playing", "stopping", "synthesizing"]),
+      synthesizing: /* @__PURE__ */ new Set(["complete", "error", "extracting", "paused", "playing", "queued", "stopping"]),
+      playing: /* @__PURE__ */ new Set(["complete", "error", "extracting", "paused", "queued", "stopping", "synthesizing"]),
+      paused: /* @__PURE__ */ new Set(["error", "extracting", "playing", "queued", "stopping", "synthesizing"]),
+      stopping: /* @__PURE__ */ new Set(["error", "idle"]),
+      complete: /* @__PURE__ */ new Set(["extracting", "idle", "queued", "stopping"]),
+      error: /* @__PURE__ */ new Set(["extracting", "idle", "queued", "stopping"])
+    };
+    function createTaskState2(sessionId, phase = "idle") {
+      const normalizedPhase = Object.prototype.hasOwnProperty.call(PHASE_TRANSITIONS, phase) ? phase : "idle";
+      return {
+        phase: normalizedPhase,
+        revision: 0,
+        sessionId: Number(sessionId) || 0
+      };
+    }
+    function canTransitionTaskState(fromPhase, toPhase) {
+      if (fromPhase === toPhase) {
+        return true;
+      }
+      const allowed = PHASE_TRANSITIONS[fromPhase];
+      return Boolean(allowed && allowed.has(toPhase));
+    }
+    function transitionTaskState2(state, nextPhase, sessionId = state && state.sessionId) {
+      const current = state || createTaskState2(sessionId);
+      if (Number(sessionId) !== current.sessionId) {
+        return current;
+      }
+      if (!Object.prototype.hasOwnProperty.call(PHASE_TRANSITIONS, nextPhase)) {
+        throw new Error(`Unknown reading task phase: ${nextPhase}`);
+      }
+      if (!canTransitionTaskState(current.phase, nextPhase)) {
+        throw new Error(`Invalid reading task transition: ${current.phase} -> ${nextPhase}`);
+      }
+      if (current.phase === nextPhase) {
+        return current;
+      }
+      return {
+        phase: nextPhase,
+        revision: current.revision + 1,
+        sessionId: current.sessionId
+      };
+    }
+    module2.exports = {
+      PHASE_TRANSITIONS,
+      canTransitionTaskState,
+      createTaskState: createTaskState2,
+      transitionTaskState: transitionTaskState2
+    };
+  }
+});
+
+// src/main.js
+var { ItemView, MarkdownView, Notice, Plugin, PluginSettingTab, SecretComponent, Setting, loadPdfJs, setIcon } = require("obsidian");
+var crypto = require("crypto");
+var fs = require("fs");
+var https = require("https");
+var os = require("os");
+var path = require("path");
+var { spawn } = require("child_process");
+var { pathToFileURL } = require("url");
+var { extractTextFromPdfItems } = require_pdf_layout();
+var {
+  createReadingAnchor,
+  normalizeReadingPositions,
+  removeReadingPosition,
+  sliceTextFromReadingPosition,
+  upsertReadingPosition
+} = require_reading_position();
+var {
+  createIncrementalSpeechChunker,
+  parseChunkLimits,
+  splitTextForSpeechChunks
+} = require_semantic_chunker();
+var {
+  createTaskState,
+  transitionTaskState
+} = require_task_state();
+var PLUGIN_ID = "note-reader-cosyvoice";
+var VIEW_TYPE = "note-reader-cosyvoice-control";
+var DEFAULT_CHUNK_LIMITS = [40, 80, 120, 160, 280, 320];
+var DEFAULT_ONLINE_CHUNK_LIMITS = [200, 400, 800];
+var MAX_ONLINE_PREFETCH_CHUNKS = 1;
+var DEFAULT_MATH_READING_LANGUAGE = "english";
+var DEFAULT_EDGE_TTS_VOICE = "en-GB-RyanNeural";
+var DEFAULT_EDGE_TTS_EXECUTABLE = "edge-tts";
+var DEFAULT_AZURE_SPEECH_VOICE = "en-GB-RyanNeural";
+var DEFAULT_OPENROUTER_TTS_MODEL = "hexgrad/kokoro-82m";
+var DEFAULT_OPENROUTER_TTS_VOICE = "bm_george";
+var AZURE_SPEECH_OUTPUT_FORMAT = "audio-24khz-48kbitrate-mono-mp3";
+var OPENROUTER_TTS_ENDPOINT = "https://openrouter.ai/api/v1/audio/speech";
+var RECOMMENDED_SCRIPT_PATH = "%LOCALAPPDATA%\\note-reader-cosyvoice\\cosyvoice-wrapper.ps1";
+var SPEED_PRESETS = [1, 1.25, 1.5, 2, 1.1, 1.2, 1.3, 1.4];
+var KEYBOARD_SEEK_SECONDS = 5;
+var LATEX_FORMULA_MAX_CHARS = 12;
+var MATH_READING_LANGUAGES = ["english", "chinese", "skip"];
+var SETTINGS_LANGUAGES = ["english", "chinese"];
+var CREDENTIAL_SOURCES = ["obsidian-secret", "key-file"];
+var SPEECH_ENGINES = ["local-cosyvoice", "edge-tts", "azure-speech", "openrouter-tts"];
+var AZURE_SPEECH_CLOUDS = ["public", "china"];
+var REMOTE_TTS_MAX_AUDIO_BYTES = 20 * 1024 * 1024;
+var REMOTE_TTS_MAX_ATTEMPTS = 3;
+var REMOTE_TTS_RETRY_DELAYS_MS = [750, 1500];
+var REMOTE_TTS_RETRY_AFTER_MAX_MS = 1e4;
+var REMOTE_TTS_RETRYABLE_STATUS_CODES = /* @__PURE__ */ new Set([408, 425, 429, 500, 502, 503, 504]);
+var REMOTE_TTS_RETRYABLE_ERROR_CODES = /* @__PURE__ */ new Set([
+  "EAI_AGAIN",
+  "ECONNREFUSED",
+  "ECONNRESET",
+  "EHOSTUNREACH",
+  "ENETDOWN",
+  "ENETRESET",
+  "ENETUNREACH",
+  "EPIPE",
+  "ETIMEDOUT"
 ]);
-const RUNTIME_LOG_MAX_BYTES = 1024 * 1024;
-const PDF_MAX_BYTES = 200 * 1024 * 1024;
-const PDF_MAX_PAGES = 2000;
-const PDF_MAX_TEXT_CHARS = 5_000_000;
-const OWNED_CACHE_FILE_PATTERN = /^\d{10,}-\d+-\d+\.(?:txt|wav|mp3)$/i;
-const MICROSOFT_VOICE_PRESETS = [
-  ['zh-CN-XiaoxiaoNeural', 'Mandarin Chinese - Xiaoxiao (female, warm)', '中文普通话 - 小晓（女声，温暖）'],
-  ['zh-CN-XiaoyiNeural', 'Mandarin Chinese - Xiaoyi (female, lively)', '中文普通话 - 小艺（女声，活泼）'],
-  ['zh-CN-YunxiNeural', 'Mandarin Chinese - Yunxi (male, lively)', '中文普通话 - 云希（男声，活泼）'],
-  ['zh-CN-YunyangNeural', 'Mandarin Chinese - Yunyang (male, professional)', '中文普通话 - 云扬（男声，专业）'],
-  ['zh-HK-HiuMaanNeural', 'Cantonese Chinese - HiuMaan (female)', '中文粤语 - 晓曼（女声）'],
-  ['zh-TW-HsiaoChenNeural', 'Taiwan Chinese - HsiaoChen (female)', '中文台湾 - 晓臻（女声）'],
-  ['en-US-JennyNeural', 'English (US) - Jenny (female)', '美式英语 - Jenny（女声）'],
-  ['en-US-GuyNeural', 'English (US) - Guy (male)', '美式英语 - Guy（男声）'],
-  ['en-US-AriaNeural', 'English (US) - Aria (female)', '美式英语 - Aria（女声）'],
-  ['en-GB-SoniaNeural', 'English (UK) - Sonia (female)', '英式英语 - Sonia（女声）'],
-  ['en-GB-RyanNeural', 'English (UK) - Ryan (male)', '英式英语 - Ryan（男声）'],
+var RUNTIME_LOG_MAX_BYTES = 1024 * 1024;
+var PDF_MAX_BYTES = 200 * 1024 * 1024;
+var PDF_MAX_PAGES = 2e3;
+var PDF_MAX_TEXT_CHARS = 5e6;
+var OWNED_CACHE_FILE_PATTERN = /^\d{10,}-\d+-\d+\.(?:txt|wav|mp3)$/i;
+var MICROSOFT_VOICE_PRESETS = [
+  ["zh-CN-XiaoxiaoNeural", "Mandarin Chinese - Xiaoxiao (female, warm)", "\u4E2D\u6587\u666E\u901A\u8BDD - \u5C0F\u6653\uFF08\u5973\u58F0\uFF0C\u6E29\u6696\uFF09"],
+  ["zh-CN-XiaoyiNeural", "Mandarin Chinese - Xiaoyi (female, lively)", "\u4E2D\u6587\u666E\u901A\u8BDD - \u5C0F\u827A\uFF08\u5973\u58F0\uFF0C\u6D3B\u6CFC\uFF09"],
+  ["zh-CN-YunxiNeural", "Mandarin Chinese - Yunxi (male, lively)", "\u4E2D\u6587\u666E\u901A\u8BDD - \u4E91\u5E0C\uFF08\u7537\u58F0\uFF0C\u6D3B\u6CFC\uFF09"],
+  ["zh-CN-YunyangNeural", "Mandarin Chinese - Yunyang (male, professional)", "\u4E2D\u6587\u666E\u901A\u8BDD - \u4E91\u626C\uFF08\u7537\u58F0\uFF0C\u4E13\u4E1A\uFF09"],
+  ["zh-HK-HiuMaanNeural", "Cantonese Chinese - HiuMaan (female)", "\u4E2D\u6587\u7CA4\u8BED - \u6653\u66FC\uFF08\u5973\u58F0\uFF09"],
+  ["zh-TW-HsiaoChenNeural", "Taiwan Chinese - HsiaoChen (female)", "\u4E2D\u6587\u53F0\u6E7E - \u6653\u81FB\uFF08\u5973\u58F0\uFF09"],
+  ["en-US-JennyNeural", "English (US) - Jenny (female)", "\u7F8E\u5F0F\u82F1\u8BED - Jenny\uFF08\u5973\u58F0\uFF09"],
+  ["en-US-GuyNeural", "English (US) - Guy (male)", "\u7F8E\u5F0F\u82F1\u8BED - Guy\uFF08\u7537\u58F0\uFF09"],
+  ["en-US-AriaNeural", "English (US) - Aria (female)", "\u7F8E\u5F0F\u82F1\u8BED - Aria\uFF08\u5973\u58F0\uFF09"],
+  ["en-GB-SoniaNeural", "English (UK) - Sonia (female)", "\u82F1\u5F0F\u82F1\u8BED - Sonia\uFF08\u5973\u58F0\uFF09"],
+  ["en-GB-RyanNeural", "English (UK) - Ryan (male)", "\u82F1\u5F0F\u82F1\u8BED - Ryan\uFF08\u7537\u58F0\uFF09"]
 ];
-const OPENROUTER_TTS_MODELS = [
+var OPENROUTER_TTS_MODELS = [
   [
-    'microsoft/mai-voice-2-flash',
-    'en-US-Harper:MAI-Voice-2',
-    'Microsoft MAI-Voice-2 Flash - low latency, 4 listed voices',
-    'Microsoft MAI-Voice-2 Flash - 低延迟、当前公开 4 个音色',
-    'A low-latency Microsoft model for responsive playback. OpenRouter currently lists only four voices: US English, Mexican Spanish, French, and German; no Chinese or UK English voice IDs are exposed.',
-    '微软低延迟语音模型，适合快速开始播放。OpenRouter 当前只列出 4 个音色：美式英语、墨西哥西班牙语、法语和德语，未公开中文或英式英语音色 ID。',
+    "microsoft/mai-voice-2-flash",
+    "en-US-Harper:MAI-Voice-2",
+    "Microsoft MAI-Voice-2 Flash - low latency, 4 listed voices",
+    "Microsoft MAI-Voice-2 Flash - \u4F4E\u5EF6\u8FDF\u3001\u5F53\u524D\u516C\u5F00 4 \u4E2A\u97F3\u8272",
+    "A low-latency Microsoft model for responsive playback. OpenRouter currently lists only four voices: US English, Mexican Spanish, French, and German; no Chinese or UK English voice IDs are exposed.",
+    "\u5FAE\u8F6F\u4F4E\u5EF6\u8FDF\u8BED\u97F3\u6A21\u578B\uFF0C\u9002\u5408\u5FEB\u901F\u5F00\u59CB\u64AD\u653E\u3002OpenRouter \u5F53\u524D\u53EA\u5217\u51FA 4 \u4E2A\u97F3\u8272\uFF1A\u7F8E\u5F0F\u82F1\u8BED\u3001\u58A8\u897F\u54E5\u897F\u73ED\u7259\u8BED\u3001\u6CD5\u8BED\u548C\u5FB7\u8BED\uFF0C\u672A\u516C\u5F00\u4E2D\u6587\u6216\u82F1\u5F0F\u82F1\u8BED\u97F3\u8272 ID\u3002"
   ],
   [
-    'microsoft/mai-voice-2',
-    'en-US-Harper:MAI-Voice-2',
-    'Microsoft MAI-Voice-2 - expressive, 4 listed voices',
-    'Microsoft MAI-Voice-2 - 表现力强、当前公开 4 个音色',
-    'An expressive Microsoft model for natural long-form narration. OpenRouter currently lists only four voices: US English, Mexican Spanish, French, and German; no Chinese or UK English voice IDs are exposed.',
-    '微软表现力语音模型，适合自然长文叙述。OpenRouter 当前只列出 4 个音色：美式英语、墨西哥西班牙语、法语和德语，未公开中文或英式英语音色 ID。',
+    "microsoft/mai-voice-2",
+    "en-US-Harper:MAI-Voice-2",
+    "Microsoft MAI-Voice-2 - expressive, 4 listed voices",
+    "Microsoft MAI-Voice-2 - \u8868\u73B0\u529B\u5F3A\u3001\u5F53\u524D\u516C\u5F00 4 \u4E2A\u97F3\u8272",
+    "An expressive Microsoft model for natural long-form narration. OpenRouter currently lists only four voices: US English, Mexican Spanish, French, and German; no Chinese or UK English voice IDs are exposed.",
+    "\u5FAE\u8F6F\u8868\u73B0\u529B\u8BED\u97F3\u6A21\u578B\uFF0C\u9002\u5408\u81EA\u7136\u957F\u6587\u53D9\u8FF0\u3002OpenRouter \u5F53\u524D\u53EA\u5217\u51FA 4 \u4E2A\u97F3\u8272\uFF1A\u7F8E\u5F0F\u82F1\u8BED\u3001\u58A8\u897F\u54E5\u897F\u73ED\u7259\u8BED\u3001\u6CD5\u8BED\u548C\u5FB7\u8BED\uFF0C\u672A\u516C\u5F00\u4E2D\u6587\u6216\u82F1\u5F0F\u82F1\u8BED\u97F3\u8272 ID\u3002"
   ],
   [
-    'google/gemini-3.1-flash-tts-preview',
-    'Kore',
-    'Google Gemini 3.1 Flash TTS Preview - 30 multilingual voices',
-    'Google Gemini 3.1 Flash TTS 预览版 - 30 个多语言音色',
-    'OpenRouter lists 30 multilingual voices. Google describes them by delivery style rather than fixed gender or US/UK accent, so the presets use official style labels only.',
-    'OpenRouter 列出 30 个多语言音色。Google 按朗读风格而非固定性别或英美口音描述这些音色，因此预设只使用官方风格标签。',
+    "google/gemini-3.1-flash-tts-preview",
+    "Kore",
+    "Google Gemini 3.1 Flash TTS Preview - 30 multilingual voices",
+    "Google Gemini 3.1 Flash TTS \u9884\u89C8\u7248 - 30 \u4E2A\u591A\u8BED\u8A00\u97F3\u8272",
+    "OpenRouter lists 30 multilingual voices. Google describes them by delivery style rather than fixed gender or US/UK accent, so the presets use official style labels only.",
+    "OpenRouter \u5217\u51FA 30 \u4E2A\u591A\u8BED\u8A00\u97F3\u8272\u3002Google \u6309\u6717\u8BFB\u98CE\u683C\u800C\u975E\u56FA\u5B9A\u6027\u522B\u6216\u82F1\u7F8E\u53E3\u97F3\u63CF\u8FF0\u8FD9\u4E9B\u97F3\u8272\uFF0C\u56E0\u6B64\u9884\u8BBE\u53EA\u4F7F\u7528\u5B98\u65B9\u98CE\u683C\u6807\u7B7E\u3002"
   ],
   [
-    'hexgrad/kokoro-82m',
-    'bm_george',
-    'Kokoro 82M - lightweight, low cost, many preset voices',
-    'Kokoro 82M - 轻量、低成本、预设音色丰富',
-    'OpenRouter lists 54 voices. The plugin provides 12 curated presets covering Chinese, US English, and UK English, with both female and male voices in every group. George remains the restrained academic-reading default.',
-    'OpenRouter 列出 54 个音色。本插件提供 12 个精选预设，完整覆盖中文、美式英语和英式英语的男女声；默认 George 男声适合较克制的学术朗读。',
-  ],
+    "hexgrad/kokoro-82m",
+    "bm_george",
+    "Kokoro 82M - lightweight, low cost, many preset voices",
+    "Kokoro 82M - \u8F7B\u91CF\u3001\u4F4E\u6210\u672C\u3001\u9884\u8BBE\u97F3\u8272\u4E30\u5BCC",
+    "OpenRouter lists 54 voices. The plugin provides 12 curated presets covering Chinese, US English, and UK English, with both female and male voices in every group. George remains the restrained academic-reading default.",
+    "OpenRouter \u5217\u51FA 54 \u4E2A\u97F3\u8272\u3002\u672C\u63D2\u4EF6\u63D0\u4F9B 12 \u4E2A\u7CBE\u9009\u9884\u8BBE\uFF0C\u5B8C\u6574\u8986\u76D6\u4E2D\u6587\u3001\u7F8E\u5F0F\u82F1\u8BED\u548C\u82F1\u5F0F\u82F1\u8BED\u7684\u7537\u5973\u58F0\uFF1B\u9ED8\u8BA4 George \u7537\u58F0\u9002\u5408\u8F83\u514B\u5236\u7684\u5B66\u672F\u6717\u8BFB\u3002"
+  ]
 ];
-// Voice IDs verified against OpenRouter's speech + ZDR models API on 2026-08-26.
-const OPENROUTER_TTS_PRESETS = [
-  ['microsoft/mai-voice-2-flash', 'en-US-Harper:MAI-Voice-2', 'Harper (US English)', 'Harper（美式英语）'],
-  ['microsoft/mai-voice-2-flash', 'es-MX-Valeria:MAI-Voice-2', 'Valeria (Mexican Spanish)', 'Valeria（墨西哥西班牙语）'],
-  ['microsoft/mai-voice-2-flash', 'fr-FR-Soleil:MAI-Voice-2', 'Soleil (French)', 'Soleil（法语）'],
-  ['microsoft/mai-voice-2-flash', 'de-DE-Klaus:MAI-Voice-2', 'Klaus (German)', 'Klaus（德语）'],
-  ['microsoft/mai-voice-2', 'en-US-Harper:MAI-Voice-2', 'Harper (US English)', 'Harper（美式英语）'],
-  ['microsoft/mai-voice-2', 'es-MX-Valeria:MAI-Voice-2', 'Valeria (Mexican Spanish)', 'Valeria（墨西哥西班牙语）'],
-  ['microsoft/mai-voice-2', 'fr-FR-Soleil:MAI-Voice-2', 'Soleil (French)', 'Soleil（法语）'],
-  ['microsoft/mai-voice-2', 'de-DE-Klaus:MAI-Voice-2', 'Klaus (German)', 'Klaus（德语）'],
-  ['google/gemini-3.1-flash-tts-preview', 'Charon', 'Charon (multilingual, informative)', 'Charon（多语言，信息型）'],
-  ['google/gemini-3.1-flash-tts-preview', 'Rasalgethi', 'Rasalgethi (multilingual, informative)', 'Rasalgethi（多语言，信息型）'],
-  ['google/gemini-3.1-flash-tts-preview', 'Sadaltager', 'Sadaltager (multilingual, knowledgeable)', 'Sadaltager（多语言，博学）'],
-  ['google/gemini-3.1-flash-tts-preview', 'Schedar', 'Schedar (multilingual, even)', 'Schedar（多语言，平稳）'],
-  ['google/gemini-3.1-flash-tts-preview', 'Iapetus', 'Iapetus (multilingual, clear)', 'Iapetus（多语言，清晰）'],
-  ['google/gemini-3.1-flash-tts-preview', 'Erinome', 'Erinome (multilingual, clear)', 'Erinome（多语言，清晰）'],
-  ['google/gemini-3.1-flash-tts-preview', 'Kore', 'Kore (multilingual, firm)', 'Kore（多语言，坚定）'],
-  ['google/gemini-3.1-flash-tts-preview', 'Orus', 'Orus (multilingual, firm)', 'Orus（多语言，坚定）'],
-  ['google/gemini-3.1-flash-tts-preview', 'Gacrux', 'Gacrux (multilingual, mature)', 'Gacrux（多语言，成熟）'],
-  ['google/gemini-3.1-flash-tts-preview', 'Sulafat', 'Sulafat (multilingual, warm)', 'Sulafat（多语言，温暖）'],
-  ['google/gemini-3.1-flash-tts-preview', 'Vindemiatrix', 'Vindemiatrix (multilingual, gentle)', 'Vindemiatrix（多语言，温和）'],
-  ['google/gemini-3.1-flash-tts-preview', 'Aoede', 'Aoede (multilingual, breezy)', 'Aoede（多语言，轻快）'],
-  ['hexgrad/kokoro-82m', 'zf_xiaoxiao', 'Xiaoxiao (Chinese female)', '小晓（中文女声）'],
-  ['hexgrad/kokoro-82m', 'zf_xiaoyi', 'Xiaoyi (Chinese female)', '小艺（中文女声）'],
-  ['hexgrad/kokoro-82m', 'zm_yunjian', 'Yunjian (Chinese male)', '云健（中文男声）'],
-  ['hexgrad/kokoro-82m', 'zm_yunyang', 'Yunyang (Chinese male)', '云扬（中文男声）'],
-  ['hexgrad/kokoro-82m', 'af_heart', 'Heart (US English female)', 'Heart（美式英语女声）'],
-  ['hexgrad/kokoro-82m', 'af_bella', 'Bella (US English female)', 'Bella（美式英语女声）'],
-  ['hexgrad/kokoro-82m', 'am_michael', 'Michael (US English male)', 'Michael（美式英语男声）'],
-  ['hexgrad/kokoro-82m', 'am_fenrir', 'Fenrir (US English male)', 'Fenrir（美式英语男声）'],
-  ['hexgrad/kokoro-82m', 'bf_emma', 'Emma (UK English female)', 'Emma（英式英语女声）'],
-  ['hexgrad/kokoro-82m', 'bf_isabella', 'Isabella (UK English female)', 'Isabella（英式英语女声）'],
-  ['hexgrad/kokoro-82m', 'bm_george', 'George (UK English male)', 'George（英式英语男声）'],
-  ['hexgrad/kokoro-82m', 'bm_fable', 'Fable (UK English male)', 'Fable（英式英语男声）'],
+var OPENROUTER_TTS_PRESETS = [
+  ["microsoft/mai-voice-2-flash", "en-US-Harper:MAI-Voice-2", "Harper (US English)", "Harper\uFF08\u7F8E\u5F0F\u82F1\u8BED\uFF09"],
+  ["microsoft/mai-voice-2-flash", "es-MX-Valeria:MAI-Voice-2", "Valeria (Mexican Spanish)", "Valeria\uFF08\u58A8\u897F\u54E5\u897F\u73ED\u7259\u8BED\uFF09"],
+  ["microsoft/mai-voice-2-flash", "fr-FR-Soleil:MAI-Voice-2", "Soleil (French)", "Soleil\uFF08\u6CD5\u8BED\uFF09"],
+  ["microsoft/mai-voice-2-flash", "de-DE-Klaus:MAI-Voice-2", "Klaus (German)", "Klaus\uFF08\u5FB7\u8BED\uFF09"],
+  ["microsoft/mai-voice-2", "en-US-Harper:MAI-Voice-2", "Harper (US English)", "Harper\uFF08\u7F8E\u5F0F\u82F1\u8BED\uFF09"],
+  ["microsoft/mai-voice-2", "es-MX-Valeria:MAI-Voice-2", "Valeria (Mexican Spanish)", "Valeria\uFF08\u58A8\u897F\u54E5\u897F\u73ED\u7259\u8BED\uFF09"],
+  ["microsoft/mai-voice-2", "fr-FR-Soleil:MAI-Voice-2", "Soleil (French)", "Soleil\uFF08\u6CD5\u8BED\uFF09"],
+  ["microsoft/mai-voice-2", "de-DE-Klaus:MAI-Voice-2", "Klaus (German)", "Klaus\uFF08\u5FB7\u8BED\uFF09"],
+  ["google/gemini-3.1-flash-tts-preview", "Charon", "Charon (multilingual, informative)", "Charon\uFF08\u591A\u8BED\u8A00\uFF0C\u4FE1\u606F\u578B\uFF09"],
+  ["google/gemini-3.1-flash-tts-preview", "Rasalgethi", "Rasalgethi (multilingual, informative)", "Rasalgethi\uFF08\u591A\u8BED\u8A00\uFF0C\u4FE1\u606F\u578B\uFF09"],
+  ["google/gemini-3.1-flash-tts-preview", "Sadaltager", "Sadaltager (multilingual, knowledgeable)", "Sadaltager\uFF08\u591A\u8BED\u8A00\uFF0C\u535A\u5B66\uFF09"],
+  ["google/gemini-3.1-flash-tts-preview", "Schedar", "Schedar (multilingual, even)", "Schedar\uFF08\u591A\u8BED\u8A00\uFF0C\u5E73\u7A33\uFF09"],
+  ["google/gemini-3.1-flash-tts-preview", "Iapetus", "Iapetus (multilingual, clear)", "Iapetus\uFF08\u591A\u8BED\u8A00\uFF0C\u6E05\u6670\uFF09"],
+  ["google/gemini-3.1-flash-tts-preview", "Erinome", "Erinome (multilingual, clear)", "Erinome\uFF08\u591A\u8BED\u8A00\uFF0C\u6E05\u6670\uFF09"],
+  ["google/gemini-3.1-flash-tts-preview", "Kore", "Kore (multilingual, firm)", "Kore\uFF08\u591A\u8BED\u8A00\uFF0C\u575A\u5B9A\uFF09"],
+  ["google/gemini-3.1-flash-tts-preview", "Orus", "Orus (multilingual, firm)", "Orus\uFF08\u591A\u8BED\u8A00\uFF0C\u575A\u5B9A\uFF09"],
+  ["google/gemini-3.1-flash-tts-preview", "Gacrux", "Gacrux (multilingual, mature)", "Gacrux\uFF08\u591A\u8BED\u8A00\uFF0C\u6210\u719F\uFF09"],
+  ["google/gemini-3.1-flash-tts-preview", "Sulafat", "Sulafat (multilingual, warm)", "Sulafat\uFF08\u591A\u8BED\u8A00\uFF0C\u6E29\u6696\uFF09"],
+  ["google/gemini-3.1-flash-tts-preview", "Vindemiatrix", "Vindemiatrix (multilingual, gentle)", "Vindemiatrix\uFF08\u591A\u8BED\u8A00\uFF0C\u6E29\u548C\uFF09"],
+  ["google/gemini-3.1-flash-tts-preview", "Aoede", "Aoede (multilingual, breezy)", "Aoede\uFF08\u591A\u8BED\u8A00\uFF0C\u8F7B\u5FEB\uFF09"],
+  ["hexgrad/kokoro-82m", "zf_xiaoxiao", "Xiaoxiao (Chinese female)", "\u5C0F\u6653\uFF08\u4E2D\u6587\u5973\u58F0\uFF09"],
+  ["hexgrad/kokoro-82m", "zf_xiaoyi", "Xiaoyi (Chinese female)", "\u5C0F\u827A\uFF08\u4E2D\u6587\u5973\u58F0\uFF09"],
+  ["hexgrad/kokoro-82m", "zm_yunjian", "Yunjian (Chinese male)", "\u4E91\u5065\uFF08\u4E2D\u6587\u7537\u58F0\uFF09"],
+  ["hexgrad/kokoro-82m", "zm_yunyang", "Yunyang (Chinese male)", "\u4E91\u626C\uFF08\u4E2D\u6587\u7537\u58F0\uFF09"],
+  ["hexgrad/kokoro-82m", "af_heart", "Heart (US English female)", "Heart\uFF08\u7F8E\u5F0F\u82F1\u8BED\u5973\u58F0\uFF09"],
+  ["hexgrad/kokoro-82m", "af_bella", "Bella (US English female)", "Bella\uFF08\u7F8E\u5F0F\u82F1\u8BED\u5973\u58F0\uFF09"],
+  ["hexgrad/kokoro-82m", "am_michael", "Michael (US English male)", "Michael\uFF08\u7F8E\u5F0F\u82F1\u8BED\u7537\u58F0\uFF09"],
+  ["hexgrad/kokoro-82m", "am_fenrir", "Fenrir (US English male)", "Fenrir\uFF08\u7F8E\u5F0F\u82F1\u8BED\u7537\u58F0\uFF09"],
+  ["hexgrad/kokoro-82m", "bf_emma", "Emma (UK English female)", "Emma\uFF08\u82F1\u5F0F\u82F1\u8BED\u5973\u58F0\uFF09"],
+  ["hexgrad/kokoro-82m", "bf_isabella", "Isabella (UK English female)", "Isabella\uFF08\u82F1\u5F0F\u82F1\u8BED\u5973\u58F0\uFF09"],
+  ["hexgrad/kokoro-82m", "bm_george", "George (UK English male)", "George\uFF08\u82F1\u5F0F\u82F1\u8BED\u7537\u58F0\uFF09"],
+  ["hexgrad/kokoro-82m", "bm_fable", "Fable (UK English male)", "Fable\uFF08\u82F1\u5F0F\u82F1\u8BED\u7537\u58F0\uFF09"]
 ];
-const SETTINGS_UI_TEXT = {
+var SETTINGS_UI_TEXT = {
   english: {
-    settingsLanguageName: 'Settings language',
-    settingsLanguageDesc: 'Choose the language used on this plugin settings page.',
-    settingsLanguageEnglish: 'English',
-    settingsLanguageChinese: '中文',
-    speechEngineName: 'Speech engine',
-    speechEngineDesc: 'Choose local CosyVoice, Microsoft Edge online voice, Microsoft Azure Speech, or OpenRouter TTS. Online modes send text to their service providers.',
-    speechEngineLocal: 'Local CosyVoice',
-    speechEngineEdge: 'Microsoft Edge online voice',
-    speechEngineAzure: 'Microsoft Azure Speech',
-    speechEngineOpenRouter: 'OpenRouter TTS',
-    localScriptName: 'CosyVoice script',
-    localScriptDesc: 'PowerShell wrapper used in Local CosyVoice mode.',
-    edgeConsentName: 'Allow Edge online processing',
-    edgeConsentDesc: 'Required for Edge mode. When enabled, each text chunk is sent to Microsoft Edge TTS. Keep this off for private or sensitive notes.',
-    edgeExecutableName: 'Edge TTS executable',
-    edgeExecutableDesc: 'Use an absolute edge-tts.exe path to avoid PATH ambiguity. The default value resolves edge-tts from the Obsidian process PATH.',
-    edgeCommonVoicesName: 'Common Edge TTS voices',
-    edgeCommonVoicesDesc: 'Common Chinese, US English, and UK English online voices. Selecting one fills the Voice ID below.',
-    customVoiceOption: 'Custom voice ID',
-    edgeVoiceName: 'Edge TTS voice',
-    edgeVoiceDesc: 'Voice ID used by Edge mode. Keep a preset above or enter any ID returned by edge-tts --list-voices.',
-    azureConsentName: 'Allow Azure online processing',
-    azureConsentDesc: 'Required for Azure mode. Each text chunk is sent by HTTPS to the selected Azure Speech cloud and region. Keep this off for private notes unless that processing is acceptable.',
-    credentialSourceName: 'API key storage',
-    credentialSourceDesc: 'Use Obsidian SecretStorage on Obsidian 1.11.4 or later, or keep a one-line key file outside the vault as a compatibility fallback.',
-    credentialSourceSecret: 'Obsidian SecretStorage (recommended)',
-    credentialSourceFile: 'External one-line key file',
-    secretStorageUnavailableName: 'Obsidian SecretStorage unavailable',
-    secretStorageUnavailableDesc: 'Update Obsidian to 1.11.4 or later, or select the external key-file option.',
-    azureCloudName: 'Azure cloud',
-    azureCloudDesc: 'Select the cloud that owns the Speech resource and subscription key.',
-    azurePublicCloud: 'Azure public cloud',
-    azureChinaCloud: 'Azure China operated by 21Vianet',
-    azureRegionName: 'Azure Speech region',
-    azureRegionDesc: 'Region identifier from the Azure resource, for example eastasia, southeastasia, chinaeast2, or chinanorth3.',
-    azureKeyFileName: 'Azure Speech key file',
-    azureKeyFileDesc: 'Compatibility fallback: absolute path to a one-line Speech resource key file outside the Obsidian vault. The key itself is not saved in data.json.',
-    azureSecretName: 'Azure Speech secret',
-    azureSecretDesc: 'Select or create an Obsidian secret containing the Speech resource key. Only the secret name is saved in data.json.',
-    azureCommonVoicesName: 'Common Azure Speech voices',
-    azureCommonVoicesDesc: 'Common Chinese, US English, and UK English Azure voices. Selecting one fills the Voice ID below.',
-    azureVoiceName: 'Azure Speech voice',
-    azureVoiceDesc: 'Prebuilt Azure Speech voice ID, for example zh-CN-XiaoxiaoNeural or en-US-JennyNeural.',
-    openRouterConsentName: 'Allow OpenRouter online processing',
-    openRouterConsentDesc: 'Required for OpenRouter mode. This permits sending text to OpenRouter and an eligible upstream TTS provider, but never relaxes ZDR routing.',
-    openRouterKeyFileName: 'OpenRouter API key file',
-    openRouterKeyFileDesc: 'Compatibility fallback: absolute path to a one-line OpenRouter API key file outside the Obsidian vault. The key itself is not saved in data.json.',
-    openRouterSecretName: 'OpenRouter API secret',
-    openRouterSecretDesc: 'Select or create an Obsidian secret containing the OpenRouter API key. Only the secret name is saved in data.json.',
-    openRouterModelsName: 'ZDR-compatible OpenRouter TTS models',
-    openRouterModelsDesc: 'Built-in choices verified against OpenRouter\'s speech and ZDR model filter for this release. Availability can change; every request still enforces ZDR.',
-    customModelOption: 'Custom model ID',
-    openRouterModelName: 'OpenRouter TTS model',
-    openRouterModelDesc: 'Speech-output model ID. A custom model works only when OpenRouter has an eligible ZDR endpoint for it.',
-    openRouterModelInfoName: 'Selected model characteristics',
-    customModelInfo: 'Custom model: check its language, voice, and speech-output support in OpenRouter. The request fails if no ZDR endpoint is eligible.',
-    openRouterVoicesName: 'Common voices for this model',
-    openRouterVoicesDesc: 'Only model-compatible voice IDs currently published by OpenRouter are listed. Gemini labels use official delivery styles; Kokoro labels use language and gender. MAI currently exposes only four voices.',
-    openRouterVoiceName: 'OpenRouter TTS voice',
-    openRouterVoiceDesc: 'Voice ID supported by the selected model. Voice catalogs differ between models.',
-    openRouterPrivacyName: 'OpenRouter privacy routing',
-    openRouterPrivacyDesc: 'Always enforced: provider.zdr is true and provider data collection is denied. The plugin never falls back to a non-ZDR endpoint. Keep OpenRouter account-level input/output logging and data sharing disabled for private content.',
-    speedName: 'Speed',
-    speedDesc: 'Speech speed passed to the selected speech engine.',
-    chunkLimitsName: 'Local chunk limits',
-    chunkLimitsDesc: 'Comma-separated character limits used by Local CosyVoice. Earlier chunks are shorter so playback starts sooner.',
-    onlineChunkLimitsName: 'Online chunk limits',
-    onlineChunkLimitsDesc: 'Used by Edge, Azure, and OpenRouter for notes and PDFs. The default 200,400,800 balances startup latency, continuity, and request count.',
-    onlinePrefetchName: 'Online synthesis prefetch',
-    onlinePrefetchDesc: 'How many future chunks an online engine may synthesize early. The default 1 improves continuity while limiting unused work to at most one chunk; choose 0 for strict on-demand synthesis.',
-    onlinePrefetchNone: '0 - synthesize only when needed',
-    onlinePrefetchOne: '1 - prefetch one chunk',
-    stripMarkdownName: 'Strip Markdown',
-    stripMarkdownDesc: 'Remove frontmatter, links, headings, embeds, and common formatting before synthesis.',
-    mathLanguageName: 'Math reading language',
-    mathLanguageDesc: 'Choose how short LaTeX formulas are verbalized. Long formulas are skipped in all modes.',
-    mathEnglish: 'English',
-    mathChinese: 'Chinese',
-    mathSkip: 'Skip math',
-    cleanupName: 'Clean temporary audio',
-    cleanupDesc: 'Delete temporary text and audio after reading, and clear stale files when the plugin starts. Temporary data is stored outside the Obsidian vault.',
-    diagnosticName: 'Diagnostic logging',
-    diagnosticDesc: 'Off by default. When enabled, only bounded failure metadata is stored in the system temporary directory; note names and child-process output are excluded.',
-    clearTemporaryName: 'Clear temporary data',
-    clearTemporaryDesc: 'Stop reading and remove plugin-owned temporary text, audio, legacy cache files, and diagnostic logs now.',
-    clearNowButton: 'Clear now',
-    restoreDefaultsName: 'Restore default settings',
-    restoreDefaultsDesc: 'Reset every setting on this page to its default value and save immediately.',
-    restoreDefaultsButton: 'Restore defaults',
-    settingsRestoredNotice: 'CosyVoice: settings restored to defaults.',
-    temporaryDataClearedNotice: 'CosyVoice: temporary text, audio, and diagnostic logs cleared.',
-    commandsFooter: 'Commands also include seek backward or forward 5 seconds and move to the previous or next reading chunk.',
+    settingsLanguageName: "Settings language",
+    settingsLanguageDesc: "Choose the language used on this plugin settings page.",
+    settingsLanguageEnglish: "English",
+    settingsLanguageChinese: "\u4E2D\u6587",
+    speechEngineName: "Speech engine",
+    speechEngineDesc: "Choose local CosyVoice, Microsoft Edge online voice, Microsoft Azure Speech, or OpenRouter TTS. Online modes send text to their service providers.",
+    speechEngineLocal: "Local CosyVoice",
+    speechEngineEdge: "Microsoft Edge online voice",
+    speechEngineAzure: "Microsoft Azure Speech",
+    speechEngineOpenRouter: "OpenRouter TTS",
+    localScriptName: "CosyVoice script",
+    localScriptDesc: "PowerShell wrapper used in Local CosyVoice mode.",
+    edgeConsentName: "Allow Edge online processing",
+    edgeConsentDesc: "Required for Edge mode. When enabled, each text chunk is sent to Microsoft Edge TTS. Keep this off for private or sensitive notes.",
+    edgeExecutableName: "Edge TTS executable",
+    edgeExecutableDesc: "Use an absolute edge-tts.exe path to avoid PATH ambiguity. The default value resolves edge-tts from the Obsidian process PATH.",
+    edgeCommonVoicesName: "Common Edge TTS voices",
+    edgeCommonVoicesDesc: "Common Chinese, US English, and UK English online voices. Selecting one fills the Voice ID below.",
+    customVoiceOption: "Custom voice ID",
+    edgeVoiceName: "Edge TTS voice",
+    edgeVoiceDesc: "Voice ID used by Edge mode. Keep a preset above or enter any ID returned by edge-tts --list-voices.",
+    azureConsentName: "Allow Azure online processing",
+    azureConsentDesc: "Required for Azure mode. Each text chunk is sent by HTTPS to the selected Azure Speech cloud and region. Keep this off for private notes unless that processing is acceptable.",
+    credentialSourceName: "API key storage",
+    credentialSourceDesc: "Use Obsidian SecretStorage on Obsidian 1.11.4 or later, or keep a one-line key file outside the vault as a compatibility fallback.",
+    credentialSourceSecret: "Obsidian SecretStorage (recommended)",
+    credentialSourceFile: "External one-line key file",
+    secretStorageUnavailableName: "Obsidian SecretStorage unavailable",
+    secretStorageUnavailableDesc: "Update Obsidian to 1.11.4 or later, or select the external key-file option.",
+    azureCloudName: "Azure cloud",
+    azureCloudDesc: "Select the cloud that owns the Speech resource and subscription key.",
+    azurePublicCloud: "Azure public cloud",
+    azureChinaCloud: "Azure China operated by 21Vianet",
+    azureRegionName: "Azure Speech region",
+    azureRegionDesc: "Region identifier from the Azure resource, for example eastasia, southeastasia, chinaeast2, or chinanorth3.",
+    azureKeyFileName: "Azure Speech key file",
+    azureKeyFileDesc: "Compatibility fallback: absolute path to a one-line Speech resource key file outside the Obsidian vault. The key itself is not saved in data.json.",
+    azureSecretName: "Azure Speech secret",
+    azureSecretDesc: "Select or create an Obsidian secret containing the Speech resource key. Only the secret name is saved in data.json.",
+    azureCommonVoicesName: "Common Azure Speech voices",
+    azureCommonVoicesDesc: "Common Chinese, US English, and UK English Azure voices. Selecting one fills the Voice ID below.",
+    azureVoiceName: "Azure Speech voice",
+    azureVoiceDesc: "Prebuilt Azure Speech voice ID, for example zh-CN-XiaoxiaoNeural or en-US-JennyNeural.",
+    openRouterConsentName: "Allow OpenRouter online processing",
+    openRouterConsentDesc: "Required for OpenRouter mode. This permits sending text to OpenRouter and an eligible upstream TTS provider, but never relaxes ZDR routing.",
+    openRouterKeyFileName: "OpenRouter API key file",
+    openRouterKeyFileDesc: "Compatibility fallback: absolute path to a one-line OpenRouter API key file outside the Obsidian vault. The key itself is not saved in data.json.",
+    openRouterSecretName: "OpenRouter API secret",
+    openRouterSecretDesc: "Select or create an Obsidian secret containing the OpenRouter API key. Only the secret name is saved in data.json.",
+    openRouterModelsName: "ZDR-compatible OpenRouter TTS models",
+    openRouterModelsDesc: "Built-in choices verified against OpenRouter's speech and ZDR model filter for this release. Availability can change; every request still enforces ZDR.",
+    customModelOption: "Custom model ID",
+    openRouterModelName: "OpenRouter TTS model",
+    openRouterModelDesc: "Speech-output model ID. A custom model works only when OpenRouter has an eligible ZDR endpoint for it.",
+    openRouterModelInfoName: "Selected model characteristics",
+    customModelInfo: "Custom model: check its language, voice, and speech-output support in OpenRouter. The request fails if no ZDR endpoint is eligible.",
+    openRouterVoicesName: "Common voices for this model",
+    openRouterVoicesDesc: "Only model-compatible voice IDs currently published by OpenRouter are listed. Gemini labels use official delivery styles; Kokoro labels use language and gender. MAI currently exposes only four voices.",
+    openRouterVoiceName: "OpenRouter TTS voice",
+    openRouterVoiceDesc: "Voice ID supported by the selected model. Voice catalogs differ between models.",
+    openRouterPrivacyName: "OpenRouter privacy routing",
+    openRouterPrivacyDesc: "Always enforced: provider.zdr is true and provider data collection is denied. The plugin never falls back to a non-ZDR endpoint. Keep OpenRouter account-level input/output logging and data sharing disabled for private content.",
+    speedName: "Speed",
+    speedDesc: "Speech speed passed to the selected speech engine.",
+    chunkLimitsName: "Local chunk limits",
+    chunkLimitsDesc: "Comma-separated character limits used by Local CosyVoice. Earlier chunks are shorter so playback starts sooner.",
+    onlineChunkLimitsName: "Online chunk limits",
+    onlineChunkLimitsDesc: "Used by Edge, Azure, and OpenRouter for notes and PDFs. The default 200,400,800 balances startup latency, continuity, and request count.",
+    onlinePrefetchName: "Online synthesis prefetch",
+    onlinePrefetchDesc: "How many future chunks an online engine may synthesize early. The default 1 improves continuity while limiting unused work to at most one chunk; choose 0 for strict on-demand synthesis.",
+    onlinePrefetchNone: "0 - synthesize only when needed",
+    onlinePrefetchOne: "1 - prefetch one chunk",
+    stripMarkdownName: "Strip Markdown",
+    stripMarkdownDesc: "Remove frontmatter, links, headings, embeds, and common formatting before synthesis.",
+    mathLanguageName: "Math reading language",
+    mathLanguageDesc: "Choose how short LaTeX formulas are verbalized. Long formulas are skipped in all modes.",
+    mathEnglish: "English",
+    mathChinese: "Chinese",
+    mathSkip: "Skip math",
+    rememberPositionName: "Remember reading position",
+    rememberPositionDesc: "Off by default. When enabled, the plugin stores only the file path, page or chunk number, a short text anchor, and a timestamp. It never stores the note or PDF body in reading history.",
+    clearPositionsName: "Clear saved reading positions",
+    clearPositionsDesc: "Remove all saved resume anchors without changing speech settings or API credentials.",
+    clearPositionsButton: "Clear positions",
+    positionsClearedNotice: "CosyVoice: saved reading positions cleared.",
+    cleanupName: "Clean temporary audio",
+    cleanupDesc: "Delete temporary text and audio after reading, and clear stale files when the plugin starts. Temporary data is stored outside the Obsidian vault.",
+    diagnosticName: "Diagnostic logging",
+    diagnosticDesc: "Off by default. When enabled, only bounded failure metadata is stored in the system temporary directory; note names and child-process output are excluded.",
+    clearTemporaryName: "Clear temporary data",
+    clearTemporaryDesc: "Stop reading and remove plugin-owned temporary text, audio, legacy cache files, and diagnostic logs now.",
+    clearNowButton: "Clear now",
+    restoreDefaultsName: "Restore default settings",
+    restoreDefaultsDesc: "Reset every setting on this page to its default value and save immediately.",
+    restoreDefaultsButton: "Restore defaults",
+    settingsRestoredNotice: "CosyVoice: settings restored to defaults.",
+    temporaryDataClearedNotice: "CosyVoice: temporary text, audio, and diagnostic logs cleared.",
+    commandsFooter: "Commands also include resume the current file, seek backward or forward 5 seconds, and move to the previous or next reading chunk."
   },
   chinese: {
-    settingsLanguageName: '设置界面语言',
-    settingsLanguageDesc: '选择本插件设置页面使用的语言。',
-    settingsLanguageEnglish: 'English',
-    settingsLanguageChinese: '中文',
-    speechEngineName: '语音引擎',
-    speechEngineDesc: '选择本地 CosyVoice、Microsoft Edge 在线语音、Microsoft Azure Speech 或 OpenRouter TTS。在线模式会把文本发送给相应服务商。',
-    speechEngineLocal: '本地 CosyVoice',
-    speechEngineEdge: 'Microsoft Edge 在线语音',
-    speechEngineAzure: 'Microsoft Azure Speech',
-    speechEngineOpenRouter: 'OpenRouter TTS',
-    localScriptName: 'CosyVoice 脚本',
-    localScriptDesc: '本地 CosyVoice 模式使用的 PowerShell 包装脚本。',
-    edgeConsentName: '允许 Edge 在线处理',
-    edgeConsentDesc: 'Edge 模式必须开启。开启后，每个文本分段都会发送给 Microsoft Edge TTS。私密或敏感笔记建议保持关闭。',
-    edgeExecutableName: 'Edge TTS 可执行文件',
-    edgeExecutableDesc: '建议填写 edge-tts.exe 的绝对路径，避免 PATH 指向不明确。默认值从 Obsidian 进程的 PATH 中查找 edge-tts。',
-    edgeCommonVoicesName: '常用 Edge TTS 音色',
-    edgeCommonVoicesDesc: '常用中文、美式英语和英式英语在线音色。选择后会自动填写下方的音色 ID。',
-    customVoiceOption: '自定义音色 ID',
-    edgeVoiceName: 'Edge TTS 音色',
-    edgeVoiceDesc: 'Edge 模式使用的音色 ID。可使用上方预设，或填写 edge-tts --list-voices 返回的任意 ID。',
-    azureConsentName: '允许 Azure 在线处理',
-    azureConsentDesc: 'Azure 模式必须开启。每个文本分段会通过 HTTPS 发送到所选 Azure Speech 云环境和区域。除非可以接受该处理，否则私密笔记应保持关闭。',
-    credentialSourceName: 'API 密钥存储方式',
-    credentialSourceDesc: 'Obsidian 1.11.4 及以上版本建议使用 SecretStorage；也可以继续使用 Obsidian 库外的单行密钥文件作为兼容回退。',
-    credentialSourceSecret: 'Obsidian SecretStorage（推荐）',
-    credentialSourceFile: '库外单行密钥文件',
-    secretStorageUnavailableName: 'Obsidian SecretStorage 不可用',
-    secretStorageUnavailableDesc: '请把 Obsidian 更新到 1.11.4 或更高版本，或改选库外密钥文件。',
-    azureCloudName: 'Azure 云环境',
-    azureCloudDesc: '选择 Speech 资源和订阅密钥所属的云环境。',
-    azurePublicCloud: 'Azure 公有云',
-    azureChinaCloud: '由世纪互联运营的 Azure 中国区',
-    azureRegionName: 'Azure Speech 区域',
-    azureRegionDesc: 'Azure 资源中的区域标识，例如 eastasia、southeastasia、chinaeast2 或 chinanorth3。',
-    azureKeyFileName: 'Azure Speech 密钥文件',
-    azureKeyFileDesc: '兼容回退方式：填写 Obsidian 库外单行 Speech 资源密钥文件的绝对路径。密钥本身不会保存到 data.json。',
-    azureSecretName: 'Azure Speech 秘密',
-    azureSecretDesc: '选择或创建一个保存 Speech 资源密钥的 Obsidian 秘密。data.json 只保存秘密名称，不保存密钥值。',
-    azureCommonVoicesName: '常用 Azure Speech 音色',
-    azureCommonVoicesDesc: '常用中文、美式英语和英式英语 Azure 音色。选择后会自动填写下方的音色 ID。',
-    azureVoiceName: 'Azure Speech 音色',
-    azureVoiceDesc: 'Azure Speech 预构建音色 ID，例如 zh-CN-XiaoxiaoNeural 或 en-US-JennyNeural。',
-    openRouterConsentName: '允许 OpenRouter 在线处理',
-    openRouterConsentDesc: 'OpenRouter 模式必须开启。它只表示允许把文本发送给 OpenRouter 及符合条件的上游 TTS 服务商，不会放宽 ZDR 路由。',
-    openRouterKeyFileName: 'OpenRouter API 密钥文件',
-    openRouterKeyFileDesc: '兼容回退方式：填写 Obsidian 库外单行 OpenRouter API 密钥文件的绝对路径。密钥本身不会保存到 data.json。',
-    openRouterSecretName: 'OpenRouter API 秘密',
-    openRouterSecretDesc: '选择或创建一个保存 OpenRouter API 密钥的 Obsidian 秘密。data.json 只保存秘密名称，不保存密钥值。',
-    openRouterModelsName: '支持 ZDR 的 OpenRouter TTS 模型',
-    openRouterModelsDesc: '内置选项已按本版本发布时 OpenRouter 的语音与 ZDR 模型过滤结果核对。可用性可能变化，但每次请求仍会强制使用 ZDR。',
-    customModelOption: '自定义模型 ID',
-    openRouterModelName: 'OpenRouter TTS 模型',
-    openRouterModelDesc: '支持语音输出的模型 ID。自定义模型只有在 OpenRouter 存在符合条件的 ZDR 端点时才能使用。',
-    openRouterModelInfoName: '所选模型特点',
-    customModelInfo: '自定义模型：请在 OpenRouter 核对其语言、音色和语音输出能力；如果没有符合条件的 ZDR 端点，请求会失败。',
-    openRouterVoicesName: '该模型的常用音色',
-    openRouterVoicesDesc: '这里只列出 OpenRouter 当前公开且与所选模型兼容的音色 ID。Gemini 按官方朗读风格标注，Kokoro 按语言和性别标注；MAI 当前只公开 4 个音色。',
-    openRouterVoiceName: 'OpenRouter TTS 音色',
-    openRouterVoiceDesc: '所选模型支持的音色 ID。不同模型的音色目录并不相同。',
-    openRouterPrivacyName: 'OpenRouter 隐私路由',
-    openRouterPrivacyDesc: '始终强制执行：provider.zdr 为 true，并拒绝供应商收集数据。插件不会降级到非 ZDR 端点。朗读私密内容时，还应关闭 OpenRouter 账户级输入输出日志和数据共享。',
-    speedName: '语速',
-    speedDesc: '传递给当前语音引擎的朗读速度。',
-    chunkLimitsName: '本地分段长度',
-    chunkLimitsDesc: '本地 CosyVoice 使用的字符数上限，以英文逗号分隔。前几个分段较短，可更快开始播放。',
-    onlineChunkLimitsName: '在线分段长度',
-    onlineChunkLimitsDesc: 'Edge、Azure 和 OpenRouter 朗读笔记或 PDF 时使用。默认 200,400,800，用于平衡启动速度、连贯性和请求次数。',
-    onlinePrefetchName: '在线合成预取',
-    onlinePrefetchDesc: '允许在线引擎提前合成的后续分段数量。默认 1 可改善衔接，并把可能未使用的提前合成限制为最多一段；选择 0 可严格按需合成。',
-    onlinePrefetchNone: '0 - 需要时才合成',
-    onlinePrefetchOne: '1 - 提前合成一段',
-    stripMarkdownName: '移除 Markdown 格式',
-    stripMarkdownDesc: '合成前移除 frontmatter、链接、标题、嵌入内容和常见格式标记。',
-    mathLanguageName: '数学公式朗读语言',
-    mathLanguageDesc: '选择短 LaTeX 公式的朗读方式。所有模式都会跳过过长公式。',
-    mathEnglish: '英语',
-    mathChinese: '中文',
-    mathSkip: '跳过公式',
-    cleanupName: '清理临时音频',
-    cleanupDesc: '朗读后删除临时文本和音频，并在插件启动时清理过期文件。临时数据保存在 Obsidian 库外。',
-    diagnosticName: '诊断日志',
-    diagnosticDesc: '默认关闭。开启后只在系统临时目录保存有大小限制的失败元数据，不包含笔记名称或子进程输出。',
-    clearTemporaryName: '清除临时数据',
-    clearTemporaryDesc: '立即停止朗读，并删除本插件产生的临时文本、音频、旧缓存文件和诊断日志。',
-    clearNowButton: '立即清除',
-    restoreDefaultsName: '恢复默认设置',
-    restoreDefaultsDesc: '把本页面的所有设置恢复为默认值并立即保存。',
-    restoreDefaultsButton: '恢复默认值',
-    settingsRestoredNotice: 'CosyVoice：设置已恢复为默认值。',
-    temporaryDataClearedNotice: 'CosyVoice：临时文本、音频和诊断日志已清除。',
-    commandsFooter: '命令还包括后退或前进 5 秒，以及跳到上一个或下一个朗读分段。',
-  },
+    settingsLanguageName: "\u8BBE\u7F6E\u754C\u9762\u8BED\u8A00",
+    settingsLanguageDesc: "\u9009\u62E9\u672C\u63D2\u4EF6\u8BBE\u7F6E\u9875\u9762\u4F7F\u7528\u7684\u8BED\u8A00\u3002",
+    settingsLanguageEnglish: "English",
+    settingsLanguageChinese: "\u4E2D\u6587",
+    speechEngineName: "\u8BED\u97F3\u5F15\u64CE",
+    speechEngineDesc: "\u9009\u62E9\u672C\u5730 CosyVoice\u3001Microsoft Edge \u5728\u7EBF\u8BED\u97F3\u3001Microsoft Azure Speech \u6216 OpenRouter TTS\u3002\u5728\u7EBF\u6A21\u5F0F\u4F1A\u628A\u6587\u672C\u53D1\u9001\u7ED9\u76F8\u5E94\u670D\u52A1\u5546\u3002",
+    speechEngineLocal: "\u672C\u5730 CosyVoice",
+    speechEngineEdge: "Microsoft Edge \u5728\u7EBF\u8BED\u97F3",
+    speechEngineAzure: "Microsoft Azure Speech",
+    speechEngineOpenRouter: "OpenRouter TTS",
+    localScriptName: "CosyVoice \u811A\u672C",
+    localScriptDesc: "\u672C\u5730 CosyVoice \u6A21\u5F0F\u4F7F\u7528\u7684 PowerShell \u5305\u88C5\u811A\u672C\u3002",
+    edgeConsentName: "\u5141\u8BB8 Edge \u5728\u7EBF\u5904\u7406",
+    edgeConsentDesc: "Edge \u6A21\u5F0F\u5FC5\u987B\u5F00\u542F\u3002\u5F00\u542F\u540E\uFF0C\u6BCF\u4E2A\u6587\u672C\u5206\u6BB5\u90FD\u4F1A\u53D1\u9001\u7ED9 Microsoft Edge TTS\u3002\u79C1\u5BC6\u6216\u654F\u611F\u7B14\u8BB0\u5EFA\u8BAE\u4FDD\u6301\u5173\u95ED\u3002",
+    edgeExecutableName: "Edge TTS \u53EF\u6267\u884C\u6587\u4EF6",
+    edgeExecutableDesc: "\u5EFA\u8BAE\u586B\u5199 edge-tts.exe \u7684\u7EDD\u5BF9\u8DEF\u5F84\uFF0C\u907F\u514D PATH \u6307\u5411\u4E0D\u660E\u786E\u3002\u9ED8\u8BA4\u503C\u4ECE Obsidian \u8FDB\u7A0B\u7684 PATH \u4E2D\u67E5\u627E edge-tts\u3002",
+    edgeCommonVoicesName: "\u5E38\u7528 Edge TTS \u97F3\u8272",
+    edgeCommonVoicesDesc: "\u5E38\u7528\u4E2D\u6587\u3001\u7F8E\u5F0F\u82F1\u8BED\u548C\u82F1\u5F0F\u82F1\u8BED\u5728\u7EBF\u97F3\u8272\u3002\u9009\u62E9\u540E\u4F1A\u81EA\u52A8\u586B\u5199\u4E0B\u65B9\u7684\u97F3\u8272 ID\u3002",
+    customVoiceOption: "\u81EA\u5B9A\u4E49\u97F3\u8272 ID",
+    edgeVoiceName: "Edge TTS \u97F3\u8272",
+    edgeVoiceDesc: "Edge \u6A21\u5F0F\u4F7F\u7528\u7684\u97F3\u8272 ID\u3002\u53EF\u4F7F\u7528\u4E0A\u65B9\u9884\u8BBE\uFF0C\u6216\u586B\u5199 edge-tts --list-voices \u8FD4\u56DE\u7684\u4EFB\u610F ID\u3002",
+    azureConsentName: "\u5141\u8BB8 Azure \u5728\u7EBF\u5904\u7406",
+    azureConsentDesc: "Azure \u6A21\u5F0F\u5FC5\u987B\u5F00\u542F\u3002\u6BCF\u4E2A\u6587\u672C\u5206\u6BB5\u4F1A\u901A\u8FC7 HTTPS \u53D1\u9001\u5230\u6240\u9009 Azure Speech \u4E91\u73AF\u5883\u548C\u533A\u57DF\u3002\u9664\u975E\u53EF\u4EE5\u63A5\u53D7\u8BE5\u5904\u7406\uFF0C\u5426\u5219\u79C1\u5BC6\u7B14\u8BB0\u5E94\u4FDD\u6301\u5173\u95ED\u3002",
+    credentialSourceName: "API \u5BC6\u94A5\u5B58\u50A8\u65B9\u5F0F",
+    credentialSourceDesc: "Obsidian 1.11.4 \u53CA\u4EE5\u4E0A\u7248\u672C\u5EFA\u8BAE\u4F7F\u7528 SecretStorage\uFF1B\u4E5F\u53EF\u4EE5\u7EE7\u7EED\u4F7F\u7528 Obsidian \u5E93\u5916\u7684\u5355\u884C\u5BC6\u94A5\u6587\u4EF6\u4F5C\u4E3A\u517C\u5BB9\u56DE\u9000\u3002",
+    credentialSourceSecret: "Obsidian SecretStorage\uFF08\u63A8\u8350\uFF09",
+    credentialSourceFile: "\u5E93\u5916\u5355\u884C\u5BC6\u94A5\u6587\u4EF6",
+    secretStorageUnavailableName: "Obsidian SecretStorage \u4E0D\u53EF\u7528",
+    secretStorageUnavailableDesc: "\u8BF7\u628A Obsidian \u66F4\u65B0\u5230 1.11.4 \u6216\u66F4\u9AD8\u7248\u672C\uFF0C\u6216\u6539\u9009\u5E93\u5916\u5BC6\u94A5\u6587\u4EF6\u3002",
+    azureCloudName: "Azure \u4E91\u73AF\u5883",
+    azureCloudDesc: "\u9009\u62E9 Speech \u8D44\u6E90\u548C\u8BA2\u9605\u5BC6\u94A5\u6240\u5C5E\u7684\u4E91\u73AF\u5883\u3002",
+    azurePublicCloud: "Azure \u516C\u6709\u4E91",
+    azureChinaCloud: "\u7531\u4E16\u7EAA\u4E92\u8054\u8FD0\u8425\u7684 Azure \u4E2D\u56FD\u533A",
+    azureRegionName: "Azure Speech \u533A\u57DF",
+    azureRegionDesc: "Azure \u8D44\u6E90\u4E2D\u7684\u533A\u57DF\u6807\u8BC6\uFF0C\u4F8B\u5982 eastasia\u3001southeastasia\u3001chinaeast2 \u6216 chinanorth3\u3002",
+    azureKeyFileName: "Azure Speech \u5BC6\u94A5\u6587\u4EF6",
+    azureKeyFileDesc: "\u517C\u5BB9\u56DE\u9000\u65B9\u5F0F\uFF1A\u586B\u5199 Obsidian \u5E93\u5916\u5355\u884C Speech \u8D44\u6E90\u5BC6\u94A5\u6587\u4EF6\u7684\u7EDD\u5BF9\u8DEF\u5F84\u3002\u5BC6\u94A5\u672C\u8EAB\u4E0D\u4F1A\u4FDD\u5B58\u5230 data.json\u3002",
+    azureSecretName: "Azure Speech \u79D8\u5BC6",
+    azureSecretDesc: "\u9009\u62E9\u6216\u521B\u5EFA\u4E00\u4E2A\u4FDD\u5B58 Speech \u8D44\u6E90\u5BC6\u94A5\u7684 Obsidian \u79D8\u5BC6\u3002data.json \u53EA\u4FDD\u5B58\u79D8\u5BC6\u540D\u79F0\uFF0C\u4E0D\u4FDD\u5B58\u5BC6\u94A5\u503C\u3002",
+    azureCommonVoicesName: "\u5E38\u7528 Azure Speech \u97F3\u8272",
+    azureCommonVoicesDesc: "\u5E38\u7528\u4E2D\u6587\u3001\u7F8E\u5F0F\u82F1\u8BED\u548C\u82F1\u5F0F\u82F1\u8BED Azure \u97F3\u8272\u3002\u9009\u62E9\u540E\u4F1A\u81EA\u52A8\u586B\u5199\u4E0B\u65B9\u7684\u97F3\u8272 ID\u3002",
+    azureVoiceName: "Azure Speech \u97F3\u8272",
+    azureVoiceDesc: "Azure Speech \u9884\u6784\u5EFA\u97F3\u8272 ID\uFF0C\u4F8B\u5982 zh-CN-XiaoxiaoNeural \u6216 en-US-JennyNeural\u3002",
+    openRouterConsentName: "\u5141\u8BB8 OpenRouter \u5728\u7EBF\u5904\u7406",
+    openRouterConsentDesc: "OpenRouter \u6A21\u5F0F\u5FC5\u987B\u5F00\u542F\u3002\u5B83\u53EA\u8868\u793A\u5141\u8BB8\u628A\u6587\u672C\u53D1\u9001\u7ED9 OpenRouter \u53CA\u7B26\u5408\u6761\u4EF6\u7684\u4E0A\u6E38 TTS \u670D\u52A1\u5546\uFF0C\u4E0D\u4F1A\u653E\u5BBD ZDR \u8DEF\u7531\u3002",
+    openRouterKeyFileName: "OpenRouter API \u5BC6\u94A5\u6587\u4EF6",
+    openRouterKeyFileDesc: "\u517C\u5BB9\u56DE\u9000\u65B9\u5F0F\uFF1A\u586B\u5199 Obsidian \u5E93\u5916\u5355\u884C OpenRouter API \u5BC6\u94A5\u6587\u4EF6\u7684\u7EDD\u5BF9\u8DEF\u5F84\u3002\u5BC6\u94A5\u672C\u8EAB\u4E0D\u4F1A\u4FDD\u5B58\u5230 data.json\u3002",
+    openRouterSecretName: "OpenRouter API \u79D8\u5BC6",
+    openRouterSecretDesc: "\u9009\u62E9\u6216\u521B\u5EFA\u4E00\u4E2A\u4FDD\u5B58 OpenRouter API \u5BC6\u94A5\u7684 Obsidian \u79D8\u5BC6\u3002data.json \u53EA\u4FDD\u5B58\u79D8\u5BC6\u540D\u79F0\uFF0C\u4E0D\u4FDD\u5B58\u5BC6\u94A5\u503C\u3002",
+    openRouterModelsName: "\u652F\u6301 ZDR \u7684 OpenRouter TTS \u6A21\u578B",
+    openRouterModelsDesc: "\u5185\u7F6E\u9009\u9879\u5DF2\u6309\u672C\u7248\u672C\u53D1\u5E03\u65F6 OpenRouter \u7684\u8BED\u97F3\u4E0E ZDR \u6A21\u578B\u8FC7\u6EE4\u7ED3\u679C\u6838\u5BF9\u3002\u53EF\u7528\u6027\u53EF\u80FD\u53D8\u5316\uFF0C\u4F46\u6BCF\u6B21\u8BF7\u6C42\u4ECD\u4F1A\u5F3A\u5236\u4F7F\u7528 ZDR\u3002",
+    customModelOption: "\u81EA\u5B9A\u4E49\u6A21\u578B ID",
+    openRouterModelName: "OpenRouter TTS \u6A21\u578B",
+    openRouterModelDesc: "\u652F\u6301\u8BED\u97F3\u8F93\u51FA\u7684\u6A21\u578B ID\u3002\u81EA\u5B9A\u4E49\u6A21\u578B\u53EA\u6709\u5728 OpenRouter \u5B58\u5728\u7B26\u5408\u6761\u4EF6\u7684 ZDR \u7AEF\u70B9\u65F6\u624D\u80FD\u4F7F\u7528\u3002",
+    openRouterModelInfoName: "\u6240\u9009\u6A21\u578B\u7279\u70B9",
+    customModelInfo: "\u81EA\u5B9A\u4E49\u6A21\u578B\uFF1A\u8BF7\u5728 OpenRouter \u6838\u5BF9\u5176\u8BED\u8A00\u3001\u97F3\u8272\u548C\u8BED\u97F3\u8F93\u51FA\u80FD\u529B\uFF1B\u5982\u679C\u6CA1\u6709\u7B26\u5408\u6761\u4EF6\u7684 ZDR \u7AEF\u70B9\uFF0C\u8BF7\u6C42\u4F1A\u5931\u8D25\u3002",
+    openRouterVoicesName: "\u8BE5\u6A21\u578B\u7684\u5E38\u7528\u97F3\u8272",
+    openRouterVoicesDesc: "\u8FD9\u91CC\u53EA\u5217\u51FA OpenRouter \u5F53\u524D\u516C\u5F00\u4E14\u4E0E\u6240\u9009\u6A21\u578B\u517C\u5BB9\u7684\u97F3\u8272 ID\u3002Gemini \u6309\u5B98\u65B9\u6717\u8BFB\u98CE\u683C\u6807\u6CE8\uFF0CKokoro \u6309\u8BED\u8A00\u548C\u6027\u522B\u6807\u6CE8\uFF1BMAI \u5F53\u524D\u53EA\u516C\u5F00 4 \u4E2A\u97F3\u8272\u3002",
+    openRouterVoiceName: "OpenRouter TTS \u97F3\u8272",
+    openRouterVoiceDesc: "\u6240\u9009\u6A21\u578B\u652F\u6301\u7684\u97F3\u8272 ID\u3002\u4E0D\u540C\u6A21\u578B\u7684\u97F3\u8272\u76EE\u5F55\u5E76\u4E0D\u76F8\u540C\u3002",
+    openRouterPrivacyName: "OpenRouter \u9690\u79C1\u8DEF\u7531",
+    openRouterPrivacyDesc: "\u59CB\u7EC8\u5F3A\u5236\u6267\u884C\uFF1Aprovider.zdr \u4E3A true\uFF0C\u5E76\u62D2\u7EDD\u4F9B\u5E94\u5546\u6536\u96C6\u6570\u636E\u3002\u63D2\u4EF6\u4E0D\u4F1A\u964D\u7EA7\u5230\u975E ZDR \u7AEF\u70B9\u3002\u6717\u8BFB\u79C1\u5BC6\u5185\u5BB9\u65F6\uFF0C\u8FD8\u5E94\u5173\u95ED OpenRouter \u8D26\u6237\u7EA7\u8F93\u5165\u8F93\u51FA\u65E5\u5FD7\u548C\u6570\u636E\u5171\u4EAB\u3002",
+    speedName: "\u8BED\u901F",
+    speedDesc: "\u4F20\u9012\u7ED9\u5F53\u524D\u8BED\u97F3\u5F15\u64CE\u7684\u6717\u8BFB\u901F\u5EA6\u3002",
+    chunkLimitsName: "\u672C\u5730\u5206\u6BB5\u957F\u5EA6",
+    chunkLimitsDesc: "\u672C\u5730 CosyVoice \u4F7F\u7528\u7684\u5B57\u7B26\u6570\u4E0A\u9650\uFF0C\u4EE5\u82F1\u6587\u9017\u53F7\u5206\u9694\u3002\u524D\u51E0\u4E2A\u5206\u6BB5\u8F83\u77ED\uFF0C\u53EF\u66F4\u5FEB\u5F00\u59CB\u64AD\u653E\u3002",
+    onlineChunkLimitsName: "\u5728\u7EBF\u5206\u6BB5\u957F\u5EA6",
+    onlineChunkLimitsDesc: "Edge\u3001Azure \u548C OpenRouter \u6717\u8BFB\u7B14\u8BB0\u6216 PDF \u65F6\u4F7F\u7528\u3002\u9ED8\u8BA4 200,400,800\uFF0C\u7528\u4E8E\u5E73\u8861\u542F\u52A8\u901F\u5EA6\u3001\u8FDE\u8D2F\u6027\u548C\u8BF7\u6C42\u6B21\u6570\u3002",
+    onlinePrefetchName: "\u5728\u7EBF\u5408\u6210\u9884\u53D6",
+    onlinePrefetchDesc: "\u5141\u8BB8\u5728\u7EBF\u5F15\u64CE\u63D0\u524D\u5408\u6210\u7684\u540E\u7EED\u5206\u6BB5\u6570\u91CF\u3002\u9ED8\u8BA4 1 \u53EF\u6539\u5584\u8854\u63A5\uFF0C\u5E76\u628A\u53EF\u80FD\u672A\u4F7F\u7528\u7684\u63D0\u524D\u5408\u6210\u9650\u5236\u4E3A\u6700\u591A\u4E00\u6BB5\uFF1B\u9009\u62E9 0 \u53EF\u4E25\u683C\u6309\u9700\u5408\u6210\u3002",
+    onlinePrefetchNone: "0 - \u9700\u8981\u65F6\u624D\u5408\u6210",
+    onlinePrefetchOne: "1 - \u63D0\u524D\u5408\u6210\u4E00\u6BB5",
+    stripMarkdownName: "\u79FB\u9664 Markdown \u683C\u5F0F",
+    stripMarkdownDesc: "\u5408\u6210\u524D\u79FB\u9664 frontmatter\u3001\u94FE\u63A5\u3001\u6807\u9898\u3001\u5D4C\u5165\u5185\u5BB9\u548C\u5E38\u89C1\u683C\u5F0F\u6807\u8BB0\u3002",
+    mathLanguageName: "\u6570\u5B66\u516C\u5F0F\u6717\u8BFB\u8BED\u8A00",
+    mathLanguageDesc: "\u9009\u62E9\u77ED LaTeX \u516C\u5F0F\u7684\u6717\u8BFB\u65B9\u5F0F\u3002\u6240\u6709\u6A21\u5F0F\u90FD\u4F1A\u8DF3\u8FC7\u8FC7\u957F\u516C\u5F0F\u3002",
+    mathEnglish: "\u82F1\u8BED",
+    mathChinese: "\u4E2D\u6587",
+    mathSkip: "\u8DF3\u8FC7\u516C\u5F0F",
+    rememberPositionName: "\u8BB0\u4F4F\u6717\u8BFB\u4F4D\u7F6E",
+    rememberPositionDesc: "\u9ED8\u8BA4\u5173\u95ED\u3002\u5F00\u542F\u540E\u53EA\u4FDD\u5B58\u6587\u4EF6\u8DEF\u5F84\u3001\u9875\u7801\u6216\u5206\u6BB5\u5E8F\u53F7\u3001\u77ED\u6587\u672C\u951A\u70B9\u548C\u65F6\u95F4\uFF0C\u4E0D\u4F1A\u628A\u7B14\u8BB0\u6216 PDF \u6B63\u6587\u4FDD\u5B58\u5230\u6717\u8BFB\u5386\u53F2\u4E2D\u3002",
+    clearPositionsName: "\u6E05\u9664\u5DF2\u4FDD\u5B58\u7684\u6717\u8BFB\u4F4D\u7F6E",
+    clearPositionsDesc: "\u5220\u9664\u5168\u90E8\u7EE7\u7EED\u6717\u8BFB\u951A\u70B9\uFF0C\u4E0D\u6539\u53D8\u8BED\u97F3\u8BBE\u7F6E\u6216 API \u51ED\u636E\u3002",
+    clearPositionsButton: "\u6E05\u9664\u4F4D\u7F6E",
+    positionsClearedNotice: "CosyVoice\uFF1A\u5DF2\u6E05\u9664\u4FDD\u5B58\u7684\u6717\u8BFB\u4F4D\u7F6E\u3002",
+    cleanupName: "\u6E05\u7406\u4E34\u65F6\u97F3\u9891",
+    cleanupDesc: "\u6717\u8BFB\u540E\u5220\u9664\u4E34\u65F6\u6587\u672C\u548C\u97F3\u9891\uFF0C\u5E76\u5728\u63D2\u4EF6\u542F\u52A8\u65F6\u6E05\u7406\u8FC7\u671F\u6587\u4EF6\u3002\u4E34\u65F6\u6570\u636E\u4FDD\u5B58\u5728 Obsidian \u5E93\u5916\u3002",
+    diagnosticName: "\u8BCA\u65AD\u65E5\u5FD7",
+    diagnosticDesc: "\u9ED8\u8BA4\u5173\u95ED\u3002\u5F00\u542F\u540E\u53EA\u5728\u7CFB\u7EDF\u4E34\u65F6\u76EE\u5F55\u4FDD\u5B58\u6709\u5927\u5C0F\u9650\u5236\u7684\u5931\u8D25\u5143\u6570\u636E\uFF0C\u4E0D\u5305\u542B\u7B14\u8BB0\u540D\u79F0\u6216\u5B50\u8FDB\u7A0B\u8F93\u51FA\u3002",
+    clearTemporaryName: "\u6E05\u9664\u4E34\u65F6\u6570\u636E",
+    clearTemporaryDesc: "\u7ACB\u5373\u505C\u6B62\u6717\u8BFB\uFF0C\u5E76\u5220\u9664\u672C\u63D2\u4EF6\u4EA7\u751F\u7684\u4E34\u65F6\u6587\u672C\u3001\u97F3\u9891\u3001\u65E7\u7F13\u5B58\u6587\u4EF6\u548C\u8BCA\u65AD\u65E5\u5FD7\u3002",
+    clearNowButton: "\u7ACB\u5373\u6E05\u9664",
+    restoreDefaultsName: "\u6062\u590D\u9ED8\u8BA4\u8BBE\u7F6E",
+    restoreDefaultsDesc: "\u628A\u672C\u9875\u9762\u7684\u6240\u6709\u8BBE\u7F6E\u6062\u590D\u4E3A\u9ED8\u8BA4\u503C\u5E76\u7ACB\u5373\u4FDD\u5B58\u3002",
+    restoreDefaultsButton: "\u6062\u590D\u9ED8\u8BA4\u503C",
+    settingsRestoredNotice: "CosyVoice\uFF1A\u8BBE\u7F6E\u5DF2\u6062\u590D\u4E3A\u9ED8\u8BA4\u503C\u3002",
+    temporaryDataClearedNotice: "CosyVoice\uFF1A\u4E34\u65F6\u6587\u672C\u3001\u97F3\u9891\u548C\u8BCA\u65AD\u65E5\u5FD7\u5DF2\u6E05\u9664\u3002",
+    commandsFooter: "\u547D\u4EE4\u8FD8\u5305\u62EC\u4ECE\u5F53\u524D\u6587\u4EF6\u4FDD\u5B58\u7684\u4F4D\u7F6E\u7EE7\u7EED\u6717\u8BFB\u3001\u540E\u9000\u6216\u524D\u8FDB 5 \u79D2\uFF0C\u4EE5\u53CA\u8DF3\u5230\u4E0A\u4E00\u4E2A\u6216\u4E0B\u4E00\u4E2A\u6717\u8BFB\u5206\u6BB5\u3002"
+  }
 };
-const LATEX_COMMAND_REPLACEMENTS = {
+var LATEX_COMMAND_REPLACEMENTS = {
   chinese: [
-    ['\\rightarrow', '到'],
-    ['\\leftarrow', '到'],
-    ['\\approx', '约等于'],
-    ['\\times', '乘以'],
-    ['\\cdot', '点乘'],
-    ['\\leq', '小于等于'],
-    ['\\geq', '大于等于'],
-    ['\\neq', '不等于'],
-    ['\\ne', '不等于'],
-    ['\\le', '小于等于'],
-    ['\\ge', '大于等于'],
-    ['\\pm', '正负'],
-    ['\\mp', '负正'],
-    ['\\infty', '无穷'],
-    ['\\alpha', 'alpha'],
-    ['\\beta', 'beta'],
-    ['\\gamma', 'gamma'],
-    ['\\delta', 'delta'],
-    ['\\epsilon', 'epsilon'],
-    ['\\theta', 'theta'],
-    ['\\lambda', 'lambda'],
-    ['\\mu', 'mu'],
-    ['\\pi', 'pi'],
-    ['\\sigma', 'sigma'],
-    ['\\omega', 'omega'],
-    ['\\sum', '求和'],
-    ['\\int', '积分'],
-    ['\\to', '到'],
-    ['\\left', ''],
-    ['\\right', ''],
+    ["\\rightarrow", "\u5230"],
+    ["\\leftarrow", "\u5230"],
+    ["\\approx", "\u7EA6\u7B49\u4E8E"],
+    ["\\times", "\u4E58\u4EE5"],
+    ["\\cdot", "\u70B9\u4E58"],
+    ["\\leq", "\u5C0F\u4E8E\u7B49\u4E8E"],
+    ["\\geq", "\u5927\u4E8E\u7B49\u4E8E"],
+    ["\\neq", "\u4E0D\u7B49\u4E8E"],
+    ["\\ne", "\u4E0D\u7B49\u4E8E"],
+    ["\\le", "\u5C0F\u4E8E\u7B49\u4E8E"],
+    ["\\ge", "\u5927\u4E8E\u7B49\u4E8E"],
+    ["\\pm", "\u6B63\u8D1F"],
+    ["\\mp", "\u8D1F\u6B63"],
+    ["\\infty", "\u65E0\u7A77"],
+    ["\\alpha", "alpha"],
+    ["\\beta", "beta"],
+    ["\\gamma", "gamma"],
+    ["\\delta", "delta"],
+    ["\\epsilon", "epsilon"],
+    ["\\theta", "theta"],
+    ["\\lambda", "lambda"],
+    ["\\mu", "mu"],
+    ["\\pi", "pi"],
+    ["\\sigma", "sigma"],
+    ["\\omega", "omega"],
+    ["\\sum", "\u6C42\u548C"],
+    ["\\int", "\u79EF\u5206"],
+    ["\\to", "\u5230"],
+    ["\\left", ""],
+    ["\\right", ""]
   ],
   english: [
-    ['\\rightarrow', 'to'],
-    ['\\leftarrow', 'from'],
-    ['\\approx', 'approximately equal to'],
-    ['\\times', 'times'],
-    ['\\cdot', 'dot'],
-    ['\\leq', 'less than or equal to'],
-    ['\\geq', 'greater than or equal to'],
-    ['\\neq', 'not equal to'],
-    ['\\ne', 'not equal to'],
-    ['\\le', 'less than or equal to'],
-    ['\\ge', 'greater than or equal to'],
-    ['\\pm', 'plus or minus'],
-    ['\\mp', 'minus or plus'],
-    ['\\infty', 'infinity'],
-    ['\\alpha', 'alpha'],
-    ['\\beta', 'beta'],
-    ['\\gamma', 'gamma'],
-    ['\\delta', 'delta'],
-    ['\\epsilon', 'epsilon'],
-    ['\\theta', 'theta'],
-    ['\\lambda', 'lambda'],
-    ['\\mu', 'mu'],
-    ['\\pi', 'pi'],
-    ['\\sigma', 'sigma'],
-    ['\\omega', 'omega'],
-    ['\\sum', 'sum'],
-    ['\\int', 'integral'],
-    ['\\to', 'to'],
-    ['\\left', ''],
-    ['\\right', ''],
-  ],
+    ["\\rightarrow", "to"],
+    ["\\leftarrow", "from"],
+    ["\\approx", "approximately equal to"],
+    ["\\times", "times"],
+    ["\\cdot", "dot"],
+    ["\\leq", "less than or equal to"],
+    ["\\geq", "greater than or equal to"],
+    ["\\neq", "not equal to"],
+    ["\\ne", "not equal to"],
+    ["\\le", "less than or equal to"],
+    ["\\ge", "greater than or equal to"],
+    ["\\pm", "plus or minus"],
+    ["\\mp", "minus or plus"],
+    ["\\infty", "infinity"],
+    ["\\alpha", "alpha"],
+    ["\\beta", "beta"],
+    ["\\gamma", "gamma"],
+    ["\\delta", "delta"],
+    ["\\epsilon", "epsilon"],
+    ["\\theta", "theta"],
+    ["\\lambda", "lambda"],
+    ["\\mu", "mu"],
+    ["\\pi", "pi"],
+    ["\\sigma", "sigma"],
+    ["\\omega", "omega"],
+    ["\\sum", "sum"],
+    ["\\int", "integral"],
+    ["\\to", "to"],
+    ["\\left", ""],
+    ["\\right", ""]
+  ]
 };
-
-const DEFAULT_SETTINGS = {
-  settingsLanguage: 'english',
+var DEFAULT_SETTINGS = {
+  settingsLanguage: "english",
   scriptPath: resolveDefaultScriptPath(),
-  speechEngine: 'local-cosyvoice',
+  speechEngine: "local-cosyvoice",
   edgeTtsConsent: false,
   edgeTtsExecutable: DEFAULT_EDGE_TTS_EXECUTABLE,
   edgeTtsVoice: DEFAULT_EDGE_TTS_VOICE,
-  azureSpeechCloud: 'public',
+  azureSpeechCloud: "public",
   azureSpeechConsent: false,
-  azureSpeechCredentialSource: 'obsidian-secret',
-  azureSpeechKeyPath: '',
-  azureSpeechRegion: '',
-  azureSpeechSecretName: '',
+  azureSpeechCredentialSource: "obsidian-secret",
+  azureSpeechKeyPath: "",
+  azureSpeechRegion: "",
+  azureSpeechSecretName: "",
   azureSpeechVoice: DEFAULT_AZURE_SPEECH_VOICE,
   openRouterConsent: false,
-  openRouterCredentialSource: 'obsidian-secret',
-  openRouterKeyPath: '',
+  openRouterCredentialSource: "obsidian-secret",
+  openRouterKeyPath: "",
   openRouterModel: DEFAULT_OPENROUTER_TTS_MODEL,
-  openRouterSecretName: '',
+  openRouterSecretName: "",
   openRouterVoice: DEFAULT_OPENROUTER_TTS_VOICE,
   speed: 1,
   stripMarkdown: true,
   cleanupCache: true,
   diagnosticLogging: false,
   mathReadingLanguage: DEFAULT_MATH_READING_LANGUAGE,
-  chunkLimits: DEFAULT_CHUNK_LIMITS.join(','),
-  onlineChunkLimits: DEFAULT_ONLINE_CHUNK_LIMITS.join(','),
+  chunkLimits: DEFAULT_CHUNK_LIMITS.join(","),
+  onlineChunkLimits: DEFAULT_ONLINE_CHUNK_LIMITS.join(","),
   onlinePrefetchChunks: 1,
+  rememberReadingPosition: false,
+  readingPositions: {}
 };
-
 function normalizeLineBreaks(text) {
-  return String(text || '').replace(/\r\n?/g, '\n');
+  return String(text || "").replace(/\r\n?/g, "\n");
 }
-
 function isPdfFile(file) {
-  return Boolean(file && String(file.extension || '').toLowerCase() === 'pdf');
+  return Boolean(file && String(file.extension || "").toLowerCase() === "pdf");
 }
-
 function getPdfFileIdentity(file) {
-  return String(file && (file.path || file.name) || '');
+  return String(file && (file.path || file.name) || "");
 }
-
+function getFileMtime(file) {
+  return Math.max(0, Math.floor(Number(file && file.stat && file.stat.mtime) || 0));
+}
 function getPdfPageNumberFromNode(node, root) {
   let element = node && node.nodeType === 1 ? node : node && node.parentElement;
-
   while (element) {
-    const getAttribute = typeof element.getAttribute === 'function'
-      ? (name) => element.getAttribute(name)
-      : () => null;
-    const pageNumberValue = getAttribute('data-page-number');
+    const getAttribute = typeof element.getAttribute === "function" ? (name) => element.getAttribute(name) : () => null;
+    const pageNumberValue = getAttribute("data-page-number");
     const pageNumber = Number(pageNumberValue);
     if (pageNumberValue !== null && Number.isInteger(pageNumber) && pageNumber >= 1) {
       return pageNumber;
     }
-
-    const pageIndexValue = getAttribute('data-page-index');
+    const pageIndexValue = getAttribute("data-page-index");
     const pageIndex = Number(pageIndexValue);
     if (pageIndexValue !== null && Number.isInteger(pageIndex) && pageIndex >= 0) {
       return pageIndex + 1;
     }
-
-    const identity = `${getAttribute('id') || ''} ${getAttribute('aria-label') || ''}`;
+    const identity = `${getAttribute("id") || ""} ${getAttribute("aria-label") || ""}`;
     const identityMatch = /(?:pageContainer|page[-_]|\bpage\s+)(\d+)\b/i.exec(identity);
     if (identityMatch) {
       return Number(identityMatch[1]);
     }
-
     if (element === root) {
       break;
     }
     element = element.parentElement;
   }
-
   return null;
 }
-
 function getPdfSelectionContext(selection, leaves, fallbackFile = null, capturedAt = Date.now()) {
-  if (!selection || typeof selection.toString !== 'function' || typeof selection.getRangeAt !== 'function') {
+  if (!selection || typeof selection.toString !== "function" || typeof selection.getRangeAt !== "function") {
     return null;
   }
-
   const selectedText = selection.toString().trim();
   if (!selectedText || Number(selection.rangeCount) < 1) {
     return null;
   }
-
   let range;
   try {
     range = selection.getRangeAt(0);
@@ -485,14 +1038,12 @@ function getPdfSelectionContext(selection, leaves, fallbackFile = null, captured
   if (!startNode) {
     return null;
   }
-
   for (const leaf of Array.isArray(leaves) ? leaves : []) {
     const view = leaf && leaf.view;
     const root = view && (view.containerEl || view.contentEl);
-    if (!root || typeof root.contains !== 'function' || !root.contains(startNode)) {
+    if (!root || typeof root.contains !== "function" || !root.contains(startNode)) {
       continue;
     }
-
     const file = isPdfFile(view.file) ? view.file : fallbackFile;
     if (!isPdfFile(file)) {
       continue;
@@ -501,39 +1052,26 @@ function getPdfSelectionContext(selection, leaves, fallbackFile = null, captured
     if (!pageNumber) {
       continue;
     }
-
     return {
       capturedAt: Number(capturedAt) || Date.now(),
       filePath: getPdfFileIdentity(file),
       pageNumber,
-      selectedText: selectedText.slice(0, 2000),
+      selectedText: selectedText.slice(0, 2e3)
     };
   }
-
   return null;
 }
-
 function normalizePdfSelectionText(text) {
-  return normalizeLineBreaks(text)
-    .normalize('NFKC')
-    .replace(/\u00ad/g, '')
-    .replace(/([A-Za-z])-\s+(?=[a-z])/g, '$1')
-    .replace(/\s+/g, ' ')
-    .trim();
+  return normalizeLineBreaks(text).normalize("NFKC").replace(/\u00ad/g, "").replace(/([A-Za-z])-\s+(?=[a-z])/g, "$1").replace(/\s+/g, " ").trim();
 }
-
 function slicePdfTextFromSelection(pageText, selectedText) {
   const page = normalizePdfSelectionText(pageText);
   const selected = normalizePdfSelectionText(selectedText);
   if (!page || !selected) {
     return { matched: false, text: page };
   }
-
-  const candidateLengths = [selected.length, 400, 240, 160, 100, 60, 30, 16, 8]
-    .map((length) => Math.min(selected.length, length))
-    .filter((length, index, values) => length >= 8 && values.indexOf(length) === index);
+  const candidateLengths = [selected.length, 400, 240, 160, 100, 60, 30, 16, 8].map((length) => Math.min(selected.length, length)).filter((length, index, values) => length >= 8 && values.indexOf(length) === index);
   const pageLower = page.toLocaleLowerCase();
-
   for (const length of candidateLengths) {
     const candidate = selected.slice(0, length);
     let matchIndex = page.indexOf(candidate);
@@ -544,193 +1082,108 @@ function slicePdfTextFromSelection(pageText, selectedText) {
       return { matched: true, text: page.slice(matchIndex) };
     }
   }
-
   return { matched: false, text: page };
 }
-
-function isCjkCharacter(character) {
-  return /[\u3040-\u30ff\u3400-\u9fff\uf900-\ufaff]/.test(String(character || ''));
-}
-
-function shouldJoinPdfTextTokens(currentLine, token) {
-  const previous = currentLine.slice(-1);
-  const next = token.charAt(0);
-
-  if (!previous || !next) {
-    return true;
-  }
-  if (/[([{\u3008-\u3010\u3014\uff08]/.test(previous)) {
-    return true;
-  }
-  if (/[),.;:!?%\]}\u3001\u3002\u3009-\u3011\u3015\uff01\uff09\uff0c\uff0e\uff1a\uff1b\uff1f]/.test(next)) {
-    return true;
-  }
-  return isCjkCharacter(previous) && isCjkCharacter(next);
-}
-
-function extractTextFromPdfItems(items) {
-  const lines = [];
-  let currentLine = '';
-
-  const flushLine = () => {
-    const line = currentLine.trim();
-    if (line) {
-      lines.push(line);
-    }
-    currentLine = '';
-  };
-
-  for (const item of Array.isArray(items) ? items : []) {
-    if (!item || typeof item.str !== 'string') {
-      continue;
-    }
-
-    const parts = normalizeLineBreaks(item.str).split('\n');
-    parts.forEach((part, index) => {
-      const token = part.replace(/[ \t]+/g, ' ').trim();
-      if (token) {
-        currentLine = currentLine && !shouldJoinPdfTextTokens(currentLine, token)
-          ? `${currentLine} ${token}`
-          : `${currentLine}${token}`;
-      }
-      if (index < parts.length - 1) {
-        flushLine();
-      }
-    });
-
-    if (item.hasEOL) {
-      flushLine();
-    }
-  }
-
-  flushLine();
-  return lines
-    .join('\n')
-    .replace(/([A-Za-z])-\n(?=[a-z])/g, '$1')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
-}
-
 function joinPdfPageText(pageTexts) {
-  return (Array.isArray(pageTexts) ? pageTexts : [])
-    .map((text) => normalizeLineBreaks(text).trim())
-    .filter(Boolean)
-    .join('\n\n');
+  return (Array.isArray(pageTexts) ? pageTexts : []).map((text) => normalizeLineBreaks(text).trim()).filter(Boolean).join("\n\n");
 }
-
 function getPdfExtractionErrorMessage(error) {
   const message = messageFromError(error);
-  if (/password/i.test(`${error && error.name ? error.name : ''} ${message}`)) {
-    return 'This PDF is password-protected. Unlock it before reading.';
+  if (/password/i.test(`${error && error.name ? error.name : ""} ${message}`)) {
+    return "This PDF is password-protected. Unlock it before reading.";
   }
-  if (/invalidpdf|invalid pdf|malformed pdf/i.test(`${error && error.name ? error.name : ''} ${message}`)) {
-    return 'This PDF is invalid or damaged and its text could not be extracted.';
+  if (/invalidpdf|invalid pdf|malformed pdf/i.test(`${error && error.name ? error.name : ""} ${message}`)) {
+    return "This PDF is invalid or damaged and its text could not be extracted.";
   }
   return message;
 }
-
 function splitMarkdownTableRow(line) {
-  let value = String(line || '').trim();
-  if (!value.includes('|')) {
+  let value = String(line || "").trim();
+  if (!value.includes("|")) {
     return [];
   }
-
-  if (value.startsWith('|')) {
+  if (value.startsWith("|")) {
     value = value.slice(1);
   }
   if (hasUnescapedTrailingPipe(value)) {
     value = value.slice(0, -1);
   }
-
   const cells = [];
-  let current = '';
+  let current = "";
   let inCode = false;
-
   for (let index = 0; index < value.length; index += 1) {
     const character = value[index];
-    if (character === '\\' && value[index + 1] === '|') {
-      current += '|';
+    if (character === "\\" && value[index + 1] === "|") {
+      current += "|";
       index += 1;
       continue;
     }
-    if (character === '`') {
+    if (character === "`") {
       inCode = !inCode;
       current += character;
       continue;
     }
-    if (character === '|' && !inCode) {
+    if (character === "|" && !inCode) {
       cells.push(current.trim());
-      current = '';
+      current = "";
       continue;
     }
     current += character;
   }
-
   cells.push(current.trim());
   return cells;
 }
-
 function hasUnescapedTrailingPipe(value) {
-  if (!value.endsWith('|')) {
+  if (!value.endsWith("|")) {
     return false;
   }
-
   let backslashes = 0;
-  for (let index = value.length - 2; index >= 0 && value[index] === '\\'; index -= 1) {
+  for (let index = value.length - 2; index >= 0 && value[index] === "\\"; index -= 1) {
     backslashes += 1;
   }
   return backslashes % 2 === 0;
 }
-
 function isMarkdownTableDelimiterLine(line) {
   const cells = splitMarkdownTableRow(line);
-  return cells.length >= 2 && cells.every((cell) => /^:?-{3,}:?$/.test(cell.replace(/\s+/g, '')));
+  return cells.length >= 2 && cells.every((cell) => /^:?-{3,}:?$/.test(cell.replace(/\s+/g, "")));
 }
-
 function formatMarkdownTableForSpeech(headers, rows) {
-  const tableText = headers.concat(...rows).join(' ');
+  const tableText = headers.concat(...rows).join(" ");
   const useChineseLabels = /[\u3040-\u30ff\u3400-\u9fff\uf900-\ufaff]/.test(tableText);
   const output = [];
   const headerLabels = headers.map((header) => header.trim()).filter(Boolean);
-
   if (headerLabels.length) {
-    output.push(`${useChineseLabels ? '表格列' : 'Table columns'}: ${headerLabels.join('; ')}${useChineseLabels ? '。' : '.'}`);
+    output.push(`${useChineseLabels ? "\u8868\u683C\u5217" : "Table columns"}: ${headerLabels.join("; ")}${useChineseLabels ? "\u3002" : "."}`);
   }
-
   rows.forEach((cells, rowIndex) => {
     const values = [];
     const cellCount = Math.max(headers.length, cells.length);
     for (let cellIndex = 0; cellIndex < cellCount; cellIndex += 1) {
-      const cell = String(cells[cellIndex] || '').trim();
+      const cell = String(cells[cellIndex] || "").trim();
       if (!cell) {
         continue;
       }
-      const header = String(headers[cellIndex] || '').trim();
+      const header = String(headers[cellIndex] || "").trim();
       values.push(header ? `${header}: ${cell}` : cell);
     }
-
     if (values.length) {
-      const rowLabel = useChineseLabels ? `第 ${rowIndex + 1} 行` : `Row ${rowIndex + 1}`;
-      output.push(`${rowLabel}. ${values.join('; ')}${useChineseLabels ? '。' : '.'}`);
+      const rowLabel = useChineseLabels ? `\u7B2C ${rowIndex + 1} \u884C` : `Row ${rowIndex + 1}`;
+      output.push(`${rowLabel}. ${values.join("; ")}${useChineseLabels ? "\u3002" : "."}`);
     }
   });
-
-  return output.join('\n');
+  return output.join("\n");
 }
-
 function sanitizeMarkdownTablesForSpeech(text) {
-  const lines = normalizeLineBreaks(text).split('\n');
+  const lines = normalizeLineBreaks(text).split("\n");
   const output = [];
-
   for (let index = 0; index < lines.length; index += 1) {
     const headerLine = lines[index];
     const delimiterLine = lines[index + 1];
-    if (headerLine.includes('|') && isMarkdownTableDelimiterLine(delimiterLine)) {
+    if (headerLine.includes("|") && isMarkdownTableDelimiterLine(delimiterLine)) {
       const headers = splitMarkdownTableRow(headerLine);
       const rows = [];
       let rowIndex = index + 2;
-
-      while (rowIndex < lines.length && lines[rowIndex].trim() && lines[rowIndex].includes('|')) {
+      while (rowIndex < lines.length && lines[rowIndex].trim() && lines[rowIndex].includes("|")) {
         const cells = splitMarkdownTableRow(lines[rowIndex]);
         if (isMarkdownTableDelimiterLine(lines[rowIndex])) {
           break;
@@ -738,37 +1191,31 @@ function sanitizeMarkdownTablesForSpeech(text) {
         rows.push(cells);
         rowIndex += 1;
       }
-
       output.push(formatMarkdownTableForSpeech(headers, rows));
       index = rowIndex - 1;
       continue;
     }
-
     if (!isMarkdownTableDelimiterLine(headerLine)) {
       output.push(headerLine);
     }
   }
-
-  return output.join('\n');
+  return output.join("\n");
 }
-
 function joinCitationSpeechParts(parts, useChineseLabels) {
   if (useChineseLabels) {
-    return parts.join('、');
+    return parts.join("\u3001");
   }
   if (parts.length <= 1) {
-    return parts[0] || '';
+    return parts[0] || "";
   }
   if (parts.length === 2) {
     return `${parts[0]} and ${parts[1]}`;
   }
-  return `${parts.slice(0, -1).join(', ')}, and ${parts.at(-1)}`;
+  return `${parts.slice(0, -1).join(", ")}, and ${parts.at(-1)}`;
 }
-
 function verbalizeNumericCitationsForSpeech(text) {
-  const value = String(text || '');
+  const value = String(text || "");
   const useChineseLabels = /[\u3040-\u30ff\u3400-\u9fff\uf900-\ufaff]/.test(value);
-
   return value.replace(
     /\[(\d+(?:\s*(?:[,;]|[-–—])\s*\d+)*)\](?:\([^)]*\))?/g,
     (match, content) => {
@@ -776,408 +1223,212 @@ function verbalizeNumericCitationsForSpeech(text) {
       if (!numbers.length || numbers.some((number) => Number(number) < 1 || Number(number) > 999)) {
         return match;
       }
-
-      const parts = content
-        .split(/\s*[,;]\s*/)
-        .map((part) => {
-          const range = /^(\d+)\s*[-–—]\s*(\d+)$/.exec(part);
-          if (!range) {
-            return part.trim();
-          }
-          return `${range[1]} ${useChineseLabels ? '到' : 'to'} ${range[2]}`;
-        })
-        .filter(Boolean);
+      const parts = content.split(/\s*[,;]\s*/).map((part) => {
+        const range = /^(\d+)\s*[-–—]\s*(\d+)$/.exec(part);
+        if (!range) {
+          return part.trim();
+        }
+        return `${range[1]} ${useChineseLabels ? "\u5230" : "to"} ${range[2]}`;
+      }).filter(Boolean);
       const isPlural = parts.length > 1 || /[-–—]/.test(content);
-      const label = useChineseLabels ? '参考文献' : (isPlural ? 'references' : 'reference');
+      const label = useChineseLabels ? "\u53C2\u8003\u6587\u732E" : isPlural ? "references" : "reference";
       return ` ${label} ${joinCitationSpeechParts(parts, useChineseLabels)} `;
     }
   );
 }
-
 function sanitizeTextForSpeech(text, options = {}) {
   let value = sanitizeLatexForSpeech(normalizeLineBreaks(text), options);
-
-  value = value.replace(/^---\n[\s\S]*?\n---\n?/, '');
-  value = value.replace(/```[\s\S]*?```/g, ' ');
-  value = value.replace(/!\[\[[^\]]+\]\]/g, ' ');
-  value = value.replace(/!\[[^\]]*]\([^)]*\)/g, ' ');
-  value = value.replace(/\[\[([^\]|]+)\|([^\]]+)\]\]/g, '$2');
-  value = value.replace(/\[\[([^\]]+)\]\]/g, '$1');
+  value = value.replace(/^---\n[\s\S]*?\n---\n?/, "");
+  value = value.replace(/```[\s\S]*?```/g, " ");
+  value = value.replace(/!\[\[[^\]]+\]\]/g, " ");
+  value = value.replace(/!\[[^\]]*]\([^)]*\)/g, " ");
+  value = value.replace(/\[\[([^\]|]+)\|([^\]]+)\]\]/g, "$2");
+  value = value.replace(/\[\[([^\]]+)\]\]/g, "$1");
   value = verbalizeNumericCitationsForSpeech(value);
-  value = value.replace(/\[([^\]]+)\]\([^)]*\)/g, '$1');
+  value = value.replace(/\[([^\]]+)\]\([^)]*\)/g, "$1");
   value = sanitizeMarkdownTablesForSpeech(value);
-  value = value.replace(/`([^`]+)`/g, '$1');
-  value = value.replace(/<[^>]+>/g, ' ');
-  value = value.replace(/^\s{0,3}#{1,6}\s+/gm, '');
-  value = value.replace(/^\s*>\s?/gm, '');
-  value = value.replace(/^\s*[-+*]\s+/gm, '');
-  value = value.replace(/[*_~]/g, '');
-  value = value.replace(/\|/g, ' ');
-  value = value.replace(/[ \t]+/g, ' ');
-  value = value.replace(/\s+([，。、；：！？,.])/g, '$1');
-  value = value.replace(/([，。、；：！？])\s+/g, '$1');
-
-  return value
-    .split('\n')
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .join('\n')
-    .trim();
+  value = value.replace(/`([^`]+)`/g, "$1");
+  value = value.replace(/<[^>]+>/g, " ");
+  value = value.replace(/^\s{0,3}#{1,6}\s+/gm, "");
+  value = value.replace(/^\s*>\s?/gm, "");
+  value = value.replace(/^\s*[-+*]\s+/gm, "");
+  value = value.replace(/[*_~]/g, "");
+  value = value.replace(/\|/g, " ");
+  value = value.replace(/[ \t]+/g, " ");
+  value = value.replace(/\s+([，。、；：！？,.])/g, "$1");
+  value = value.replace(/([，。、；：！？])\s+/g, "$1");
+  return value.split("\n").map((line) => line.trim()).filter(Boolean).join("\n").trim();
 }
-
 function sanitizeLatexForSpeech(text, options = {}) {
   let value = normalizeLineBreaks(text);
   const mathReadingLanguage = normalizeMathReadingLanguage(options.mathReadingLanguage);
-
   value = value.replace(/\$\$([\s\S]*?)\$\$/g, (match, content) => replaceLatexFormula(match, content, mathReadingLanguage));
   value = value.replace(/\\\[([\s\S]*?)\\\]/g, (match, content) => replaceLatexFormula(match, content, mathReadingLanguage));
   value = value.replace(/\\\(([\s\S]*?)\\\)/g, (match, content) => replaceLatexFormula(match, content, mathReadingLanguage));
   value = value.replace(/\$([^$\n]+?)\$/g, (match, content) => replaceLatexFormula(match, content, mathReadingLanguage));
-
   return verbalizeLatexCommands(value, mathReadingLanguage);
 }
-
 function replaceLatexFormula(match, content, mathReadingLanguage) {
-  if (mathReadingLanguage === 'skip' || isLongLatexFormula(content)) {
-    return ' ';
+  if (mathReadingLanguage === "skip" || isLongLatexFormula(content)) {
+    return " ";
   }
-
   return ` ${verbalizeShortLatex(content, mathReadingLanguage)} `;
 }
-
 function isLongLatexFormula(content) {
-  return stripLatexDelimiters(content).replace(/\s+/g, '').length > LATEX_FORMULA_MAX_CHARS;
+  return stripLatexDelimiters(content).replace(/\s+/g, "").length > LATEX_FORMULA_MAX_CHARS;
 }
-
 function stripLatexDelimiters(content) {
-  let value = String(content || '').trim();
-
-  value = value.replace(/^\$\$([\s\S]*?)\$\$$/, '$1');
-  value = value.replace(/^\\\[([\s\S]*?)\\\]$/, '$1');
-  value = value.replace(/^\\\(([\s\S]*?)\\\)$/, '$1');
-  value = value.replace(/^\$([^$]*)\$$/, '$1');
-
+  let value = String(content || "").trim();
+  value = value.replace(/^\$\$([\s\S]*?)\$\$$/, "$1");
+  value = value.replace(/^\\\[([\s\S]*?)\\\]$/, "$1");
+  value = value.replace(/^\\\(([\s\S]*?)\\\)$/, "$1");
+  value = value.replace(/^\$([^$]*)\$$/, "$1");
   return value.trim();
 }
-
 function verbalizeShortLatex(content, mathReadingLanguage = DEFAULT_MATH_READING_LANGUAGE) {
   let value = stripLatexDelimiters(content);
   const language = normalizeMathReadingLanguage(mathReadingLanguage);
-
   value = verbalizeLatexCommands(value, language);
   value = verbalizeLatexAbsoluteValues(value, language);
-  value = value.replace(/_/g, language === 'chinese' ? ' 下标 ' : ' subscript ');
-  value = value.replace(/\^/g, language === 'chinese' ? ' 上标 ' : ' superscript ');
-  value = value.replace(/\+/g, language === 'chinese' ? ' 加 ' : ' plus ');
-  value = value.replace(/=/g, language === 'chinese' ? ' 等于 ' : ' equals ');
-  value = value.replace(/[{}()[\]]/g, ' ');
-  value = value.replace(/\\/g, ' ');
-
+  value = value.replace(/_/g, language === "chinese" ? " \u4E0B\u6807 " : " subscript ");
+  value = value.replace(/\^/g, language === "chinese" ? " \u4E0A\u6807 " : " superscript ");
+  value = value.replace(/\+/g, language === "chinese" ? " \u52A0 " : " plus ");
+  value = value.replace(/=/g, language === "chinese" ? " \u7B49\u4E8E " : " equals ");
+  value = value.replace(/[{}()[\]]/g, " ");
+  value = value.replace(/\\/g, " ");
   return cleanupLatexSpeech(value);
 }
-
 function verbalizeLatexAbsoluteValues(text, mathReadingLanguage) {
-  let value = String(text || '').replace(/\\(?:lvert|rvert|vert)\b/g, '|');
-  value = value.replace(/\|([^|\n]+)\|/g, (_match, inner) => (
-    mathReadingLanguage === 'chinese'
-      ? `${inner} 的绝对值`
-      : `absolute value of ${inner}`
-  ));
-  return value.replace(/\|/g, ' ');
+  let value = String(text || "").replace(/\\(?:lvert|rvert|vert)\b/g, "|");
+  value = value.replace(/\|([^|\n]+)\|/g, (_match, inner) => mathReadingLanguage === "chinese" ? `${inner} \u7684\u7EDD\u5BF9\u503C` : `absolute value of ${inner}`);
+  return value.replace(/\|/g, " ");
 }
-
 function verbalizeLatexCommands(text, mathReadingLanguage = DEFAULT_MATH_READING_LANGUAGE) {
   const language = normalizeMathReadingLanguage(mathReadingLanguage);
-  let value = replaceLatexCommands(String(text || ''), language);
+  let value = replaceLatexCommands(String(text || ""), language);
   value = replaceLatexSymbolCommands(value, language);
   return cleanupLatexSpeechPreservingLines(value);
 }
-
 function replaceLatexCommands(text, mathReadingLanguage) {
-  let value = String(text || '');
-  let previous = '';
-  const fractionSpeech = mathReadingLanguage === 'chinese' ? '$1 分之 $2' : '$1 over $2';
-
+  let value = String(text || "");
+  let previous = "";
+  const fractionSpeech = mathReadingLanguage === "chinese" ? "$1 \u5206\u4E4B $2" : "$1 over $2";
   while (value !== previous) {
     previous = value;
-    value = value.replace(/\\(?:textbf|mathbf|boldsymbol|textit|emph|mathrm|operatorname|text)\s*\{([^{}]*)\}/g, '$1');
+    value = value.replace(/\\(?:textbf|mathbf|boldsymbol|textit|emph|mathrm|operatorname|text)\s*\{([^{}]*)\}/g, "$1");
     value = value.replace(/\\frac\s*\{([^{}]*)\}\s*\{([^{}]*)\}/g, fractionSpeech);
   }
-
   return value;
 }
-
 function replaceLatexSymbolCommands(text, mathReadingLanguage) {
-  let value = String(text || '');
+  let value = String(text || "");
   const replacements = LATEX_COMMAND_REPLACEMENTS[mathReadingLanguage] || LATEX_COMMAND_REPLACEMENTS[DEFAULT_MATH_READING_LANGUAGE];
-
   for (const [command, speech] of replacements) {
-    const replacement = speech ? ` ${speech} ` : ' ';
-    value = value.replace(new RegExp(`${escapeRegExp(command)}\\b`, 'g'), replacement);
+    const replacement = speech ? ` ${speech} ` : " ";
+    value = value.replace(new RegExp(`${escapeRegExp(command)}\\b`, "g"), replacement);
   }
-
   return value;
 }
-
 function cleanupLatexSpeech(text) {
-  return String(text || '')
-    .replace(/\s+/g, ' ')
-    .replace(/\s+([，。、；：！？,.])/g, '$1')
-    .replace(/([，。、；：！？])\s+/g, '$1')
-    .trim();
+  return String(text || "").replace(/\s+/g, " ").replace(/\s+([，。、；：！？,.])/g, "$1").replace(/([，。、；：！？])\s+/g, "$1").trim();
 }
-
 function cleanupLatexSpeechPreservingLines(text) {
-  return String(text || '')
-    .split('\n')
-    .map((line) => cleanupLatexSpeech(line))
-    .join('\n');
+  return String(text || "").split("\n").map((line) => cleanupLatexSpeech(line)).join("\n");
 }
-
 function escapeRegExp(text) {
-  return String(text).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return String(text).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
-
-function parseChunkLimits(value, fallback = DEFAULT_CHUNK_LIMITS) {
-  const list = Array.isArray(value)
-    ? value
-    : String(value || '')
-        .split(',')
-        .map((item) => item.trim());
-
-  const limits = list
-    .map((item) => Math.floor(Number(item)))
-    .filter((item) => Number.isFinite(item) && item > 0);
-
-  const fallbackLimits = Array.isArray(fallback)
-    ? fallback.filter((item) => Number.isFinite(item) && item > 0)
-    : [];
-  return limits.length
-    ? limits
-    : (fallbackLimits.length ? fallbackLimits.slice() : DEFAULT_CHUNK_LIMITS.slice());
-}
-
-function splitTextForSpeechChunks(text, maxLengths = DEFAULT_CHUNK_LIMITS) {
-  const limits = parseChunkLimits(maxLengths);
-  const normalized = String(text || '').replace(/\s+/g, ' ').trim();
-
-  if (!normalized) {
-    return [];
-  }
-
-  const chunks = [];
-  let remaining = normalized;
-
-  while (remaining.length > 0) {
-    const limit = limits[Math.min(chunks.length, limits.length - 1)];
-
-    if (remaining.length <= limit) {
-      chunks.push(remaining);
-      break;
-    }
-
-    const cut = chooseChunkCut(remaining, limit);
-    const chunk = remaining.slice(0, cut).trim();
-    if (chunk) {
-      chunks.push(chunk);
-    }
-    remaining = remaining.slice(cut).trim();
-  }
-
-  return chunks;
-}
-
-function createIncrementalSpeechChunker(maxLengths = DEFAULT_CHUNK_LIMITS) {
-  const limits = parseChunkLimits(maxLengths);
-  let buffer = '';
-  let chunkCount = 0;
-
-  const takeReadyChunks = (flush) => {
-    const chunks = [];
-
-    while (buffer) {
-      const limit = limits[Math.min(chunkCount, limits.length - 1)];
-      if (buffer.length <= limit) {
-        if (flush) {
-          chunks.push(buffer);
-          buffer = '';
-          chunkCount += 1;
-        }
-        break;
-      }
-
-      const cut = chooseChunkCut(buffer, limit);
-      const chunk = buffer.slice(0, cut).trim();
-      buffer = buffer.slice(cut).trim();
-      if (chunk) {
-        chunks.push(chunk);
-        chunkCount += 1;
-      }
-    }
-
-    return chunks;
-  };
-
-  return {
-    push(text) {
-      const normalized = String(text || '').replace(/\s+/g, ' ').trim();
-      if (normalized) {
-        buffer = buffer ? `${buffer} ${normalized}` : normalized;
-      }
-      return takeReadyChunks(false);
-    },
-    finish() {
-      return takeReadyChunks(true);
-    },
-  };
-}
-
-function chooseChunkCut(text, limit) {
-  const minUsefulCut = Math.floor(limit * 0.45);
-  const search = text.slice(0, limit + 1);
-
-  for (const pattern of [/[。！？!?]\s?/g, /[，,；;：:]\s?/g, /\s/g]) {
-    let match;
-    let best = -1;
-    pattern.lastIndex = 0;
-
-    while ((match = pattern.exec(search)) !== null) {
-      const end = match.index + match[0].length;
-      if (end > 0 && end <= limit) {
-        best = end;
-      }
-    }
-
-    if (best >= minUsefulCut) {
-      return best;
-    }
-  }
-
-  return limit;
-}
-
 function resolveDefaultScriptPath() {
-  return '';
+  return "";
 }
-
 function normalizeSpeed(value) {
   const speed = Number(value);
-
   if (!Number.isFinite(speed)) {
     return 1;
   }
-
   return Math.min(2, Math.max(0.5, speed));
 }
-
 function normalizeMathReadingLanguage(value) {
   const language = String(value || DEFAULT_MATH_READING_LANGUAGE).toLowerCase();
   return MATH_READING_LANGUAGES.includes(language) ? language : DEFAULT_MATH_READING_LANGUAGE;
 }
-
 function normalizeSettingsLanguage(value) {
   const language = String(value || DEFAULT_SETTINGS.settingsLanguage).toLowerCase();
   return SETTINGS_LANGUAGES.includes(language) ? language : DEFAULT_SETTINGS.settingsLanguage;
 }
-
 function normalizeCredentialSource(value) {
-  const source = String(value || 'obsidian-secret').trim().toLowerCase();
-  return CREDENTIAL_SOURCES.includes(source) ? source : 'obsidian-secret';
+  const source = String(value || "obsidian-secret").trim().toLowerCase();
+  return CREDENTIAL_SOURCES.includes(source) ? source : "obsidian-secret";
 }
-
 function getSettingsUiText(language) {
   return SETTINGS_UI_TEXT[normalizeSettingsLanguage(language)];
 }
-
 function normalizeSpeechEngine(value) {
   const engine = String(value || DEFAULT_SETTINGS.speechEngine).toLowerCase();
   return SPEECH_ENGINES.includes(engine) ? engine : DEFAULT_SETTINGS.speechEngine;
 }
-
 function isOnlineSpeechEngine(value) {
-  return normalizeSpeechEngine(value) !== 'local-cosyvoice';
+  return normalizeSpeechEngine(value) !== "local-cosyvoice";
 }
-
 function normalizeOnlinePrefetchChunks(value) {
   const count = Math.floor(Number(value));
-  return Number.isFinite(count)
-    ? Math.min(MAX_ONLINE_PREFETCH_CHUNKS, Math.max(0, count))
-    : DEFAULT_SETTINGS.onlinePrefetchChunks;
+  return Number.isFinite(count) ? Math.min(MAX_ONLINE_PREFETCH_CHUNKS, Math.max(0, count)) : DEFAULT_SETTINGS.onlinePrefetchChunks;
 }
-
 function getChunkLimitsForSpeechEngine(settings, speechEngine = normalizeSpeechEngine(settings && settings.speechEngine)) {
   if (isOnlineSpeechEngine(speechEngine)) {
     return parseChunkLimits(settings && settings.onlineChunkLimits, DEFAULT_ONLINE_CHUNK_LIMITS);
   }
   return parseChunkLimits(settings && settings.chunkLimits, DEFAULT_CHUNK_LIMITS);
 }
-
 function getSynthesisPrefetchCount(settings, speechEngine = normalizeSpeechEngine(settings && settings.speechEngine)) {
-  return isOnlineSpeechEngine(speechEngine)
-    ? normalizeOnlinePrefetchChunks(settings && settings.onlinePrefetchChunks)
-    : 1;
+  return isOnlineSpeechEngine(speechEngine) ? normalizeOnlinePrefetchChunks(settings && settings.onlinePrefetchChunks) : 1;
 }
-
 function normalizeEdgeTtsVoice(value) {
-  const voice = String(value || '').trim();
+  const voice = String(value || "").trim();
   return voice || DEFAULT_EDGE_TTS_VOICE;
 }
-
 function normalizeEdgeTtsExecutable(value) {
-  const executable = String(value || '').trim();
+  const executable = String(value || "").trim();
   return executable || DEFAULT_EDGE_TTS_EXECUTABLE;
 }
-
 function normalizeAzureSpeechCloud(value) {
-  const cloud = String(value || '').trim().toLowerCase();
-  return AZURE_SPEECH_CLOUDS.includes(cloud) ? cloud : 'public';
+  const cloud = String(value || "").trim().toLowerCase();
+  return AZURE_SPEECH_CLOUDS.includes(cloud) ? cloud : "public";
 }
-
 function normalizeAzureSpeechRegion(value) {
-  const region = String(value || '').trim().toLowerCase();
-  return /^[a-z0-9]{2,32}$/.test(region) ? region : '';
+  const region = String(value || "").trim().toLowerCase();
+  return /^[a-z0-9]{2,32}$/.test(region) ? region : "";
 }
-
 function normalizeAzureSpeechVoice(value) {
-  const voice = String(value || '').trim();
-  return /^[a-z]{2,3}-[a-z]{2}-[a-z0-9][a-z0-9._:-]{1,190}$/i.test(voice)
-    ? voice
-    : DEFAULT_AZURE_SPEECH_VOICE;
+  const voice = String(value || "").trim();
+  return /^[a-z]{2,3}-[a-z]{2}-[a-z0-9][a-z0-9._:-]{1,190}$/i.test(voice) ? voice : DEFAULT_AZURE_SPEECH_VOICE;
 }
-
 function normalizeOpenRouterModel(value) {
-  const model = String(value || '').trim();
-  return /^[a-z0-9][a-z0-9._-]{0,79}\/[a-z0-9][a-z0-9._-]{1,149}(?::[a-z0-9._-]+)?$/i.test(model)
-    ? model
-    : DEFAULT_OPENROUTER_TTS_MODEL;
+  const model = String(value || "").trim();
+  return /^[a-z0-9][a-z0-9._-]{0,79}\/[a-z0-9][a-z0-9._-]{1,149}(?::[a-z0-9._-]+)?$/i.test(model) ? model : DEFAULT_OPENROUTER_TTS_MODEL;
 }
-
 function normalizeOpenRouterVoice(value) {
-  const voice = String(value || '').trim();
+  const voice = String(value || "").trim();
   return /^[a-z0-9][a-z0-9._:-]{0,199}$/i.test(voice) ? voice : DEFAULT_OPENROUTER_TTS_VOICE;
 }
-
 function hasObsidianSecretStorage(app) {
-  return Boolean(app && app.secretStorage && typeof app.secretStorage.getSecret === 'function');
+  return Boolean(app && app.secretStorage && typeof app.secretStorage.getSecret === "function");
 }
-
 function hasObsidianSecretStorageUi(app) {
-  return hasObsidianSecretStorage(app) && typeof SecretComponent === 'function';
+  return hasObsidianSecretStorage(app) && typeof SecretComponent === "function";
 }
-
 function getCredentialValueError(value, serviceLabel) {
-  const secret = String(value || '').replace(/^\uFEFF/, '').trim();
+  const secret = String(value || "").replace(/^\uFEFF/, "").trim();
   if (!secret) {
     return `${serviceLabel} secret is empty or unavailable.`;
   }
   if (/[\r\n]/.test(secret)) {
     return `${serviceLabel} secret must contain exactly one non-empty line.`;
   }
-  return '';
+  return "";
 }
-
 function readObsidianSecretValue(secretNameValue, app, serviceLabel) {
-  const secretName = String(secretNameValue || '').trim();
+  const secretName = String(secretNameValue || "").trim();
   if (!secretName) {
     throw new Error(`Select or create an Obsidian SecretStorage entry for ${serviceLabel}.`);
   }
@@ -1185,9 +1436,8 @@ function readObsidianSecretValue(secretNameValue, app, serviceLabel) {
     throw new Error(`${serviceLabel} secret name must use lowercase letters, numbers, and dashes.`);
   }
   if (!hasObsidianSecretStorage(app)) {
-    throw new Error('Obsidian SecretStorage requires Obsidian 1.11.4 or later. Select the external key-file option on older versions.');
+    throw new Error("Obsidian SecretStorage requires Obsidian 1.11.4 or later. Select the external key-file option on older versions.");
   }
-
   let value;
   try {
     value = app.secretStorage.getSecret(secretName);
@@ -1200,18 +1450,16 @@ function readObsidianSecretValue(secretNameValue, app, serviceLabel) {
   }
   return String(value).trim();
 }
-
 function getObsidianSecretConfigurationError(secretNameValue, app, serviceLabel) {
   try {
     readObsidianSecretValue(secretNameValue, app, serviceLabel);
-    return '';
+    return "";
   } catch (error) {
     return error && error.message ? String(error.message) : `Could not read the ${serviceLabel} secret from Obsidian SecretStorage.`;
   }
 }
-
 function getSecretFileConfigurationError(keyPathValue, vaultBasePath, serviceLabel) {
-  const keyPath = String(keyPathValue || '').trim();
+  const keyPath = String(keyPathValue || "").trim();
   if (!keyPath || !path.isAbsolute(keyPath)) {
     return `Set an absolute ${serviceLabel} key file path in the plugin settings.`;
   }
@@ -1221,214 +1469,176 @@ function getSecretFileConfigurationError(keyPathValue, vaultBasePath, serviceLab
   if (!fs.existsSync(keyPath)) {
     return `${serviceLabel} key file not found: ${keyPath}`;
   }
-
-  return '';
+  return "";
 }
-
 function getRemoteCredentialConfigurationError({ credentialSource, secretName, keyPath }, vaultBasePath, app, serviceLabel) {
-  if (normalizeCredentialSource(credentialSource) === 'obsidian-secret') {
+  if (normalizeCredentialSource(credentialSource) === "obsidian-secret") {
     return getObsidianSecretConfigurationError(secretName, app, serviceLabel);
   }
   return getSecretFileConfigurationError(keyPath, vaultBasePath, serviceLabel);
 }
-
 function buildAzureSpeechEndpoint(settings = {}) {
-  const cloud = String(settings.azureSpeechCloud || 'public').trim().toLowerCase();
+  const cloud = String(settings.azureSpeechCloud || "public").trim().toLowerCase();
   const region = normalizeAzureSpeechRegion(settings.azureSpeechRegion);
   if (!AZURE_SPEECH_CLOUDS.includes(cloud)) {
-    throw new Error('Invalid Azure Speech cloud.');
+    throw new Error("Invalid Azure Speech cloud.");
   }
   if (!region) {
-    throw new Error('Invalid Azure Speech region.');
+    throw new Error("Invalid Azure Speech region.");
   }
-  const domain = cloud === 'china'
-    ? 'tts.speech.azure.cn'
-    : 'tts.speech.microsoft.com';
+  const domain = cloud === "china" ? "tts.speech.azure.cn" : "tts.speech.microsoft.com";
   return `https://${region}.${domain}/cognitiveservices/v1`;
 }
-
 function escapeXml(value) {
-  return String(value || '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&apos;');
+  return String(value || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
 }
-
 function buildAzureSpeechSsml(text, settings = {}) {
   const voice = normalizeAzureSpeechVoice(settings.azureSpeechVoice);
-  const locale = voice.split('-').slice(0, 2).join('-');
+  const locale = voice.split("-").slice(0, 2).join("-");
   const rate = formatEdgeTtsRate(settings.speed);
   return `<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="${escapeXml(locale)}"><voice name="${escapeXml(voice)}"><prosody rate="${rate}">${escapeXml(text)}</prosody></voice></speak>`;
 }
-
-function getAzureSpeechConfigurationError(settings = {}, vaultBasePath = '', app = null) {
-  const cloud = String(settings.azureSpeechCloud || 'public').trim().toLowerCase();
+function getAzureSpeechConfigurationError(settings = {}, vaultBasePath = "", app = null) {
+  const cloud = String(settings.azureSpeechCloud || "public").trim().toLowerCase();
   if (!AZURE_SPEECH_CLOUDS.includes(cloud)) {
-    return 'Select a valid Azure Speech cloud in the plugin settings.';
+    return "Select a valid Azure Speech cloud in the plugin settings.";
   }
-  const region = String(settings.azureSpeechRegion || '').trim().toLowerCase();
+  const region = String(settings.azureSpeechRegion || "").trim().toLowerCase();
   if (!region || normalizeAzureSpeechRegion(region) !== region) {
-    return 'Set a valid Azure Speech region in the plugin settings.';
+    return "Set a valid Azure Speech region in the plugin settings.";
   }
-  if (normalizeAzureSpeechVoice(settings.azureSpeechVoice) !== String(settings.azureSpeechVoice || '').trim()) {
-    return 'Set a valid Azure Speech voice ID in the plugin settings.';
+  if (normalizeAzureSpeechVoice(settings.azureSpeechVoice) !== String(settings.azureSpeechVoice || "").trim()) {
+    return "Set a valid Azure Speech voice ID in the plugin settings.";
   }
-
   return getRemoteCredentialConfigurationError({
     credentialSource: settings.azureSpeechCredentialSource,
     secretName: settings.azureSpeechSecretName,
-    keyPath: settings.azureSpeechKeyPath,
-  }, vaultBasePath, app, 'Azure Speech');
+    keyPath: settings.azureSpeechKeyPath
+  }, vaultBasePath, app, "Azure Speech");
 }
-
-function getOpenRouterConfigurationError(settings = {}, vaultBasePath = '', app = null) {
-  if (normalizeOpenRouterModel(settings.openRouterModel) !== String(settings.openRouterModel || '').trim()) {
-    return 'Set a valid OpenRouter TTS model ID in the plugin settings.';
+function getOpenRouterConfigurationError(settings = {}, vaultBasePath = "", app = null) {
+  if (normalizeOpenRouterModel(settings.openRouterModel) !== String(settings.openRouterModel || "").trim()) {
+    return "Set a valid OpenRouter TTS model ID in the plugin settings.";
   }
-  if (normalizeOpenRouterVoice(settings.openRouterVoice) !== String(settings.openRouterVoice || '').trim()) {
-    return 'Set a valid OpenRouter TTS voice ID in the plugin settings.';
+  if (normalizeOpenRouterVoice(settings.openRouterVoice) !== String(settings.openRouterVoice || "").trim()) {
+    return "Set a valid OpenRouter TTS voice ID in the plugin settings.";
   }
-
   return getRemoteCredentialConfigurationError({
     credentialSource: settings.openRouterCredentialSource,
     secretName: settings.openRouterSecretName,
-    keyPath: settings.openRouterKeyPath,
-  }, vaultBasePath, app, 'OpenRouter API');
+    keyPath: settings.openRouterKeyPath
+  }, vaultBasePath, app, "OpenRouter API");
 }
-
 function buildOpenRouterTtsRequestBody(text, settings = {}) {
   return JSON.stringify({
     model: normalizeOpenRouterModel(settings.openRouterModel),
-    input: String(text || ''),
+    input: String(text || ""),
     voice: normalizeOpenRouterVoice(settings.openRouterVoice),
-    response_format: 'mp3',
+    response_format: "mp3",
     speed: normalizeSpeed(settings.speed),
     provider: {
-      data_collection: 'deny',
-      zdr: true,
-    },
+      data_collection: "deny",
+      zdr: true
+    }
   });
 }
-
 function getMicrosoftVoicePresets(language) {
-  const labelIndex = normalizeSettingsLanguage(language) === 'chinese' ? 2 : 1;
+  const labelIndex = normalizeSettingsLanguage(language) === "chinese" ? 2 : 1;
   return MICROSOFT_VOICE_PRESETS.map((preset) => [preset[0], preset[labelIndex]]);
 }
-
 function getEdgeTtsVoicePresets(language) {
   return getMicrosoftVoicePresets(language);
 }
-
 function getAzureSpeechVoicePresets(language) {
   return getMicrosoftVoicePresets(language);
 }
-
 function getOpenRouterTtsModels(language) {
   const normalizedLanguage = normalizeSettingsLanguage(language);
-  const labelIndex = normalizedLanguage === 'chinese' ? 3 : 2;
-  const infoIndex = normalizedLanguage === 'chinese' ? 5 : 4;
+  const labelIndex = normalizedLanguage === "chinese" ? 3 : 2;
+  const infoIndex = normalizedLanguage === "chinese" ? 5 : 4;
   return OPENROUTER_TTS_MODELS.map((model) => [model[0], model[1], model[labelIndex], model[infoIndex]]);
 }
-
 function getDefaultOpenRouterVoiceForModel(modelId) {
-  const selected = OPENROUTER_TTS_MODELS.find(([model]) => model === String(modelId || '').trim());
+  const selected = OPENROUTER_TTS_MODELS.find(([model]) => model === String(modelId || "").trim());
   return selected ? selected[1] : DEFAULT_OPENROUTER_TTS_VOICE;
 }
-
 function getOpenRouterTtsPresets(language) {
-  const labelIndex = normalizeSettingsLanguage(language) === 'chinese' ? 3 : 2;
+  const labelIndex = normalizeSettingsLanguage(language) === "chinese" ? 3 : 2;
   return OPENROUTER_TTS_PRESETS.map((preset) => [preset[0], preset[1], preset[labelIndex]]);
 }
-
 function getOpenRouterTtsVoicePresets(modelId, language) {
-  const selectedModel = String(modelId || '').trim();
+  const selectedModel = String(modelId || "").trim();
   return getOpenRouterTtsPresets(language).filter(([model]) => model === selectedModel);
 }
-
 function hasEdgeTtsConsent(settings = {}) {
-  return normalizeSpeechEngine(settings.speechEngine) !== 'edge-tts' || settings.edgeTtsConsent === true;
+  return normalizeSpeechEngine(settings.speechEngine) !== "edge-tts" || settings.edgeTtsConsent === true;
 }
-
 function hasAzureSpeechConsent(settings = {}) {
-  return normalizeSpeechEngine(settings.speechEngine) !== 'azure-speech' || settings.azureSpeechConsent === true;
+  return normalizeSpeechEngine(settings.speechEngine) !== "azure-speech" || settings.azureSpeechConsent === true;
 }
-
 function hasOpenRouterConsent(settings = {}) {
-  return normalizeSpeechEngine(settings.speechEngine) !== 'openrouter-tts' || settings.openRouterConsent === true;
+  return normalizeSpeechEngine(settings.speechEngine) !== "openrouter-tts" || settings.openRouterConsent === true;
 }
-
 function getPluginTempCacheDir(vaultBasePath, tempBasePath = os.tmpdir()) {
-  const resolvedVaultPath = path.resolve(String(vaultBasePath || ''));
-  const vaultKey = crypto.createHash('sha256').update(resolvedVaultPath).digest('hex').slice(0, 16);
+  const resolvedVaultPath = path.resolve(String(vaultBasePath || ""));
+  const vaultKey = crypto.createHash("sha256").update(resolvedVaultPath).digest("hex").slice(0, 16);
   return path.join(tempBasePath, PLUGIN_ID, vaultKey);
 }
-
 function isOwnedCacheFileName(fileName) {
-  const name = String(fileName || '');
-  return OWNED_CACHE_FILE_PATTERN.test(name) || name === 'diagnostic.log';
+  const name = String(fileName || "");
+  return OWNED_CACHE_FILE_PATTERN.test(name) || name === "diagnostic.log";
 }
-
-function createSafeRuntimeLogEvent(stage, settings = {}, timestamp = new Date().toISOString()) {
-  if (stage !== 'failed') {
+function createSafeRuntimeLogEvent(stage, settings = {}, timestamp = (/* @__PURE__ */ new Date()).toISOString()) {
+  if (stage !== "failed") {
     return null;
   }
-
   return {
     time: timestamp,
-    stage: 'failed',
-    engine: getSpeechEngineLabel(settings),
+    stage: "failed",
+    engine: getSpeechEngineLabel(settings)
   };
 }
-
 function formatEdgeTtsRate(speed) {
   const rate = Math.round((normalizeSpeed(speed) - 1) * 100);
-  return `${rate >= 0 ? '+' : ''}${rate}%`;
+  return `${rate >= 0 ? "+" : ""}${rate}%`;
 }
-
 function buildEdgeTtsArgs(inputPath, outputPath, settings = {}) {
   return [
-    '--voice',
+    "--voice",
     normalizeEdgeTtsVoice(settings.edgeTtsVoice),
     `--rate=${formatEdgeTtsRate(settings.speed)}`,
-    '--file',
+    "--file",
     inputPath,
-    '--write-media',
-    outputPath,
+    "--write-media",
+    outputPath
   ];
 }
-
 function getSpeechEngineLabel(settings = {}) {
   const speechEngine = normalizeSpeechEngine(settings.speechEngine);
-  if (speechEngine === 'edge-tts') {
-    return 'Edge TTS';
+  if (speechEngine === "edge-tts") {
+    return "Edge TTS";
   }
-  if (speechEngine === 'azure-speech') {
-    return 'Azure Speech';
+  if (speechEngine === "azure-speech") {
+    return "Azure Speech";
   }
-  if (speechEngine === 'openrouter-tts') {
-    return 'OpenRouter TTS';
+  if (speechEngine === "openrouter-tts") {
+    return "OpenRouter TTS";
   }
-  return 'CosyVoice';
+  return "CosyVoice";
 }
-
 function getSpeedPresets() {
   return SPEED_PRESETS.slice();
 }
-
 function formatSpeedLabel(speed) {
   return `${normalizeSpeed(speed).toString()}x`;
 }
-
 function selectKnownSettings(defaults, candidate) {
-  const source = candidate && typeof candidate === 'object' ? candidate : {};
+  const source = candidate && typeof candidate === "object" ? candidate : {};
   return Object.fromEntries(Object.entries(defaults).map(([key, defaultValue]) => [
     key,
-    Object.prototype.hasOwnProperty.call(source, key) ? source[key] : defaultValue,
+    Object.prototype.hasOwnProperty.call(source, key) ? source[key] : defaultValue
   ]));
 }
-
 function createDefaultSettings() {
   return {
     azureSpeechCloud: normalizeAzureSpeechCloud(DEFAULT_SETTINGS.azureSpeechCloud),
@@ -1439,12 +1649,14 @@ function createDefaultSettings() {
     azureSpeechSecretName: DEFAULT_SETTINGS.azureSpeechSecretName,
     azureSpeechVoice: normalizeAzureSpeechVoice(DEFAULT_SETTINGS.azureSpeechVoice),
     cleanupCache: DEFAULT_SETTINGS.cleanupCache,
-    chunkLimits: parseChunkLimits(DEFAULT_SETTINGS.chunkLimits).join(','),
+    chunkLimits: parseChunkLimits(DEFAULT_SETTINGS.chunkLimits).join(","),
     onlineChunkLimits: parseChunkLimits(
       DEFAULT_SETTINGS.onlineChunkLimits,
       DEFAULT_ONLINE_CHUNK_LIMITS
-    ).join(','),
+    ).join(","),
     onlinePrefetchChunks: normalizeOnlinePrefetchChunks(DEFAULT_SETTINGS.onlinePrefetchChunks),
+    readingPositions: normalizeReadingPositions(DEFAULT_SETTINGS.readingPositions),
+    rememberReadingPosition: DEFAULT_SETTINGS.rememberReadingPosition,
     diagnosticLogging: DEFAULT_SETTINGS.diagnosticLogging,
     edgeTtsConsent: DEFAULT_SETTINGS.edgeTtsConsent,
     edgeTtsExecutable: normalizeEdgeTtsExecutable(DEFAULT_SETTINGS.edgeTtsExecutable),
@@ -1460,10 +1672,9 @@ function createDefaultSettings() {
     scriptPath: resolveDefaultScriptPath(),
     speechEngine: normalizeSpeechEngine(DEFAULT_SETTINGS.speechEngine),
     speed: normalizeSpeed(DEFAULT_SETTINGS.speed),
-    stripMarkdown: DEFAULT_SETTINGS.stripMarkdown,
+    stripMarkdown: DEFAULT_SETTINGS.stripMarkdown
   };
 }
-
 function createReaderState(overrides = {}) {
   return normalizeReaderState({
     canPause: false,
@@ -1472,23 +1683,21 @@ function createReaderState(overrides = {}) {
     canSeek: false,
     canStop: false,
     currentChunk: 0,
-    currentText: '',
-    error: '',
+    currentText: "",
+    error: "",
     isPaused: false,
-    label: 'CosyVoice idle',
-    phase: 'idle',
+    label: "CosyVoice idle",
+    phase: "idle",
     progress: 0,
-    source: '',
-    status: 'idle',
+    source: "",
+    status: "idle",
     totalChunks: 0,
-    ...overrides,
+    ...overrides
   });
 }
-
 function normalizeReaderState(state) {
   const totalChunks = Math.max(0, Math.floor(Number(state.totalChunks) || 0));
   const currentChunk = Math.max(0, Math.min(totalChunks || Number.MAX_SAFE_INTEGER, Math.floor(Number(state.currentChunk) || 0)));
-
   return {
     canPause: Boolean(state.canPause),
     canNextChunk: Boolean(state.canNextChunk),
@@ -1496,246 +1705,188 @@ function normalizeReaderState(state) {
     canSeek: Boolean(state.canSeek),
     canStop: Boolean(state.canStop),
     currentChunk,
-    currentText: String(state.currentText || ''),
-    error: String(state.error || ''),
+    currentText: String(state.currentText || ""),
+    error: String(state.error || ""),
     isPaused: Boolean(state.isPaused),
-    label: String(state.label || 'CosyVoice idle'),
-    phase: String(state.phase || 'idle'),
+    label: String(state.label || "CosyVoice idle"),
+    phase: String(state.phase || "idle"),
     progress: clampProgress(state.progress),
-    source: String(state.source || ''),
-    status: String(state.status || 'idle'),
-    totalChunks,
+    source: String(state.source || ""),
+    status: String(state.status || "idle"),
+    totalChunks
   };
 }
-
 function calculateCurrentChunkSeekTime({ progress, currentChunk, totalChunks, duration }) {
   const total = Math.max(0, Math.floor(Number(totalChunks) || 0));
   const chunk = Math.max(0, Math.floor(Number(currentChunk) || 0));
   const seconds = Number(duration);
-
   if (!total || !chunk || !Number.isFinite(seconds) || seconds <= 0) {
     return null;
   }
-
   const chunkStart = (chunk - 1) / total;
   const chunkEnd = chunk / total;
   const clampedProgress = Math.min(chunkEnd, Math.max(chunkStart, clampProgress(progress)));
   const localProgress = (clampedProgress - chunkStart) / (chunkEnd - chunkStart);
-
-  return Math.round(seconds * localProgress * 1000) / 1000;
+  return Math.round(seconds * localProgress * 1e3) / 1e3;
 }
-
 function getTextFromPositionToEnd(lines, position) {
-  const sourceLines = Array.isArray(lines) ? lines.map((line) => String(line || '')) : [];
+  const sourceLines = Array.isArray(lines) ? lines.map((line2) => String(line2 || "")) : [];
   const line = Math.max(0, Math.min(sourceLines.length - 1, Math.floor(Number(position && position.line) || 0)));
   const ch = Math.max(0, Math.floor(Number(position && position.ch) || 0));
-
   if (!sourceLines.length) {
-    return '';
+    return "";
   }
-
-  const firstLine = sourceLines[line] || '';
-  return [firstLine.slice(ch), ...sourceLines.slice(line + 1)].join('\n').trim();
+  const firstLine = sourceLines[line] || "";
+  return [firstLine.slice(ch), ...sourceLines.slice(line + 1)].join("\n").trim();
 }
-
 function clampProgress(value) {
   const progress = Number(value);
-
   if (!Number.isFinite(progress)) {
     return 0;
   }
-
   return Math.min(1, Math.max(0, progress));
 }
-
 function formatProgressLabel(state) {
   const currentChunk = Math.max(0, Math.floor(Number(state.currentChunk) || 0));
   const totalChunks = Math.max(0, Math.floor(Number(state.totalChunks) || 0));
   return `${currentChunk} / ${totalChunks}`;
 }
-
 function isSpaceKeyEvent(event) {
-  return event && (event.code === 'Space' || event.key === ' ' || event.key === 'Spacebar');
+  return event && (event.code === "Space" || event.key === " " || event.key === "Spacebar");
 }
-
 function getKeyboardSeekDeltaSeconds(event) {
   if (!event) {
     return 0;
   }
-
-  if (event.code === 'ArrowLeft' || event.key === 'ArrowLeft') {
+  if (event.code === "ArrowLeft" || event.key === "ArrowLeft") {
     return -KEYBOARD_SEEK_SECONDS;
   }
-
-  if (event.code === 'ArrowRight' || event.key === 'ArrowRight') {
+  if (event.code === "ArrowRight" || event.key === "ArrowRight") {
     return KEYBOARD_SEEK_SECONDS;
   }
-
   return 0;
 }
-
 function isInteractiveKeyboardTarget(target) {
   if (!target || !target.tagName) {
     return false;
   }
-
   if (target.isContentEditable) {
     return true;
   }
-
-  if (typeof target.closest === 'function' && target.closest('.cm-editor, .markdown-source-view, [contenteditable="true"]')) {
+  if (typeof target.closest === "function" && target.closest('.cm-editor, .markdown-source-view, [contenteditable="true"]')) {
     return true;
   }
-
   const tagName = String(target.tagName).toLowerCase();
-  if (tagName === 'textarea' || tagName === 'select') {
+  if (tagName === "textarea" || tagName === "select") {
     return true;
   }
-
-  if (tagName !== 'input') {
+  if (tagName !== "input") {
     return false;
   }
-
   const type = String(
-    target.type ||
-      (target.attributes && target.attributes.type) ||
-      'text'
+    target.type || target.attributes && target.attributes.type || "text"
   ).toLowerCase();
-  return !['button', 'checkbox', 'radio', 'range', 'reset', 'submit'].includes(type);
+  return !["button", "checkbox", "radio", "range", "reset", "submit"].includes(type);
 }
-
 function getChunkNavigationState(currentChunk, totalChunks) {
   const total = Math.max(0, Math.floor(Number(totalChunks) || 0));
   const current = Math.max(0, Math.min(total || Number.MAX_SAFE_INTEGER, Math.floor(Number(currentChunk) || 0)));
-
   return {
     canNextChunk: Boolean(current && current < total),
-    canPreviousChunk: current > 1,
+    canPreviousChunk: current > 1
   };
 }
-
 function previewText(text) {
-  return String(text || '').replace(/\s+/g, ' ').trim().slice(0, 320);
+  return String(text || "").replace(/\s+/g, " ").trim().slice(0, 320);
 }
-
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
-
 function parseRetryAfterMs(value, nowMs = Date.now()) {
   const rawValue = Array.isArray(value) ? value[0] : value;
-  const normalized = String(rawValue || '').trim();
+  const normalized = String(rawValue || "").trim();
   if (!normalized) {
     return null;
   }
-
   if (/^\d+(?:\.\d+)?$/.test(normalized)) {
-    return Math.min(REMOTE_TTS_RETRY_AFTER_MAX_MS, Math.max(0, Math.ceil(Number(normalized) * 1000)));
+    return Math.min(REMOTE_TTS_RETRY_AFTER_MAX_MS, Math.max(0, Math.ceil(Number(normalized) * 1e3)));
   }
-
   const retryAtMs = Date.parse(normalized);
   if (!Number.isFinite(retryAtMs)) {
     return null;
   }
-
   return Math.min(REMOTE_TTS_RETRY_AFTER_MAX_MS, Math.max(0, retryAtMs - nowMs));
 }
-
 function isRetryableRemoteError(error) {
   if (!error) {
     return false;
   }
-
   const statusCode = Number(error.statusCode) || 0;
   if (statusCode) {
     return REMOTE_TTS_RETRYABLE_STATUS_CODES.has(statusCode);
   }
-
-  return REMOTE_TTS_RETRYABLE_ERROR_CODES.has(String(error.code || '').toUpperCase());
+  return REMOTE_TTS_RETRYABLE_ERROR_CODES.has(String(error.code || "").toUpperCase());
 }
-
 function createRemoteHttpError(serviceLabel, statusCode, failureHint, retryAfterValue) {
   const isTemporary = REMOTE_TTS_RETRYABLE_STATUS_CODES.has(statusCode);
-  const detail = isTemporary
-    ? 'The upstream service is temporarily unavailable or busy.'
-    : failureHint || 'Check the service configuration and account status.';
+  const detail = isTemporary ? "The upstream service is temporarily unavailable or busy." : failureHint || "Check the service configuration and account status.";
   const error = new Error(`${serviceLabel} returned HTTP ${statusCode}. ${detail}`);
   error.statusCode = statusCode;
   error.retryAfterMs = parseRetryAfterMs(retryAfterValue);
   return error;
 }
-
 function createRemoteRetryExhaustedError(serviceLabel, error, attempts) {
   const statusCode = Number(error && error.statusCode) || 0;
   const failure = statusCode ? `HTTP ${statusCode}` : messageFromError(error);
   const exhaustedError = new Error(
-    `${serviceLabel} returned ${failure} after ${attempts} attempts. ` +
-    'The upstream provider may be temporarily unavailable. Try again shortly or select another model.'
+    `${serviceLabel} returned ${failure} after ${attempts} attempts. The upstream provider may be temporarily unavailable. Try again shortly or select another model.`
   );
-  exhaustedError.statusCode = statusCode || undefined;
+  exhaustedError.statusCode = statusCode || void 0;
   exhaustedError.code = error && error.code;
   return exhaustedError;
 }
-
 function focusElementWithoutScroll(element) {
-  if (!element || typeof element.focus !== 'function') {
+  if (!element || typeof element.focus !== "function") {
     return;
   }
-
   try {
     element.focus({ preventScroll: true });
   } catch (error) {
     element.focus();
   }
 }
-
 function toVaultRelativePath(basePath, filePath) {
   const relative = path.relative(path.resolve(basePath), path.resolve(filePath));
-
-  if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) {
+  if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) {
     return null;
   }
-
-  return relative.split(path.sep).join('/');
+  return relative.split(path.sep).join("/");
 }
-
 function getAudioUrlForFile(adapter, basePath, filePath) {
   const vaultPath = toVaultRelativePath(basePath, filePath);
-
-  if (vaultPath && adapter && typeof adapter.getResourcePath === 'function') {
+  if (vaultPath && adapter && typeof adapter.getResourcePath === "function") {
     return adapter.getResourcePath(vaultPath);
   }
-
   return pathToFileURL(filePath).href;
 }
-
 function getAudioMimeType(filePath) {
-  return path.extname(String(filePath || '')).toLowerCase() === '.wav'
-    ? 'audio/wav'
-    : 'audio/mpeg';
+  return path.extname(String(filePath || "")).toLowerCase() === ".wav" ? "audio/wav" : "audio/mpeg";
 }
-
 function createBlobAudioSource(audioBytes, filePath, runtime = globalThis) {
-  if (!audioBytes || typeof audioBytes.length !== 'number' || audioBytes.length === 0) {
+  if (!audioBytes || typeof audioBytes.length !== "number" || audioBytes.length === 0) {
     return null;
   }
-
   const BlobConstructor = runtime && runtime.Blob;
   const urlApi = runtime && runtime.URL;
-  if (typeof BlobConstructor !== 'function'
-    || !urlApi
-    || typeof urlApi.createObjectURL !== 'function'
-    || typeof urlApi.revokeObjectURL !== 'function') {
+  if (typeof BlobConstructor !== "function" || !urlApi || typeof urlApi.createObjectURL !== "function" || typeof urlApi.revokeObjectURL !== "function") {
     return null;
   }
-
   try {
     const mimeType = getAudioMimeType(filePath);
     const objectUrl = urlApi.createObjectURL(new BlobConstructor([audioBytes], { type: mimeType }));
     if (!objectUrl) {
       return null;
     }
-
     let released = false;
     return {
       mimeType,
@@ -1750,93 +1901,96 @@ function createBlobAudioSource(audioBytes, filePath, runtime = globalThis) {
         } catch (error) {
           console.warn(`[${PLUGIN_ID}] Could not release temporary audio URL`, error);
         }
-      },
+      }
     };
   } catch (error) {
     return null;
   }
 }
-
 function describeMediaError(mediaError) {
   const code = Number(mediaError && mediaError.code) || 0;
   const descriptions = {
-    1: 'playback was aborted',
-    2: 'the audio source could not be loaded',
-    3: 'the audio could not be decoded',
-    4: 'the audio source or format is unsupported',
+    1: "playback was aborted",
+    2: "the audio source could not be loaded",
+    3: "the audio could not be decoded",
+    4: "the audio source or format is unsupported"
   };
-  return code ? ` (media error ${code}: ${descriptions[code] || 'unknown media failure'})` : '';
+  return code ? ` (media error ${code}: ${descriptions[code] || "unknown media failure"})` : "";
 }
-
 function resolvePowerShellExecutable() {
-  return 'powershell.exe';
+  return "powershell.exe";
 }
-
-class CosyVoiceReaderPlugin extends Plugin {
+var CosyVoiceReaderPlugin = class extends Plugin {
   async onload() {
     this.sequence = 0;
     this.activeSession = null;
     this.currentAudio = null;
     this.currentProcess = null;
-    this.currentRequests = new Set();
+    this.currentRequests = /* @__PURE__ */ new Set();
     this.lastMarkdownView = null;
     this.lastPdfSelection = null;
     this.pauseRequested = false;
     this.readerState = createReaderState();
-    this.readerViews = new Set();
+    this.readerViews = /* @__PURE__ */ new Set();
     this.vaultBasePath = null;
     this.cacheDir = null;
     this.legacyCacheDir = null;
     this.legacyLogPath = null;
     this.logPath = null;
     this.statusBar = this.addStatusBarItem();
-
     await this.loadSettings();
     await this.ensureCacheDir();
-
     this.registerView(VIEW_TYPE, (leaf) => new CosyVoiceReaderView(leaf, this));
     this.lastMarkdownView = this.app.workspace.getActiveViewOfType(MarkdownView);
     this.registerEvent(
-      this.app.workspace.on('active-leaf-change', () => {
+      this.app.workspace.on("active-leaf-change", () => {
         const view = this.app.workspace.getActiveViewOfType(MarkdownView);
         if (view && view.editor) {
           this.lastMarkdownView = view;
         }
+        this.renderReaderViews();
       })
     );
-    if (typeof document !== 'undefined') {
-      this.registerDomEvent(document, 'selectionchange', () => {
+    if (typeof document !== "undefined") {
+      this.registerDomEvent(document, "selectionchange", () => {
         this.capturePdfSelection();
       });
     }
-
-    this.addRibbonIcon('volume-2', 'Open voice reader controls', () => {
+    this.addRibbonIcon("volume-2", "Open voice reader controls", () => {
       void this.activateControlView();
     });
-
     this.addCommand({
-      id: 'open-control-panel',
-      name: 'Open voice reader controls',
+      id: "open-control-panel",
+      name: "Open voice reader controls",
       callback: () => {
         void this.activateControlView();
-      },
+      }
     });
-
     this.addCommand({
-      id: 'read-current-note',
-      name: 'Read current note or PDF aloud',
+      id: "read-current-note",
+      name: "Read current note or PDF aloud",
       callback: () => {
         void this.readCurrentNote();
-      },
+      }
     });
-
     this.addCommand({
-      id: 'read-current-pdf',
-      name: 'Read current PDF aloud',
+      id: "resume-current-file",
+      name: "Resume reading current note or PDF",
       checkCallback: (checking) => {
-        const file = typeof this.app.workspace.getActiveFile === 'function'
-          ? this.app.workspace.getActiveFile()
-          : null;
+        if (!this.canResumeCurrentFile()) {
+          return false;
+        }
+        if (!checking) {
+          void this.resumeCurrentFile();
+        }
+        return true;
+      }
+    });
+    this.addCommand({
+      id: "read-current-pdf",
+      name: "Read current PDF aloud",
+      checkCallback: (checking) => {
+        const file = typeof this.app.workspace.getActiveFile === "function" ? this.app.workspace.getActiveFile() : null;
         if (!isPdfFile(file)) {
           return false;
         }
@@ -1844,16 +1998,13 @@ class CosyVoiceReaderPlugin extends Plugin {
           void this.readCurrentPdf(file);
         }
         return true;
-      },
+      }
     });
-
     this.addCommand({
-      id: 'read-current-pdf-from-selection',
-      name: 'Read current PDF from selection aloud',
+      id: "read-current-pdf-from-selection",
+      name: "Read current PDF from selection aloud",
       checkCallback: (checking) => {
-        const file = typeof this.app.workspace.getActiveFile === 'function'
-          ? this.app.workspace.getActiveFile()
-          : null;
+        const file = typeof this.app.workspace.getActiveFile === "function" ? this.app.workspace.getActiveFile() : null;
         if (!isPdfFile(file)) {
           return false;
         }
@@ -1861,36 +2012,32 @@ class CosyVoiceReaderPlugin extends Plugin {
           void this.readCurrentPdfFromSelection(file);
         }
         return true;
-      },
+      }
     });
-
     this.addCommand({
-      id: 'read-selection',
-      name: 'Read selection aloud',
+      id: "read-selection",
+      name: "Read selection aloud",
       callback: () => {
         void this.readSelection();
-      },
+      }
     });
-
     this.addCommand({
-      id: 'read-from-selection',
-      name: 'Read from selection aloud',
+      id: "read-from-selection",
+      name: "Read from selection aloud",
       callback: () => {
         void this.readFromSelection();
-      },
+      }
     });
-
     this.addCommand({
-      id: 'pause-or-resume',
-      name: 'Pause or resume voice reading',
+      id: "pause-or-resume",
+      name: "Pause or resume voice reading",
       callback: () => {
         void this.pauseOrResume();
-      },
+      }
     });
-
     this.addCommand({
-      id: 'seek-backward-5-seconds',
-      name: 'Seek backward 5 seconds',
+      id: "seek-backward-5-seconds",
+      name: "Seek backward 5 seconds",
       checkCallback: (checking) => {
         if (!this.readerState.canSeek) {
           return false;
@@ -1899,12 +2046,11 @@ class CosyVoiceReaderPlugin extends Plugin {
           this.seekCurrentAudioBySeconds(-KEYBOARD_SEEK_SECONDS);
         }
         return true;
-      },
+      }
     });
-
     this.addCommand({
-      id: 'seek-forward-5-seconds',
-      name: 'Seek forward 5 seconds',
+      id: "seek-forward-5-seconds",
+      name: "Seek forward 5 seconds",
       checkCallback: (checking) => {
         if (!this.readerState.canSeek) {
           return false;
@@ -1913,12 +2059,11 @@ class CosyVoiceReaderPlugin extends Plugin {
           this.seekCurrentAudioBySeconds(KEYBOARD_SEEK_SECONDS);
         }
         return true;
-      },
+      }
     });
-
     this.addCommand({
-      id: 'previous-reading-chunk',
-      name: 'Move to previous reading chunk',
+      id: "previous-reading-chunk",
+      name: "Move to previous reading chunk",
       checkCallback: (checking) => {
         if (!this.readerState.canPreviousChunk) {
           return false;
@@ -1927,12 +2072,11 @@ class CosyVoiceReaderPlugin extends Plugin {
           this.jumpToAdjacentChunk(-1);
         }
         return true;
-      },
+      }
     });
-
     this.addCommand({
-      id: 'next-reading-chunk',
-      name: 'Move to next reading chunk',
+      id: "next-reading-chunk",
+      name: "Move to next reading chunk",
       checkCallback: (checking) => {
         if (!this.readerState.canNextChunk) {
           return false;
@@ -1941,52 +2085,45 @@ class CosyVoiceReaderPlugin extends Plugin {
           this.jumpToAdjacentChunk(1);
         }
         return true;
-      },
+      }
     });
-
     this.addCommand({
-      id: 'stop-reading',
-      name: 'Stop voice reading',
+      id: "stop-reading",
+      name: "Stop voice reading",
       callback: () => {
         void this.stopReading();
-      },
+      }
     });
-
     this.addSettingTab(new CosyVoiceReaderSettingTab(this.app, this));
     this.register(() => {
       void this.stopReading({ silent: true });
     });
-
-    this.updateStatus('CosyVoice idle');
+    this.updateStatus("CosyVoice idle");
   }
-
   async onunload() {
     await this.stopReading({ silent: true });
   }
-
   async loadSettings() {
     const defaults = createDefaultSettings();
     const savedSettings = await this.loadData();
-    const source = savedSettings && typeof savedSettings === 'object' ? savedSettings : {};
+    const source = savedSettings && typeof savedSettings === "object" ? savedSettings : {};
     const removedObsoleteSettings = Object.keys(source).some(
       (key) => !Object.prototype.hasOwnProperty.call(defaults, key)
     );
     const missingKnownSettings = Object.keys(defaults).some(
       (key) => !Object.prototype.hasOwnProperty.call(source, key)
     );
-    const hadAzureCredentialSource = Object.prototype.hasOwnProperty.call(source, 'azureSpeechCredentialSource');
-    const hadOpenRouterCredentialSource = Object.prototype.hasOwnProperty.call(source, 'openRouterCredentialSource');
+    const hadAzureCredentialSource = Object.prototype.hasOwnProperty.call(source, "azureSpeechCredentialSource");
+    const hadOpenRouterCredentialSource = Object.prototype.hasOwnProperty.call(source, "openRouterCredentialSource");
     this.settings = selectKnownSettings(defaults, source);
     this.settings.speed = normalizeSpeed(this.settings.speed);
     this.settings.speechEngine = normalizeSpeechEngine(this.settings.speechEngine);
     this.settings.azureSpeechCloud = normalizeAzureSpeechCloud(this.settings.azureSpeechCloud);
     this.settings.azureSpeechConsent = this.settings.azureSpeechConsent === true;
-    this.settings.azureSpeechCredentialSource = !hadAzureCredentialSource && String(source.azureSpeechKeyPath || '').trim()
-      ? 'key-file'
-      : normalizeCredentialSource(this.settings.azureSpeechCredentialSource);
-    this.settings.azureSpeechKeyPath = String(this.settings.azureSpeechKeyPath || '').trim();
+    this.settings.azureSpeechCredentialSource = !hadAzureCredentialSource && String(source.azureSpeechKeyPath || "").trim() ? "key-file" : normalizeCredentialSource(this.settings.azureSpeechCredentialSource);
+    this.settings.azureSpeechKeyPath = String(this.settings.azureSpeechKeyPath || "").trim();
     this.settings.azureSpeechRegion = normalizeAzureSpeechRegion(this.settings.azureSpeechRegion);
-    this.settings.azureSpeechSecretName = String(this.settings.azureSpeechSecretName || '').trim();
+    this.settings.azureSpeechSecretName = String(this.settings.azureSpeechSecretName || "").trim();
     this.settings.azureSpeechVoice = normalizeAzureSpeechVoice(this.settings.azureSpeechVoice);
     this.settings.edgeTtsConsent = this.settings.edgeTtsConsent === true;
     this.settings.edgeTtsExecutable = normalizeEdgeTtsExecutable(this.settings.edgeTtsExecutable);
@@ -1994,26 +2131,25 @@ class CosyVoiceReaderPlugin extends Plugin {
     this.settings.diagnosticLogging = this.settings.diagnosticLogging === true;
     this.settings.mathReadingLanguage = normalizeMathReadingLanguage(this.settings.mathReadingLanguage);
     this.settings.openRouterConsent = this.settings.openRouterConsent === true;
-    this.settings.openRouterCredentialSource = !hadOpenRouterCredentialSource && String(source.openRouterKeyPath || '').trim()
-      ? 'key-file'
-      : normalizeCredentialSource(this.settings.openRouterCredentialSource);
-    this.settings.openRouterKeyPath = String(this.settings.openRouterKeyPath || '').trim();
+    this.settings.openRouterCredentialSource = !hadOpenRouterCredentialSource && String(source.openRouterKeyPath || "").trim() ? "key-file" : normalizeCredentialSource(this.settings.openRouterCredentialSource);
+    this.settings.openRouterKeyPath = String(this.settings.openRouterKeyPath || "").trim();
     this.settings.openRouterModel = normalizeOpenRouterModel(this.settings.openRouterModel);
-    this.settings.openRouterSecretName = String(this.settings.openRouterSecretName || '').trim();
+    this.settings.openRouterSecretName = String(this.settings.openRouterSecretName || "").trim();
     this.settings.openRouterVoice = normalizeOpenRouterVoice(this.settings.openRouterVoice);
     this.settings.settingsLanguage = normalizeSettingsLanguage(this.settings.settingsLanguage);
     this.settings.scriptPath = String(this.settings.scriptPath || defaults.scriptPath);
-    this.settings.chunkLimits = parseChunkLimits(this.settings.chunkLimits).join(',');
+    this.settings.chunkLimits = parseChunkLimits(this.settings.chunkLimits).join(",");
     this.settings.onlineChunkLimits = parseChunkLimits(
       this.settings.onlineChunkLimits,
       DEFAULT_ONLINE_CHUNK_LIMITS
-    ).join(',');
+    ).join(",");
     this.settings.onlinePrefetchChunks = normalizeOnlinePrefetchChunks(this.settings.onlinePrefetchChunks);
+    this.settings.readingPositions = normalizeReadingPositions(this.settings.readingPositions);
+    this.settings.rememberReadingPosition = this.settings.rememberReadingPosition === true;
     if (removedObsoleteSettings || missingKnownSettings) {
       await this.saveData(this.settings);
     }
   }
-
   async saveSettings() {
     this.settings = selectKnownSettings(createDefaultSettings(), this.settings);
     this.settings.speed = normalizeSpeed(this.settings.speed);
@@ -2021,9 +2157,9 @@ class CosyVoiceReaderPlugin extends Plugin {
     this.settings.azureSpeechCloud = normalizeAzureSpeechCloud(this.settings.azureSpeechCloud);
     this.settings.azureSpeechConsent = this.settings.azureSpeechConsent === true;
     this.settings.azureSpeechCredentialSource = normalizeCredentialSource(this.settings.azureSpeechCredentialSource);
-    this.settings.azureSpeechKeyPath = String(this.settings.azureSpeechKeyPath || '').trim();
+    this.settings.azureSpeechKeyPath = String(this.settings.azureSpeechKeyPath || "").trim();
     this.settings.azureSpeechRegion = normalizeAzureSpeechRegion(this.settings.azureSpeechRegion);
-    this.settings.azureSpeechSecretName = String(this.settings.azureSpeechSecretName || '').trim();
+    this.settings.azureSpeechSecretName = String(this.settings.azureSpeechSecretName || "").trim();
     this.settings.azureSpeechVoice = normalizeAzureSpeechVoice(this.settings.azureSpeechVoice);
     this.settings.edgeTtsConsent = this.settings.edgeTtsConsent === true;
     this.settings.edgeTtsExecutable = normalizeEdgeTtsExecutable(this.settings.edgeTtsExecutable);
@@ -2032,313 +2168,383 @@ class CosyVoiceReaderPlugin extends Plugin {
     this.settings.mathReadingLanguage = normalizeMathReadingLanguage(this.settings.mathReadingLanguage);
     this.settings.openRouterConsent = this.settings.openRouterConsent === true;
     this.settings.openRouterCredentialSource = normalizeCredentialSource(this.settings.openRouterCredentialSource);
-    this.settings.openRouterKeyPath = String(this.settings.openRouterKeyPath || '').trim();
+    this.settings.openRouterKeyPath = String(this.settings.openRouterKeyPath || "").trim();
     this.settings.openRouterModel = normalizeOpenRouterModel(this.settings.openRouterModel);
-    this.settings.openRouterSecretName = String(this.settings.openRouterSecretName || '').trim();
+    this.settings.openRouterSecretName = String(this.settings.openRouterSecretName || "").trim();
     this.settings.openRouterVoice = normalizeOpenRouterVoice(this.settings.openRouterVoice);
     this.settings.settingsLanguage = normalizeSettingsLanguage(this.settings.settingsLanguage);
-    this.settings.chunkLimits = parseChunkLimits(this.settings.chunkLimits).join(',');
+    this.settings.chunkLimits = parseChunkLimits(this.settings.chunkLimits).join(",");
     this.settings.onlineChunkLimits = parseChunkLimits(
       this.settings.onlineChunkLimits,
       DEFAULT_ONLINE_CHUNK_LIMITS
-    ).join(',');
+    ).join(",");
     this.settings.onlinePrefetchChunks = normalizeOnlinePrefetchChunks(this.settings.onlinePrefetchChunks);
+    this.settings.readingPositions = normalizeReadingPositions(this.settings.readingPositions);
+    this.settings.rememberReadingPosition = this.settings.rememberReadingPosition === true;
     await this.saveData(this.settings);
   }
-
   async resetSettingsToDefaults() {
     this.settings = createDefaultSettings();
     await this.saveSettings();
   }
-
   async setSpeechSpeed(speed) {
     if (!this.settings) {
       this.settings = createDefaultSettings();
     }
-
     this.settings.speed = normalizeSpeed(speed);
     await this.saveSettings();
     this.renderReaderViews();
     return this.settings.speed;
   }
-
   async ensureCacheDir() {
     const adapter = this.app.vault.adapter;
-
-    if (!adapter || typeof adapter.getBasePath !== 'function') {
-      throw new Error('Note and PDF Voice Reader requires the desktop FileSystemAdapter.');
+    if (!adapter || typeof adapter.getBasePath !== "function") {
+      throw new Error("Note and PDF Voice Reader requires the desktop FileSystemAdapter.");
     }
-
     this.vaultBasePath = adapter.getBasePath();
-    this.legacyCacheDir = path.join(this.vaultBasePath, '.obsidian', 'plugins', PLUGIN_ID, 'cache');
-    this.legacyLogPath = path.join(this.vaultBasePath, '.obsidian', 'plugins', PLUGIN_ID, 'last-error.log');
+    this.legacyCacheDir = path.join(this.vaultBasePath, ".obsidian", "plugins", PLUGIN_ID, "cache");
+    this.legacyLogPath = path.join(this.vaultBasePath, ".obsidian", "plugins", PLUGIN_ID, "last-error.log");
     this.cacheDir = getPluginTempCacheDir(this.vaultBasePath);
-    this.logPath = path.join(this.cacheDir, 'diagnostic.log');
+    this.logPath = path.join(this.cacheDir, "diagnostic.log");
     await fs.promises.mkdir(this.cacheDir, { recursive: true });
-
     if (this.settings.cleanupCache) {
       await this.cleanupStaleTemporaryData();
     }
   }
-
   async cleanupOwnedFilesInDirectory(directoryPath) {
     if (!directoryPath) {
       return;
     }
-
     let entries;
     try {
       entries = await fs.promises.readdir(directoryPath, { withFileTypes: true });
     } catch (error) {
-      if (error && error.code === 'ENOENT') {
+      if (error && error.code === "ENOENT") {
         return;
       }
       throw error;
     }
-
     for (const entry of entries) {
       if (!entry.isFile() || !isOwnedCacheFileName(entry.name)) {
         continue;
       }
-
       try {
         await fs.promises.unlink(path.join(directoryPath, entry.name));
       } catch (error) {
-        if (!error || error.code !== 'ENOENT') {
+        if (!error || error.code !== "ENOENT") {
           console.warn(`[${PLUGIN_ID}] Could not remove stale temporary file`, entry.name, error);
         }
       }
     }
   }
-
   async removeLegacyRuntimeLog() {
     if (!this.legacyLogPath) {
       return;
     }
-
     try {
       await fs.promises.unlink(this.legacyLogPath);
     } catch (error) {
-      if (!error || error.code !== 'ENOENT') {
+      if (!error || error.code !== "ENOENT") {
         console.warn(`[${PLUGIN_ID}] Could not remove legacy runtime log`, error);
       }
     }
   }
-
   async cleanupStaleTemporaryData() {
     await this.cleanupOwnedFilesInDirectory(this.cacheDir);
     await this.cleanupOwnedFilesInDirectory(this.legacyCacheDir);
     await this.removeLegacyRuntimeLog();
-
     if (this.legacyCacheDir) {
       try {
         await fs.promises.rmdir(this.legacyCacheDir);
       } catch (error) {
-        if (!error || !['ENOENT', 'ENOTEMPTY'].includes(error.code)) {
+        if (!error || !["ENOENT", "ENOTEMPTY"].includes(error.code)) {
           console.warn(`[${PLUGIN_ID}] Could not remove empty legacy cache directory`, error);
         }
       }
     }
   }
-
   async clearTemporaryData() {
     await this.stopReading({ silent: true });
     await this.cleanupStaleTemporaryData();
     new Notice(getSettingsUiText(this.settings.settingsLanguage).temporaryDataClearedNotice);
   }
-
   async activateControlView() {
     let leaf = this.app.workspace.getLeavesOfType(VIEW_TYPE)[0];
-
     if (!leaf) {
       leaf = this.app.workspace.getRightLeaf(false);
       if (!leaf) {
-        new Notice('CosyVoice: unable to open reader controls.');
+        new Notice("CosyVoice: unable to open reader controls.");
         return null;
       }
       await leaf.setViewState({
         type: VIEW_TYPE,
-        active: true,
+        active: true
       });
     }
-
     this.app.workspace.revealLeaf(leaf);
     return leaf;
   }
-
   registerReaderView(view) {
     this.readerViews.add(view);
     view.render();
   }
-
   unregisterReaderView(view) {
     this.readerViews.delete(view);
   }
-
   renderReaderViews() {
     for (const view of this.readerViews) {
       view.render();
     }
   }
-
   setReaderState(patch) {
     this.readerState = createReaderState({
       ...this.readerState,
-      ...patch,
+      ...patch
     });
     this.renderReaderViews();
   }
-
   capturePdfSelection() {
-    if (typeof document === 'undefined' || typeof document.getSelection !== 'function') {
+    if (typeof document === "undefined" || typeof document.getSelection !== "function") {
       return null;
     }
-
     const selection = document.getSelection();
-    const selectedText = selection && typeof selection.toString === 'function'
-      ? selection.toString().trim()
-      : '';
+    const selectedText = selection && typeof selection.toString === "function" ? selection.toString().trim() : "";
     if (!selectedText) {
       return null;
     }
-
     const workspace = this.app && this.app.workspace;
-    const leaves = workspace && typeof workspace.getLeavesOfType === 'function'
-      ? workspace.getLeavesOfType('pdf')
-      : [];
-    const activeFile = workspace && typeof workspace.getActiveFile === 'function'
-      ? workspace.getActiveFile()
-      : null;
+    const leaves = workspace && typeof workspace.getLeavesOfType === "function" ? workspace.getLeavesOfType("pdf") : [];
+    const activeFile = workspace && typeof workspace.getActiveFile === "function" ? workspace.getActiveFile() : null;
     const context = getPdfSelectionContext(selection, leaves, activeFile);
     this.lastPdfSelection = context;
     return context;
   }
-
   getPdfSelectionForFile(file) {
     const liveSelection = this.capturePdfSelection();
     const context = liveSelection || this.lastPdfSelection;
     return context && context.filePath === getPdfFileIdentity(file) ? context : null;
   }
-
   getActiveMarkdownView() {
     const view = this.app.workspace.getActiveViewOfType(MarkdownView) || this.lastMarkdownView;
-
     if (!view || !view.editor) {
-      new Notice('CosyVoice: no active Markdown note.');
+      new Notice("CosyVoice: no active Markdown note.");
       return null;
     }
-
     this.lastMarkdownView = view;
     return view;
   }
-
   async readCurrentNote() {
-    const activeFile = typeof this.app.workspace.getActiveFile === 'function'
-      ? this.app.workspace.getActiveFile()
-      : null;
+    const activeFile = typeof this.app.workspace.getActiveFile === "function" ? this.app.workspace.getActiveFile() : null;
     if (isPdfFile(activeFile)) {
       await this.readCurrentPdf(activeFile);
       return;
     }
-
     const view = this.getActiveMarkdownView();
     if (!view) {
       return;
     }
-
     const selection = view.editor.getSelection();
     const text = selection && selection.trim() ? selection : view.editor.getValue();
     await this.activateControlView();
-    await this.startReading(text, selection && selection.trim() ? 'selection' : view.file?.basename || 'note');
-  }
-
-  async readCurrentPdfFromSelection(pdfFile = null) {
-    const file = pdfFile || (
-      typeof this.app.workspace.getActiveFile === 'function'
-        ? this.app.workspace.getActiveFile()
-        : null
+    await this.startReading(
+      text,
+      selection && selection.trim() ? "selection" : view.file?.basename || "note",
+      selection && selection.trim() ? {} : { file: view.file, sourceKind: "markdown" }
     );
-    if (!isPdfFile(file)) {
-      new Notice('CosyVoice: no active PDF file.');
+  }
+  getSavedReadingPosition(file) {
+    const filePath = getPdfFileIdentity(file);
+    if (!filePath || !this.settings || !this.settings.rememberReadingPosition) {
+      return null;
+    }
+    return normalizeReadingPositions(this.settings.readingPositions)[filePath] || null;
+  }
+  canResumeCurrentFile() {
+    const file = this.app && this.app.workspace && typeof this.app.workspace.getActiveFile === "function" ? this.app.workspace.getActiveFile() : null;
+    return Boolean(this.getSavedReadingPosition(file));
+  }
+  async resumeCurrentFile() {
+    if (!this.settings || !this.settings.rememberReadingPosition) {
+      new Notice("CosyVoice: enable Remember reading position in the plugin settings first.", 8e3);
       return;
     }
-
+    const file = typeof this.app.workspace.getActiveFile === "function" ? this.app.workspace.getActiveFile() : null;
+    const position = this.getSavedReadingPosition(file);
+    if (!file || !position) {
+      new Notice("CosyVoice: no saved reading position for the current file.", 6e3);
+      return;
+    }
+    if (isPdfFile(file)) {
+      await this.readCurrentPdf(file, { resumePosition: position });
+      return;
+    }
+    const view = this.getActiveMarkdownView();
+    if (!view || getPdfFileIdentity(view.file) !== position.filePath) {
+      new Notice("CosyVoice: open the saved note before resuming.", 6e3);
+      return;
+    }
+    const fullText = this.settings.stripMarkdown ? sanitizeTextForSpeech(view.editor.getValue(), { mathReadingLanguage: this.settings.mathReadingLanguage }) : normalizeLineBreaks(view.editor.getValue()).trim();
+    let resumeSlice = sliceTextFromReadingPosition(fullText, position);
+    if (!resumeSlice.matched) {
+      const configuration = this.getSpeechConfiguration();
+      if (!configuration) {
+        return;
+      }
+      const chunks = splitTextForSpeechChunks(fullText, configuration.chunkLimits);
+      const fallbackIndex = Math.min(Math.max(0, position.chunkIndex), Math.max(0, chunks.length - 1));
+      resumeSlice = { matched: false, text: chunks.slice(fallbackIndex).join("\n\n") };
+      new Notice("CosyVoice: the saved text anchor changed. Resuming from the nearest saved chunk.", 8e3);
+    }
+    if (!resumeSlice.text) {
+      new Notice("CosyVoice: the saved position is no longer readable.", 6e3);
+      return;
+    }
+    await this.activateControlView();
+    await this.startReading(resumeSlice.text, `${file.basename || file.name || "note"} (resumed)`, {
+      file,
+      sourceKind: "markdown"
+    });
+  }
+  async clearReadingPositions() {
+    this.settings.readingPositions = {};
+    await this.saveSettings();
+    this.renderReaderViews();
+    new Notice(getSettingsUiText(this.settings.settingsLanguage).positionsClearedNotice);
+  }
+  async saveSessionReadingPosition(session) {
+    if (!session || !this.settings || !this.settings.rememberReadingPosition || !session.filePath || !["markdown", "pdf"].includes(session.sourceKind) || !session.chunks.length || !Number.isInteger(session.currentChunkIndex)) {
+      return false;
+    }
+    let chunkIndex = Math.max(0, Math.min(session.chunks.length - 1, session.currentChunkIndex));
+    if (session.lastCompletedChunkIndex === chunkIndex && chunkIndex + 1 < session.chunks.length) {
+      chunkIndex += 1;
+    }
+    const anchor = createReadingAnchor(session.chunks[chunkIndex]);
+    if (!anchor) {
+      return false;
+    }
+    this.settings.readingPositions = upsertReadingPosition(this.settings.readingPositions, {
+      anchor,
+      chunkIndex,
+      fileMtime: session.fileMtime,
+      filePath: session.filePath,
+      kind: session.sourceKind,
+      pageNumber: session.sourceKind === "pdf" ? Array.isArray(session.chunkPageNumbers) && session.chunkPageNumbers[chunkIndex] || 1 : null,
+      updatedAt: Date.now()
+    });
+    await this.saveSettings();
+    this.renderReaderViews();
+    return true;
+  }
+  async clearSessionReadingPosition(session) {
+    if (!session || !session.filePath || !this.settings || !this.settings.rememberReadingPosition) {
+      return false;
+    }
+    const current = normalizeReadingPositions(this.settings.readingPositions);
+    if (!current[session.filePath]) {
+      return false;
+    }
+    this.settings.readingPositions = removeReadingPosition(current, session.filePath);
+    await this.saveSettings();
+    this.renderReaderViews();
+    return true;
+  }
+  async readCurrentPdfFromSelection(pdfFile = null) {
+    const file = pdfFile || (typeof this.app.workspace.getActiveFile === "function" ? this.app.workspace.getActiveFile() : null);
+    if (!isPdfFile(file)) {
+      new Notice("CosyVoice: no active PDF file.");
+      return;
+    }
     const selectionContext = this.getPdfSelectionForFile(file);
     if (!selectionContext) {
-      new Notice('CosyVoice PDF: select text in the PDF first, then try again.', 8000);
+      new Notice("CosyVoice PDF: select text in the PDF first, then try again.", 8e3);
       return;
     }
-
     await this.readCurrentPdf(file, { selectionContext });
   }
-
   getSpeechConfiguration() {
     const speechEngine = normalizeSpeechEngine(this.settings.speechEngine);
     const engineLabel = getSpeechEngineLabel(this.settings);
-    const scriptPath = String(this.settings.scriptPath || '').trim();
-    if (speechEngine === 'edge-tts' && !hasEdgeTtsConsent(this.settings)) {
-      new Notice('Edge TTS sends text to Microsoft. Enable online processing consent in the plugin settings before reading.', 10000);
+    const scriptPath = String(this.settings.scriptPath || "").trim();
+    if (speechEngine === "edge-tts" && !hasEdgeTtsConsent(this.settings)) {
+      new Notice("Edge TTS sends text to Microsoft. Enable online processing consent in the plugin settings before reading.", 1e4);
       return null;
     }
-    if (speechEngine === 'azure-speech' && !hasAzureSpeechConsent(this.settings)) {
-      new Notice('Azure Speech sends text to your Microsoft Azure Speech resource. Enable Azure online processing consent before reading.', 10000);
+    if (speechEngine === "azure-speech" && !hasAzureSpeechConsent(this.settings)) {
+      new Notice("Azure Speech sends text to your Microsoft Azure Speech resource. Enable Azure online processing consent before reading.", 1e4);
       return null;
     }
-    if (speechEngine === 'azure-speech') {
+    if (speechEngine === "azure-speech") {
       const configurationError = getAzureSpeechConfigurationError(this.settings, this.vaultBasePath, this.app);
       if (configurationError) {
-        new Notice(`Azure Speech: ${configurationError}`, 10000);
+        new Notice(`Azure Speech: ${configurationError}`, 1e4);
         return null;
       }
     }
-    if (speechEngine === 'openrouter-tts' && !hasOpenRouterConsent(this.settings)) {
-      new Notice('OpenRouter TTS sends text to OpenRouter and an eligible upstream provider. Enable OpenRouter online processing consent before reading.', 10000);
+    if (speechEngine === "openrouter-tts" && !hasOpenRouterConsent(this.settings)) {
+      new Notice("OpenRouter TTS sends text to OpenRouter and an eligible upstream provider. Enable OpenRouter online processing consent before reading.", 1e4);
       return null;
     }
-    if (speechEngine === 'openrouter-tts') {
+    if (speechEngine === "openrouter-tts") {
       const configurationError = getOpenRouterConfigurationError(this.settings, this.vaultBasePath, this.app);
       if (configurationError) {
-        new Notice(`OpenRouter TTS: ${configurationError}`, 10000);
+        new Notice(`OpenRouter TTS: ${configurationError}`, 1e4);
         return null;
       }
     }
-    if (speechEngine === 'local-cosyvoice' && (!scriptPath || !fs.existsSync(scriptPath))) {
-      new Notice(`CosyVoice: script not found: ${scriptPath || '(empty)'}`, 8000);
+    if (speechEngine === "local-cosyvoice" && (!scriptPath || !fs.existsSync(scriptPath))) {
+      new Notice(`CosyVoice: script not found: ${scriptPath || "(empty)"}`, 8e3);
       return null;
     }
-
     return {
       chunkLimits: getChunkLimitsForSpeechEngine(this.settings, speechEngine),
       engineLabel,
       prefetchChunks: getSynthesisPrefetchCount(this.settings, speechEngine),
-      speechEngine,
+      speechEngine
     };
   }
-
   createSpeechSession(chunks, sourceLabel, configuration, options = {}) {
     const initialChunks = Array.isArray(chunks) ? chunks.slice() : [];
+    const id = ++this.sequence;
     return {
-      chunkWaiters: new Set(),
+      chunkWaiters: /* @__PURE__ */ new Set(),
+      chunkPageNumbers: initialChunks.map(() => null),
       chunks: initialChunks,
       currentChunkIndex: null,
       engineLabel: configuration.engineLabel,
+      fileMtime: getFileMtime(options.file),
+      filePath: getPdfFileIdentity(options.file),
       files: [],
-      id: ++this.sequence,
-      kind: options.kind || 'text',
+      id,
+      kind: options.kind || "text",
+      lastCompletedChunkIndex: null,
       pdfLoadingTask: null,
       pdfSelectionMatched: null,
       prefetchChunks: configuration.prefetchChunks,
+      prepareAvailableChunks: null,
       producerError: null,
       productionComplete: options.productionComplete !== false,
       requestedChunkIndex: null,
       sourceLabel,
+      sourceKind: options.sourceKind || "",
       speechEngine: configuration.speechEngine,
       speechStarted: false,
       stopped: false,
-      totalChunks: initialChunks.length,
+      taskState: createTaskState(id, options.kind === "pdf-progressive" ? "extracting" : "queued"),
+      totalChunks: initialChunks.length
     };
   }
-
+  transitionSessionPhase(session, phase) {
+    if (!session || !session.taskState || !phase) {
+      return;
+    }
+    const taskPhase = phase === "extracting PDF" ? "extracting" : phase;
+    try {
+      session.taskState = transitionTaskState(session.taskState, taskPhase, session.id);
+    } catch (error) {
+      console.warn(`[${PLUGIN_ID}] Reading task state transition was rejected`, error);
+    }
+  }
   notifySessionChunkWaiters(session) {
     if (!session || !(session.chunkWaiters instanceof Set)) {
       return;
@@ -2349,48 +2555,45 @@ class CosyVoiceReaderPlugin extends Plugin {
       wake();
     }
   }
-
-  appendSessionChunks(session, chunks) {
+  appendSessionChunks(session, chunks, options = {}) {
     if (!this.isActive(session) || !Array.isArray(chunks)) {
       return 0;
     }
-    const readableChunks = chunks
-      .map((chunk) => String(chunk || '').trim())
-      .filter(Boolean);
+    const readableChunks = chunks.map((chunk) => {
+      const detailed = chunk && typeof chunk === "object" && Object.prototype.hasOwnProperty.call(chunk, "text");
+      const text = String(detailed ? chunk.text : chunk || "").trim();
+      const pageNumber = detailed && chunk.metadata ? Math.max(1, Math.floor(Number(chunk.metadata.pageNumber) || 1)) : options.pageNumber ? Math.max(1, Math.floor(Number(options.pageNumber) || 1)) : null;
+      return text ? { pageNumber, text } : null;
+    }).filter(Boolean);
     if (!readableChunks.length) {
       return 0;
     }
-
-    session.chunks.push(...readableChunks);
+    session.chunks.push(...readableChunks.map((chunk) => chunk.text));
+    session.chunkPageNumbers.push(...readableChunks.map((chunk) => chunk.pageNumber));
     session.totalChunks = session.chunks.length;
     const currentChunk = this.readerState.currentChunk;
     this.setReaderState({
       ...getChunkNavigationState(currentChunk, session.totalChunks),
-      totalChunks: session.totalChunks,
+      totalChunks: session.totalChunks
     });
     this.notifySessionChunkWaiters(session);
+    if (typeof session.prepareAvailableChunks === "function") {
+      session.prepareAvailableChunks();
+    }
     return readableChunks.length;
   }
-
   completeSessionChunks(session) {
     session.productionComplete = true;
     session.totalChunks = session.chunks.length;
     this.notifySessionChunkWaiters(session);
   }
-
   failSessionChunks(session, error) {
     session.producerError = error instanceof Error ? error : new Error(messageFromError(error));
     session.productionComplete = true;
     this.notifySessionChunkWaiters(session);
   }
-
   async waitForSessionChunk(session, index) {
-    while (
-      this.isActive(session)
-      && index >= session.chunks.length
-      && !session.productionComplete
-      && !session.producerError
-    ) {
+    while (this.isActive(session) && index >= session.chunks.length && !session.productionComplete && !session.producerError) {
       await new Promise((resolve) => {
         const wake = () => {
           session.chunkWaiters.delete(wake);
@@ -2399,195 +2602,160 @@ class CosyVoiceReaderPlugin extends Plugin {
         session.chunkWaiters.add(wake);
       });
     }
-
     if (session.producerError) {
       throw session.producerError;
     }
     return index < session.chunks.length ? session.chunks[index] : null;
   }
-
   async readCurrentPdf(pdfFile = null, options = {}) {
-    const file = pdfFile || (
-      typeof this.app.workspace.getActiveFile === 'function'
-        ? this.app.workspace.getActiveFile()
-        : null
-    );
+    const file = pdfFile || (typeof this.app.workspace.getActiveFile === "function" ? this.app.workspace.getActiveFile() : null);
     if (!isPdfFile(file)) {
-      new Notice('CosyVoice: no active PDF file.');
+      new Notice("CosyVoice: no active PDF file.");
       return;
     }
-
-    const selectionContext = options && options.selectionContext
-      && getPdfFileIdentity(file) === options.selectionContext.filePath
-      ? options.selectionContext
-      : null;
-
+    const selectionContext = options && options.selectionContext && getPdfFileIdentity(file) === options.selectionContext.filePath ? options.selectionContext : null;
+    const resumePosition = options && options.resumePosition && getPdfFileIdentity(file) === options.resumePosition.filePath ? options.resumePosition : null;
+    const startContext = selectionContext || (resumePosition ? {
+      filePath: resumePosition.filePath,
+      pageNumber: resumePosition.pageNumber,
+      selectedText: resumePosition.anchor
+    } : null);
     const configuration = this.getSpeechConfiguration();
     if (!configuration) {
       return;
     }
-
     await this.activateControlView();
     await this.stopReading({ silent: true });
     this.pauseRequested = false;
-
-    const sourceLabel = file.basename || file.name || 'PDF';
-    const readingSourceLabel = selectionContext
-      ? `${sourceLabel} (PDF from selection)`
-      : `${sourceLabel} (PDF)`;
+    const sourceLabel = file.basename || file.name || "PDF";
+    const readingSourceLabel = resumePosition ? `${sourceLabel} (resumed PDF)` : selectionContext ? `${sourceLabel} (PDF from selection)` : `${sourceLabel} (PDF)`;
     const session = this.createSpeechSession([], readingSourceLabel, configuration, {
-      kind: 'pdf-progressive',
+      file,
+      kind: "pdf-progressive",
       productionComplete: false,
+      sourceKind: "pdf"
     });
     this.activeSession = session;
-    this.updateStatus('PDF text extraction', {
+    this.updateStatus("PDF text extraction", {
       canPause: false,
       canNextChunk: false,
       canPreviousChunk: false,
       canSeek: false,
       canStop: true,
       currentChunk: 0,
-      currentText: selectionContext
-        ? `Loading PDF text from page ${selectionContext.pageNumber}...`
-        : 'Loading PDF text...',
-      error: '',
+      currentText: startContext ? `Loading PDF text from page ${startContext.pageNumber}...` : "Loading PDF text...",
+      error: "",
       isPaused: false,
-      phase: 'extracting PDF',
+      phase: "extracting PDF",
       progress: 0,
       source: sourceLabel,
-      status: 'running',
-      totalChunks: 0,
+      status: "running",
+      totalChunks: 0
     });
-
     session.producerPromise = this.producePdfSpeechChunks(
       file,
       session,
-      selectionContext,
+      startContext,
       configuration.chunkLimits
     ).then(() => {
       this.completeSessionChunks(session);
     }).catch((error) => {
       this.failSessionChunks(session, error);
     });
-
-    const prefetchNotice = configuration.prefetchChunks > 0
-      ? 'Up to one next chunk may be prepared early.'
-      : 'Audio is synthesized only as needed.';
+    const prefetchNotice = configuration.prefetchChunks > 0 ? "Up to one next chunk may be prepared early." : "Audio is synthesized only as needed.";
     new Notice(
       `${configuration.engineLabel}: progressively reading ${readingSourceLabel}. ${prefetchNotice}`,
-      6000
+      6e3
     );
     await this.runSpeechSession(session);
   }
-
   async producePdfSpeechChunks(file, session, selectionContext, chunkLimits) {
-    const chunker = createIncrementalSpeechChunker(chunkLimits);
+    const chunker = createIncrementalSpeechChunker(chunkLimits, { detailed: true });
     let readableTextLength = 0;
     let selectionFallbackNotified = false;
-
     await this.extractPdfText(file, session, {
       collectText: false,
       onPageText: async (pageText, pageInfo) => {
         if (!this.isActive(session)) {
           return;
         }
-        const text = this.settings.stripMarkdown
-          ? sanitizeTextForSpeech(pageText, { mathReadingLanguage: this.settings.mathReadingLanguage })
-          : normalizeLineBreaks(pageText).trim();
+        const text = this.settings.stripMarkdown ? sanitizeTextForSpeech(pageText, { mathReadingLanguage: this.settings.mathReadingLanguage }) : normalizeLineBreaks(pageText).trim();
         readableTextLength += text.length;
-        this.appendSessionChunks(session, chunker.push(text));
-
-        if (
-          selectionContext
-          && pageInfo.pageNumber === selectionContext.pageNumber
-          && session.pdfSelectionMatched === false
-          && !selectionFallbackNotified
-        ) {
+        this.appendSessionChunks(session, chunker.push(text, { pageNumber: pageInfo.pageNumber }));
+        if (selectionContext && pageInfo.pageNumber === selectionContext.pageNumber && session.pdfSelectionMatched === false && !selectionFallbackNotified) {
           selectionFallbackNotified = true;
           new Notice(
             `CosyVoice PDF: the selected text could not be matched exactly. Reading from the start of page ${selectionContext.pageNumber}.`,
-            10000
+            1e4
           );
         }
       },
       reportProgress: true,
-      selectedText: selectionContext ? selectionContext.selectedText : '',
-      startPageNumber: selectionContext ? selectionContext.pageNumber : 1,
+      selectedText: selectionContext ? selectionContext.selectedText : "",
+      startPageNumber: selectionContext ? selectionContext.pageNumber : 1
     });
-
     if (!this.isActive(session)) {
       return;
     }
     this.appendSessionChunks(session, chunker.finish());
     if (!readableTextLength || !session.chunks.length) {
-      throw new Error('No extractable text was found. This PDF may be scanned or image-only; run OCR first and try again.');
+      throw new Error("No extractable text was found. This PDF may be scanned or image-only; run OCR first and try again.");
     }
   }
-
   async extractPdfText(file, session, options = {}) {
     if (!isPdfFile(file)) {
-      throw new Error('The active file is not a PDF.');
+      throw new Error("The active file is not a PDF.");
     }
     if (Number(file.stat && file.stat.size) > PDF_MAX_BYTES) {
-      throw new Error('This PDF is larger than 200 MB. Split or compress it before reading.');
+      throw new Error("This PDF is larger than 200 MB. Split or compress it before reading.");
     }
-    if (typeof loadPdfJs !== 'function') {
-      throw new Error('PDF text extraction is unavailable in this Obsidian version. Update Obsidian and try again.');
+    if (typeof loadPdfJs !== "function") {
+      throw new Error("PDF text extraction is unavailable in this Obsidian version. Update Obsidian and try again.");
     }
-    if (!this.app.vault || typeof this.app.vault.readBinary !== 'function') {
-      throw new Error('Obsidian could not read the active PDF.');
+    if (!this.app.vault || typeof this.app.vault.readBinary !== "function") {
+      throw new Error("Obsidian could not read the active PDF.");
     }
-
     const [pdfjsLib, binary] = await Promise.all([
       loadPdfJs(),
-      this.app.vault.readBinary(file),
+      this.app.vault.readBinary(file)
     ]);
     if (!this.isActive(session)) {
-      return '';
+      return "";
     }
-    if (!pdfjsLib || typeof pdfjsLib.getDocument !== 'function') {
-      throw new Error('Obsidian PDF.js did not load correctly.');
+    if (!pdfjsLib || typeof pdfjsLib.getDocument !== "function") {
+      throw new Error("Obsidian PDF.js did not load correctly.");
     }
-
-    const data = binary instanceof Uint8Array
-      ? new Uint8Array(binary.buffer, binary.byteOffset, binary.byteLength)
-      : new Uint8Array(binary);
+    const data = binary instanceof Uint8Array ? new Uint8Array(binary.buffer, binary.byteOffset, binary.byteLength) : new Uint8Array(binary);
     const loadingTask = pdfjsLib.getDocument({ data });
     session.pdfLoadingTask = loadingTask;
     let pdfDocument = null;
-
     try {
       pdfDocument = await loadingTask.promise;
       if (!this.isActive(session)) {
-        return '';
+        return "";
       }
-
       const totalPages = Math.max(0, Math.floor(Number(pdfDocument.numPages) || 0));
       if (!totalPages) {
-        throw new Error('This PDF contains no readable pages.');
+        throw new Error("This PDF contains no readable pages.");
       }
       if (totalPages > PDF_MAX_PAGES) {
         throw new Error(`This PDF has more than ${PDF_MAX_PAGES} pages. Split it before reading.`);
       }
-
       const requestedStartPage = Math.floor(Number(options.startPageNumber) || 1);
       const startPageNumber = Math.max(1, Math.min(totalPages, requestedStartPage));
-      const selectedText = String(options.selectedText || '').trim();
-
+      const selectedText = String(options.selectedText || "").trim();
       const collectText = options.collectText !== false;
-      const onPageText = typeof options.onPageText === 'function' ? options.onPageText : null;
+      const onPageText = typeof options.onPageText === "function" ? options.onPageText : null;
       const reportProgress = options.reportProgress !== false;
       if (!onPageText) {
         session.totalChunks = totalPages;
       }
       const pageTexts = [];
       let textLength = 0;
-
       for (let pageNumber = startPageNumber; pageNumber <= totalPages; pageNumber += 1) {
         if (!this.isActive(session)) {
-          return '';
+          return "";
         }
-
         if (reportProgress && !session.speechStarted) {
           this.updateStatus(`PDF page ${pageNumber}/${totalPages}`, {
             canPause: false,
@@ -2597,24 +2765,24 @@ class CosyVoiceReaderPlugin extends Plugin {
             canStop: true,
             currentChunk: onPageText ? 0 : pageNumber - 1,
             currentText: `Extracting page ${pageNumber} of ${totalPages}...`,
-            phase: 'extracting PDF',
+            phase: "extracting PDF",
             progress: (pageNumber - 1) / totalPages,
-            status: 'running',
-            totalChunks: onPageText ? session.totalChunks : totalPages,
+            status: "running",
+            totalChunks: onPageText ? session.totalChunks : totalPages
           });
         }
-
         let page = null;
         try {
           page = await pdfDocument.getPage(pageNumber);
           if (!this.isActive(session)) {
-            return '';
+            return "";
           }
           const textContent = await page.getTextContent();
           if (!this.isActive(session)) {
-            return '';
+            return "";
           }
-          let pageText = extractTextFromPdfItems(textContent && textContent.items);
+          const viewport = typeof page.getViewport === "function" ? page.getViewport({ scale: 1 }) : null;
+          let pageText = extractTextFromPdfItems(textContent && textContent.items, { viewport });
           if (selectedText && pageNumber === startPageNumber) {
             const selectionSlice = slicePdfTextFromSelection(pageText, selectedText);
             pageText = selectionSlice.text;
@@ -2625,35 +2793,33 @@ class CosyVoiceReaderPlugin extends Plugin {
           }
           textLength += pageText.length;
           if (textLength > PDF_MAX_TEXT_CHARS) {
-            throw new Error('This PDF contains more than 5,000,000 extractable characters. Split it before reading.');
+            throw new Error("This PDF contains more than 5,000,000 extractable characters. Split it before reading.");
           }
           if (onPageText) {
             await onPageText(pageText, { pageNumber, totalPages });
           }
         } finally {
-          if (page && typeof page.cleanup === 'function') {
+          if (page && typeof page.cleanup === "function") {
             page.cleanup();
           }
         }
-
         if (reportProgress && !session.speechStarted) {
           this.updateStatus(`PDF page ${pageNumber}/${totalPages}`, {
             currentChunk: onPageText ? 0 : pageNumber,
-            progress: pageNumber / totalPages,
+            progress: pageNumber / totalPages
           });
         }
       }
-
-      return collectText ? joinPdfPageText(pageTexts) : '';
+      return collectText ? joinPdfPageText(pageTexts) : "";
     } finally {
       const ownsLoadingTask = session.pdfLoadingTask === loadingTask;
       if (ownsLoadingTask) {
         session.pdfLoadingTask = null;
       }
       try {
-        if (pdfDocument && typeof pdfDocument.destroy === 'function') {
+        if (pdfDocument && typeof pdfDocument.destroy === "function") {
           await pdfDocument.destroy();
-        } else if (ownsLoadingTask && loadingTask && typeof loadingTask.destroy === 'function') {
+        } else if (ownsLoadingTask && loadingTask && typeof loadingTask.destroy === "function") {
           loadingTask.destroy();
         }
       } catch (error) {
@@ -2661,95 +2827,75 @@ class CosyVoiceReaderPlugin extends Plugin {
       }
     }
   }
-
   async readSelection() {
-    const activeFile = typeof this.app.workspace.getActiveFile === 'function'
-      ? this.app.workspace.getActiveFile()
-      : null;
+    const activeFile = typeof this.app.workspace.getActiveFile === "function" ? this.app.workspace.getActiveFile() : null;
     if (isPdfFile(activeFile)) {
       const selectionContext = this.getPdfSelectionForFile(activeFile);
       if (!selectionContext) {
-        new Notice('CosyVoice PDF: select text in the PDF first, then try again.', 8000);
+        new Notice("CosyVoice PDF: select text in the PDF first, then try again.", 8e3);
         return;
       }
-
       await this.activateControlView();
       await this.startReading(
         selectionContext.selectedText,
-        `${activeFile.basename || activeFile.name || 'PDF'} (PDF selection)`
+        `${activeFile.basename || activeFile.name || "PDF"} (PDF selection)`
       );
       return;
     }
-
     const view = this.getActiveMarkdownView();
     if (!view) {
       return;
     }
-
     const selection = view.editor.getSelection();
     if (!selection || !selection.trim()) {
-      new Notice('CosyVoice: select text first.');
+      new Notice("CosyVoice: select text first.");
       return;
     }
-
     await this.activateControlView();
-    await this.startReading(selection, 'selection');
+    await this.startReading(selection, "selection");
   }
-
   async readFromSelection() {
-    const activeFile = typeof this.app.workspace.getActiveFile === 'function'
-      ? this.app.workspace.getActiveFile()
-      : null;
+    const activeFile = typeof this.app.workspace.getActiveFile === "function" ? this.app.workspace.getActiveFile() : null;
     if (isPdfFile(activeFile)) {
       await this.readCurrentPdfFromSelection(activeFile);
       return;
     }
-
     const view = this.getActiveMarkdownView();
     if (!view) {
       return;
     }
-
     const selection = view.editor.getSelection();
     if (!selection || !selection.trim()) {
-      new Notice('CosyVoice: select a start point first.');
+      new Notice("CosyVoice: select a start point first.");
       return;
     }
-
-    const from = view.editor.getCursor('from');
+    const from = view.editor.getCursor("from");
     const lines = view.editor.getValue().split(/\r\n?|\n/);
     const text = getTextFromPositionToEnd(lines, from);
-
     if (!text) {
-      new Notice('CosyVoice: nothing to read after selection.');
+      new Notice("CosyVoice: nothing to read after selection.");
       return;
     }
-
     await this.activateControlView();
-    await this.startReading(text, 'from selection');
+    await this.startReading(text, "from selection", { file: view.file, sourceKind: "markdown" });
   }
-
-  async startReading(rawText, sourceLabel) {
-    const text = this.settings.stripMarkdown
-      ? sanitizeTextForSpeech(rawText, { mathReadingLanguage: this.settings.mathReadingLanguage })
-      : normalizeLineBreaks(rawText).trim();
-
+  async startReading(rawText, sourceLabel, options = {}) {
+    const text = this.settings.stripMarkdown ? sanitizeTextForSpeech(rawText, { mathReadingLanguage: this.settings.mathReadingLanguage }) : normalizeLineBreaks(rawText).trim();
     if (!text) {
-      new Notice('CosyVoice: nothing readable in this note.');
+      new Notice("CosyVoice: nothing readable in this note.");
       return;
     }
-
     const configuration = this.getSpeechConfiguration();
     if (!configuration) {
       return;
     }
-
     await this.stopReading({ silent: true });
     this.pauseRequested = false;
-
     const chunks = splitTextForSpeechChunks(text, configuration.chunkLimits);
-    const session = this.createSpeechSession(chunks, sourceLabel, configuration);
-
+    const session = this.createSpeechSession(chunks, sourceLabel, configuration, {
+      file: options.file,
+      sourceKind: options.sourceKind || ""
+    });
     this.activeSession = session;
     this.updateStatus(`${configuration.engineLabel} 0/${chunks.length}`, {
       canPause: false,
@@ -2759,35 +2905,45 @@ class CosyVoiceReaderPlugin extends Plugin {
       canStop: true,
       currentChunk: 0,
       currentText: previewText(chunks[0]),
-      error: '',
+      error: "",
       isPaused: false,
-      phase: 'queued',
+      phase: "queued",
       progress: 0,
       source: sourceLabel,
-      status: 'running',
-      totalChunks: chunks.length,
+      status: "running",
+      totalChunks: chunks.length
     });
-    await this.writeRuntimeLog('start', {
+    await this.writeRuntimeLog("start", {
       chunks: chunks.length,
       prefetchChunks: configuration.prefetchChunks,
       source: sourceLabel,
-      textLength: text.length,
+      textLength: text.length
     });
-    new Notice(`${configuration.engineLabel}: reading ${sourceLabel}. First synthesis may take a while.`, 6000);
-
+    new Notice(`${configuration.engineLabel}: reading ${sourceLabel}. First synthesis may take a while.`, 6e3);
     await this.runSpeechSession(session);
   }
-
   async runSpeechSession(session) {
-    const preparedChunks = new Map();
+    const preparedChunks = /* @__PURE__ */ new Map();
     const getPreparedChunk = (index) => {
       if (!preparedChunks.has(index)) {
-        preparedChunks.set(index, this.queuePrepareChunk(session.chunks[index], index, session));
+        const preparing = this.queuePrepareChunk(session.chunks[index], index, session);
+        preparing.catch(() => {
+        });
+        preparedChunks.set(index, preparing);
       }
-
       return preparedChunks.get(index);
     };
-
+    session.prepareAvailableChunks = () => {
+      if (!this.isActive(session) || !Number.isInteger(session.prefetchBaseIndex)) {
+        return;
+      }
+      for (let offset = 1; offset <= session.prefetchChunks; offset += 1) {
+        const prefetchIndex = session.prefetchBaseIndex + offset;
+        if (prefetchIndex < session.chunks.length) {
+          getPreparedChunk(prefetchIndex);
+        }
+      }
+    };
     try {
       let index = 0;
       while (this.isActive(session)) {
@@ -2795,24 +2951,19 @@ class CosyVoiceReaderPlugin extends Plugin {
           index = Math.max(0, Math.min(session.chunks.length - 1, session.requestedChunkIndex));
           session.requestedChunkIndex = null;
         }
-
-        if (
-          session.kind === 'pdf-progressive'
-          && index >= session.chunks.length
-          && !session.productionComplete
-        ) {
-          this.updateStatus('PDF parsing next pages', {
+        session.prefetchBaseIndex = index;
+        if (session.kind === "pdf-progressive" && index >= session.chunks.length && !session.productionComplete) {
+          this.updateStatus("PDF parsing next pages", {
             canPause: true,
             canNextChunk: false,
             canSeek: false,
             canStop: true,
             isPaused: false,
-            phase: 'extracting PDF',
+            phase: "extracting PDF",
             progress: Math.min(0.99, this.readerState.progress),
-            status: 'running',
+            status: "running"
           });
         }
-
         const chunkText = await this.waitForSessionChunk(session, index);
         if (!this.isActive(session)) {
           break;
@@ -2820,29 +2971,20 @@ class CosyVoiceReaderPlugin extends Plugin {
         if (chunkText === null) {
           break;
         }
-
+        session.currentChunkIndex = index;
         const prepared = await getPreparedChunk(index);
         if (!this.isActive(session)) {
           break;
         }
-
         if (Number.isInteger(session.requestedChunkIndex) && session.requestedChunkIndex !== index) {
           index = Math.max(0, Math.min(session.chunks.length - 1, session.requestedChunkIndex));
           session.requestedChunkIndex = null;
           continue;
         }
-
-        for (let offset = 1; offset <= session.prefetchChunks; offset += 1) {
-          const prefetchIndex = index + offset;
-          if (prefetchIndex < session.chunks.length) {
-            getPreparedChunk(prefetchIndex);
-          }
-        }
-
-        session.currentChunkIndex = index;
+        session.prepareAvailableChunks();
         session.requestedChunkIndex = null;
         await this.playPreparedAudio(prepared, session, index, session.totalChunks);
-
+        session.lastCompletedChunkIndex = index;
         if (Number.isInteger(session.requestedChunkIndex)) {
           index = Math.max(0, Math.min(session.chunks.length - 1, session.requestedChunkIndex));
           session.requestedChunkIndex = null;
@@ -2850,7 +2992,6 @@ class CosyVoiceReaderPlugin extends Plugin {
           index += 1;
         }
       }
-
       if (this.isActive(session)) {
         this.updateStatus(`${session.engineLabel} complete`, {
           canPause: false,
@@ -2859,17 +3000,16 @@ class CosyVoiceReaderPlugin extends Plugin {
           canSeek: false,
           canStop: false,
           isPaused: false,
-          phase: 'complete',
+          phase: "complete",
           progress: 1,
-          status: 'complete',
+          status: "complete"
         });
+        await this.clearSessionReadingPosition(session);
         this.activeSession = null;
       }
     } catch (error) {
       if (this.isActive(session)) {
-        const message = session.kind === 'pdf-progressive'
-          ? getPdfExtractionErrorMessage(error)
-          : messageFromError(error);
+        const message = session.kind === "pdf-progressive" ? getPdfExtractionErrorMessage(error) : messageFromError(error);
         this.updateStatus(`${session.engineLabel} error`, {
           canPause: false,
           canNextChunk: false,
@@ -2878,56 +3018,61 @@ class CosyVoiceReaderPlugin extends Plugin {
           canStop: false,
           error: message,
           isPaused: false,
-          phase: 'error',
-          status: 'error',
+          phase: "error",
+          status: "error"
         });
-        await this.writeRuntimeLog('failed', {
-          message,
+        await this.writeRuntimeLog("failed", {
+          message
         });
-        const noticePrefix = session.kind === 'pdf-progressive' ? 'CosyVoice PDF' : session.engineLabel;
-        new Notice(`${noticePrefix} failed: ${message}`, 10000);
+        const noticePrefix = session.kind === "pdf-progressive" ? "CosyVoice PDF" : session.engineLabel;
+        new Notice(`${noticePrefix} failed: ${message}`, 1e4);
+        await this.saveSessionReadingPosition(session);
         await this.cancelSessionOperations(session);
         this.activeSession = null;
       }
     } finally {
+      session.prepareAvailableChunks = null;
+      session.prefetchBaseIndex = null;
       if (session.producerPromise) {
-        await session.producerPromise.catch(() => {});
+        await session.producerPromise.catch(() => {
+        });
       }
       if (this.settings.cleanupCache) {
         await this.cleanupSessionFiles(session);
       }
     }
   }
-
   async prepareChunk(chunkText, index, session) {
     if (!this.isActive(session)) {
-      throw new Error('Reading stopped.');
+      throw new Error("Reading stopped.");
     }
-
     session.speechStarted = true;
     const speechEngine = normalizeSpeechEngine(session.speechEngine || this.settings.speechEngine);
     const engineLabel = session.engineLabel || getSpeechEngineLabel(this.settings);
-    const outputExtension = speechEngine === 'local-cosyvoice' ? 'wav' : 'mp3';
+    const outputExtension = speechEngine === "local-cosyvoice" ? "wav" : "mp3";
     const basename = `${Date.now()}-${session.id}-${index}`;
     const inputPath = path.join(this.cacheDir, `${basename}.txt`);
     const outputPath = path.join(this.cacheDir, `${basename}.${outputExtension}`);
-
     session.files.push(inputPath, outputPath);
-    await fs.promises.writeFile(inputPath, chunkText, { encoding: 'utf8', mode: 0o600 });
-
-    this.updateStatus(`${engineLabel} synth ${index + 1}/${session.totalChunks || 0}`, {
-      canPause: true,
-      ...getChunkNavigationState(index + 1, session.totalChunks),
-      canSeek: false,
-      canStop: true,
-      currentChunk: index + 1,
-      currentText: previewText(chunkText),
-      isPaused: false,
-      phase: 'synthesizing',
-      progress: session.totalChunks ? index / session.totalChunks : 0,
-      status: 'running',
-      totalChunks: session.totalChunks || 0,
-    });
+    await fs.promises.writeFile(inputPath, chunkText, { encoding: "utf8", mode: 384 });
+    const isBackgroundPrefetch = Boolean(
+      this.currentAudio && Number.isInteger(session.currentChunkIndex) && index !== session.currentChunkIndex
+    );
+    if (!isBackgroundPrefetch) {
+      this.updateStatus(`${engineLabel} synth ${index + 1}/${session.totalChunks || 0}`, {
+        canPause: true,
+        ...getChunkNavigationState(index + 1, session.totalChunks),
+        canSeek: false,
+        canStop: true,
+        currentChunk: index + 1,
+        currentText: previewText(chunkText),
+        isPaused: false,
+        phase: "synthesizing",
+        progress: session.totalChunks ? index / session.totalChunks : 0,
+        status: "running",
+        totalChunks: session.totalChunks || 0
+      });
+    }
     try {
       await this.runSpeechEngine(inputPath, outputPath, session, speechEngine);
     } finally {
@@ -2935,97 +3080,84 @@ class CosyVoiceReaderPlugin extends Plugin {
         await this.removeTempFile(inputPath);
       }
     }
-
     const outputStat = await fs.promises.stat(outputPath);
     if (outputStat.size <= 44) {
       throw new Error(`${engineLabel} generated an invalid audio file: ${outputStat.size} bytes.`);
     }
-
     if (!this.isActive(session)) {
       if (this.settings.cleanupCache) {
         await this.removeTempFile(outputPath);
       }
-      throw new Error('Reading stopped.');
+      throw new Error("Reading stopped.");
     }
-
     const url = getAudioUrlForFile(this.app.vault.adapter, this.vaultBasePath, outputPath);
-    await this.writeRuntimeLog('prepared', {
+    await this.writeRuntimeLog("prepared", {
       index,
       outputBytes: outputStat.size,
-      urlScheme: String(url).split(':')[0],
+      urlScheme: String(url).split(":")[0]
     });
-
     return {
       outputPath,
-      url,
+      url
     };
   }
-
   queuePrepareChunk(chunkText, index, session) {
     const promise = this.prepareChunk(chunkText, index, session);
-    promise.catch(() => {});
+    promise.catch(() => {
+    });
     return promise;
   }
-
   runSpeechEngine(inputPath, outputPath, session, speechEngine = normalizeSpeechEngine(this.settings.speechEngine)) {
-    if (speechEngine === 'edge-tts') {
+    if (speechEngine === "edge-tts") {
       return this.runEdgeTts(inputPath, outputPath, session);
     }
-    if (speechEngine === 'azure-speech') {
+    if (speechEngine === "azure-speech") {
       return this.runAzureSpeech(inputPath, outputPath, session);
     }
-    if (speechEngine === 'openrouter-tts') {
+    if (speechEngine === "openrouter-tts") {
       return this.runOpenRouterTts(inputPath, outputPath, session);
     }
-
     return this.runCosyVoice(inputPath, outputPath, session);
   }
-
   runCosyVoice(inputPath, outputPath, session) {
     const scriptPath = this.settings.scriptPath.trim();
     const args = [
-      '-NoProfile',
-      '-ExecutionPolicy',
-      'Bypass',
-      '-File',
+      "-NoProfile",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-File",
       scriptPath,
-      '-InputPath',
+      "-InputPath",
       inputPath,
-      '-OutputPath',
+      "-OutputPath",
       outputPath,
-      '-Speed',
-      String(normalizeSpeed(this.settings.speed)),
+      "-Speed",
+      String(normalizeSpeed(this.settings.speed))
     ];
-
     return new Promise((resolve, reject) => {
       const child = spawn(resolvePowerShellExecutable(), args, {
         cwd: path.dirname(scriptPath),
-        windowsHide: true,
+        windowsHide: true
       });
-      let stdout = '';
-      let stderr = '';
+      let stdout = "";
+      let stderr = "";
       let settled = false;
-
       this.currentProcess = child;
-
       const timeout = setTimeout(() => {
         if (settled) {
           return;
         }
         settled = true;
         child.kill();
-        reject(new Error('CosyVoice synthesis timed out after 10 minutes.'));
-      }, 10 * 60 * 1000);
-
-      child.stdout.on('data', (data) => {
+        reject(new Error("CosyVoice synthesis timed out after 10 minutes."));
+      }, 10 * 60 * 1e3);
+      child.stdout.on("data", (data) => {
         stdout += data.toString();
       });
-
-      child.stderr.on('data', (data) => {
+      child.stderr.on("data", (data) => {
         stderr += data.toString();
       });
-
-      child.on('error', (error) => {
+      child.on("error", (error) => {
         if (settled) {
           return;
         }
@@ -3036,8 +3168,7 @@ class CosyVoiceReaderPlugin extends Plugin {
         }
         reject(error);
       });
-
-      child.on('close', (code) => {
+      child.on("close", (code) => {
         if (settled) {
           return;
         }
@@ -3046,55 +3177,45 @@ class CosyVoiceReaderPlugin extends Plugin {
         if (this.currentProcess === child) {
           this.currentProcess = null;
         }
-
         if (!this.isActive(session)) {
-          reject(new Error('Reading stopped.'));
+          reject(new Error("Reading stopped."));
           return;
         }
-
         if (code === 0 && fs.existsSync(outputPath)) {
           resolve();
           return;
         }
-
-        const detail = [stderr.trim(), stdout.trim()].filter(Boolean).join('\n');
+        const detail = [stderr.trim(), stdout.trim()].filter(Boolean).join("\n");
         reject(new Error(detail || `CosyVoice exited with code ${code}.`));
       });
     });
   }
-
   runEdgeTts(inputPath, outputPath, session) {
     const args = buildEdgeTtsArgs(inputPath, outputPath, this.settings);
     const executable = normalizeEdgeTtsExecutable(this.settings.edgeTtsExecutable);
-
     return new Promise((resolve, reject) => {
       const child = spawn(executable, args, {
-        windowsHide: true,
+        windowsHide: true
       });
-      let stdout = '';
-      let stderr = '';
+      let stdout = "";
+      let stderr = "";
       let settled = false;
-
       this.currentProcess = child;
-
       const timeout = setTimeout(() => {
         if (settled) {
           return;
         }
         settled = true;
         child.kill();
-        reject(new Error('Edge TTS synthesis timed out after 10 minutes.'));
-      }, 10 * 60 * 1000);
-
-      child.stdout.on('data', (data) => {
+        reject(new Error("Edge TTS synthesis timed out after 10 minutes."));
+      }, 10 * 60 * 1e3);
+      child.stdout.on("data", (data) => {
         stdout += data.toString();
       });
-
-      child.stderr.on('data', (data) => {
+      child.stderr.on("data", (data) => {
         stderr += data.toString();
       });
-
-      child.on('error', (error) => {
+      child.on("error", (error) => {
         if (settled) {
           return;
         }
@@ -3105,8 +3226,7 @@ class CosyVoiceReaderPlugin extends Plugin {
         }
         reject(new Error(`Edge TTS command failed at ${executable}. Check the configured executable path. ${messageFromError(error)}`));
       });
-
-      child.on('close', (code) => {
+      child.on("close", (code) => {
         if (settled) {
           return;
         }
@@ -3115,78 +3235,66 @@ class CosyVoiceReaderPlugin extends Plugin {
         if (this.currentProcess === child) {
           this.currentProcess = null;
         }
-
         if (!this.isActive(session)) {
-          reject(new Error('Reading stopped.'));
+          reject(new Error("Reading stopped."));
           return;
         }
-
         if (code === 0 && fs.existsSync(outputPath)) {
           resolve();
           return;
         }
-
-        const detail = [stderr.trim(), stdout.trim()].filter(Boolean).join('\n');
+        const detail = [stderr.trim(), stdout.trim()].filter(Boolean).join("\n");
         reject(new Error(detail || `Edge TTS exited with code ${code}.`));
       });
     });
   }
-
   async readSecretFileOutsideVault(configuredPathValue, serviceLabel) {
-    const configuredPath = String(configuredPathValue || '').trim();
+    const configuredPath = String(configuredPathValue || "").trim();
     const keyPath = await fs.promises.realpath(configuredPath);
     const vaultPath = await fs.promises.realpath(this.vaultBasePath).catch(() => path.resolve(this.vaultBasePath));
     if (isInsideDirectory(keyPath, vaultPath)) {
       throw new Error(`${serviceLabel} key file must be stored outside the Obsidian vault.`);
     }
-
     const stat = await fs.promises.stat(keyPath);
     if (!stat.isFile() || stat.size <= 0 || stat.size > 8192) {
       throw new Error(`${serviceLabel} key file must be a non-empty text file smaller than 8 KB.`);
     }
-
-    const key = (await fs.promises.readFile(keyPath, 'utf8')).replace(/^\uFEFF/, '').trim();
+    const key = (await fs.promises.readFile(keyPath, "utf8")).replace(/^\uFEFF/, "").trim();
     if (!key || /[\r\n]/.test(key)) {
       throw new Error(`${serviceLabel} key file must contain exactly one non-empty line.`);
     }
     return key;
   }
-
   readObsidianSecret(secretNameValue, serviceLabel) {
     return readObsidianSecretValue(secretNameValue, this.app, serviceLabel);
   }
-
   async readOpenRouterKey() {
-    if (normalizeCredentialSource(this.settings.openRouterCredentialSource) === 'obsidian-secret') {
-      return this.readObsidianSecret(this.settings.openRouterSecretName, 'OpenRouter API');
+    if (normalizeCredentialSource(this.settings.openRouterCredentialSource) === "obsidian-secret") {
+      return this.readObsidianSecret(this.settings.openRouterSecretName, "OpenRouter API");
     }
-    return this.readSecretFileOutsideVault(this.settings.openRouterKeyPath, 'OpenRouter API');
+    return this.readSecretFileOutsideVault(this.settings.openRouterKeyPath, "OpenRouter API");
   }
-
   async readAzureSpeechKey() {
-    if (normalizeCredentialSource(this.settings.azureSpeechCredentialSource) === 'obsidian-secret') {
-      return this.readObsidianSecret(this.settings.azureSpeechSecretName, 'Azure Speech');
+    if (normalizeCredentialSource(this.settings.azureSpeechCredentialSource) === "obsidian-secret") {
+      return this.readObsidianSecret(this.settings.azureSpeechSecretName, "Azure Speech");
     }
-    return this.readSecretFileOutsideVault(this.settings.azureSpeechKeyPath, 'Azure Speech');
+    return this.readSecretFileOutsideVault(this.settings.azureSpeechKeyPath, "Azure Speech");
   }
-
   async waitForRemoteRetry(session, delayMs) {
     let remainingMs = Math.max(0, Number(delayMs) || 0);
     while (remainingMs > 0) {
       const intervalMs = Math.min(100, remainingMs);
       await sleep(intervalMs);
       if (!this.isActive(session)) {
-        throw new Error('Reading stopped.');
+        throw new Error("Reading stopped.");
       }
       remainingMs -= intervalMs;
     }
   }
-
   async requestRemoteAudio(options) {
     if (!(this.currentRequests instanceof Set)) {
-      this.currentRequests = new Set();
+      this.currentRequests = /* @__PURE__ */ new Set();
     }
-
     const { session, serviceLabel } = options;
     const maxAttempts = options.retryTemporaryFailures === true ? REMOTE_TTS_MAX_ATTEMPTS : 1;
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
@@ -3195,29 +3303,21 @@ class CosyVoiceReaderPlugin extends Plugin {
         return;
       } catch (error) {
         if (!this.isActive(session)) {
-          throw new Error('Reading stopped.');
+          throw new Error("Reading stopped.");
         }
-
         if (!isRetryableRemoteError(error)) {
           throw error;
         }
-
         if (attempt === maxAttempts) {
-          throw maxAttempts > 1
-            ? createRemoteRetryExhaustedError(serviceLabel, error, attempt)
-            : error;
+          throw maxAttempts > 1 ? createRemoteRetryExhaustedError(serviceLabel, error, attempt) : error;
         }
-
         const fallbackDelayMs = REMOTE_TTS_RETRY_DELAYS_MS[attempt - 1] || REMOTE_TTS_RETRY_DELAYS_MS.at(-1);
         const retryAfterMs = Number(error.retryAfterMs);
-        const delayMs = Number.isFinite(retryAfterMs)
-          ? Math.max(fallbackDelayMs, retryAfterMs)
-          : fallbackDelayMs;
+        const delayMs = Number.isFinite(retryAfterMs) ? Math.max(fallbackDelayMs, retryAfterMs) : fallbackDelayMs;
         await this.waitForRemoteRetry(session, delayMs);
       }
     }
   }
-
   async requestRemoteAudioOnce({ endpoint, headers, body, outputPath, session, serviceLabel, expectedContentType, failureHint }) {
     await new Promise((resolve, reject) => {
       let settled = false;
@@ -3229,10 +3329,9 @@ class CosyVoiceReaderPlugin extends Plugin {
         this.currentRequests.delete(request);
         callback(value);
       };
-
       const request = https.request(endpoint, {
-        method: 'POST',
-        headers,
+        method: "POST",
+        headers
       }, (response) => {
         const statusCode = Number(response.statusCode) || 0;
         if (statusCode !== 200) {
@@ -3241,30 +3340,27 @@ class CosyVoiceReaderPlugin extends Plugin {
             serviceLabel,
             statusCode,
             failureHint,
-            response.headers && response.headers['retry-after']
+            response.headers && response.headers["retry-after"]
           ));
           return;
         }
-
         const responseHeaders = response.headers || {};
-        const contentType = String(responseHeaders['content-type'] || '').split(';')[0].trim().toLowerCase();
+        const contentType = String(responseHeaders["content-type"] || "").split(";")[0].trim().toLowerCase();
         if (expectedContentType && contentType !== expectedContentType) {
           response.resume();
-          finish(reject, new Error(`${serviceLabel} returned unexpected content type ${contentType || '(missing)'}.`));
+          finish(reject, new Error(`${serviceLabel} returned unexpected content type ${contentType || "(missing)"}.`));
           return;
         }
-
-        const contentLength = Number(responseHeaders['content-length']) || 0;
+        const contentLength = Number(responseHeaders["content-length"]) || 0;
         if (contentLength > REMOTE_TTS_MAX_AUDIO_BYTES) {
           response.resume();
           finish(reject, new Error(`${serviceLabel} response exceeded the 20 MB safety limit.`));
           request.destroy();
           return;
         }
-
         const chunks = [];
         let totalBytes = 0;
-        response.on('data', (chunk) => {
+        response.on("data", (chunk) => {
           if (settled) {
             return;
           }
@@ -3277,148 +3373,136 @@ class CosyVoiceReaderPlugin extends Plugin {
           }
           chunks.push(chunk);
         });
-        response.on('aborted', () => {
+        response.on("aborted", () => {
           const error = new Error(`${serviceLabel} response was interrupted.`);
-          error.code = 'ECONNRESET';
+          error.code = "ECONNRESET";
           finish(reject, error);
         });
-        response.on('error', (error) => {
+        response.on("error", (error) => {
           finish(reject, error);
         });
-        response.on('end', async () => {
+        response.on("end", async () => {
           if (settled) {
             return;
           }
           if (!this.isActive(session)) {
-            finish(reject, new Error('Reading stopped.'));
+            finish(reject, new Error("Reading stopped."));
             return;
           }
-
           try {
-            await fs.promises.writeFile(outputPath, Buffer.concat(chunks), { mode: 0o600 });
+            await fs.promises.writeFile(outputPath, Buffer.concat(chunks), { mode: 384 });
             finish(resolve);
           } catch (error) {
             finish(reject, error);
           }
         });
       });
-
       this.currentRequests.add(request);
-      request.setTimeout(2 * 60 * 1000, () => {
+      request.setTimeout(2 * 60 * 1e3, () => {
         const error = new Error(`${serviceLabel} synthesis timed out after 2 minutes.`);
-        error.code = 'ETIMEDOUT';
+        error.code = "ETIMEDOUT";
         finish(reject, error);
         request.destroy();
       });
-      request.on('error', (error) => {
+      request.on("error", (error) => {
         finish(reject, error);
       });
-      request.on('close', () => {
+      request.on("close", () => {
         if (!settled && !this.isActive(session)) {
-          finish(reject, new Error('Reading stopped.'));
+          finish(reject, new Error("Reading stopped."));
         }
       });
       request.end(body);
     });
   }
-
   async runAzureSpeech(inputPath, outputPath, session) {
     const [text, subscriptionKey] = await Promise.all([
-      fs.promises.readFile(inputPath, 'utf8'),
-      this.readAzureSpeechKey(),
+      fs.promises.readFile(inputPath, "utf8"),
+      this.readAzureSpeechKey()
     ]);
     if (!this.isActive(session)) {
-      throw new Error('Reading stopped.');
+      throw new Error("Reading stopped.");
     }
-
     const body = buildAzureSpeechSsml(text, this.settings);
     await this.requestRemoteAudio({
       endpoint: new URL(buildAzureSpeechEndpoint(this.settings)),
       headers: {
-        Accept: 'audio/mpeg',
-        'Content-Length': Buffer.byteLength(body, 'utf8'),
-        'Content-Type': 'application/ssml+xml',
-        'Ocp-Apim-Subscription-Key': subscriptionKey,
-        'User-Agent': 'note-reader-cosyvoice/0.2.6',
-        'X-Microsoft-OutputFormat': AZURE_SPEECH_OUTPUT_FORMAT,
+        Accept: "audio/mpeg",
+        "Content-Length": Buffer.byteLength(body, "utf8"),
+        "Content-Type": "application/ssml+xml",
+        "Ocp-Apim-Subscription-Key": subscriptionKey,
+        "User-Agent": "note-reader-cosyvoice/0.2.6",
+        "X-Microsoft-OutputFormat": AZURE_SPEECH_OUTPUT_FORMAT
       },
       body,
       outputPath,
       session,
-      serviceLabel: 'Azure Speech',
-      expectedContentType: 'audio/mpeg',
-      failureHint: 'Check the selected API credential, cloud, region, voice, resource status, and quota.',
+      serviceLabel: "Azure Speech",
+      expectedContentType: "audio/mpeg",
+      failureHint: "Check the selected API credential, cloud, region, voice, resource status, and quota."
     });
   }
-
   async runOpenRouterTts(inputPath, outputPath, session) {
     const [text, apiKey] = await Promise.all([
-      fs.promises.readFile(inputPath, 'utf8'),
-      this.readOpenRouterKey(),
+      fs.promises.readFile(inputPath, "utf8"),
+      this.readOpenRouterKey()
     ]);
     if (!this.isActive(session)) {
-      throw new Error('Reading stopped.');
+      throw new Error("Reading stopped.");
     }
-
     const body = buildOpenRouterTtsRequestBody(text, this.settings);
     await this.requestRemoteAudio({
       endpoint: new URL(OPENROUTER_TTS_ENDPOINT),
       headers: {
-        Accept: 'audio/mpeg',
+        Accept: "audio/mpeg",
         Authorization: `Bearer ${apiKey}`,
-        'Content-Length': Buffer.byteLength(body, 'utf8'),
-        'Content-Type': 'application/json',
-        'User-Agent': 'note-reader-cosyvoice/0.2.6',
+        "Content-Length": Buffer.byteLength(body, "utf8"),
+        "Content-Type": "application/json",
+        "User-Agent": "note-reader-cosyvoice/0.2.6"
       },
       body,
       outputPath,
       session,
-      serviceLabel: 'OpenRouter TTS',
-      expectedContentType: 'audio/mpeg',
-      failureHint: 'Check the selected API credential, model, voice, account balance, and privacy settings.',
-      retryTemporaryFailures: true,
+      serviceLabel: "OpenRouter TTS",
+      expectedContentType: "audio/mpeg",
+      failureHint: "Check the selected API credential, model, voice, account balance, and privacy settings.",
+      retryTemporaryFailures: true
     });
   }
-
   async createPlayableAudioSource(prepared) {
     const audioBytes = await fs.promises.readFile(prepared.outputPath);
     const blobSource = createBlobAudioSource(audioBytes, prepared.outputPath);
     if (blobSource) {
       return blobSource;
     }
-
     return {
       mimeType: getAudioMimeType(prepared.outputPath),
       url: prepared.url,
-      release() {},
+      release() {
+      }
     };
   }
-
   releaseAudioSource(audio) {
-    if (!audio || typeof audio.noteReaderReleaseSource !== 'function') {
+    if (!audio || typeof audio.noteReaderReleaseSource !== "function") {
       return;
     }
     const release = audio.noteReaderReleaseSource;
     audio.noteReaderReleaseSource = null;
     release();
   }
-
   async playPreparedAudio(prepared, session, index, total) {
     if (!this.isActive(session)) {
       return;
     }
-
     await this.waitWhilePaused(session);
     if (!this.isActive(session)) {
       return;
     }
-
     const source = await this.createPlayableAudioSource(prepared);
     if (!this.isActive(session)) {
       source.release();
       return;
     }
-
     await new Promise((resolve, reject) => {
       let audio;
       let settled = false;
@@ -3438,11 +3522,10 @@ class CosyVoiceReaderPlugin extends Plugin {
         this.releaseAudioSource(audio);
         callback(value);
       };
-
       try {
         audio = new Audio();
         audio.noteReaderReleaseSource = source.release;
-        audio.preload = 'auto';
+        audio.preload = "auto";
         this.currentAudio = audio;
         const playbackTotal = getPlaybackTotal();
         this.updateStatus(`${session.engineLabel || getSpeechEngineLabel(this.settings)} play ${index + 1}/${playbackTotal}`, {
@@ -3452,17 +3535,17 @@ class CosyVoiceReaderPlugin extends Plugin {
           canSeek: true,
           canStop: true,
           currentChunk: index + 1,
+          currentText: previewText(Array.isArray(session.chunks) ? session.chunks[index] : ""),
           isPaused: false,
-          phase: 'playing',
+          phase: "playing",
           progress: index / playbackTotal,
-          status: 'running',
-          totalChunks: playbackTotal,
+          status: "running",
+          totalChunks: playbackTotal
         });
-        void this.writeRuntimeLog('play', {
+        void this.writeRuntimeLog("play", {
           index,
-          urlScheme: String(source.url).split(':')[0],
+          urlScheme: String(source.url).split(":")[0]
         });
-
         let lastProgressUpdate = 0;
         audio.ontimeupdate = () => {
           const now = Date.now();
@@ -3475,10 +3558,9 @@ class CosyVoiceReaderPlugin extends Plugin {
           const currentTotal = getPlaybackTotal();
           this.setReaderState({
             progress: (index + chunkProgress) / currentTotal,
-            totalChunks: currentTotal,
+            totalChunks: currentTotal
           });
         };
-
         audio.onended = () => {
           const currentTotal = getPlaybackTotal();
           this.setReaderState({
@@ -3487,15 +3569,13 @@ class CosyVoiceReaderPlugin extends Plugin {
             canSeek: false,
             isPaused: false,
             progress: (index + 1) / currentTotal,
-            totalChunks: currentTotal,
+            totalChunks: currentTotal
           });
           finish(resolve);
         };
-
         audio.onerror = () => {
           finish(reject, new Error(`Unable to play ${prepared.outputPath}${describeMediaError(audio.error)}`));
         };
-
         audio.src = source.url;
         Promise.resolve(audio.play()).catch((error) => {
           finish(reject, error);
@@ -3510,37 +3590,29 @@ class CosyVoiceReaderPlugin extends Plugin {
       }
     });
   }
-
   async waitWhilePaused(session) {
     while (this.isActive(session) && this.pauseRequested) {
-      this.updateStatus('CosyVoice paused', {
+      this.updateStatus("CosyVoice paused", {
         canPause: true,
         ...getChunkNavigationState(this.readerState.currentChunk, this.readerState.totalChunks),
         canSeek: Boolean(this.currentAudio),
         canStop: true,
         isPaused: true,
-        phase: 'paused',
-        status: 'paused',
+        phase: "paused",
+        status: "paused"
       });
       await sleep(100);
     }
   }
-
   handleReaderKeydown(event, options = {}) {
-    if (
-      !event ||
-      event.defaultPrevented ||
-      isInteractiveKeyboardTarget(event.target)
-    ) {
+    if (!event || event.defaultPrevented || isInteractiveKeyboardTarget(event.target)) {
       return false;
     }
-
     const seekDeltaSeconds = getKeyboardSeekDeltaSeconds(event);
     if (seekDeltaSeconds) {
       if (!this.seekCurrentAudioBySeconds(seekDeltaSeconds)) {
         return false;
       }
-
       event.preventDefault();
       event.stopPropagation();
       if (options.focusPanel) {
@@ -3548,17 +3620,10 @@ class CosyVoiceReaderPlugin extends Plugin {
       }
       return true;
     }
-
     const state = this.readerState || createReaderState();
-    if (
-      options.allowPause === false ||
-      event.repeat ||
-      !state.canPause ||
-      !isSpaceKeyEvent(event)
-    ) {
+    if (options.allowPause === false || event.repeat || !state.canPause || !isSpaceKeyEvent(event)) {
       return false;
     }
-
     event.preventDefault();
     event.stopPropagation();
     void Promise.resolve(this.pauseOrResume()).finally(() => {
@@ -3568,93 +3633,75 @@ class CosyVoiceReaderPlugin extends Plugin {
     });
     return true;
   }
-
   seekToProgress(progress) {
     const audio = this.currentAudio;
     if (!audio || !Number.isFinite(audio.duration) || audio.duration <= 0) {
       return false;
     }
-
     const seekTime = calculateCurrentChunkSeekTime({
       progress,
       currentChunk: this.readerState.currentChunk,
       totalChunks: this.readerState.totalChunks,
-      duration: audio.duration,
+      duration: audio.duration
     });
-
     if (seekTime === null) {
       return false;
     }
-
     return this.seekCurrentAudioToTime(seekTime);
   }
-
   seekCurrentAudioBySeconds(deltaSeconds) {
     const audio = this.currentAudio;
     const delta = Number(deltaSeconds);
     if (!audio || !Number.isFinite(delta)) {
       return false;
     }
-
     const currentTime = Number.isFinite(audio.currentTime) ? audio.currentTime : 0;
     return this.seekCurrentAudioToTime(currentTime + delta);
   }
-
   seekCurrentAudioToTime(seekTime) {
     const audio = this.currentAudio;
     const requestedTime = Number(seekTime);
     if (!audio || !Number.isFinite(requestedTime)) {
       return false;
     }
-
     const duration = Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : 0;
     try {
-      audio.currentTime = duration
-        ? Math.min(duration, Math.max(0, requestedTime))
-        : Math.max(0, requestedTime);
+      audio.currentTime = duration ? Math.min(duration, Math.max(0, requestedTime)) : Math.max(0, requestedTime);
     } catch (error) {
       return false;
     }
-
     if (!duration) {
       return true;
     }
-
     const chunkIndex = Math.max(0, (this.readerState.currentChunk || 1) - 1);
     const chunkProgress = duration ? audio.currentTime / duration : 0;
     this.setReaderState({
-      progress: this.readerState.totalChunks ? (chunkIndex + chunkProgress) / this.readerState.totalChunks : 0,
+      progress: this.readerState.totalChunks ? (chunkIndex + chunkProgress) / this.readerState.totalChunks : 0
     });
     return true;
   }
-
   jumpToAdjacentChunk(deltaChunks) {
     const session = this.activeSession;
     const total = Math.max(0, Math.floor(Number(this.readerState.totalChunks) || 0));
     const currentChunk = Math.max(0, Math.floor(Number(this.readerState.currentChunk) || 0));
     const delta = Math.trunc(Number(deltaChunks) || 0);
-
     if (!this.isActive(session) || !total || !currentChunk || !delta) {
       return false;
     }
-
     const currentIndex = Math.max(0, Math.min(total - 1, currentChunk - 1));
     const targetIndex = Math.max(0, Math.min(total - 1, currentIndex + delta));
     if (targetIndex === currentIndex) {
       return false;
     }
-
     session.requestedChunkIndex = targetIndex;
     this.pauseRequested = false;
-
     const audio = this.currentAudio;
-    if (audio && typeof audio.pause === 'function') {
+    if (audio && typeof audio.pause === "function") {
       audio.pause();
     }
-    if (audio && typeof audio.onended === 'function') {
+    if (audio && typeof audio.onended === "function") {
       audio.onended();
     }
-
     this.updateStatus(`${getSpeechEngineLabel(this.settings)} jump ${targetIndex + 1}/${total}`, {
       canPause: true,
       ...getChunkNavigationState(targetIndex + 1, total),
@@ -3662,71 +3709,64 @@ class CosyVoiceReaderPlugin extends Plugin {
       canStop: true,
       currentChunk: targetIndex + 1,
       isPaused: false,
-      phase: 'queued',
+      phase: "queued",
       progress: total ? targetIndex / total : 0,
-      status: 'running',
-      totalChunks: total,
+      status: "running",
+      totalChunks: total
     });
-
     return true;
   }
-
   async pauseOrResume() {
     const audio = this.currentAudio;
-
     if (!audio) {
       if (!this.activeSession) {
-        new Notice('CosyVoice: nothing is playing.');
+        new Notice("CosyVoice: nothing is playing.");
         return;
       }
-
       this.pauseRequested = !this.pauseRequested;
-      this.updateStatus(this.pauseRequested ? 'CosyVoice paused' : 'CosyVoice waiting', {
+      this.updateStatus(this.pauseRequested ? "CosyVoice paused" : "CosyVoice waiting", {
         canPause: true,
         ...getChunkNavigationState(this.readerState.currentChunk, this.readerState.totalChunks),
         canSeek: false,
         canStop: true,
         isPaused: this.pauseRequested,
-        phase: this.pauseRequested ? 'paused' : 'synthesizing',
-        status: this.pauseRequested ? 'paused' : 'running',
+        phase: this.pauseRequested ? "paused" : "synthesizing",
+        status: this.pauseRequested ? "paused" : "running"
       });
       return;
     }
-
     if (audio.paused) {
       this.pauseRequested = false;
       await audio.play();
-      this.updateStatus('CosyVoice playing', {
+      this.updateStatus("CosyVoice playing", {
         canPause: true,
         ...getChunkNavigationState(this.readerState.currentChunk, this.readerState.totalChunks),
         canSeek: true,
         canStop: true,
         isPaused: false,
-        phase: 'playing',
-        status: 'running',
+        phase: "playing",
+        status: "running"
       });
     } else {
       this.pauseRequested = true;
       audio.pause();
-      this.updateStatus('CosyVoice paused', {
+      this.updateStatus("CosyVoice paused", {
         canPause: true,
         ...getChunkNavigationState(this.readerState.currentChunk, this.readerState.totalChunks),
         canSeek: true,
         canStop: true,
         isPaused: true,
-        phase: 'paused',
-        status: 'paused',
+        phase: "paused",
+        status: "paused"
       });
     }
   }
-
   async cancelSessionOperations(session) {
     if (session) {
       session.stopped = true;
       this.notifySessionChunkWaiters(session);
     }
-
-    if (session && session.pdfLoadingTask && typeof session.pdfLoadingTask.destroy === 'function') {
+    if (session && session.pdfLoadingTask && typeof session.pdfLoadingTask.destroy === "function") {
       try {
         await session.pdfLoadingTask.destroy();
       } catch (error) {
@@ -3734,208 +3774,189 @@ class CosyVoiceReaderPlugin extends Plugin {
       }
       session.pdfLoadingTask = null;
     }
-
     if (this.currentProcess) {
       this.currentProcess.kill();
       this.currentProcess = null;
     }
-
     if (this.currentRequests instanceof Set) {
       for (const request of Array.from(this.currentRequests)) {
         request.destroy();
       }
       this.currentRequests.clear();
     }
-
     if (this.currentAudio) {
       this.currentAudio.pause();
       this.releaseAudioSource(this.currentAudio);
-      this.currentAudio.removeAttribute('src');
+      this.currentAudio.removeAttribute("src");
       this.currentAudio.load();
       this.currentAudio = null;
     }
   }
-
   async stopReading(options = {}) {
     const previous = this.activeSession;
+    await this.saveSessionReadingPosition(previous);
+    this.transitionSessionPhase(previous, "stopping");
     this.sequence += 1;
     this.pauseRequested = false;
     await this.cancelSessionOperations(previous);
-
+    this.transitionSessionPhase(previous, "idle");
     this.activeSession = null;
-    this.updateStatus('CosyVoice idle', createReaderState());
-
+    this.updateStatus("CosyVoice idle", createReaderState());
     if (previous && this.settings && this.settings.cleanupCache) {
       await this.cleanupSessionFiles(previous);
     }
-
     if (!options.silent) {
-      new Notice('CosyVoice: stopped.');
+      new Notice("CosyVoice: stopped.");
     }
   }
-
   async cleanupSessionFiles(session) {
     if (!session || !Array.isArray(session.files)) {
       return;
     }
-
     for (const filePath of session.files) {
       await this.removeTempFile(filePath);
     }
   }
-
   async removeTempFile(filePath) {
     if (!this.cacheDir || !isInsideDirectory(filePath, this.cacheDir)) {
       return;
     }
-
     try {
       await fs.promises.unlink(filePath);
     } catch (error) {
-      if (error && error.code !== 'ENOENT') {
+      if (error && error.code !== "ENOENT") {
         console.warn(`[${PLUGIN_ID}] Could not remove temp file`, filePath, error);
       }
     }
   }
-
   isActive(session) {
     return Boolean(session && this.activeSession === session && !session.stopped && session.id === this.sequence);
   }
-
   updateStatus(text, patch = {}) {
+    if (patch && patch.phase && this.activeSession) {
+      this.transitionSessionPhase(this.activeSession, patch.phase);
+    }
     if (this.statusBar) {
       this.statusBar.setText(text);
     }
     this.setReaderState({
       label: text,
-      ...patch,
+      ...patch
     });
   }
-
   async writeRuntimeLog(stage, _details = {}) {
     if (!this.logPath || !this.settings || !this.settings.diagnosticLogging) {
       return;
     }
-
     const event = createSafeRuntimeLogEvent(stage, this.settings);
     if (!event) {
       return;
     }
-
-    const line = `${JSON.stringify(event)}\n`;
-
+    const line = `${JSON.stringify(event)}
+`;
     try {
       const stat = await fs.promises.stat(this.logPath).catch((error) => {
-        if (error && error.code === 'ENOENT') {
+        if (error && error.code === "ENOENT") {
           return null;
         }
         throw error;
       });
-      if (stat && stat.size + Buffer.byteLength(line, 'utf8') > RUNTIME_LOG_MAX_BYTES) {
+      if (stat && stat.size + Buffer.byteLength(line, "utf8") > RUNTIME_LOG_MAX_BYTES) {
         await fs.promises.unlink(this.logPath);
       }
-      await fs.promises.appendFile(this.logPath, line, { encoding: 'utf8', mode: 0o600 });
+      await fs.promises.appendFile(this.logPath, line, { encoding: "utf8", mode: 384 });
     } catch (error) {
       console.warn(`[${PLUGIN_ID}] Could not write runtime log`, error);
     }
   }
 };
-
-class CosyVoiceReaderView extends ItemView {
+var CosyVoiceReaderView = class extends ItemView {
   constructor(leaf, plugin) {
     super(leaf);
     this.plugin = plugin;
     this.handlePanelKeydown = this.handlePanelKeydown.bind(this);
   }
-
   getViewType() {
     return VIEW_TYPE;
   }
-
   getDisplayText() {
-    return 'Voice Reader';
+    return "Voice Reader";
   }
-
   getIcon() {
-    return 'volume-2';
+    return "volume-2";
   }
-
   async onOpen() {
     this.plugin.registerReaderView(this);
   }
-
   async onClose() {
     this.plugin.unregisterReaderView(this);
   }
-
   render() {
     const root = this.contentEl || this.containerEl.children[1] || this.containerEl;
     const state = this.plugin.readerState || createReaderState();
-
     root.empty();
-    root.addClass('note-reader-cosyvoice-view');
-    root.setAttribute('tabindex', '0');
-    root.setAttribute('aria-label', 'Voice reader controls');
-    root.addEventListener('keydown', this.handlePanelKeydown);
-
-    const header = root.createDiv({ cls: 'note-reader-cosyvoice-panel-header' });
-    header.createEl('h3', { text: 'Voice Reader' });
+    root.addClass("note-reader-cosyvoice-view");
+    root.setAttribute("tabindex", "0");
+    root.setAttribute("aria-label", "Voice reader controls");
+    root.addEventListener("keydown", this.handlePanelKeydown);
+    const header = root.createDiv({ cls: "note-reader-cosyvoice-panel-header" });
+    header.createEl("h3", { text: "Voice Reader" });
     header.createDiv({ cls: `note-reader-cosyvoice-state is-${state.status}`, text: state.label });
-
-    const progressWrap = root.createDiv({ cls: 'note-reader-cosyvoice-progress-wrap' });
-    const progressControls = progressWrap.createDiv({ cls: 'note-reader-cosyvoice-progress-controls' });
-    this.createIconButton(progressControls, 'skip-back', 'Previous chunk', () => {
+    const progressWrap = root.createDiv({ cls: "note-reader-cosyvoice-progress-wrap" });
+    const progressControls = progressWrap.createDiv({ cls: "note-reader-cosyvoice-progress-controls" });
+    this.createIconButton(progressControls, "skip-back", "Previous chunk", () => {
       this.plugin.jumpToAdjacentChunk(-1);
     }, !state.canPreviousChunk, { triggerOnPointerDown: true });
     const progressTrack = progressControls.createDiv({
-      cls: `note-reader-cosyvoice-progress-track${state.canSeek ? ' is-seekable' : ''}`,
+      cls: `note-reader-cosyvoice-progress-track${state.canSeek ? " is-seekable" : ""}`
     });
-    const progressFill = progressTrack.createDiv({ cls: 'note-reader-cosyvoice-progress-fill' });
+    const progressFill = progressTrack.createDiv({ cls: "note-reader-cosyvoice-progress-fill" });
     progressFill.style.width = `${Math.round(state.progress * 100)}%`;
-    const progressInput = progressTrack.createEl('input', {
-      cls: 'note-reader-cosyvoice-progress-input',
+    const progressInput = progressTrack.createEl("input", {
+      cls: "note-reader-cosyvoice-progress-input",
       attr: {
-        'aria-label': 'Reading progress',
-        max: '1000',
-        min: '0',
-        step: '1',
-        title: state.canSeek ? 'Drag to seek within the current audio chunk' : 'Progress is seekable while audio is playing',
-        type: 'range',
-        value: String(Math.round(state.progress * 1000)),
-      },
+        "aria-label": "Reading progress",
+        max: "1000",
+        min: "0",
+        step: "1",
+        title: state.canSeek ? "Drag to seek within the current audio chunk" : "Progress is seekable while audio is playing",
+        type: "range",
+        value: String(Math.round(state.progress * 1e3))
+      }
     });
     progressInput.disabled = !state.canSeek;
-    progressInput.addEventListener('input', () => {
+    progressInput.addEventListener("input", () => {
       if (!state.canSeek) {
         return;
       }
-      const requestedProgress = Number(progressInput.value) / 1000;
+      const requestedProgress = Number(progressInput.value) / 1e3;
       this.plugin.seekToProgress(requestedProgress);
     });
-    this.createIconButton(progressControls, 'skip-forward', 'Next chunk', () => {
+    this.createIconButton(progressControls, "skip-forward", "Next chunk", () => {
       this.plugin.jumpToAdjacentChunk(1);
     }, !state.canNextChunk, { triggerOnPointerDown: true });
-
-    const meta = progressWrap.createDiv({ cls: 'note-reader-cosyvoice-meta' });
+    const meta = progressWrap.createDiv({ cls: "note-reader-cosyvoice-meta" });
     meta.createSpan({ text: formatProgressLabel(state) });
     meta.createSpan({ text: `${Math.round(state.progress * 100)}%` });
-
     this.createSpeedPanel(root);
-
-    const actions = root.createDiv({ cls: 'note-reader-cosyvoice-actions' });
-    this.createActionButton(actions, 'play', 'Read selection', () => {
+    const actions = root.createDiv({ cls: "note-reader-cosyvoice-actions" });
+    this.createActionButton(actions, "play", "Read selection", () => {
       void this.plugin.readSelection();
     }, false, { triggerOnPointerDown: true });
-    this.createActionButton(actions, 'list-start', 'Read from selection', () => {
+    this.createActionButton(actions, "list-start", "Read from selection", () => {
       void this.plugin.readFromSelection();
     }, false, { triggerOnPointerDown: true });
-    this.createActionButton(actions, 'file-text', 'Read file', () => {
+    this.createActionButton(actions, "file-text", "Read file", () => {
       void this.plugin.readCurrentNote();
     });
+    const canResumeFile = typeof this.plugin.canResumeCurrentFile === "function" && this.plugin.canResumeCurrentFile();
+    this.createActionButton(actions, "history", "Resume file", () => {
+      void this.plugin.resumeCurrentFile();
+    }, !canResumeFile);
     this.createActionButton(
       actions,
-      state.isPaused ? 'play' : 'pause',
-      state.isPaused ? 'Resume' : 'Pause',
+      state.isPaused ? "play" : "pause",
+      state.isPaused ? "Resume" : "Pause",
       () => {
         void this.plugin.pauseOrResume();
       },
@@ -3944,647 +3965,414 @@ class CosyVoiceReaderView extends ItemView {
     );
     this.createActionButton(
       actions,
-      'square',
-      'Stop',
+      "square",
+      "Stop",
       () => {
         void this.plugin.stopReading();
       },
       !state.canStop
     );
-
-    const details = root.createDiv({ cls: 'note-reader-cosyvoice-details' });
-    details.createDiv({ cls: 'note-reader-cosyvoice-detail-label', text: 'Phase' });
-    details.createDiv({ cls: 'note-reader-cosyvoice-detail-value', text: state.phase });
-    details.createDiv({ cls: 'note-reader-cosyvoice-detail-label', text: 'Source' });
-    details.createDiv({ cls: 'note-reader-cosyvoice-detail-value', text: state.source || '-' });
-
+    const details = root.createDiv({ cls: "note-reader-cosyvoice-details" });
+    details.createDiv({ cls: "note-reader-cosyvoice-detail-label", text: "Phase" });
+    details.createDiv({ cls: "note-reader-cosyvoice-detail-value", text: state.phase });
+    details.createDiv({ cls: "note-reader-cosyvoice-detail-label", text: "Source" });
+    details.createDiv({ cls: "note-reader-cosyvoice-detail-value", text: state.source || "-" });
     if (state.error) {
-      root.createDiv({ cls: 'note-reader-cosyvoice-error', text: state.error });
+      root.createDiv({ cls: "note-reader-cosyvoice-error", text: state.error });
     }
-
-    const preview = root.createDiv({ cls: 'note-reader-cosyvoice-preview' });
-    preview.createDiv({ cls: 'note-reader-cosyvoice-detail-label', text: 'Text' });
+    const preview = root.createDiv({ cls: "note-reader-cosyvoice-preview" });
+    preview.createDiv({ cls: "note-reader-cosyvoice-detail-label", text: "Text" });
     preview.createDiv({
-      cls: 'note-reader-cosyvoice-preview-text',
-      text: state.currentText || '-',
+      cls: "note-reader-cosyvoice-preview-text",
+      text: state.currentText || "-"
     });
   }
-
   createSpeedPanel(parent) {
     const currentSpeed = normalizeSpeed(this.plugin.settings && this.plugin.settings.speed);
-    const panel = parent.createDiv({ cls: 'note-reader-cosyvoice-speed-panel' });
-    const header = panel.createDiv({ cls: 'note-reader-cosyvoice-speed-header' });
-    header.createSpan({ cls: 'note-reader-cosyvoice-detail-label', text: 'Speed' });
-    header.createSpan({ cls: 'note-reader-cosyvoice-speed-current', text: formatSpeedLabel(currentSpeed) });
-
-    const options = panel.createDiv({ cls: 'note-reader-cosyvoice-speed-options' });
+    const panel = parent.createDiv({ cls: "note-reader-cosyvoice-speed-panel" });
+    const header = panel.createDiv({ cls: "note-reader-cosyvoice-speed-header" });
+    header.createSpan({ cls: "note-reader-cosyvoice-detail-label", text: "Speed" });
+    header.createSpan({ cls: "note-reader-cosyvoice-speed-current", text: formatSpeedLabel(currentSpeed) });
+    const options = panel.createDiv({ cls: "note-reader-cosyvoice-speed-options" });
     for (const speed of getSpeedPresets()) {
-      const isActive = Math.abs(currentSpeed - speed) < 0.001;
-      const button = options.createEl('button', {
-        cls: `note-reader-cosyvoice-speed-option${isActive ? ' is-active' : ''}`,
+      const isActive = Math.abs(currentSpeed - speed) < 1e-3;
+      const button = options.createEl("button", {
+        cls: `note-reader-cosyvoice-speed-option${isActive ? " is-active" : ""}`,
         text: formatSpeedLabel(speed),
         attr: {
-          'aria-label': `Set speech speed to ${formatSpeedLabel(speed)}`,
-          'aria-pressed': String(isActive),
-          title: `Set speech speed to ${formatSpeedLabel(speed)}`,
-        },
+          "aria-label": `Set speech speed to ${formatSpeedLabel(speed)}`,
+          "aria-pressed": String(isActive),
+          title: `Set speech speed to ${formatSpeedLabel(speed)}`
+        }
       });
-      button.addEventListener('click', () => {
+      button.addEventListener("click", () => {
         void this.plugin.setSpeechSpeed(speed);
       });
     }
   }
-
   handlePanelKeydown(event) {
     this.plugin.handleReaderKeydown(event, { allowPause: true, focusPanel: event.currentTarget });
   }
-
   focusPanel(panel) {
     focusElementWithoutScroll(panel);
   }
-
   createIconButton(parent, icon, label, onClick, disabled = false, options = {}) {
-    const button = parent.createEl('button', {
-      cls: 'note-reader-cosyvoice-icon-button',
+    const button = parent.createEl("button", {
+      cls: "note-reader-cosyvoice-icon-button",
       attr: {
-        'aria-label': label,
-        title: label,
-      },
+        "aria-label": label,
+        title: label
+      }
     });
     button.disabled = disabled;
-
-    if (typeof setIcon === 'function') {
+    if (typeof setIcon === "function") {
       setIcon(button, icon);
     }
-
     this.wireButtonAction(button, onClick, options);
     return button;
   }
-
   createActionButton(parent, icon, label, onClick, disabled = false, options = {}) {
-    const button = parent.createEl('button', {
-      cls: 'note-reader-cosyvoice-action',
+    const button = parent.createEl("button", {
+      cls: "note-reader-cosyvoice-action",
       attr: {
-        'aria-label': label,
-        title: label,
-      },
+        "aria-label": label,
+        title: label
+      }
     });
     button.disabled = disabled;
-
-    const iconEl = button.createSpan({ cls: 'note-reader-cosyvoice-action-icon' });
-    if (typeof setIcon === 'function') {
+    const iconEl = button.createSpan({ cls: "note-reader-cosyvoice-action-icon" });
+    if (typeof setIcon === "function") {
       setIcon(iconEl, icon);
     }
-
-    button.createSpan({ cls: 'note-reader-cosyvoice-action-label', text: label });
+    button.createSpan({ cls: "note-reader-cosyvoice-action-label", text: label });
     this.wireButtonAction(button, onClick, options);
     return button;
   }
-
   wireButtonAction(button, onClick, options = {}) {
     let pointerHandled = false;
     if (options.triggerOnPointerDown) {
-      button.addEventListener('pointerdown', (event) => {
-        if (button.disabled || event.defaultPrevented || (Number.isFinite(event.button) && event.button !== 0)) {
+      button.addEventListener("pointerdown", (event) => {
+        if (button.disabled || event.defaultPrevented || Number.isFinite(event.button) && event.button !== 0) {
           return;
         }
-
         pointerHandled = true;
         event.preventDefault();
         event.stopPropagation();
         onClick(event);
       });
     }
-
-    button.addEventListener('click', (event) => {
+    button.addEventListener("click", (event) => {
       if (pointerHandled) {
         pointerHandled = false;
         event.preventDefault();
         return;
       }
-
       onClick(event);
     });
   }
-}
-
-class CosyVoiceReaderSettingTab extends PluginSettingTab {
+};
+var CosyVoiceReaderSettingTab = class extends PluginSettingTab {
   constructor(app, plugin) {
     super(app, plugin);
     this.plugin = plugin;
   }
-
   display() {
     const { containerEl } = this;
     containerEl.empty();
-
-    containerEl.createEl('h2', { text: 'Note and PDF Voice Reader' });
+    containerEl.createEl("h2", { text: "Note and PDF Voice Reader" });
     const settingsLanguage = normalizeSettingsLanguage(this.plugin.settings.settingsLanguage);
     const ui = getSettingsUiText(settingsLanguage);
     const selectedSpeechEngine = normalizeSpeechEngine(this.plugin.settings.speechEngine);
     const microsoftVoicePresets = getMicrosoftVoicePresets(settingsLanguage);
     const commonVoiceIds = new Set(microsoftVoicePresets.map(([id]) => id));
-
-    new Setting(containerEl)
-      .setName(ui.settingsLanguageName)
-      .setDesc(ui.settingsLanguageDesc)
-      .addDropdown((dropdown) => {
-        dropdown
-          .addOption('english', ui.settingsLanguageEnglish)
-          .addOption('chinese', ui.settingsLanguageChinese)
-          .setValue(settingsLanguage)
-          .onChange(async (value) => {
-            this.plugin.settings.settingsLanguage = normalizeSettingsLanguage(value);
-            await this.plugin.saveSettings();
-            this.display();
-          });
+    new Setting(containerEl).setName(ui.settingsLanguageName).setDesc(ui.settingsLanguageDesc).addDropdown((dropdown) => {
+      dropdown.addOption("english", ui.settingsLanguageEnglish).addOption("chinese", ui.settingsLanguageChinese).setValue(settingsLanguage).onChange(async (value) => {
+        this.plugin.settings.settingsLanguage = normalizeSettingsLanguage(value);
+        await this.plugin.saveSettings();
+        this.display();
       });
-
-    new Setting(containerEl)
-      .setName(ui.speechEngineName)
-      .setDesc(ui.speechEngineDesc)
-      .addDropdown((dropdown) => {
-        dropdown
-          .addOption('local-cosyvoice', ui.speechEngineLocal)
-          .addOption('edge-tts', ui.speechEngineEdge)
-          .addOption('azure-speech', ui.speechEngineAzure)
-          .addOption('openrouter-tts', ui.speechEngineOpenRouter)
-          .setValue(selectedSpeechEngine)
-          .onChange(async (value) => {
-            this.plugin.settings.speechEngine = normalizeSpeechEngine(value);
-            await this.plugin.saveSettings();
-            this.display();
-          });
+    });
+    new Setting(containerEl).setName(ui.speechEngineName).setDesc(ui.speechEngineDesc).addDropdown((dropdown) => {
+      dropdown.addOption("local-cosyvoice", ui.speechEngineLocal).addOption("edge-tts", ui.speechEngineEdge).addOption("azure-speech", ui.speechEngineAzure).addOption("openrouter-tts", ui.speechEngineOpenRouter).setValue(selectedSpeechEngine).onChange(async (value) => {
+        this.plugin.settings.speechEngine = normalizeSpeechEngine(value);
+        await this.plugin.saveSettings();
+        this.display();
       });
-
-    if (selectedSpeechEngine === 'local-cosyvoice') {
-      new Setting(containerEl)
-        .setName(ui.localScriptName)
-        .setDesc(ui.localScriptDesc)
-        .addText((text) => {
-          text
-            .setPlaceholder(RECOMMENDED_SCRIPT_PATH)
-            .setValue(this.plugin.settings.scriptPath)
-            .onChange(async (value) => {
-              this.plugin.settings.scriptPath = value.trim();
-              await this.plugin.saveSettings();
-            });
-          text.inputEl.addClass('note-reader-cosyvoice-script-input');
+    });
+    if (selectedSpeechEngine === "local-cosyvoice") {
+      new Setting(containerEl).setName(ui.localScriptName).setDesc(ui.localScriptDesc).addText((text) => {
+        text.setPlaceholder(RECOMMENDED_SCRIPT_PATH).setValue(this.plugin.settings.scriptPath).onChange(async (value) => {
+          this.plugin.settings.scriptPath = value.trim();
+          await this.plugin.saveSettings();
         });
+        text.inputEl.addClass("note-reader-cosyvoice-script-input");
+      });
     }
-
-    if (selectedSpeechEngine === 'edge-tts') {
-      new Setting(containerEl)
-        .setName(ui.edgeConsentName)
-        .setDesc(ui.edgeConsentDesc)
-        .addToggle((toggle) => {
-          toggle.setValue(this.plugin.settings.edgeTtsConsent === true).onChange(async (value) => {
-            this.plugin.settings.edgeTtsConsent = value;
-            await this.plugin.saveSettings();
-          });
+    if (selectedSpeechEngine === "edge-tts") {
+      new Setting(containerEl).setName(ui.edgeConsentName).setDesc(ui.edgeConsentDesc).addToggle((toggle) => {
+        toggle.setValue(this.plugin.settings.edgeTtsConsent === true).onChange(async (value) => {
+          this.plugin.settings.edgeTtsConsent = value;
+          await this.plugin.saveSettings();
         });
-
-      new Setting(containerEl)
-        .setName(ui.edgeExecutableName)
-        .setDesc(ui.edgeExecutableDesc)
-        .addText((text) => {
-          text
-            .setPlaceholder(DEFAULT_EDGE_TTS_EXECUTABLE)
-            .setValue(normalizeEdgeTtsExecutable(this.plugin.settings.edgeTtsExecutable))
-            .onChange(async (value) => {
-              this.plugin.settings.edgeTtsExecutable = normalizeEdgeTtsExecutable(value);
-              await this.plugin.saveSettings();
-            });
-          text.inputEl.addClass('note-reader-cosyvoice-script-input');
+      });
+      new Setting(containerEl).setName(ui.edgeExecutableName).setDesc(ui.edgeExecutableDesc).addText((text) => {
+        text.setPlaceholder(DEFAULT_EDGE_TTS_EXECUTABLE).setValue(normalizeEdgeTtsExecutable(this.plugin.settings.edgeTtsExecutable)).onChange(async (value) => {
+          this.plugin.settings.edgeTtsExecutable = normalizeEdgeTtsExecutable(value);
+          await this.plugin.saveSettings();
         });
-
+        text.inputEl.addClass("note-reader-cosyvoice-script-input");
+      });
       const currentEdgeVoice = normalizeEdgeTtsVoice(this.plugin.settings.edgeTtsVoice);
-      new Setting(containerEl)
-        .setName(ui.edgeCommonVoicesName)
-        .setDesc(ui.edgeCommonVoicesDesc)
-        .addDropdown((dropdown) => {
-          for (const [voiceId, label] of microsoftVoicePresets) {
-            dropdown.addOption(voiceId, label);
+      new Setting(containerEl).setName(ui.edgeCommonVoicesName).setDesc(ui.edgeCommonVoicesDesc).addDropdown((dropdown) => {
+        for (const [voiceId, label] of microsoftVoicePresets) {
+          dropdown.addOption(voiceId, label);
+        }
+        dropdown.addOption("__custom__", ui.customVoiceOption).setValue(commonVoiceIds.has(currentEdgeVoice) ? currentEdgeVoice : "__custom__").onChange(async (value) => {
+          if (value === "__custom__") {
+            return;
           }
-          dropdown
-            .addOption('__custom__', ui.customVoiceOption)
-            .setValue(commonVoiceIds.has(currentEdgeVoice) ? currentEdgeVoice : '__custom__')
-            .onChange(async (value) => {
-              if (value === '__custom__') {
-                return;
-              }
-              this.plugin.settings.edgeTtsVoice = value;
-              await this.plugin.saveSettings();
-              this.display();
-            });
+          this.plugin.settings.edgeTtsVoice = value;
+          await this.plugin.saveSettings();
+          this.display();
         });
-
-      new Setting(containerEl)
-        .setName(ui.edgeVoiceName)
-        .setDesc(ui.edgeVoiceDesc)
-        .addText((text) => {
-          text
-            .setPlaceholder(DEFAULT_EDGE_TTS_VOICE)
-            .setValue(normalizeEdgeTtsVoice(this.plugin.settings.edgeTtsVoice))
-            .onChange(async (value) => {
-              this.plugin.settings.edgeTtsVoice = normalizeEdgeTtsVoice(value);
-              await this.plugin.saveSettings();
-            });
+      });
+      new Setting(containerEl).setName(ui.edgeVoiceName).setDesc(ui.edgeVoiceDesc).addText((text) => {
+        text.setPlaceholder(DEFAULT_EDGE_TTS_VOICE).setValue(normalizeEdgeTtsVoice(this.plugin.settings.edgeTtsVoice)).onChange(async (value) => {
+          this.plugin.settings.edgeTtsVoice = normalizeEdgeTtsVoice(value);
+          await this.plugin.saveSettings();
         });
+      });
     }
-
-    if (selectedSpeechEngine === 'azure-speech') {
-      new Setting(containerEl)
-        .setName(ui.azureConsentName)
-        .setDesc(ui.azureConsentDesc)
-        .addToggle((toggle) => {
-          toggle.setValue(this.plugin.settings.azureSpeechConsent === true).onChange(async (value) => {
-            this.plugin.settings.azureSpeechConsent = value;
-            await this.plugin.saveSettings();
-          });
+    if (selectedSpeechEngine === "azure-speech") {
+      new Setting(containerEl).setName(ui.azureConsentName).setDesc(ui.azureConsentDesc).addToggle((toggle) => {
+        toggle.setValue(this.plugin.settings.azureSpeechConsent === true).onChange(async (value) => {
+          this.plugin.settings.azureSpeechConsent = value;
+          await this.plugin.saveSettings();
         });
-
-      new Setting(containerEl)
-        .setName(ui.azureCloudName)
-        .setDesc(ui.azureCloudDesc)
-        .addDropdown((dropdown) => {
-          dropdown
-            .addOption('public', ui.azurePublicCloud)
-            .addOption('china', ui.azureChinaCloud)
-            .setValue(normalizeAzureSpeechCloud(this.plugin.settings.azureSpeechCloud))
-            .onChange(async (value) => {
-              this.plugin.settings.azureSpeechCloud = normalizeAzureSpeechCloud(value);
-              await this.plugin.saveSettings();
-            });
+      });
+      new Setting(containerEl).setName(ui.azureCloudName).setDesc(ui.azureCloudDesc).addDropdown((dropdown) => {
+        dropdown.addOption("public", ui.azurePublicCloud).addOption("china", ui.azureChinaCloud).setValue(normalizeAzureSpeechCloud(this.plugin.settings.azureSpeechCloud)).onChange(async (value) => {
+          this.plugin.settings.azureSpeechCloud = normalizeAzureSpeechCloud(value);
+          await this.plugin.saveSettings();
         });
-
-      new Setting(containerEl)
-        .setName(ui.azureRegionName)
-        .setDesc(ui.azureRegionDesc)
-        .addText((text) => {
-          text
-            .setPlaceholder('eastasia')
-            .setValue(this.plugin.settings.azureSpeechRegion || '')
-            .onChange(async (value) => {
-              this.plugin.settings.azureSpeechRegion = normalizeAzureSpeechRegion(value);
-              await this.plugin.saveSettings();
-            });
+      });
+      new Setting(containerEl).setName(ui.azureRegionName).setDesc(ui.azureRegionDesc).addText((text) => {
+        text.setPlaceholder("eastasia").setValue(this.plugin.settings.azureSpeechRegion || "").onChange(async (value) => {
+          this.plugin.settings.azureSpeechRegion = normalizeAzureSpeechRegion(value);
+          await this.plugin.saveSettings();
         });
-
+      });
       const azureCredentialSource = normalizeCredentialSource(this.plugin.settings.azureSpeechCredentialSource);
-      new Setting(containerEl)
-        .setName(ui.credentialSourceName)
-        .setDesc(ui.credentialSourceDesc)
-        .addDropdown((dropdown) => {
-          dropdown
-            .addOption('obsidian-secret', ui.credentialSourceSecret)
-            .addOption('key-file', ui.credentialSourceFile)
-            .setValue(azureCredentialSource)
-            .onChange(async (value) => {
-              this.plugin.settings.azureSpeechCredentialSource = normalizeCredentialSource(value);
-              await this.plugin.saveSettings();
-              this.display();
-            });
+      new Setting(containerEl).setName(ui.credentialSourceName).setDesc(ui.credentialSourceDesc).addDropdown((dropdown) => {
+        dropdown.addOption("obsidian-secret", ui.credentialSourceSecret).addOption("key-file", ui.credentialSourceFile).setValue(azureCredentialSource).onChange(async (value) => {
+          this.plugin.settings.azureSpeechCredentialSource = normalizeCredentialSource(value);
+          await this.plugin.saveSettings();
+          this.display();
         });
-
-      if (azureCredentialSource === 'obsidian-secret') {
+      });
+      if (azureCredentialSource === "obsidian-secret") {
         if (hasObsidianSecretStorageUi(this.app)) {
-          new Setting(containerEl)
-            .setName(ui.azureSecretName)
-            .setDesc(ui.azureSecretDesc)
-            .addComponent((element) => new SecretComponent(this.app, element)
-              .setValue(this.plugin.settings.azureSpeechSecretName || '')
-              .onChange(async (value) => {
-                this.plugin.settings.azureSpeechSecretName = String(value || '').trim();
-                await this.plugin.saveSettings();
-              }));
+          new Setting(containerEl).setName(ui.azureSecretName).setDesc(ui.azureSecretDesc).addComponent((element) => new SecretComponent(this.app, element).setValue(this.plugin.settings.azureSpeechSecretName || "").onChange(async (value) => {
+            this.plugin.settings.azureSpeechSecretName = String(value || "").trim();
+            await this.plugin.saveSettings();
+          }));
         } else {
-          new Setting(containerEl)
-            .setName(ui.secretStorageUnavailableName)
-            .setDesc(ui.secretStorageUnavailableDesc);
+          new Setting(containerEl).setName(ui.secretStorageUnavailableName).setDesc(ui.secretStorageUnavailableDesc);
         }
       } else {
-        new Setting(containerEl)
-          .setName(ui.azureKeyFileName)
-          .setDesc(ui.azureKeyFileDesc)
-          .addText((text) => {
-            text
-              .setPlaceholder('C:\\Users\\you\\AppData\\Local\\note-reader-cosyvoice\\azure-speech-key.txt')
-              .setValue(this.plugin.settings.azureSpeechKeyPath || '')
-              .onChange(async (value) => {
-                this.plugin.settings.azureSpeechKeyPath = value.trim();
-                await this.plugin.saveSettings();
-              });
-            text.inputEl.addClass('note-reader-cosyvoice-script-input');
-          });
-      }
-
-      const currentAzureVoice = normalizeAzureSpeechVoice(this.plugin.settings.azureSpeechVoice);
-      new Setting(containerEl)
-        .setName(ui.azureCommonVoicesName)
-        .setDesc(ui.azureCommonVoicesDesc)
-        .addDropdown((dropdown) => {
-          for (const [voiceId, label] of microsoftVoicePresets) {
-            dropdown.addOption(voiceId, label);
-          }
-          dropdown
-            .addOption('__custom__', ui.customVoiceOption)
-            .setValue(commonVoiceIds.has(currentAzureVoice) ? currentAzureVoice : '__custom__')
-            .onChange(async (value) => {
-              if (value === '__custom__') {
-                return;
-              }
-              this.plugin.settings.azureSpeechVoice = value;
-              await this.plugin.saveSettings();
-              this.display();
-            });
-        });
-
-      new Setting(containerEl)
-        .setName(ui.azureVoiceName)
-        .setDesc(ui.azureVoiceDesc)
-        .addText((text) => {
-          text
-            .setPlaceholder(DEFAULT_AZURE_SPEECH_VOICE)
-            .setValue(currentAzureVoice)
-            .onChange(async (value) => {
-              this.plugin.settings.azureSpeechVoice = normalizeAzureSpeechVoice(value);
-              await this.plugin.saveSettings();
-            });
-        });
-    }
-
-    if (selectedSpeechEngine === 'openrouter-tts') {
-      new Setting(containerEl)
-        .setName(ui.openRouterConsentName)
-        .setDesc(ui.openRouterConsentDesc)
-        .addToggle((toggle) => {
-          toggle.setValue(this.plugin.settings.openRouterConsent === true).onChange(async (value) => {
-            this.plugin.settings.openRouterConsent = value;
+        new Setting(containerEl).setName(ui.azureKeyFileName).setDesc(ui.azureKeyFileDesc).addText((text) => {
+          text.setPlaceholder("C:\\Users\\you\\AppData\\Local\\note-reader-cosyvoice\\azure-speech-key.txt").setValue(this.plugin.settings.azureSpeechKeyPath || "").onChange(async (value) => {
+            this.plugin.settings.azureSpeechKeyPath = value.trim();
             await this.plugin.saveSettings();
           });
+          text.inputEl.addClass("note-reader-cosyvoice-script-input");
         });
-
+      }
+      const currentAzureVoice = normalizeAzureSpeechVoice(this.plugin.settings.azureSpeechVoice);
+      new Setting(containerEl).setName(ui.azureCommonVoicesName).setDesc(ui.azureCommonVoicesDesc).addDropdown((dropdown) => {
+        for (const [voiceId, label] of microsoftVoicePresets) {
+          dropdown.addOption(voiceId, label);
+        }
+        dropdown.addOption("__custom__", ui.customVoiceOption).setValue(commonVoiceIds.has(currentAzureVoice) ? currentAzureVoice : "__custom__").onChange(async (value) => {
+          if (value === "__custom__") {
+            return;
+          }
+          this.plugin.settings.azureSpeechVoice = value;
+          await this.plugin.saveSettings();
+          this.display();
+        });
+      });
+      new Setting(containerEl).setName(ui.azureVoiceName).setDesc(ui.azureVoiceDesc).addText((text) => {
+        text.setPlaceholder(DEFAULT_AZURE_SPEECH_VOICE).setValue(currentAzureVoice).onChange(async (value) => {
+          this.plugin.settings.azureSpeechVoice = normalizeAzureSpeechVoice(value);
+          await this.plugin.saveSettings();
+        });
+      });
+    }
+    if (selectedSpeechEngine === "openrouter-tts") {
+      new Setting(containerEl).setName(ui.openRouterConsentName).setDesc(ui.openRouterConsentDesc).addToggle((toggle) => {
+        toggle.setValue(this.plugin.settings.openRouterConsent === true).onChange(async (value) => {
+          this.plugin.settings.openRouterConsent = value;
+          await this.plugin.saveSettings();
+        });
+      });
       const openRouterCredentialSource = normalizeCredentialSource(this.plugin.settings.openRouterCredentialSource);
-      new Setting(containerEl)
-        .setName(ui.credentialSourceName)
-        .setDesc(ui.credentialSourceDesc)
-        .addDropdown((dropdown) => {
-          dropdown
-            .addOption('obsidian-secret', ui.credentialSourceSecret)
-            .addOption('key-file', ui.credentialSourceFile)
-            .setValue(openRouterCredentialSource)
-            .onChange(async (value) => {
-              this.plugin.settings.openRouterCredentialSource = normalizeCredentialSource(value);
-              await this.plugin.saveSettings();
-              this.display();
-            });
+      new Setting(containerEl).setName(ui.credentialSourceName).setDesc(ui.credentialSourceDesc).addDropdown((dropdown) => {
+        dropdown.addOption("obsidian-secret", ui.credentialSourceSecret).addOption("key-file", ui.credentialSourceFile).setValue(openRouterCredentialSource).onChange(async (value) => {
+          this.plugin.settings.openRouterCredentialSource = normalizeCredentialSource(value);
+          await this.plugin.saveSettings();
+          this.display();
         });
-
-      if (openRouterCredentialSource === 'obsidian-secret') {
+      });
+      if (openRouterCredentialSource === "obsidian-secret") {
         if (hasObsidianSecretStorageUi(this.app)) {
-          new Setting(containerEl)
-            .setName(ui.openRouterSecretName)
-            .setDesc(ui.openRouterSecretDesc)
-            .addComponent((element) => new SecretComponent(this.app, element)
-              .setValue(this.plugin.settings.openRouterSecretName || '')
-              .onChange(async (value) => {
-                this.plugin.settings.openRouterSecretName = String(value || '').trim();
-                await this.plugin.saveSettings();
-              }));
+          new Setting(containerEl).setName(ui.openRouterSecretName).setDesc(ui.openRouterSecretDesc).addComponent((element) => new SecretComponent(this.app, element).setValue(this.plugin.settings.openRouterSecretName || "").onChange(async (value) => {
+            this.plugin.settings.openRouterSecretName = String(value || "").trim();
+            await this.plugin.saveSettings();
+          }));
         } else {
-          new Setting(containerEl)
-            .setName(ui.secretStorageUnavailableName)
-            .setDesc(ui.secretStorageUnavailableDesc);
+          new Setting(containerEl).setName(ui.secretStorageUnavailableName).setDesc(ui.secretStorageUnavailableDesc);
         }
       } else {
-        new Setting(containerEl)
-          .setName(ui.openRouterKeyFileName)
-          .setDesc(ui.openRouterKeyFileDesc)
-          .addText((text) => {
-            text
-              .setPlaceholder('C:\\Users\\you\\AppData\\Local\\note-reader-cosyvoice\\openrouter-api-key.txt')
-              .setValue(this.plugin.settings.openRouterKeyPath || '')
-              .onChange(async (value) => {
-                this.plugin.settings.openRouterKeyPath = value.trim();
-                await this.plugin.saveSettings();
-              });
-            text.inputEl.addClass('note-reader-cosyvoice-script-input');
+        new Setting(containerEl).setName(ui.openRouterKeyFileName).setDesc(ui.openRouterKeyFileDesc).addText((text) => {
+          text.setPlaceholder("C:\\Users\\you\\AppData\\Local\\note-reader-cosyvoice\\openrouter-api-key.txt").setValue(this.plugin.settings.openRouterKeyPath || "").onChange(async (value) => {
+            this.plugin.settings.openRouterKeyPath = value.trim();
+            await this.plugin.saveSettings();
           });
+          text.inputEl.addClass("note-reader-cosyvoice-script-input");
+        });
       }
-
       const currentOpenRouterModel = normalizeOpenRouterModel(this.plugin.settings.openRouterModel);
       const currentOpenRouterVoice = normalizeOpenRouterVoice(this.plugin.settings.openRouterVoice);
       const openRouterModels = getOpenRouterTtsModels(settingsLanguage);
       const selectedOpenRouterModel = openRouterModels.find(([model]) => model === currentOpenRouterModel);
-      new Setting(containerEl)
-        .setName(ui.openRouterModelsName)
-        .setDesc(ui.openRouterModelsDesc)
-        .addDropdown((dropdown) => {
-          for (const [model, , label] of openRouterModels) {
-            dropdown.addOption(model, label);
+      new Setting(containerEl).setName(ui.openRouterModelsName).setDesc(ui.openRouterModelsDesc).addDropdown((dropdown) => {
+        for (const [model, , label] of openRouterModels) {
+          dropdown.addOption(model, label);
+        }
+        dropdown.addOption("__custom__", ui.customModelOption).setValue(selectedOpenRouterModel ? currentOpenRouterModel : "__custom__").onChange(async (value) => {
+          if (value === "__custom__") {
+            return;
           }
-          dropdown
-            .addOption('__custom__', ui.customModelOption)
-            .setValue(selectedOpenRouterModel ? currentOpenRouterModel : '__custom__')
-            .onChange(async (value) => {
-              if (value === '__custom__') {
-                return;
-              }
-              this.plugin.settings.openRouterModel = value;
-              this.plugin.settings.openRouterVoice = getDefaultOpenRouterVoiceForModel(value);
-              await this.plugin.saveSettings();
-              this.display();
-            });
+          this.plugin.settings.openRouterModel = value;
+          this.plugin.settings.openRouterVoice = getDefaultOpenRouterVoiceForModel(value);
+          await this.plugin.saveSettings();
+          this.display();
         });
-
-      new Setting(containerEl)
-        .setName(ui.openRouterModelName)
-        .setDesc(ui.openRouterModelDesc)
-        .addText((text) => {
-          text
-            .setPlaceholder(DEFAULT_OPENROUTER_TTS_MODEL)
-            .setValue(currentOpenRouterModel)
-            .onChange(async (value) => {
-              this.plugin.settings.openRouterModel = normalizeOpenRouterModel(value);
-              await this.plugin.saveSettings();
-            });
-          text.inputEl.addClass('note-reader-cosyvoice-script-input');
+      });
+      new Setting(containerEl).setName(ui.openRouterModelName).setDesc(ui.openRouterModelDesc).addText((text) => {
+        text.setPlaceholder(DEFAULT_OPENROUTER_TTS_MODEL).setValue(currentOpenRouterModel).onChange(async (value) => {
+          this.plugin.settings.openRouterModel = normalizeOpenRouterModel(value);
+          await this.plugin.saveSettings();
         });
-
-      new Setting(containerEl)
-        .setName(ui.openRouterModelInfoName)
-        .setDesc(selectedOpenRouterModel ? selectedOpenRouterModel[3] : ui.customModelInfo);
-
+        text.inputEl.addClass("note-reader-cosyvoice-script-input");
+      });
+      new Setting(containerEl).setName(ui.openRouterModelInfoName).setDesc(selectedOpenRouterModel ? selectedOpenRouterModel[3] : ui.customModelInfo);
       const openRouterVoicePresets = getOpenRouterTtsVoicePresets(currentOpenRouterModel, settingsLanguage);
       const openRouterVoiceIds = new Set(openRouterVoicePresets.map(([, voice]) => voice));
-      new Setting(containerEl)
-        .setName(ui.openRouterVoicesName)
-        .setDesc(ui.openRouterVoicesDesc)
-        .addDropdown((dropdown) => {
-          for (const [, voice, label] of openRouterVoicePresets) {
-            dropdown.addOption(voice, label);
+      new Setting(containerEl).setName(ui.openRouterVoicesName).setDesc(ui.openRouterVoicesDesc).addDropdown((dropdown) => {
+        for (const [, voice, label] of openRouterVoicePresets) {
+          dropdown.addOption(voice, label);
+        }
+        dropdown.addOption("__custom__", ui.customVoiceOption).setValue(openRouterVoiceIds.has(currentOpenRouterVoice) ? currentOpenRouterVoice : "__custom__").onChange(async (value) => {
+          if (value === "__custom__") {
+            return;
           }
-          dropdown
-            .addOption('__custom__', ui.customVoiceOption)
-            .setValue(openRouterVoiceIds.has(currentOpenRouterVoice) ? currentOpenRouterVoice : '__custom__')
-            .onChange(async (value) => {
-              if (value === '__custom__') {
-                return;
-              }
-              this.plugin.settings.openRouterVoice = value;
-              await this.plugin.saveSettings();
-              this.display();
-            });
+          this.plugin.settings.openRouterVoice = value;
+          await this.plugin.saveSettings();
+          this.display();
         });
-
-      new Setting(containerEl)
-        .setName(ui.openRouterVoiceName)
-        .setDesc(ui.openRouterVoiceDesc)
-        .addText((text) => {
-          text
-            .setPlaceholder(DEFAULT_OPENROUTER_TTS_VOICE)
-            .setValue(currentOpenRouterVoice)
-            .onChange(async (value) => {
-              this.plugin.settings.openRouterVoice = normalizeOpenRouterVoice(value);
-              await this.plugin.saveSettings();
-            });
+      });
+      new Setting(containerEl).setName(ui.openRouterVoiceName).setDesc(ui.openRouterVoiceDesc).addText((text) => {
+        text.setPlaceholder(DEFAULT_OPENROUTER_TTS_VOICE).setValue(currentOpenRouterVoice).onChange(async (value) => {
+          this.plugin.settings.openRouterVoice = normalizeOpenRouterVoice(value);
+          await this.plugin.saveSettings();
         });
-
-      new Setting(containerEl)
-        .setName(ui.openRouterPrivacyName)
-        .setDesc(ui.openRouterPrivacyDesc);
+      });
+      new Setting(containerEl).setName(ui.openRouterPrivacyName).setDesc(ui.openRouterPrivacyDesc);
     }
-
-    new Setting(containerEl)
-      .setName(ui.speedName)
-      .setDesc(ui.speedDesc)
-      .addSlider((slider) => {
-        slider
-          .setLimits(0.5, 2, 0.05)
-          .setValue(this.plugin.settings.speed)
-          .setDynamicTooltip()
-          .onChange(async (value) => {
-            this.plugin.settings.speed = normalizeSpeed(value);
-            await this.plugin.saveSettings();
-          });
+    new Setting(containerEl).setName(ui.speedName).setDesc(ui.speedDesc).addSlider((slider) => {
+      slider.setLimits(0.5, 2, 0.05).setValue(this.plugin.settings.speed).setDynamicTooltip().onChange(async (value) => {
+        this.plugin.settings.speed = normalizeSpeed(value);
+        await this.plugin.saveSettings();
       });
-
-    new Setting(containerEl)
-      .setName(ui.chunkLimitsName)
-      .setDesc(ui.chunkLimitsDesc)
-      .addText((text) => {
-        text.setValue(this.plugin.settings.chunkLimits).onChange(async (value) => {
-          this.plugin.settings.chunkLimits = parseChunkLimits(value).join(',');
-          await this.plugin.saveSettings();
-        });
+    });
+    new Setting(containerEl).setName(ui.chunkLimitsName).setDesc(ui.chunkLimitsDesc).addText((text) => {
+      text.setValue(this.plugin.settings.chunkLimits).onChange(async (value) => {
+        this.plugin.settings.chunkLimits = parseChunkLimits(value).join(",");
+        await this.plugin.saveSettings();
       });
-
-    new Setting(containerEl)
-      .setName(ui.onlineChunkLimitsName)
-      .setDesc(ui.onlineChunkLimitsDesc)
-      .addText((text) => {
-        text.setValue(this.plugin.settings.onlineChunkLimits).onChange(async (value) => {
-          this.plugin.settings.onlineChunkLimits = parseChunkLimits(
-            value,
-            DEFAULT_ONLINE_CHUNK_LIMITS
-          ).join(',');
-          await this.plugin.saveSettings();
-        });
+    });
+    new Setting(containerEl).setName(ui.onlineChunkLimitsName).setDesc(ui.onlineChunkLimitsDesc).addText((text) => {
+      text.setValue(this.plugin.settings.onlineChunkLimits).onChange(async (value) => {
+        this.plugin.settings.onlineChunkLimits = parseChunkLimits(
+          value,
+          DEFAULT_ONLINE_CHUNK_LIMITS
+        ).join(",");
+        await this.plugin.saveSettings();
       });
-
-    new Setting(containerEl)
-      .setName(ui.onlinePrefetchName)
-      .setDesc(ui.onlinePrefetchDesc)
-      .addDropdown((dropdown) => {
-        dropdown
-          .addOption('0', ui.onlinePrefetchNone)
-          .addOption('1', ui.onlinePrefetchOne)
-          .setValue(String(normalizeOnlinePrefetchChunks(this.plugin.settings.onlinePrefetchChunks)))
-          .onChange(async (value) => {
-            this.plugin.settings.onlinePrefetchChunks = normalizeOnlinePrefetchChunks(value);
-            await this.plugin.saveSettings();
-          });
+    });
+    new Setting(containerEl).setName(ui.onlinePrefetchName).setDesc(ui.onlinePrefetchDesc).addDropdown((dropdown) => {
+      dropdown.addOption("0", ui.onlinePrefetchNone).addOption("1", ui.onlinePrefetchOne).setValue(String(normalizeOnlinePrefetchChunks(this.plugin.settings.onlinePrefetchChunks))).onChange(async (value) => {
+        this.plugin.settings.onlinePrefetchChunks = normalizeOnlinePrefetchChunks(value);
+        await this.plugin.saveSettings();
       });
-
-    new Setting(containerEl)
-      .setName(ui.stripMarkdownName)
-      .setDesc(ui.stripMarkdownDesc)
-      .addToggle((toggle) => {
-        toggle.setValue(this.plugin.settings.stripMarkdown).onChange(async (value) => {
-          this.plugin.settings.stripMarkdown = value;
-          await this.plugin.saveSettings();
-        });
+    });
+    new Setting(containerEl).setName(ui.stripMarkdownName).setDesc(ui.stripMarkdownDesc).addToggle((toggle) => {
+      toggle.setValue(this.plugin.settings.stripMarkdown).onChange(async (value) => {
+        this.plugin.settings.stripMarkdown = value;
+        await this.plugin.saveSettings();
       });
-
-    new Setting(containerEl)
-      .setName(ui.mathLanguageName)
-      .setDesc(ui.mathLanguageDesc)
-      .addDropdown((dropdown) => {
-        dropdown
-          .addOption('english', ui.mathEnglish)
-          .addOption('chinese', ui.mathChinese)
-          .addOption('skip', ui.mathSkip)
-          .setValue(normalizeMathReadingLanguage(this.plugin.settings.mathReadingLanguage))
-          .onChange(async (value) => {
-            this.plugin.settings.mathReadingLanguage = normalizeMathReadingLanguage(value);
-            await this.plugin.saveSettings();
-          });
+    });
+    new Setting(containerEl).setName(ui.mathLanguageName).setDesc(ui.mathLanguageDesc).addDropdown((dropdown) => {
+      dropdown.addOption("english", ui.mathEnglish).addOption("chinese", ui.mathChinese).addOption("skip", ui.mathSkip).setValue(normalizeMathReadingLanguage(this.plugin.settings.mathReadingLanguage)).onChange(async (value) => {
+        this.plugin.settings.mathReadingLanguage = normalizeMathReadingLanguage(value);
+        await this.plugin.saveSettings();
       });
-
-    new Setting(containerEl)
-      .setName(ui.cleanupName)
-      .setDesc(ui.cleanupDesc)
-      .addToggle((toggle) => {
-        toggle.setValue(this.plugin.settings.cleanupCache).onChange(async (value) => {
-          this.plugin.settings.cleanupCache = value;
-          await this.plugin.saveSettings();
-        });
+    });
+    new Setting(containerEl).setName(ui.rememberPositionName).setDesc(ui.rememberPositionDesc).addToggle((toggle) => {
+      toggle.setValue(this.plugin.settings.rememberReadingPosition === true).onChange(async (value) => {
+        this.plugin.settings.rememberReadingPosition = value;
+        await this.plugin.saveSettings();
+        this.plugin.renderReaderViews();
       });
-
-    new Setting(containerEl)
-      .setName(ui.diagnosticName)
-      .setDesc(ui.diagnosticDesc)
-      .addToggle((toggle) => {
-        toggle.setValue(this.plugin.settings.diagnosticLogging === true).onChange(async (value) => {
-          this.plugin.settings.diagnosticLogging = value;
-          await this.plugin.saveSettings();
-        });
+    });
+    new Setting(containerEl).setName(ui.clearPositionsName).setDesc(ui.clearPositionsDesc).addButton((button) => {
+      button.setButtonText(ui.clearPositionsButton).setWarning().onClick(async () => {
+        await this.plugin.clearReadingPositions();
+        this.display();
       });
-
-    new Setting(containerEl)
-      .setName(ui.clearTemporaryName)
-      .setDesc(ui.clearTemporaryDesc)
-      .addButton((button) => {
-        button
-          .setButtonText(ui.clearNowButton)
-          .setWarning()
-          .onClick(async () => {
-            await this.plugin.clearTemporaryData();
-          });
+    });
+    new Setting(containerEl).setName(ui.cleanupName).setDesc(ui.cleanupDesc).addToggle((toggle) => {
+      toggle.setValue(this.plugin.settings.cleanupCache).onChange(async (value) => {
+        this.plugin.settings.cleanupCache = value;
+        await this.plugin.saveSettings();
       });
-
-    new Setting(containerEl)
-      .setName(ui.restoreDefaultsName)
-      .setDesc(ui.restoreDefaultsDesc)
-      .addButton((button) => {
-        button
-          .setButtonText(ui.restoreDefaultsButton)
-          .setWarning()
-          .onClick(async () => {
-            await this.plugin.resetSettingsToDefaults();
-            new Notice(ui.settingsRestoredNotice);
-            this.display();
-          });
+    });
+    new Setting(containerEl).setName(ui.diagnosticName).setDesc(ui.diagnosticDesc).addToggle((toggle) => {
+      toggle.setValue(this.plugin.settings.diagnosticLogging === true).onChange(async (value) => {
+        this.plugin.settings.diagnosticLogging = value;
+        await this.plugin.saveSettings();
       });
-
-    containerEl.createEl('p', {
-      cls: 'note-reader-cosyvoice-muted',
-      text: ui.commandsFooter,
+    });
+    new Setting(containerEl).setName(ui.clearTemporaryName).setDesc(ui.clearTemporaryDesc).addButton((button) => {
+      button.setButtonText(ui.clearNowButton).setWarning().onClick(async () => {
+        await this.plugin.clearTemporaryData();
+      });
+    });
+    new Setting(containerEl).setName(ui.restoreDefaultsName).setDesc(ui.restoreDefaultsDesc).addButton((button) => {
+      button.setButtonText(ui.restoreDefaultsButton).setWarning().onClick(async () => {
+        await this.plugin.resetSettingsToDefaults();
+        new Notice(ui.settingsRestoredNotice);
+        this.display();
+      });
+    });
+    containerEl.createEl("p", {
+      cls: "note-reader-cosyvoice-muted",
+      text: ui.commandsFooter
     });
   }
-}
-
+};
 module.exports = {
   default: CosyVoiceReaderPlugin,
   __test: {
@@ -4598,8 +4386,10 @@ module.exports = {
     createBlobAudioSource,
     createDefaultSettings,
     createIncrementalSpeechChunker,
+    createReadingAnchor,
     createReaderState,
     createSafeRuntimeLogEvent,
+    createTaskState,
     describeMediaError,
     extractTextFromPdfItems,
     formatProgressLabel,
@@ -4642,6 +4432,7 @@ module.exports = {
     normalizeOpenRouterVoice,
     normalizeOnlinePrefetchChunks,
     normalizePdfSelectionText,
+    normalizeReadingPositions,
     normalizeSettingsLanguage,
     normalizeSpeechEngine,
     parseRetryAfterMs,
@@ -4651,26 +4442,25 @@ module.exports = {
     sanitizeTextForSpeech,
     sanitizeLatexForSpeech,
     slicePdfTextFromSelection,
+    sliceTextFromReadingPosition,
     selectKnownSettings,
     splitTextForSpeechChunks,
+    transitionTaskState,
+    upsertReadingPosition,
     toVaultRelativePath,
-    verbalizeShortLatex,
-  },
+    verbalizeShortLatex
+  }
 };
-
 function isInsideDirectory(filePath, directoryPath) {
   const relative = path.relative(path.resolve(directoryPath), path.resolve(filePath));
-  return Boolean(relative && !relative.startsWith('..') && !path.isAbsolute(relative));
+  return Boolean(relative && !relative.startsWith("..") && !path.isAbsolute(relative));
 }
-
 function messageFromError(error) {
   if (!error) {
-    return 'unknown error';
+    return "unknown error";
   }
-
   if (error.message) {
     return String(error.message);
   }
-
   return String(error);
 }

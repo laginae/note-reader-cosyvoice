@@ -7,7 +7,9 @@ A privacy-first Obsidian desktop voice reader for Markdown notes and text-based 
 ## Highlights
 
 - **Privacy first:** Local CosyVoice is the default. Each online engine requires separate, explicit consent before it can receive text.
+- **Layout-aware PDF reading:** Local PDF extraction uses text coordinates to read common two-column papers left column first, while preserving full-width headings and section boundaries.
 - **Progressive PDF start:** Markdown notes and text-based PDFs are parsed locally; ordinary text-based PDFs typically yield their first speech chunk within a few seconds, while later pages continue parsing.
+- **Private, optional resume:** Reading-position history is off by default. When enabled, it stores only bounded resume metadata and a short text anchor, never the complete note or PDF body.
 - **Bounded online prefetch:** Online modes prepare at most one upcoming chunk by default for smoother transitions. Set prefetch to `0` for strict on-demand synthesis.
 - **Flexible PDF selection reading:** Continue reading from a selected position in a PDF, or read only the selected text.
 
@@ -26,7 +28,9 @@ Plugin settings. The script path shown here is a redacted example:
 ## Features
 
 - Reads the current Markdown note or text-based PDF, selected text in either view, or from a Markdown/PDF selection start to the end of the active file.
-- Extracts PDF text locally with Obsidian's built-in PDF.js and progressively feeds speech chunks while later pages continue parsing, with cancellation from the control panel.
+- Extracts PDF text locally with Obsidian's built-in PDF.js, uses coordinates to improve common two-column reading order, and progressively feeds speech chunks while later pages continue parsing.
+- Uses paragraph-, line-, sentence-, and clause-aware chunk boundaries while keeping configured character limits as hard upper bounds.
+- Can optionally remember and resume the current Markdown or PDF position. The setting is disabled by default and includes a separate clear-history control.
 - Opens a right-side `Voice Reader` control panel.
 - Shows synthesis/playback phase, whole-reading progress, percentage, and text preview.
 - Supports pause, resume, stop, Space to pause or resume in the control panel, repeated Left/Right Arrow 5-second seeking, previous/next chunk buttons, and progress dragging while the current audio chunk is playing.
@@ -56,6 +60,8 @@ Plugin settings. The script path shown here is a redacted example:
 By default, the plugin uses local TTS. In `Local CosyVoice` mode, the plugin itself does not send note or extracted PDF text to Microsoft, OpenAI, or another remote TTS service. The configured wrapper remains part of your trust boundary and may make its own network requests.
 
 PDF extraction uses Obsidian's bundled PDF.js and `Vault.readBinary`; the PDF file itself is not uploaded by this feature. To support PDF selection commands, the plugin temporarily keeps the selection's page number and up to 2,000 characters of locator text in memory only; it is not saved to settings or diagnostic logs. When an online speech engine is selected and its consent is enabled, extracted PDF text chunks are transmitted under the same rules as note text. Scanned or image-only PDFs need OCR before the plugin can read them.
+
+`Remember reading position` is off by default. If you enable it, `data.json` stores the file path, file timestamp, PDF page or speech-chunk index, update time, and a normalized text anchor capped at 180 characters. It does not store the complete note or PDF body. Use `Clear saved reading positions` to remove all saved anchors; disabling the setting stops future use and updates but does not silently delete existing history.
 
 Edge, Azure, and OpenRouter are opt-in online modes. Edge passes each chunk to the configured `edge-tts` executable. Azure sends each chunk by HTTPS to the selected Azure Speech cloud and region. OpenRouter sends each chunk to OpenRouter and an eligible upstream TTS provider. The plugin will not start an online mode until its separate online-processing consent setting is enabled. OpenRouter consent permits that transmission only; it does not permit non-ZDR routing. By default, the plugin may synthesize the next chunk while the current chunk is playing, but it never prefetches more than one future chunk. Stopping early can therefore leave at most one prefetched chunk unused. Set prefetch to `0` for strict on-demand synthesis. Provider billing units vary, so this bounds avoidable work rather than guaranteeing a fixed cost reduction.
 
@@ -230,6 +236,7 @@ Use `Local chunk limits` to balance local startup latency and synthesis stabilit
 
 - `Open voice reader controls`
 - `Read current note or PDF aloud`
+- `Resume reading current note or PDF`
 - `Read current PDF aloud`
 - `Read current PDF from selection aloud`
 - `Read selection aloud`
@@ -255,7 +262,20 @@ Open a PDF stored in the vault, then click `Read file` in the control panel or r
 
 To start at a specific position, select a recognizable phrase in the PDF text layer and click `Read from selection`, or run `Read current PDF from selection aloud`. The plugin starts extraction on that page, matches the selected phrase in the extracted text, and reads through the end of the PDF. `Read selection` reads only the selected PDF text. If the visual text layer cannot be matched to the PDF's embedded text order, the plugin displays a notice and starts at the beginning of the selected page.
 
-The PDF must contain selectable embedded text. Password-protected, damaged, scanned, or image-only files cannot be extracted; run OCR or unlock the file first. Complex multi-column documents are read in the text order embedded by the PDF producer, which may not always match the visual order.
+The PDF must contain selectable embedded text. Password-protected, damaged, scanned, or image-only files cannot be extracted; run OCR or unlock the file first. Version 0.4.0 uses text coordinates to recognize common two-column pages and read each vertical band left column before right column, while treating full-width headings as boundaries. Unusual layouts, rotated text, sidebars, and complex tables can still require a manual selection start or a better-tagged source PDF.
+
+If `Remember reading position` is enabled, use `Resume file` in the control panel or `Resume reading current note or PDF` in the command palette. PDF resume starts on the saved page and locates the short anchor again; Markdown resume locates the same normalized anchor and falls back to the nearest saved chunk if the note changed.
+
+## Development
+
+Source modules live under `src/`. Build and run all tests before publishing:
+
+```powershell
+npm install
+npm test
+```
+
+The build bundles `src/main.js` and its local modules into the single root `main.js` required by the Obsidian Community installer. `obsidian` remains an external runtime dependency supplied by the host application.
 
 ## Shared Package Contents
 

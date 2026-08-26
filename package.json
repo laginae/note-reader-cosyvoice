@@ -1,0 +1,13 @@
+{
+  "name": "note-reader-cosyvoice",
+  "version": "0.4.0",
+  "private": true,
+  "description": "Build and test tooling for the Note and PDF Voice Reader Obsidian plugin.",
+  "scripts": {
+    "build": "esbuild src/main.js --bundle --external:obsidian --platform=node --format=cjs --target=es2020 --outfile=main.js --log-level=warning",
+    "test": "npm run build && node core.test.cjs && node main.test.cjs && node obsidian-loader.test.cjs && node --test src/*.test.cjs"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.10"
+  }
+}
