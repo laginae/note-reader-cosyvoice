@@ -2,7 +2,7 @@
 
 ## Install From ZIP
 
-1. Unzip `note-reader-cosyvoice-0.2.5-install.zip`.
+1. Unzip `note-reader-cosyvoice-0.2.6-install.zip`.
 2. Copy the `note-reader-cosyvoice` folder into your vault:
 
 ```text
@@ -12,7 +12,7 @@
 3. In Obsidian, open `Settings -> Community plugins`.
 4. Turn off Restricted mode if required.
 5. Enable `Note and PDF Voice Reader`.
-6. Run `Open CosyVoice reader controls` from the command palette, or click the ribbon icon.
+6. Run `Open voice reader controls` from the command palette, or click the ribbon icon.
 
 ## Choose Speech Engine
 
@@ -133,6 +133,8 @@ The consent switch permits online transmission; it does not permit non-ZDR routi
 
 The key value is never saved in the plugin's `data.json`. Every request enforces `provider.zdr: true` and `provider.data_collection: "deny"`; synthesis fails if no eligible endpoint satisfies those restrictions. Model and voice availability changes over time, so check the live [`speech + ZDR` model API](https://openrouter.ai/api/v1/models?output_modalities=speech&zdr=true) when a preset stops working. See the official [OpenRouter TTS documentation](https://openrouter.ai/docs/guides/overview/multimodal/tts), [data collection documentation](https://openrouter.ai/docs/guides/privacy/data-collection), and [Zero Data Retention documentation](https://openrouter.ai/docs/guides/features/zdr).
 
+Temporary gateway, rate-limit, and network failures are retried up to three total attempts with short bounded delays. Credential, model, voice, privacy-policy, and malformed-request errors are not retried. A final `HTTP 502` means OpenRouter or its upstream provider remained unavailable after those attempts; it does not normally indicate an unsupported character. Short LaTeX absolute-value notation such as `$|Y_{k,h}|$` is converted to spoken text before transmission.
+
 ## Temporary Data
 
 Temporary text and audio are stored under the operating system temporary directory rather than inside the vault. Keep `Clean temporary audio` enabled to remove plaintext immediately after synthesis, remove session files after reading, and clear stale plugin-owned files at startup. `Diagnostic logging` is off by default. Use `Clear temporary data` in settings to stop reading and remove current plus legacy plugin temporary data.
@@ -163,6 +165,6 @@ For `Microsoft Edge online voice`, run `edge-tts --help` in PowerShell to confir
 
 For `Microsoft Azure Speech`, verify the selected cloud, region, selected SecretStorage entry or external key-file path, resource status, quota, and voice ID.
 
-For `OpenRouter TTS`, verify the selected SecretStorage entry or external key-file path, account balance, model, and voice. An error about no eligible endpoint means that the selected model currently has no provider satisfying the enforced privacy routing policy.
+For `OpenRouter TTS`, verify the selected SecretStorage entry or external key-file path, account balance, model, and voice. An error about no eligible endpoint means that the selected model currently has no provider satisfying the enforced privacy routing policy. A `502` is a temporary bad-gateway response; retry later or select another compatible model if all automatic attempts fail.
 
 The first synthesis after starting the local model may take longer than later reads.

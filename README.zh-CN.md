@@ -32,6 +32,7 @@ Note and PDF Voice Reader 是一个桌面端 Obsidian 插件，用于把当前 M
 - 提供 `Math reading language` 设置：
   - 默认使用 `English`，例如 `$a_b$` 会处理为 `a subscript b`。
   - `Chinese` 会使用中文数学读法，例如 `$a_b$` 会处理为 `a 下标 b`。
+  - `$|Y_{k,h}|$` 这类短绝对值公式会转换成可朗读文字，不再把原始竖线发送给语音模型。
   - `Skip math` 会跳过短公式和长公式。
   - 超过 12 个非空白字符的公式会被跳过，避免长公式被逐字朗读。
   - 常见希腊字母命令保留为英文名，例如 `\alpha`、`\beta`、`\pi` 会变为 `alpha`、`beta`、`pi`。
@@ -196,6 +197,8 @@ C:\Users\你的用户名\AppData\Local\note-reader-cosyvoice\azure-speech-key.tx
 ## OpenRouter TTS 模式
 
 OpenRouter 提供与 OpenAI Audio Speech 兼容的专用 TTS 接口，输入文本后直接返回 MP3 或 PCM 原始音频。本插件固定请求 MP3，并在保存前检查 HTTP 状态和 `Content-Type`，避免把 JSON 错误响应当成音频。接口说明见 [OpenRouter TTS 官方文档](https://openrouter.ai/docs/guides/overview/multimodal/tts)。
+
+对于临时性的 `408`、`425`、`429`、`500`、`502`、`503`、`504` 和瞬时网络故障，插件会采用短间隔、有限退避，最多尝试 3 次。密钥、模型、音色、隐私策略、请求格式或返回内容类型错误不会重试。若最终仍显示 `HTTP 502`，表示 OpenRouter 或上游供应商在有限重试后仍不可用，通常不是文本中存在“不支持字符”。
 
 在 [OpenRouter API Keys](https://openrouter.ai/settings/keys) 创建专用 API 密钥。建议设置较低的消费上限和适当的到期时间。如果选择库外密钥文件兼容模式，可使用类似路径：
 

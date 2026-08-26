@@ -33,6 +33,7 @@ Plugin settings. The script path shown here is a redacted example:
   - Skips formulas longer than 12 non-space characters.
   - `English` is the default for public releases, for example `$a_b$` -> `a subscript b`.
   - `Chinese` keeps Chinese math words, for example `$a_b$` -> `a 下标 b`.
+  - Converts short absolute-value notation such as `$|Y_{k,h}|$` into spoken words instead of sending raw vertical bars.
   - `Skip math` skips short formulas as well as long formulas.
   - Leaves common Greek commands as English names, such as `\alpha` -> `alpha`, `\beta` -> `beta`, and `\pi` -> `pi`.
   - Reads common non-Greek symbols such as `\leq`, `\times`, and `_`.
@@ -165,6 +166,8 @@ The plugin derives the HTTPS host from the validated region and selected cloud; 
 ### Configure OpenRouter TTS
 
 OpenRouter exposes an OpenAI-compatible TTS endpoint that accepts text and returns raw MP3 or PCM audio. This plugin always requests MP3 and validates the HTTP status and `Content-Type` before saving it. See the official [OpenRouter TTS documentation](https://openrouter.ai/docs/guides/overview/multimodal/tts).
+
+The plugin retries temporary `408`, `425`, `429`, `500`, `502`, `503`, and `504` responses and transient network failures up to three total attempts with short bounded delays. It does not retry credential, model, voice, privacy-policy, malformed-request, or unexpected-content errors. A final `HTTP 502` therefore indicates that OpenRouter or its upstream provider remained unavailable after the limited retries, rather than normally indicating an unsupported text character.
 
 Create a dedicated API key in [OpenRouter API Keys](https://openrouter.ai/settings/keys). Use a low spending limit and an expiration date where appropriate. If you select the external key-file fallback, a suitable path is:
 

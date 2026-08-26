@@ -143,6 +143,7 @@ function verbalizeShortLatex(content, mathReadingLanguage = DEFAULT_MATH_READING
   const language = normalizeMathReadingLanguage(mathReadingLanguage);
 
   value = verbalizeLatexCommands(value, language);
+  value = verbalizeLatexAbsoluteValues(value, language);
   value = value.replace(/_/g, language === 'chinese' ? ' 下标 ' : ' subscript ');
   value = value.replace(/\^/g, language === 'chinese' ? ' 上标 ' : ' superscript ');
   value = value.replace(/\+/g, language === 'chinese' ? ' 加 ' : ' plus ');
@@ -151,6 +152,16 @@ function verbalizeShortLatex(content, mathReadingLanguage = DEFAULT_MATH_READING
   value = value.replace(/\\/g, ' ');
 
   return cleanupLatexSpeech(value);
+}
+
+function verbalizeLatexAbsoluteValues(text, mathReadingLanguage) {
+  let value = String(text || '').replace(/\\(?:lvert|rvert|vert)\b/g, '|');
+  value = value.replace(/\|([^|\n]+)\|/g, (_match, inner) => (
+    mathReadingLanguage === 'chinese'
+      ? `${inner} 的绝对值`
+      : `absolute value of ${inner}`
+  ));
+  return value.replace(/\|/g, ' ');
 }
 
 function verbalizeLatexCommands(text, mathReadingLanguage = DEFAULT_MATH_READING_LANGUAGE) {

@@ -16,6 +16,16 @@ assert.strictEqual(
 );
 
 assert.strictEqual(
+  sanitizeTextForSpeech('The quantile of $|Y\\_{k,h}|$ is used.'),
+  'The quantile of absolute value of Y subscript k,h is used.'
+);
+
+assert.strictEqual(
+  sanitizeTextForSpeech('绝对值 $|x_i|$。', { mathReadingLanguage: 'chinese' }),
+  '绝对值 x 下标 i 的绝对值。'
+);
+
+assert.strictEqual(
   sanitizeTextForSpeech('命令 \\textbf{重点}、\\mathbf{x}、\\frac{a}{b}、\\leq 都要自然朗读。'),
   '命令 重点、x、a over b、less than or equal to 都要自然朗读。'
 );

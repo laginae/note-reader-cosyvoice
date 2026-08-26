@@ -196,7 +196,7 @@ const testVaultPath = path.resolve('test-vault');
 const testAudioPath = path.join(testVaultPath, '.obsidian', 'plugins', 'note-reader-cosyvoice', 'cache', 'a.wav');
 assert.strictEqual(manifest.id, 'note-reader-cosyvoice');
 assert.strictEqual(manifest.name, 'Note and PDF Voice Reader');
-assert.strictEqual(manifest.version, '0.2.5');
+assert.strictEqual(manifest.version, '0.2.6');
 assert.ok(!/\bObsidian\b/.test(manifest.description));
 assert.ok(!code.includes('Note Reader CosyVoice'));
 assert.ok(!code.includes('CosyVoice Reader'));
@@ -304,6 +304,10 @@ assert.ok(!moduleObject.exports.__test.resolveDefaultScriptPath().toLowerCase().
 assert.strictEqual(moduleObject.exports.__test.normalizeMathReadingLanguage('chinese'), 'chinese');
 assert.strictEqual(moduleObject.exports.__test.normalizeMathReadingLanguage('skip'), 'skip');
 assert.strictEqual(moduleObject.exports.__test.normalizeMathReadingLanguage('bad'), 'english');
+const reportedOpenRouterText = 'As a reference, the static scheme (S) uses no forecast information. Its interval is centered at zero, and the half-width is taken directly as the 0.95 empirical quantile of $|Y\\_{k,h}|$ on the same hold-out data:';
+const sanitizedReportedOpenRouterText = moduleObject.exports.__test.sanitizeTextForSpeech(reportedOpenRouterText);
+assert.ok(sanitizedReportedOpenRouterText.includes('absolute value of Y subscript k,h'));
+assert.ok(!/[|$\\]/.test(sanitizedReportedOpenRouterText));
 assert.strictEqual(moduleObject.exports.__test.normalizeSettingsLanguage('chinese'), 'chinese');
 assert.strictEqual(moduleObject.exports.__test.normalizeSettingsLanguage('bad'), 'english');
 assert.strictEqual(moduleObject.exports.__test.normalizeCredentialSource('key-file'), 'key-file');
@@ -461,6 +465,13 @@ const openRouterBodyWithIgnoredRelaxation = JSON.parse(
 );
 assert.strictEqual(openRouterBodyWithIgnoredRelaxation.provider.zdr, true);
 assert.strictEqual(openRouterBodyWithIgnoredRelaxation.provider.data_collection, 'deny');
+assert.strictEqual(moduleObject.exports.__test.isRetryableRemoteError({ statusCode: 502 }), true);
+assert.strictEqual(moduleObject.exports.__test.isRetryableRemoteError({ statusCode: 403 }), false);
+assert.strictEqual(moduleObject.exports.__test.isRetryableRemoteError({ code: 'ECONNRESET' }), true);
+assert.strictEqual(moduleObject.exports.__test.isRetryableRemoteError(new Error('invalid voice')), false);
+assert.strictEqual(moduleObject.exports.__test.parseRetryAfterMs('1.5'), 1500);
+assert.strictEqual(moduleObject.exports.__test.parseRetryAfterMs('120'), 10000);
+assert.strictEqual(moduleObject.exports.__test.parseRetryAfterMs('invalid'), null);
 const openRouterModelIds = moduleObject.exports.__test.getOpenRouterTtsModels().map(([model]) => model);
 assert.deepStrictEqual(openRouterModelIds, [
   'microsoft/mai-voice-2-flash',
@@ -1464,12 +1475,116 @@ assert.deepStrictEqual(chunkNavigationCalls, [-1, 1]);
   assert.strictEqual(fs.statSync(openRouterOutputPath).size, 64);
   assert.strictEqual(openRouterPlugin.currentRequests.size, 0);
 
+  const openRouterRetryOutputPath = path.join(prepareTempDir, 'openrouter-retry.mp3');
+  const openRouterRetryDelays = [];
+  let openRouterRetryAttempts = 0;
+  openRouterPlugin.waitForRemoteRetry = async (session, delayMs) => {
+    assert.strictEqual(openRouterPlugin.isActive(session), true);
+    openRouterRetryDelays.push(delayMs);
+  };
   try {
     https.request = (_endpoint, _options, callback) => {
       const request = new EventEmitter();
       request.setTimeout = () => {};
       request.destroy = () => request.emit('close');
       request.end = () => {
+        openRouterRetryAttempts += 1;
+        process.nextTick(() => {
+          const response = new EventEmitter();
+          const succeeded = openRouterRetryAttempts === 3;
+          response.statusCode = succeeded ? 200 : 502;
+          response.headers = succeeded
+            ? { 'content-length': '64', 'content-type': 'audio/mpeg' }
+            : { 'content-type': 'application/json', 'retry-after': '0' };
+          response.resume = () => {};
+          response.destroy = () => {};
+          callback(response);
+          if (succeeded) {
+            response.emit('data', Buffer.alloc(64));
+            response.emit('end');
+          }
+        });
+      };
+      return request;
+    };
+
+    await openRouterPlugin.runOpenRouterTts(openRouterInputPath, openRouterRetryOutputPath, openRouterSession);
+  } finally {
+    https.request = originalHttpsRequest;
+  }
+  assert.strictEqual(openRouterRetryAttempts, 3);
+  assert.deepStrictEqual(openRouterRetryDelays, [750, 1500]);
+  assert.strictEqual(fs.statSync(openRouterRetryOutputPath).size, 64);
+  assert.strictEqual(openRouterPlugin.currentRequests.size, 0);
+
+  let openRouterExhaustedAttempts = 0;
+  try {
+    https.request = (_endpoint, _options, callback) => {
+      const request = new EventEmitter();
+      request.setTimeout = () => {};
+      request.destroy = () => request.emit('close');
+      request.end = () => {
+        openRouterExhaustedAttempts += 1;
+        process.nextTick(() => {
+          const response = new EventEmitter();
+          response.statusCode = 502;
+          response.headers = { 'content-type': 'application/json' };
+          response.resume = () => {};
+          response.destroy = () => {};
+          callback(response);
+        });
+      };
+      return request;
+    };
+
+    await assert.rejects(
+      () => openRouterPlugin.runOpenRouterTts(openRouterInputPath, openRouterRetryOutputPath, openRouterSession),
+      /HTTP 502 after 3 attempts.*temporarily unavailable/
+    );
+  } finally {
+    https.request = originalHttpsRequest;
+  }
+  assert.strictEqual(openRouterExhaustedAttempts, 3);
+  assert.strictEqual(openRouterPlugin.currentRequests.size, 0);
+
+  let openRouterForbiddenAttempts = 0;
+  try {
+    https.request = (_endpoint, _options, callback) => {
+      const request = new EventEmitter();
+      request.setTimeout = () => {};
+      request.destroy = () => request.emit('close');
+      request.end = () => {
+        openRouterForbiddenAttempts += 1;
+        process.nextTick(() => {
+          const response = new EventEmitter();
+          response.statusCode = 403;
+          response.headers = { 'content-type': 'application/json' };
+          response.resume = () => {};
+          response.destroy = () => {};
+          callback(response);
+        });
+      };
+      return request;
+    };
+
+    await assert.rejects(
+      () => openRouterPlugin.runOpenRouterTts(openRouterInputPath, openRouterRetryOutputPath, openRouterSession),
+      /HTTP 403.*Check the selected API credential/
+    );
+  } finally {
+    https.request = originalHttpsRequest;
+  }
+  assert.strictEqual(openRouterForbiddenAttempts, 1);
+  assert.strictEqual(openRouterPlugin.currentRequests.size, 0);
+
+  let openRouterInvalidAttempts = 0;
+  try {
+    https.request = (_endpoint, _options, callback) => {
+      const request = new EventEmitter();
+      request.setTimeout = () => {};
+      request.destroy = () => request.emit('close');
+      request.end = () => {
+        openRouterInvalidAttempts += 1;
         process.nextTick(() => {
           const response = new EventEmitter();
           response.statusCode = 200;
@@ -1489,6 +1604,7 @@ assert.deepStrictEqual(chunkNavigationCalls, [-1, 1]);
   } finally {
     https.request = originalHttpsRequest;
   }
+  assert.strictEqual(openRouterInvalidAttempts, 1);
   assert.strictEqual(fs.existsSync(openRouterInvalidOutputPath), false);
   assert.strictEqual(openRouterPlugin.currentRequests.size, 0);
 

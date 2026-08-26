@@ -28,6 +28,21 @@ const CREDENTIAL_SOURCES = ['obsidian-secret', 'key-file'];
 const SPEECH_ENGINES = ['local-cosyvoice', 'edge-tts', 'azure-speech', 'openrouter-tts'];
 const AZURE_SPEECH_CLOUDS = ['public', 'china'];
 const REMOTE_TTS_MAX_AUDIO_BYTES = 20 * 1024 * 1024;
+const REMOTE_TTS_MAX_ATTEMPTS = 3;
+const REMOTE_TTS_RETRY_DELAYS_MS = [750, 1500];
+const REMOTE_TTS_RETRY_AFTER_MAX_MS = 10_000;
+const REMOTE_TTS_RETRYABLE_STATUS_CODES = new Set([408, 425, 429, 500, 502, 503, 504]);
+const REMOTE_TTS_RETRYABLE_ERROR_CODES = new Set([
+  'EAI_AGAIN',
+  'ECONNREFUSED',
+  'ECONNRESET',
+  'EHOSTUNREACH',
+  'ENETDOWN',
+  'ENETRESET',
+  'ENETUNREACH',
+  'EPIPE',
+  'ETIMEDOUT',
+]);
 const RUNTIME_LOG_MAX_BYTES = 1024 * 1024;
 const PDF_MAX_BYTES = 200 * 1024 * 1024;
 const PDF_MAX_PAGES = 2000;
@@ -545,6 +560,7 @@ function verbalizeShortLatex(content, mathReadingLanguage = DEFAULT_MATH_READING
   const language = normalizeMathReadingLanguage(mathReadingLanguage);
 
   value = verbalizeLatexCommands(value, language);
+  value = verbalizeLatexAbsoluteValues(value, language);
   value = value.replace(/_/g, language === 'chinese' ? ' 下标 ' : ' subscript ');
   value = value.replace(/\^/g, language === 'chinese' ? ' 上标 ' : ' superscript ');
   value = value.replace(/\+/g, language === 'chinese' ? ' 加 ' : ' plus ');
@@ -553,6 +569,16 @@ function verbalizeShortLatex(content, mathReadingLanguage = DEFAULT_MATH_READING
   value = value.replace(/\\/g, ' ');
 
   return cleanupLatexSpeech(value);
+}
+
+function verbalizeLatexAbsoluteValues(text, mathReadingLanguage) {
+  let value = String(text || '').replace(/\\(?:lvert|rvert|vert)\b/g, '|');
+  value = value.replace(/\|([^|\n]+)\|/g, (_match, inner) => (
+    mathReadingLanguage === 'chinese'
+      ? `${inner} 的绝对值`
+      : `absolute value of ${inner}`
+  ));
+  return value.replace(/\|/g, ' ');
 }
 
 function verbalizeLatexCommands(text, mathReadingLanguage = DEFAULT_MATH_READING_LANGUAGE) {
@@ -1210,6 +1236,61 @@ function previewText(text) {
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function parseRetryAfterMs(value, nowMs = Date.now()) {
+  const rawValue = Array.isArray(value) ? value[0] : value;
+  const normalized = String(rawValue || '').trim();
+  if (!normalized) {
+    return null;
+  }
+
+  if (/^\d+(?:\.\d+)?$/.test(normalized)) {
+    return Math.min(REMOTE_TTS_RETRY_AFTER_MAX_MS, Math.max(0, Math.ceil(Number(normalized) * 1000)));
+  }
+
+  const retryAtMs = Date.parse(normalized);
+  if (!Number.isFinite(retryAtMs)) {
+    return null;
+  }
+
+  return Math.min(REMOTE_TTS_RETRY_AFTER_MAX_MS, Math.max(0, retryAtMs - nowMs));
+}
+
+function isRetryableRemoteError(error) {
+  if (!error) {
+    return false;
+  }
+
+  const statusCode = Number(error.statusCode) || 0;
+  if (statusCode) {
+    return REMOTE_TTS_RETRYABLE_STATUS_CODES.has(statusCode);
+  }
+
+  return REMOTE_TTS_RETRYABLE_ERROR_CODES.has(String(error.code || '').toUpperCase());
+}
+
+function createRemoteHttpError(serviceLabel, statusCode, failureHint, retryAfterValue) {
+  const isTemporary = REMOTE_TTS_RETRYABLE_STATUS_CODES.has(statusCode);
+  const detail = isTemporary
+    ? 'The upstream service is temporarily unavailable or busy.'
+    : failureHint || 'Check the service configuration and account status.';
+  const error = new Error(`${serviceLabel} returned HTTP ${statusCode}. ${detail}`);
+  error.statusCode = statusCode;
+  error.retryAfterMs = parseRetryAfterMs(retryAfterValue);
+  return error;
+}
+
+function createRemoteRetryExhaustedError(serviceLabel, error, attempts) {
+  const statusCode = Number(error && error.statusCode) || 0;
+  const failure = statusCode ? `HTTP ${statusCode}` : messageFromError(error);
+  const exhaustedError = new Error(
+    `${serviceLabel} returned ${failure} after ${attempts} attempts. ` +
+    'The upstream provider may be temporarily unavailable. Try again shortly or select another model.'
+  );
+  exhaustedError.statusCode = statusCode || undefined;
+  exhaustedError.code = error && error.code;
+  return exhaustedError;
 }
 
 function focusElementWithoutScroll(element) {
@@ -2334,11 +2415,55 @@ class CosyVoiceReaderPlugin extends Plugin {
     return this.readSecretFileOutsideVault(this.settings.azureSpeechKeyPath, 'Azure Speech');
   }
 
-  async requestRemoteAudio({ endpoint, headers, body, outputPath, session, serviceLabel, expectedContentType, failureHint }) {
+  async waitForRemoteRetry(session, delayMs) {
+    let remainingMs = Math.max(0, Number(delayMs) || 0);
+    while (remainingMs > 0) {
+      const intervalMs = Math.min(100, remainingMs);
+      await sleep(intervalMs);
+      if (!this.isActive(session)) {
+        throw new Error('Reading stopped.');
+      }
+      remainingMs -= intervalMs;
+    }
+  }
+
+  async requestRemoteAudio(options) {
     if (!(this.currentRequests instanceof Set)) {
       this.currentRequests = new Set();
     }
 
+    const { session, serviceLabel } = options;
+    const maxAttempts = options.retryTemporaryFailures === true ? REMOTE_TTS_MAX_ATTEMPTS : 1;
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      try {
+        await this.requestRemoteAudioOnce(options);
+        return;
+      } catch (error) {
+        if (!this.isActive(session)) {
+          throw new Error('Reading stopped.');
+        }
+
+        if (!isRetryableRemoteError(error)) {
+          throw error;
+        }
+
+        if (attempt === maxAttempts) {
+          throw maxAttempts > 1
+            ? createRemoteRetryExhaustedError(serviceLabel, error, attempt)
+            : error;
+        }
+
+        const fallbackDelayMs = REMOTE_TTS_RETRY_DELAYS_MS[attempt - 1] || REMOTE_TTS_RETRY_DELAYS_MS.at(-1);
+        const retryAfterMs = Number(error.retryAfterMs);
+        const delayMs = Number.isFinite(retryAfterMs)
+          ? Math.max(fallbackDelayMs, retryAfterMs)
+          : fallbackDelayMs;
+        await this.waitForRemoteRetry(session, delayMs);
+      }
+    }
+  }
+
+  async requestRemoteAudioOnce({ endpoint, headers, body, outputPath, session, serviceLabel, expectedContentType, failureHint }) {
     await new Promise((resolve, reject) => {
       let settled = false;
       const finish = (callback, value) => {
@@ -2357,18 +2482,24 @@ class CosyVoiceReaderPlugin extends Plugin {
         const statusCode = Number(response.statusCode) || 0;
         if (statusCode !== 200) {
           response.resume();
-          finish(reject, new Error(`${serviceLabel} returned HTTP ${statusCode}. ${failureHint || 'Check the service configuration and account status.'}`));
+          finish(reject, createRemoteHttpError(
+            serviceLabel,
+            statusCode,
+            failureHint,
+            response.headers && response.headers['retry-after']
+          ));
           return;
         }
 
-        const contentType = String(response.headers['content-type'] || '').split(';')[0].trim().toLowerCase();
+        const responseHeaders = response.headers || {};
+        const contentType = String(responseHeaders['content-type'] || '').split(';')[0].trim().toLowerCase();
         if (expectedContentType && contentType !== expectedContentType) {
           response.resume();
           finish(reject, new Error(`${serviceLabel} returned unexpected content type ${contentType || '(missing)'}.`));
           return;
         }
 
-        const contentLength = Number(response.headers['content-length']) || 0;
+        const contentLength = Number(responseHeaders['content-length']) || 0;
         if (contentLength > REMOTE_TTS_MAX_AUDIO_BYTES) {
           response.resume();
           finish(reject, new Error(`${serviceLabel} response exceeded the 20 MB safety limit.`));
@@ -2392,7 +2523,9 @@ class CosyVoiceReaderPlugin extends Plugin {
           chunks.push(chunk);
         });
         response.on('aborted', () => {
-          finish(reject, new Error(`${serviceLabel} response was interrupted.`));
+          const error = new Error(`${serviceLabel} response was interrupted.`);
+          error.code = 'ECONNRESET';
+          finish(reject, error);
         });
         response.on('error', (error) => {
           finish(reject, error);
@@ -2417,7 +2550,9 @@ class CosyVoiceReaderPlugin extends Plugin {
 
       this.currentRequests.add(request);
       request.setTimeout(2 * 60 * 1000, () => {
-        finish(reject, new Error(`${serviceLabel} synthesis timed out after 2 minutes.`));
+        const error = new Error(`${serviceLabel} synthesis timed out after 2 minutes.`);
+        error.code = 'ETIMEDOUT';
+        finish(reject, error);
         request.destroy();
       });
       request.on('error', (error) => {
@@ -2449,7 +2584,7 @@ class CosyVoiceReaderPlugin extends Plugin {
         'Content-Length': Buffer.byteLength(body, 'utf8'),
         'Content-Type': 'application/ssml+xml',
         'Ocp-Apim-Subscription-Key': subscriptionKey,
-        'User-Agent': 'note-reader-cosyvoice/0.2.5',
+        'User-Agent': 'note-reader-cosyvoice/0.2.6',
         'X-Microsoft-OutputFormat': AZURE_SPEECH_OUTPUT_FORMAT,
       },
       body,
@@ -2478,7 +2613,7 @@ class CosyVoiceReaderPlugin extends Plugin {
         Authorization: `Bearer ${apiKey}`,
         'Content-Length': Buffer.byteLength(body, 'utf8'),
         'Content-Type': 'application/json',
-        'User-Agent': 'note-reader-cosyvoice/0.2.5',
+        'User-Agent': 'note-reader-cosyvoice/0.2.6',
       },
       body,
       outputPath,
@@ -2486,6 +2621,7 @@ class CosyVoiceReaderPlugin extends Plugin {
       serviceLabel: 'OpenRouter TTS',
       expectedContentType: 'audio/mpeg',
       failureHint: 'Check the selected API credential, model, voice, account balance, and privacy settings.',
+      retryTemporaryFailures: true,
     });
   }
 
@@ -3689,6 +3825,7 @@ module.exports = {
     hasEdgeTtsConsent,
     hasObsidianSecretStorage,
     hasOpenRouterConsent,
+    isRetryableRemoteError,
     isPdfFile,
     isOwnedCacheFileName,
     joinPdfPageText,
@@ -3703,6 +3840,7 @@ module.exports = {
     normalizeOpenRouterVoice,
     normalizeSettingsLanguage,
     normalizeSpeechEngine,
+    parseRetryAfterMs,
     resolveDefaultScriptPath,
     resolvePowerShellExecutable,
     readObsidianSecretValue,
