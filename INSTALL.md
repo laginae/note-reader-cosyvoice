@@ -2,7 +2,7 @@
 
 ## Install From ZIP
 
-1. Unzip `note-reader-cosyvoice-0.3.0-install.zip`.
+1. Unzip `note-reader-cosyvoice-0.3.1-install.zip`.
 2. Copy the `note-reader-cosyvoice` folder into your vault:
 
 ```text
@@ -135,7 +135,7 @@ The key value is never saved in the plugin's `data.json`. Every request enforces
 
 Temporary gateway, rate-limit, and network failures are retried up to three total attempts with short bounded delays. Credential, model, voice, privacy-policy, and malformed-request errors are not retried. A final `HTTP 502` means OpenRouter or its upstream provider remained unavailable after those attempts; it does not normally indicate an unsupported character. Short LaTeX absolute-value notation such as `$|Y_{k,h}|$` is converted to spoken text before transmission.
 
-For Edge, Azure, and OpenRouter, `Online chunk limits` defaults to `200,400,800` for both notes and PDFs. `Online synthesis prefetch` defaults to `0`, so the next chunk is not transmitted for synthesis until the current chunk finishes playing. Setting it to `1` may improve continuity but can consume allowance for one chunk that is never played.
+For Edge, Azure, and OpenRouter, `Online chunk limits` defaults to `200,400,800` for both notes and PDFs. `Online synthesis prefetch` defaults to `1`, so the next chunk may be prepared while the current chunk is playing. Prefetch remains capped at one future chunk; set it to `0` for strict on-demand synthesis.
 
 ## Temporary Data
 

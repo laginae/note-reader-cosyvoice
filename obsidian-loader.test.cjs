@@ -196,7 +196,7 @@ const testVaultPath = path.resolve('test-vault');
 const testAudioPath = path.join(testVaultPath, '.obsidian', 'plugins', 'note-reader-cosyvoice', 'cache', 'a.wav');
 assert.strictEqual(manifest.id, 'note-reader-cosyvoice');
 assert.strictEqual(manifest.name, 'Note and PDF Voice Reader');
-assert.strictEqual(manifest.version, '0.3.0');
+assert.strictEqual(manifest.version, '0.3.1');
 assert.ok(!/\bObsidian\b/.test(manifest.description));
 assert.ok(!code.includes('Note Reader CosyVoice'));
 assert.ok(!code.includes('CosyVoice Reader'));
@@ -283,7 +283,7 @@ assert.deepStrictEqual(moduleObject.exports.__test.createDefaultSettings(), {
   cleanupCache: true,
   chunkLimits: '40,80,120,160,280,320',
   onlineChunkLimits: '200,400,800',
-  onlinePrefetchChunks: 0,
+  onlinePrefetchChunks: 1,
   diagnosticLogging: false,
   edgeTtsConsent: false,
   edgeTtsExecutable: 'edge-tts',
@@ -365,12 +365,17 @@ assert.deepStrictEqual(
   [200, 400, 800]
 );
 assert.strictEqual(moduleObject.exports.__test.getSynthesisPrefetchCount({ speechEngine: 'local-cosyvoice' }), 1);
-assert.strictEqual(moduleObject.exports.__test.getSynthesisPrefetchCount({ speechEngine: 'openrouter-tts' }), 0);
+assert.strictEqual(moduleObject.exports.__test.getSynthesisPrefetchCount({ speechEngine: 'openrouter-tts' }), 1);
+assert.strictEqual(moduleObject.exports.__test.getSynthesisPrefetchCount({
+  onlinePrefetchChunks: 0,
+  speechEngine: 'openrouter-tts',
+}), 0);
 assert.strictEqual(moduleObject.exports.__test.getSynthesisPrefetchCount({
   onlinePrefetchChunks: 1,
   speechEngine: 'azure-speech',
 }), 1);
 assert.strictEqual(moduleObject.exports.__test.normalizeOnlinePrefetchChunks(99), 1);
+assert.strictEqual(moduleObject.exports.__test.normalizeOnlinePrefetchChunks('invalid'), 1);
 assert.strictEqual(moduleObject.exports.__test.normalizeEdgeTtsExecutable('  '), 'edge-tts');
 assert.strictEqual(moduleObject.exports.__test.normalizeEdgeTtsExecutable(' C:\\Tools\\edge-tts.exe '), 'C:\\Tools\\edge-tts.exe');
 assert.strictEqual(moduleObject.exports.__test.normalizeEdgeTtsVoice('  '), 'en-GB-RyanNeural');
@@ -1122,6 +1127,32 @@ assert.deepStrictEqual(chunkNavigationCalls, [-1, 1]);
   demandPlugin.activeSession = demandSession;
   await demandPlugin.runSpeechSession(demandSession);
   assert.deepStrictEqual(demandEvents, ['prepare:0', 'play:0', 'prepare:1', 'play:1']);
+
+  const prefetchPlugin = Object.create(PluginClass.prototype);
+  prefetchPlugin.sequence = 75;
+  prefetchPlugin.settings = {
+    ...moduleObject.exports.__test.createDefaultSettings(),
+    cleanupCache: false,
+    speechEngine: 'openrouter-tts',
+  };
+  prefetchPlugin.readerState = moduleObject.exports.__test.createReaderState();
+  prefetchPlugin.updateStatus = () => {};
+  const prefetchEvents = [];
+  prefetchPlugin.queuePrepareChunk = (_text, index) => {
+    prefetchEvents.push(`prepare:${index}`);
+    return Promise.resolve({ outputPath: `${index}.mp3` });
+  };
+  prefetchPlugin.playPreparedAudio = async (_prepared, _session, index) => {
+    prefetchEvents.push(`play:${index}`);
+  };
+  const prefetchSession = prefetchPlugin.createSpeechSession(['first', 'second'], 'note', {
+    engineLabel: 'OpenRouter TTS',
+    prefetchChunks: moduleObject.exports.__test.getSynthesisPrefetchCount(prefetchPlugin.settings),
+    speechEngine: 'openrouter-tts',
+  });
+  prefetchPlugin.activeSession = prefetchSession;
+  await prefetchPlugin.runSpeechSession(prefetchSession);
+  assert.deepStrictEqual(prefetchEvents, ['prepare:0', 'prepare:1', 'play:0', 'play:1']);
 
   const waitingPlugin = Object.create(PluginClass.prototype);
   waitingPlugin.sequence = 80;

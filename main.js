@@ -203,7 +203,7 @@ const SETTINGS_UI_TEXT = {
     onlineChunkLimitsName: 'Online chunk limits',
     onlineChunkLimitsDesc: 'Used by Edge, Azure, and OpenRouter for notes and PDFs. The default 200,400,800 balances startup latency, continuity, and request count.',
     onlinePrefetchName: 'Online synthesis prefetch',
-    onlinePrefetchDesc: 'How many future chunks an online engine may synthesize early. Zero avoids spending API allowance on audio you may never play.',
+    onlinePrefetchDesc: 'How many future chunks an online engine may synthesize early. The default 1 improves continuity while limiting unused work to at most one chunk; choose 0 for strict on-demand synthesis.',
     onlinePrefetchNone: '0 - synthesize only when needed',
     onlinePrefetchOne: '1 - prefetch one chunk',
     stripMarkdownName: 'Strip Markdown',
@@ -297,7 +297,7 @@ const SETTINGS_UI_TEXT = {
     onlineChunkLimitsName: '在线分段长度',
     onlineChunkLimitsDesc: 'Edge、Azure 和 OpenRouter 朗读笔记或 PDF 时使用。默认 200,400,800，用于平衡启动速度、连贯性和请求次数。',
     onlinePrefetchName: '在线合成预取',
-    onlinePrefetchDesc: '允许在线引擎提前合成的后续分段数量。选择 0 可避免为可能不会播放的音频消耗 API 额度。',
+    onlinePrefetchDesc: '允许在线引擎提前合成的后续分段数量。默认 1 可改善衔接，并把可能未使用的提前合成限制为最多一段；选择 0 可严格按需合成。',
     onlinePrefetchNone: '0 - 需要时才合成',
     onlinePrefetchOne: '1 - 提前合成一段',
     stripMarkdownName: '移除 Markdown 格式',
@@ -416,7 +416,7 @@ const DEFAULT_SETTINGS = {
   mathReadingLanguage: DEFAULT_MATH_READING_LANGUAGE,
   chunkLimits: DEFAULT_CHUNK_LIMITS.join(','),
   onlineChunkLimits: DEFAULT_ONLINE_CHUNK_LIMITS.join(','),
-  onlinePrefetchChunks: 0,
+  onlinePrefetchChunks: 1,
 };
 
 function normalizeLineBreaks(text) {
@@ -1102,7 +1102,7 @@ function normalizeOnlinePrefetchChunks(value) {
   const count = Math.floor(Number(value));
   return Number.isFinite(count)
     ? Math.min(MAX_ONLINE_PREFETCH_CHUNKS, Math.max(0, count))
-    : 0;
+    : DEFAULT_SETTINGS.onlinePrefetchChunks;
 }
 
 function getChunkLimitsForSpeechEngine(settings, speechEngine = normalizeSpeechEngine(settings && settings.speechEngine)) {
@@ -2470,8 +2470,11 @@ class CosyVoiceReaderPlugin extends Plugin {
       this.failSessionChunks(session, error);
     });
 
+    const prefetchNotice = configuration.prefetchChunks > 0
+      ? 'Up to one next chunk may be prepared early.'
+      : 'Audio is synthesized only as needed.';
     new Notice(
-      `${configuration.engineLabel}: progressively reading ${readingSourceLabel}. Online audio is synthesized only as needed.`,
+      `${configuration.engineLabel}: progressively reading ${readingSourceLabel}. ${prefetchNotice}`,
       6000
     );
     await this.runSpeechSession(session);

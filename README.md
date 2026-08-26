@@ -8,7 +8,7 @@ A privacy-first Obsidian desktop voice reader for Markdown notes and text-based 
 
 - **Privacy first:** Local CosyVoice is the default. Each online engine requires separate, explicit consent before it can receive text.
 - **Progressive PDF start:** Markdown notes and text-based PDFs are parsed locally; ordinary text-based PDFs typically yield their first speech chunk within a few seconds, while later pages continue parsing.
-- **Quota-conscious online synthesis:** Online modes default to synthesizing only the current chunk, so stopping early does not spend API allowance on unsynthesized later chunks.
+- **Bounded online prefetch:** Online modes prepare at most one upcoming chunk by default for smoother transitions. Set prefetch to `0` for strict on-demand synthesis.
 - **Flexible PDF selection reading:** Continue reading from a selected position in a PDF, or read only the selected text.
 
 Here, a text-based PDF means a PDF with selectable embedded text. Scanned or image-only PDFs need OCR first.
@@ -34,7 +34,7 @@ Plugin settings. The script path shown here is a redacted example:
 - Lets you choose `Local CosyVoice`, `Microsoft Edge online voice`, `Microsoft Azure Speech`, or `OpenRouter TTS` in settings. Local CosyVoice is the default.
 - Lets you switch the complete plugin settings page between English and Chinese.
 - Requires a separate opt-in before each online engine can receive text.
-- Uses separate local and online chunk limits. Online notes and PDFs default to `200,400,800`, with zero future-chunk synthesis prefetch by default.
+- Uses separate local and online chunk limits. Online notes and PDFs default to `200,400,800`, with at most one future chunk synthesized early by default.
 - Uses Obsidian SecretStorage for Azure and OpenRouter API keys by default on Obsidian 1.11.4 or later, with an external key-file compatibility option.
 - Provides common Chinese and English voice presets, model-specific OpenRouter voice menus, and custom voice ID fields.
 - Cleans Markdown before synthesis and converts Markdown tables into speech-friendly column and row descriptions while skipping empty cells.
@@ -57,7 +57,7 @@ By default, the plugin uses local TTS. In `Local CosyVoice` mode, the plugin its
 
 PDF extraction uses Obsidian's bundled PDF.js and `Vault.readBinary`; the PDF file itself is not uploaded by this feature. To support PDF selection commands, the plugin temporarily keeps the selection's page number and up to 2,000 characters of locator text in memory only; it is not saved to settings or diagnostic logs. When an online speech engine is selected and its consent is enabled, extracted PDF text chunks are transmitted under the same rules as note text. Scanned or image-only PDFs need OCR before the plugin can read them.
 
-Edge, Azure, and OpenRouter are opt-in online modes. Edge passes each chunk to the configured `edge-tts` executable. Azure sends each chunk by HTTPS to the selected Azure Speech cloud and region. OpenRouter sends each chunk to OpenRouter and an eligible upstream TTS provider. The plugin will not start an online mode until its separate online-processing consent setting is enabled. OpenRouter consent permits that transmission only; it does not permit non-ZDR routing. By default, only the chunk currently needed for playback is synthesized; later chunks are neither transmitted nor billed by the selected service unless playback reaches them. Provider billing units vary, so this limits avoidable requests rather than guaranteeing a fixed cost reduction.
+Edge, Azure, and OpenRouter are opt-in online modes. Edge passes each chunk to the configured `edge-tts` executable. Azure sends each chunk by HTTPS to the selected Azure Speech cloud and region. OpenRouter sends each chunk to OpenRouter and an eligible upstream TTS provider. The plugin will not start an online mode until its separate online-processing consent setting is enabled. OpenRouter consent permits that transmission only; it does not permit non-ZDR routing. By default, the plugin may synthesize the next chunk while the current chunk is playing, but it never prefetches more than one future chunk. Stopping early can therefore leave at most one prefetched chunk unused. Set prefetch to `0` for strict on-demand synthesis. Provider billing units vary, so this bounds avoidable work rather than guaranteeing a fixed cost reduction.
 
 Temporary text and audio are stored in a vault-specific folder under the operating system temporary directory, not inside the Obsidian vault. With `Clean temporary audio` enabled, plaintext chunk files are removed immediately after synthesis, remaining session files are removed when reading ends or stops, and stale plugin-owned files plus the legacy in-vault cache are cleaned at startup. Diagnostic logging is off by default; when enabled, it records only bounded failure metadata without note names, note text, or child-process output.
 
@@ -224,7 +224,7 @@ Use `Local chunk limits` to balance local startup latency and synthesis stabilit
 
 `Online chunk limits` applies to both notes and PDFs in Edge, Azure, and OpenRouter modes. Its default is `200,400,800`, which uses a shorter first request and longer later requests to balance startup time, continuity, and request count.
 
-`Online synthesis prefetch` defaults to `0`: the plugin synthesizes the current chunk, plays it, and only then requests the next chunk. This avoids spending API allowance on later audio when you stop early. Set it to `1` only when smoother transitions matter more than the possibility of one unused request.
+`Online synthesis prefetch` defaults to `1`: while the current chunk is playing, the plugin may prepare the next chunk to improve continuity. It never prepares more than one future chunk, so stopping early can leave at most one prefetched request unused. Set it to `0` when avoiding every unused future request matters more than the pause between chunks.
 
 ## Commands
 
