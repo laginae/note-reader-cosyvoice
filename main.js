@@ -1339,13 +1339,13 @@ class CosyVoiceReaderPlugin extends Plugin {
       })
     );
 
-    this.addRibbonIcon('volume-2', 'Open CosyVoice reader controls', () => {
+    this.addRibbonIcon('volume-2', 'Open voice reader controls', () => {
       void this.activateControlView();
     });
 
     this.addCommand({
       id: 'open-control-panel',
-      name: 'Open CosyVoice reader controls',
+      name: 'Open voice reader controls',
       callback: () => {
         void this.activateControlView();
       },
@@ -1353,7 +1353,7 @@ class CosyVoiceReaderPlugin extends Plugin {
 
     this.addCommand({
       id: 'read-current-note',
-      name: 'Read current note or PDF with CosyVoice',
+      name: 'Read current note or PDF aloud',
       callback: () => {
         void this.readCurrentNote();
       },
@@ -1361,7 +1361,7 @@ class CosyVoiceReaderPlugin extends Plugin {
 
     this.addCommand({
       id: 'read-current-pdf',
-      name: 'Read current PDF with CosyVoice',
+      name: 'Read current PDF aloud',
       checkCallback: (checking) => {
         const file = typeof this.app.workspace.getActiveFile === 'function'
           ? this.app.workspace.getActiveFile()
@@ -1378,7 +1378,7 @@ class CosyVoiceReaderPlugin extends Plugin {
 
     this.addCommand({
       id: 'read-selection',
-      name: 'Read selection with CosyVoice',
+      name: 'Read selection aloud',
       callback: () => {
         void this.readSelection();
       },
@@ -1386,7 +1386,7 @@ class CosyVoiceReaderPlugin extends Plugin {
 
     this.addCommand({
       id: 'read-from-selection',
-      name: 'Read from selection with CosyVoice',
+      name: 'Read from selection aloud',
       callback: () => {
         void this.readFromSelection();
       },
@@ -1394,7 +1394,7 @@ class CosyVoiceReaderPlugin extends Plugin {
 
     this.addCommand({
       id: 'pause-or-resume',
-      name: 'Pause or resume CosyVoice reading',
+      name: 'Pause or resume voice reading',
       callback: () => {
         void this.pauseOrResume();
       },
@@ -1402,7 +1402,7 @@ class CosyVoiceReaderPlugin extends Plugin {
 
     this.addCommand({
       id: 'stop-reading',
-      name: 'Stop CosyVoice reading',
+      name: 'Stop voice reading',
       callback: () => {
         void this.stopReading();
       },
@@ -1511,7 +1511,7 @@ class CosyVoiceReaderPlugin extends Plugin {
     const adapter = this.app.vault.adapter;
 
     if (!adapter || typeof adapter.getBasePath !== 'function') {
-      throw new Error('Note Reader CosyVoice requires the desktop FileSystemAdapter.');
+      throw new Error('Note and PDF Voice Reader requires the desktop FileSystemAdapter.');
     }
 
     this.vaultBasePath = adapter.getBasePath();
@@ -2449,7 +2449,7 @@ class CosyVoiceReaderPlugin extends Plugin {
         'Content-Length': Buffer.byteLength(body, 'utf8'),
         'Content-Type': 'application/ssml+xml',
         'Ocp-Apim-Subscription-Key': subscriptionKey,
-        'User-Agent': 'note-reader-cosyvoice/0.2.4',
+        'User-Agent': 'note-reader-cosyvoice/0.2.5',
         'X-Microsoft-OutputFormat': AZURE_SPEECH_OUTPUT_FORMAT,
       },
       body,
@@ -2478,7 +2478,7 @@ class CosyVoiceReaderPlugin extends Plugin {
         Authorization: `Bearer ${apiKey}`,
         'Content-Length': Buffer.byteLength(body, 'utf8'),
         'Content-Type': 'application/json',
-        'User-Agent': 'note-reader-cosyvoice/0.2.4',
+        'User-Agent': 'note-reader-cosyvoice/0.2.5',
       },
       body,
       outputPath,
@@ -2949,7 +2949,7 @@ class CosyVoiceReaderView extends ItemView {
   }
 
   getDisplayText() {
-    return 'CosyVoice Reader';
+    return 'Voice Reader';
   }
 
   getIcon() {
@@ -2971,11 +2971,11 @@ class CosyVoiceReaderView extends ItemView {
     root.empty();
     root.addClass('note-reader-cosyvoice-view');
     root.setAttribute('tabindex', '0');
-    root.setAttribute('aria-label', 'CosyVoice reader controls');
+    root.setAttribute('aria-label', 'Voice reader controls');
     root.addEventListener('keydown', this.handlePanelKeydown);
 
     const header = root.createDiv({ cls: 'note-reader-cosyvoice-panel-header' });
-    header.createEl('h3', { text: 'CosyVoice Reader' });
+    header.createEl('h3', { text: 'Voice Reader' });
     header.createDiv({ cls: `note-reader-cosyvoice-state is-${state.status}`, text: state.label });
 
     const progressWrap = root.createDiv({ cls: 'note-reader-cosyvoice-progress-wrap' });
@@ -3174,7 +3174,7 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
     const { containerEl } = this;
     containerEl.empty();
 
-    containerEl.createEl('h2', { text: 'Note Reader CosyVoice' });
+    containerEl.createEl('h2', { text: 'Note and PDF Voice Reader' });
     const settingsLanguage = normalizeSettingsLanguage(this.plugin.settings.settingsLanguage);
     const ui = getSettingsUiText(settingsLanguage);
     const selectedSpeechEngine = normalizeSpeechEngine(this.plugin.settings.speechEngine);

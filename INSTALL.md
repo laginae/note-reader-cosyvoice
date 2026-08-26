@@ -2,7 +2,7 @@
 
 ## Install From ZIP
 
-1. Unzip `note-reader-cosyvoice-0.2.4-install.zip`.
+1. Unzip `note-reader-cosyvoice-0.2.5-install.zip`.
 2. Copy the `note-reader-cosyvoice` folder into your vault:
 
 ```text
@@ -11,12 +11,12 @@
 
 3. In Obsidian, open `Settings -> Community plugins`.
 4. Turn off Restricted mode if required.
-5. Enable `Note Reader CosyVoice`.
+5. Enable `Note and PDF Voice Reader`.
 6. Run `Open CosyVoice reader controls` from the command palette, or click the ribbon icon.
 
 ## Choose Speech Engine
 
-Open `Settings -> Note Reader CosyVoice` and choose `Speech engine`.
+Open `Settings -> Note and PDF Voice Reader` and choose `Speech engine`.
 
 - `Local CosyVoice` is the default and uses your configured PowerShell wrapper.
 - `Microsoft Edge online voice` calls the configured `edge-tts` command-line tool and sends text to Microsoft Edge TTS after explicit consent. Its default voice is UK English male `en-GB-RyanNeural`.
@@ -27,7 +27,7 @@ On Obsidian 1.11.4 or later, Azure and OpenRouter use Obsidian SecretStorage by 
 
 ## Configure Local CosyVoice
 
-Open `Settings -> Note Reader CosyVoice` and set `CosyVoice script` if your wrapper is not at:
+Open `Settings -> Note and PDF Voice Reader` and set `CosyVoice script` if your wrapper is not at:
 
 ```text
 %LOCALAPPDATA%\note-reader-cosyvoice\cosyvoice-wrapper.ps1

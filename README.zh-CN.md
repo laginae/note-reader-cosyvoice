@@ -1,24 +1,24 @@
-# Note Reader CosyVoice
+# Note and PDF Voice Reader
 
 [English README](README.md)
 
-Note Reader CosyVoice 是一个桌面端 Obsidian 插件，用于把当前 Markdown 笔记、可搜索 PDF、选中文本，或从选中位置开始的后续内容交给本地 CosyVoice、Microsoft Edge 在线语音、用户自己的 Microsoft Azure Speech 资源或 OpenRouter TTS 朗读。插件本身不包含 CosyVoice、语音模型或云端语音服务，它只负责文本提取与清理、分块、调用语音引擎、播放音频和提供控制面板。
+Note and PDF Voice Reader 是一个桌面端 Obsidian 插件，用于把当前 Markdown 笔记、可搜索 PDF、选中文本，或从选中位置开始的后续内容交给本地 CosyVoice、Microsoft Edge 在线语音、用户自己的 Microsoft Azure Speech 资源或 OpenRouter TTS 朗读。插件本身不包含 CosyVoice、语音模型或云端语音服务，它只负责文本提取与清理、分块、调用语音引擎、播放音频和提供控制面板。
 
 ## 界面截图
 
 右侧朗读控制面板：
 
-![CosyVoice Reader 控制面板](docs/images/reader-controls.png)
+![Voice Reader 控制面板](docs/images/reader-controls.png)
 
 插件设置页。截图中的脚本路径是脱敏示例：
 
-![Note Reader CosyVoice 设置页](docs/images/plugin-settings.png)
+![Note and PDF Voice Reader 设置页](docs/images/plugin-settings.png)
 
 ## 功能
 
 - 朗读当前 Markdown 笔记、可搜索 PDF、当前选中文本，或从选中位置开始朗读到笔记结尾。
 - 使用 Obsidian 内置 PDF.js 在本地逐页提取 PDF 文本，并在控制面板显示进度和支持停止提取。
-- 在右侧边栏打开 `CosyVoice Reader` 控制面板。
+- 在右侧边栏打开 `Voice Reader` 控制面板。
 - 显示合成、播放状态、整体朗读进度、百分比和当前文本预览。
 - 支持暂停、继续、停止；控制面板获得焦点时可用空格暂停/继续，可连续按左右方向键按 5 秒步进前后跳转；进度条两侧提供上一段/下一段按钮；也支持在当前已加载音频块内点击或拖动进度条。
 - 右侧边栏提供语速按钮：`1x`、`1.25x`、`1.5x`、`2x`、`1.1x`、`1.2x`、`1.3x`、`1.4x`。
@@ -84,7 +84,7 @@ INSTALL.md
 LICENSE
 ```
 
-4. 重新打开 Obsidian，进入 `Settings -> Community plugins`，启用 `Note Reader CosyVoice`。
+4. 重新打开 Obsidian，进入 `Settings -> Community plugins`，启用 `Note and PDF Voice Reader`。
 5. 进入插件设置，选择 `Speech engine`。默认本地模式需要填写 CosyVoice 包装脚本路径；Edge 模式需要安装 `edge-tts`；Azure 模式需要 Azure Speech 资源及 SecretStorage 或库外密钥文件；OpenRouter 模式需要 OpenRouter 账户、额度及 SecretStorage 或库外 API 密钥文件。
 
 ## 本地 CosyVoice 要求
@@ -150,7 +150,7 @@ edge-tts --help
 edge-tts --list-voices
 ```
 
-然后进入 `Settings -> Note Reader CosyVoice`：
+然后进入 `Settings -> Note and PDF Voice Reader`：
 
 1. 把 `Speech engine` 改为 `Microsoft Edge online voice`。
 2. 开启 `Allow Edge online processing`。
@@ -180,7 +180,7 @@ Azure 模式使用官方实时 Speech REST 接口，支持 Azure 公有云和由
 C:\Users\你的用户名\AppData\Local\note-reader-cosyvoice\azure-speech-key.txt
 ```
 
-然后进入 `Settings -> Note Reader CosyVoice`：
+然后进入 `Settings -> Note and PDF Voice Reader`：
 
 1. 把 `Speech engine` 改为 `Microsoft Azure Speech`。
 2. 开启 `Allow Azure online processing`。
@@ -203,7 +203,7 @@ OpenRouter 提供与 OpenAI Audio Speech 兼容的专用 TTS 接口，输入文�
 C:\Users\你的用户名\AppData\Local\note-reader-cosyvoice\openrouter-api-key.txt
 ```
 
-然后进入 `Settings -> Note Reader CosyVoice`：
+然后进入 `Settings -> Note and PDF Voice Reader`：
 
 1. 把 `Speech engine` 改为 `OpenRouter TTS`。
 2. 开启 `Allow OpenRouter online processing`。
@@ -258,19 +258,19 @@ Edge、Azure 与 OpenRouter 是和本地包装脚本并列的在线语音模式�
 
 插件提供以下命令：
 
-- `Open CosyVoice reader controls`
-- `Read current note or PDF with CosyVoice`
-- `Read current PDF with CosyVoice`
-- `Read selection with CosyVoice`
-- `Read from selection with CosyVoice`
-- `Pause or resume CosyVoice reading`
-- `Stop CosyVoice reading`
+- `Open voice reader controls`
+- `Read current note or PDF aloud`
+- `Read current PDF aloud`
+- `Read selection aloud`
+- `Read from selection aloud`
+- `Pause or resume voice reading`
+- `Stop voice reading`
 
 也可以使用编辑器中的按钮或右侧边栏控制面板。语速按钮会影响后续合成的音频块；已经合成并正在播放的音频不会被重新变速，除非停止后重新开始朗读。
 
 ## 键盘与进度条说明
 
-右侧边栏 `CosyVoice Reader` 控制面板获得焦点时，空格可以暂停或继续朗读。播放中只要当前音频可用，左方向键或右方向键会按 5 秒步进后退或前进。
+右侧边栏 `Voice Reader` 控制面板获得焦点时，空格可以暂停或继续朗读。播放中只要当前音频可用，左方向键或右方向键会按 5 秒步进后退或前进。
 
 进度条两侧的三角按钮可以跳到上一段文本分段或下一段文本分段。已经合成过的分段会尽量复用；如果目标分段尚未合成，插件会先合成再播放。
 

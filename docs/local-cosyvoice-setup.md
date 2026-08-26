@@ -28,7 +28,7 @@ The plugin does not auto-detect this path because community review tools warn on
 %LOCALAPPDATA%\note-reader-cosyvoice\cosyvoice-wrapper.ps1
 ```
 
-You can use any path. Configure it in `Settings -> Note Reader CosyVoice -> CosyVoice script`.
+You can use any path. Configure it in `Settings -> Note and PDF Voice Reader -> CosyVoice script`.
 
 ## Install CosyVoice Locally
 

@@ -1,4 +1,4 @@
-# Note Reader CosyVoice
+# Note and PDF Voice Reader
 
 [中文说明](README.zh-CN.md)
 
@@ -8,17 +8,17 @@ An Obsidian desktop plugin that reads the current Markdown note, searchable PDF,
 
 Reader control panel:
 
-![CosyVoice Reader control panel](docs/images/reader-controls.png)
+![Voice Reader control panel](docs/images/reader-controls.png)
 
 Plugin settings. The script path shown here is a redacted example:
 
-![Note Reader CosyVoice settings](docs/images/plugin-settings.png)
+![Note and PDF Voice Reader settings](docs/images/plugin-settings.png)
 
 ## Features
 
 - Reads the current Markdown note, searchable PDF, current note selection, or from the current selection start to the end of the note.
 - Extracts PDF text locally with Obsidian's built-in PDF.js, with page progress and cancellation from the control panel.
-- Opens a right-side `CosyVoice Reader` control panel.
+- Opens a right-side `Voice Reader` control panel.
 - Shows synthesis/playback phase, whole-reading progress, percentage, and text preview.
 - Supports pause, resume, stop, Space to pause or resume in the control panel, repeated Left/Right Arrow 5-second seeking, previous/next chunk buttons, and progress dragging while the current audio chunk is playing.
 - Provides right-panel speed presets: `1x`, `1.25x`, `1.5x`, `2x`, `1.1x`, `1.2x`, `1.3x`, and `1.4x`.
@@ -119,7 +119,7 @@ To list available voices:
 edge-tts --list-voices
 ```
 
-Then open `Settings -> Note Reader CosyVoice`:
+Then open `Settings -> Note and PDF Voice Reader`:
 
 1. Set `Speech engine` to `Microsoft Edge online voice`.
 2. Enable `Allow Edge online processing`.
@@ -149,7 +149,7 @@ If you select the external key-file fallback, a suitable path is:
 C:\Users\you\AppData\Local\note-reader-cosyvoice\azure-speech-key.txt
 ```
 
-Then open `Settings -> Note Reader CosyVoice`:
+Then open `Settings -> Note and PDF Voice Reader`:
 
 1. Set `Speech engine` to `Microsoft Azure Speech`.
 2. Enable `Allow Azure online processing`.
@@ -172,7 +172,7 @@ Create a dedicated API key in [OpenRouter API Keys](https://openrouter.ai/settin
 C:\Users\you\AppData\Local\note-reader-cosyvoice\openrouter-api-key.txt
 ```
 
-Then open `Settings -> Note Reader CosyVoice`:
+Then open `Settings -> Note and PDF Voice Reader`:
 
 1. Set `Speech engine` to `OpenRouter TTS`.
 2. Enable `Allow OpenRouter online processing`.
@@ -210,17 +210,17 @@ Use `Chunk limits` to balance startup latency and synthesis stability:
 
 ## Commands
 
-- `Open CosyVoice reader controls`
-- `Read current note or PDF with CosyVoice`
-- `Read current PDF with CosyVoice`
-- `Read selection with CosyVoice`
-- `Read from selection with CosyVoice`
-- `Pause or resume CosyVoice reading`
-- `Stop CosyVoice reading`
+- `Open voice reader controls`
+- `Read current note or PDF aloud`
+- `Read current PDF aloud`
+- `Read selection aloud`
+- `Read from selection aloud`
+- `Pause or resume voice reading`
+- `Stop voice reading`
 
 ## Keyboard And Progress Seeking
 
-When the `CosyVoice Reader` control panel is focused, Space pauses or resumes reading, and Left Arrow or Right Arrow seek backward or forward in 5-second steps while audio is available.
+When the `Voice Reader` control panel is focused, Space pauses or resumes reading, and Left Arrow or Right Arrow seek backward or forward in 5-second steps while audio is available.
 
 The triangle buttons beside the progress bar jump to the previous text chunk or the next text chunk. Already synthesized chunks are reused when possible; otherwise the target chunk is synthesized before playback.
 
