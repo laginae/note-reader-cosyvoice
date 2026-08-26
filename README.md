@@ -16,7 +16,7 @@ Plugin settings. The script path shown here is a redacted example:
 
 ## Features
 
-- Reads the current Markdown note, searchable PDF, current note selection, or from the current selection start to the end of the note.
+- Reads the current Markdown note or searchable PDF, selected text in either view, or from a Markdown/PDF selection start to the end of the active file.
 - Extracts PDF text locally with Obsidian's built-in PDF.js, with page progress and cancellation from the control panel.
 - Opens a right-side `Voice Reader` control panel.
 - Shows synthesis/playback phase, whole-reading progress, percentage, and text preview.
@@ -45,7 +45,7 @@ Plugin settings. The script path shown here is a redacted example:
 
 By default, the plugin uses local TTS. In `Local CosyVoice` mode, the plugin itself does not send note or extracted PDF text to Microsoft, OpenAI, or another remote TTS service. The configured wrapper remains part of your trust boundary and may make its own network requests.
 
-PDF extraction uses Obsidian's bundled PDF.js and `Vault.readBinary`; the PDF file itself is not uploaded by this feature. When an online speech engine is selected and its consent is enabled, extracted PDF text chunks are transmitted under the same rules as note text. Scanned or image-only PDFs need OCR before the plugin can read them.
+PDF extraction uses Obsidian's bundled PDF.js and `Vault.readBinary`; the PDF file itself is not uploaded by this feature. To support PDF selection commands, the plugin temporarily keeps the selection's page number and up to 2,000 characters of locator text in memory only; it is not saved to settings or diagnostic logs. When an online speech engine is selected and its consent is enabled, extracted PDF text chunks are transmitted under the same rules as note text. Scanned or image-only PDFs need OCR before the plugin can read them.
 
 Edge, Azure, and OpenRouter are opt-in online modes. Edge passes each chunk to the configured `edge-tts` executable. Azure sends each chunk by HTTPS to the selected Azure Speech cloud and region. OpenRouter sends each chunk to OpenRouter and an eligible upstream TTS provider. The plugin will not start an online mode until its separate online-processing consent setting is enabled. OpenRouter consent permits that transmission only; it does not permit non-ZDR routing.
 
@@ -217,6 +217,7 @@ Use `Chunk limits` to balance startup latency and synthesis stability:
 - `Open voice reader controls`
 - `Read current note or PDF aloud`
 - `Read current PDF aloud`
+- `Read current PDF from selection aloud`
 - `Read selection aloud`
 - `Read from selection aloud`
 - `Pause or resume voice reading`
@@ -232,7 +233,9 @@ The progress bar shows whole-reading progress across all chunks. While audio is 
 
 ## PDF Reading
 
-Open a PDF stored in the vault, then click `Read file` in the control panel or run either PDF-capable command. Text extraction happens page by page before speech synthesis begins. The Stop button cancels extraction.
+Open a PDF stored in the vault, then click `Read file` in the control panel or run a PDF-capable command. Text extraction happens page by page before speech synthesis begins. The Stop button cancels extraction.
+
+To start at a specific position, select a recognizable phrase in the PDF text layer and click `Read from selection`, or run `Read current PDF from selection aloud`. The plugin starts extraction on that page, matches the selected phrase in the extracted text, and reads through the end of the PDF. `Read selection` reads only the selected PDF text. If the visual text layer cannot be matched to the PDF's embedded text order, the plugin displays a notice and starts at the beginning of the selected page.
 
 The PDF must contain selectable embedded text. Password-protected, damaged, scanned, or image-only files cannot be extracted; run OCR or unlock the file first. Complex multi-column documents are read in the text order embedded by the PDF producer, which may not always match the visual order.
 

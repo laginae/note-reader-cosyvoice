@@ -16,7 +16,7 @@ Note and PDF Voice Reader 是一个桌面端 Obsidian 插件，用于把当前 M
 
 ## 功能
 
-- 朗读当前 Markdown 笔记、可搜索 PDF、当前选中文本，或从选中位置开始朗读到笔记结尾。
+- 朗读当前 Markdown 笔记或可搜索 PDF、两种视图中的当前选中文本，或从 Markdown/PDF 的选中位置开始朗读到当前文件结尾。
 - 使用 Obsidian 内置 PDF.js 在本地逐页提取 PDF 文本，并在控制面板显示进度和支持停止提取。
 - 在右侧边栏打开 `Voice Reader` 控制面板。
 - 显示合成、播放状态、整体朗读进度、百分比和当前文本预览。
@@ -44,7 +44,7 @@ Note and PDF Voice Reader 是一个桌面端 Obsidian 插件，用于把当前 M
 
 插件默认使用本地语音合成。在 `Local CosyVoice` 模式下，插件本身不会把笔记内容或从 PDF 提取的文本发送到 Microsoft、OpenAI 或其他远程 TTS 服务；但你配置的包装脚本属于同一信任边界，它仍可能按照自身实现发起网络请求。
 
-PDF 提取使用 Obsidian 内置 PDF.js 和 `Vault.readBinary`，此功能不会上传 PDF 文件本身。如果选择在线语音引擎并开启对应同意开关，从 PDF 提取出的文本分段会按照与笔记文本相同的规则发送。扫描版或纯图片 PDF 必须先完成 OCR 才能朗读。
+PDF 提取使用 Obsidian 内置 PDF.js 和 `Vault.readBinary`，此功能不会上传 PDF 文件本身。为支持 PDF 选择位置命令，插件只在内存中临时保留所选页码和最多 2,000 个字符的定位文本，不会写入设置或诊断日志。如果选择在线语音引擎并开启对应同意开关，从 PDF 提取出的文本分段会按照与笔记文本相同的规则发送。扫描版或纯图片 PDF 必须先完成 OCR 才能朗读。
 
 Edge、Azure 与 OpenRouter 都是主动选择的在线模式。Edge 模式把每个文本分段交给配置的 `edge-tts` 程序；Azure 模式通过 HTTPS 把分段发送到所选云环境和区域下的 Azure Speech 资源；OpenRouter 模式把分段发送到 OpenRouter 及符合条件的上游 TTS 供应商。三种模式都必须先分别开启在线处理同意开关。OpenRouter 的同意开关只表示允许在线传输，不表示允许非 ZDR 路由。
 
@@ -265,6 +265,7 @@ Edge、Azure 与 OpenRouter 是和本地包装脚本并列的在线语音模式�
 - `Open voice reader controls`
 - `Read current note or PDF aloud`
 - `Read current PDF aloud`
+- `Read current PDF from selection aloud`
 - `Read selection aloud`
 - `Read from selection aloud`
 - `Pause or resume voice reading`
@@ -282,7 +283,9 @@ Edge、Azure 与 OpenRouter 是和本地包装脚本并列的在线语音模式�
 
 ## PDF 朗读
 
-先在 Obsidian 中打开库内 PDF，再点击控制面板中的 `Read file`，或者执行任一支持 PDF 的命令。插件会先逐页提取文本，再开始语音合成；提取过程中可用停止按钮取消。
+先在 Obsidian 中打开库内 PDF，再点击控制面板中的 `Read file`，或者执行支持 PDF 的命令。插件会先逐页提取文本，再开始语音合成；提取过程中可用停止按钮取消。
+
+若要从指定位置开始，请先在 PDF 文本层选中一段容易识别的文字，再点击 `Read from selection`，或执行 `Read current PDF from selection aloud`。插件会从该页开始提取，在第一页匹配选中文字，然后朗读到 PDF 末尾。`Read selection` 只朗读当前选中的 PDF 文字。如果视觉文本层与 PDF 内嵌文本顺序无法精确匹配，插件会显示提示并改为从所选页开头朗读。
 
 PDF 必须包含可选择的内嵌文本。加密、损坏、扫描版或纯图片 PDF 无法直接提取，需要先解锁或执行 OCR。复杂多栏论文的朗读顺序取决于 PDF 制作者写入的文本顺序，因此可能与页面视觉顺序不完全一致。
 

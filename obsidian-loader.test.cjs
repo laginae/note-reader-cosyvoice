@@ -196,7 +196,7 @@ const testVaultPath = path.resolve('test-vault');
 const testAudioPath = path.join(testVaultPath, '.obsidian', 'plugins', 'note-reader-cosyvoice', 'cache', 'a.wav');
 assert.strictEqual(manifest.id, 'note-reader-cosyvoice');
 assert.strictEqual(manifest.name, 'Note and PDF Voice Reader');
-assert.strictEqual(manifest.version, '0.2.8');
+assert.strictEqual(manifest.version, '0.2.9');
 assert.ok(!/\bObsidian\b/.test(manifest.description));
 assert.ok(!code.includes('Note Reader CosyVoice'));
 assert.ok(!code.includes('CosyVoice Reader'));
@@ -660,6 +660,49 @@ assert.strictEqual(
   moduleObject.exports.__test.joinPdfPageText(['First page.', '', '  第二页。  ']),
   'First page.\n\n第二页。'
 );
+assert.deepStrictEqual(
+  moduleObject.exports.__test.slicePdfTextFromSelection(
+    'Introduction.\nSelected passage continues on this page.',
+    'Selected passage'
+  ),
+  { matched: true, text: 'Selected passage continues on this page.' }
+);
+assert.deepStrictEqual(
+  moduleObject.exports.__test.slicePdfTextFromSelection(
+    'A multi-\ncolumn anchor continues.',
+    'multicolumn anchor'
+  ),
+  { matched: true, text: 'multicolumn anchor continues.' }
+);
+assert.deepStrictEqual(
+  moduleObject.exports.__test.slicePdfTextFromSelection('Page text only.', 'missing selection'),
+  { matched: false, text: 'Page text only.' }
+);
+const pdfSelectionRoot = {
+  contains(node) {
+    return node === pdfSelectionTextNode || node === pdfSelectionPage;
+  },
+};
+const pdfSelectionPage = {
+  nodeType: 1,
+  parentElement: pdfSelectionRoot,
+  getAttribute(name) {
+    return name === 'data-page-number' ? '3' : null;
+  },
+};
+const pdfSelectionTextNode = { nodeType: 3, parentElement: pdfSelectionPage };
+const pdfSelectionFile = { extension: 'pdf', name: 'paper.pdf', path: 'papers/paper.pdf' };
+const pdfSelectionContext = moduleObject.exports.__test.getPdfSelectionContext({
+  rangeCount: 1,
+  getRangeAt: () => ({ startContainer: pdfSelectionTextNode }),
+  toString: () => 'Selected PDF passage',
+}, [{ view: { containerEl: pdfSelectionRoot, file: pdfSelectionFile } }], null, 12345);
+assert.deepStrictEqual(pdfSelectionContext, {
+  capturedAt: 12345,
+  filePath: 'papers/paper.pdf',
+  pageNumber: 3,
+  selectedText: 'Selected PDF passage',
+});
 
 const root = new FakeElement('section');
 let pauseOrResumeCalls = 0;
@@ -903,6 +946,43 @@ assert.deepStrictEqual(chunkNavigationCalls, [-1, 1]);
   assert.strictEqual(pdfDestroyed, true);
   assert.strictEqual(pdfSession.pdfLoadingTask, null);
   assert.ok(pdfStatuses.some(({ label }) => label === 'PDF page 2/2'));
+
+  const selectedPdfPages = [];
+  mockPdfJsLib = {
+    getDocument: () => ({
+      promise: Promise.resolve({
+        numPages: 3,
+        getPage: async (pageNumber) => {
+          selectedPdfPages.push(pageNumber);
+          return {
+            cleanup: () => {},
+            getTextContent: async () => ({
+              items: pageNumber === 2
+                ? [
+                    { str: 'Before' },
+                    { str: 'selected' },
+                    { str: 'anchor' },
+                    { str: 'after' },
+                    { str: '.' },
+                  ]
+                : [{ str: 'Third' }, { str: 'page' }, { str: '.' }],
+            }),
+          };
+        },
+        destroy: async () => {},
+      }),
+    }),
+  };
+  const selectedPdfSession = { id: 43, stopped: false };
+  pdfPlugin.activeSession = selectedPdfSession;
+  pdfPlugin.sequence = selectedPdfSession.id;
+  const selectedPdfText = await pdfPlugin.extractPdfText(pdfFile, selectedPdfSession, {
+    selectedText: 'selected anchor',
+    startPageNumber: 2,
+  });
+  assert.strictEqual(selectedPdfText, 'selected anchor after.\n\nThird page.');
+  assert.deepStrictEqual(selectedPdfPages, [2, 3]);
+  assert.strictEqual(selectedPdfSession.pdfSelectionMatched, true);
   mockPdfJsLib = null;
 
   let cancelledPdfLoading = false;
@@ -948,6 +1028,22 @@ assert.deepStrictEqual(chunkNavigationCalls, [-1, 1]);
   };
   await routePlugin.readCurrentNote();
   assert.strictEqual(routedPdfFile, pdfFile);
+
+  const pdfFromSelectionRoutePlugin = Object.create(PluginClass.prototype);
+  let routedPdfSelectionFile = null;
+  pdfFromSelectionRoutePlugin.app = {
+    workspace: {
+      getActiveFile: () => pdfFile,
+    },
+  };
+  pdfFromSelectionRoutePlugin.getActiveMarkdownView = () => {
+    throw new Error('A PDF selection must not fall back to the last Markdown note.');
+  };
+  pdfFromSelectionRoutePlugin.readCurrentPdfFromSelection = async (file) => {
+    routedPdfSelectionFile = file;
+  };
+  await pdfFromSelectionRoutePlugin.readFromSelection();
+  assert.strictEqual(routedPdfSelectionFile, pdfFile);
 
   const credentialMigrationPlugin = Object.create(PluginClass.prototype);
   let migratedSettings = null;

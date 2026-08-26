@@ -411,6 +411,127 @@ function isPdfFile(file) {
   return Boolean(file && String(file.extension || '').toLowerCase() === 'pdf');
 }
 
+function getPdfFileIdentity(file) {
+  return String(file && (file.path || file.name) || '');
+}
+
+function getPdfPageNumberFromNode(node, root) {
+  let element = node && node.nodeType === 1 ? node : node && node.parentElement;
+
+  while (element) {
+    const getAttribute = typeof element.getAttribute === 'function'
+      ? (name) => element.getAttribute(name)
+      : () => null;
+    const pageNumberValue = getAttribute('data-page-number');
+    const pageNumber = Number(pageNumberValue);
+    if (pageNumberValue !== null && Number.isInteger(pageNumber) && pageNumber >= 1) {
+      return pageNumber;
+    }
+
+    const pageIndexValue = getAttribute('data-page-index');
+    const pageIndex = Number(pageIndexValue);
+    if (pageIndexValue !== null && Number.isInteger(pageIndex) && pageIndex >= 0) {
+      return pageIndex + 1;
+    }
+
+    const identity = `${getAttribute('id') || ''} ${getAttribute('aria-label') || ''}`;
+    const identityMatch = /(?:pageContainer|page[-_]|\bpage\s+)(\d+)\b/i.exec(identity);
+    if (identityMatch) {
+      return Number(identityMatch[1]);
+    }
+
+    if (element === root) {
+      break;
+    }
+    element = element.parentElement;
+  }
+
+  return null;
+}
+
+function getPdfSelectionContext(selection, leaves, fallbackFile = null, capturedAt = Date.now()) {
+  if (!selection || typeof selection.toString !== 'function' || typeof selection.getRangeAt !== 'function') {
+    return null;
+  }
+
+  const selectedText = selection.toString().trim();
+  if (!selectedText || Number(selection.rangeCount) < 1) {
+    return null;
+  }
+
+  let range;
+  try {
+    range = selection.getRangeAt(0);
+  } catch (error) {
+    return null;
+  }
+  const startNode = range && range.startContainer;
+  if (!startNode) {
+    return null;
+  }
+
+  for (const leaf of Array.isArray(leaves) ? leaves : []) {
+    const view = leaf && leaf.view;
+    const root = view && (view.containerEl || view.contentEl);
+    if (!root || typeof root.contains !== 'function' || !root.contains(startNode)) {
+      continue;
+    }
+
+    const file = isPdfFile(view.file) ? view.file : fallbackFile;
+    if (!isPdfFile(file)) {
+      continue;
+    }
+    const pageNumber = getPdfPageNumberFromNode(startNode, root);
+    if (!pageNumber) {
+      continue;
+    }
+
+    return {
+      capturedAt: Number(capturedAt) || Date.now(),
+      filePath: getPdfFileIdentity(file),
+      pageNumber,
+      selectedText: selectedText.slice(0, 2000),
+    };
+  }
+
+  return null;
+}
+
+function normalizePdfSelectionText(text) {
+  return normalizeLineBreaks(text)
+    .normalize('NFKC')
+    .replace(/\u00ad/g, '')
+    .replace(/([A-Za-z])-\s+(?=[a-z])/g, '$1')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function slicePdfTextFromSelection(pageText, selectedText) {
+  const page = normalizePdfSelectionText(pageText);
+  const selected = normalizePdfSelectionText(selectedText);
+  if (!page || !selected) {
+    return { matched: false, text: page };
+  }
+
+  const candidateLengths = [selected.length, 400, 240, 160, 100, 60, 30, 16, 8]
+    .map((length) => Math.min(selected.length, length))
+    .filter((length, index, values) => length >= 8 && values.indexOf(length) === index);
+  const pageLower = page.toLocaleLowerCase();
+
+  for (const length of candidateLengths) {
+    const candidate = selected.slice(0, length);
+    let matchIndex = page.indexOf(candidate);
+    if (matchIndex < 0) {
+      matchIndex = pageLower.indexOf(candidate.toLocaleLowerCase());
+    }
+    if (matchIndex >= 0) {
+      return { matched: true, text: page.slice(matchIndex) };
+    }
+  }
+
+  return { matched: false, text: page };
+}
+
 function isCjkCharacter(character) {
   return /[\u3040-\u30ff\u3400-\u9fff\uf900-\ufaff]/.test(String(character || ''));
 }
@@ -1564,6 +1685,7 @@ class CosyVoiceReaderPlugin extends Plugin {
     this.currentProcess = null;
     this.currentRequests = new Set();
     this.lastMarkdownView = null;
+    this.lastPdfSelection = null;
     this.pauseRequested = false;
     this.readerState = createReaderState();
     this.readerViews = new Set();
@@ -1587,6 +1709,11 @@ class CosyVoiceReaderPlugin extends Plugin {
         }
       })
     );
+    if (typeof document !== 'undefined') {
+      this.registerDomEvent(document, 'selectionchange', () => {
+        this.capturePdfSelection();
+      });
+    }
 
     this.addRibbonIcon('volume-2', 'Open voice reader controls', () => {
       void this.activateControlView();
@@ -1620,6 +1747,23 @@ class CosyVoiceReaderPlugin extends Plugin {
         }
         if (!checking) {
           void this.readCurrentPdf(file);
+        }
+        return true;
+      },
+    });
+
+    this.addCommand({
+      id: 'read-current-pdf-from-selection',
+      name: 'Read current PDF from selection aloud',
+      checkCallback: (checking) => {
+        const file = typeof this.app.workspace.getActiveFile === 'function'
+          ? this.app.workspace.getActiveFile()
+          : null;
+        if (!isPdfFile(file)) {
+          return false;
+        }
+        if (!checking) {
+          void this.readCurrentPdfFromSelection(file);
         }
         return true;
       },
@@ -1883,6 +2027,37 @@ class CosyVoiceReaderPlugin extends Plugin {
     this.renderReaderViews();
   }
 
+  capturePdfSelection() {
+    if (typeof document === 'undefined' || typeof document.getSelection !== 'function') {
+      return null;
+    }
+
+    const selection = document.getSelection();
+    const selectedText = selection && typeof selection.toString === 'function'
+      ? selection.toString().trim()
+      : '';
+    if (!selectedText) {
+      return null;
+    }
+
+    const workspace = this.app && this.app.workspace;
+    const leaves = workspace && typeof workspace.getLeavesOfType === 'function'
+      ? workspace.getLeavesOfType('pdf')
+      : [];
+    const activeFile = workspace && typeof workspace.getActiveFile === 'function'
+      ? workspace.getActiveFile()
+      : null;
+    const context = getPdfSelectionContext(selection, leaves, activeFile);
+    this.lastPdfSelection = context;
+    return context;
+  }
+
+  getPdfSelectionForFile(file) {
+    const liveSelection = this.capturePdfSelection();
+    const context = liveSelection || this.lastPdfSelection;
+    return context && context.filePath === getPdfFileIdentity(file) ? context : null;
+  }
+
   getActiveMarkdownView() {
     const view = this.app.workspace.getActiveViewOfType(MarkdownView) || this.lastMarkdownView;
 
@@ -1915,7 +2090,7 @@ class CosyVoiceReaderPlugin extends Plugin {
     await this.startReading(text, selection && selection.trim() ? 'selection' : view.file?.basename || 'note');
   }
 
-  async readCurrentPdf(pdfFile = null) {
+  async readCurrentPdfFromSelection(pdfFile = null) {
     const file = pdfFile || (
       typeof this.app.workspace.getActiveFile === 'function'
         ? this.app.workspace.getActiveFile()
@@ -1925,6 +2100,31 @@ class CosyVoiceReaderPlugin extends Plugin {
       new Notice('CosyVoice: no active PDF file.');
       return;
     }
+
+    const selectionContext = this.getPdfSelectionForFile(file);
+    if (!selectionContext) {
+      new Notice('CosyVoice PDF: select text in the PDF first, then try again.', 8000);
+      return;
+    }
+
+    await this.readCurrentPdf(file, { selectionContext });
+  }
+
+  async readCurrentPdf(pdfFile = null, options = {}) {
+    const file = pdfFile || (
+      typeof this.app.workspace.getActiveFile === 'function'
+        ? this.app.workspace.getActiveFile()
+        : null
+    );
+    if (!isPdfFile(file)) {
+      new Notice('CosyVoice: no active PDF file.');
+      return;
+    }
+
+    const selectionContext = options && options.selectionContext
+      && getPdfFileIdentity(file) === options.selectionContext.filePath
+      ? options.selectionContext
+      : null;
 
     await this.activateControlView();
     await this.stopReading({ silent: true });
@@ -1937,6 +2137,7 @@ class CosyVoiceReaderPlugin extends Plugin {
       files: [],
       kind: 'pdf-extraction',
       pdfLoadingTask: null,
+      pdfSelectionMatched: null,
       totalChunks: 0,
     };
     this.activeSession = session;
@@ -1947,7 +2148,9 @@ class CosyVoiceReaderPlugin extends Plugin {
       canSeek: false,
       canStop: true,
       currentChunk: 0,
-      currentText: 'Loading PDF text...',
+      currentText: selectionContext
+        ? `Loading PDF text from page ${selectionContext.pageNumber}...`
+        : 'Loading PDF text...',
       error: '',
       isPaused: false,
       phase: 'extracting PDF',
@@ -1958,7 +2161,10 @@ class CosyVoiceReaderPlugin extends Plugin {
     });
 
     try {
-      const text = await this.extractPdfText(file, session);
+      const text = await this.extractPdfText(file, session, selectionContext ? {
+        selectedText: selectionContext.selectedText,
+        startPageNumber: selectionContext.pageNumber,
+      } : {});
       if (!this.isActive(session)) {
         return;
       }
@@ -1969,7 +2175,16 @@ class CosyVoiceReaderPlugin extends Plugin {
       session.stopped = true;
       this.activeSession = null;
       this.updateStatus('CosyVoice idle', createReaderState());
-      await this.startReading(text, `${sourceLabel} (PDF)`);
+      if (selectionContext && session.pdfSelectionMatched === false) {
+        new Notice(
+          `CosyVoice PDF: the selected text could not be matched exactly. Reading from the start of page ${selectionContext.pageNumber}.`,
+          10000
+        );
+      }
+      await this.startReading(
+        text,
+        selectionContext ? `${sourceLabel} (PDF from selection)` : `${sourceLabel} (PDF)`
+      );
     } catch (error) {
       if (!this.isActive(session)) {
         return;
@@ -1994,7 +2209,7 @@ class CosyVoiceReaderPlugin extends Plugin {
     }
   }
 
-  async extractPdfText(file, session) {
+  async extractPdfText(file, session, options = {}) {
     if (!isPdfFile(file)) {
       throw new Error('The active file is not a PDF.');
     }
@@ -2040,11 +2255,15 @@ class CosyVoiceReaderPlugin extends Plugin {
         throw new Error(`This PDF has more than ${PDF_MAX_PAGES} pages. Split it before reading.`);
       }
 
+      const requestedStartPage = Math.floor(Number(options.startPageNumber) || 1);
+      const startPageNumber = Math.max(1, Math.min(totalPages, requestedStartPage));
+      const selectedText = String(options.selectedText || '').trim();
+
       session.totalChunks = totalPages;
       const pageTexts = [];
       let textLength = 0;
 
-      for (let pageNumber = 1; pageNumber <= totalPages; pageNumber += 1) {
+      for (let pageNumber = startPageNumber; pageNumber <= totalPages; pageNumber += 1) {
         if (!this.isActive(session)) {
           return '';
         }
@@ -2073,7 +2292,12 @@ class CosyVoiceReaderPlugin extends Plugin {
           if (!this.isActive(session)) {
             return '';
           }
-          const pageText = extractTextFromPdfItems(textContent && textContent.items);
+          let pageText = extractTextFromPdfItems(textContent && textContent.items);
+          if (selectedText && pageNumber === startPageNumber) {
+            const selectionSlice = slicePdfTextFromSelection(pageText, selectedText);
+            pageText = selectionSlice.text;
+            session.pdfSelectionMatched = selectionSlice.matched;
+          }
           pageTexts.push(pageText);
           textLength += pageText.length;
           if (textLength > PDF_MAX_TEXT_CHARS) {
@@ -2110,6 +2334,24 @@ class CosyVoiceReaderPlugin extends Plugin {
   }
 
   async readSelection() {
+    const activeFile = typeof this.app.workspace.getActiveFile === 'function'
+      ? this.app.workspace.getActiveFile()
+      : null;
+    if (isPdfFile(activeFile)) {
+      const selectionContext = this.getPdfSelectionForFile(activeFile);
+      if (!selectionContext) {
+        new Notice('CosyVoice PDF: select text in the PDF first, then try again.', 8000);
+        return;
+      }
+
+      await this.activateControlView();
+      await this.startReading(
+        selectionContext.selectedText,
+        `${activeFile.basename || activeFile.name || 'PDF'} (PDF selection)`
+      );
+      return;
+    }
+
     const view = this.getActiveMarkdownView();
     if (!view) {
       return;
@@ -2126,6 +2368,14 @@ class CosyVoiceReaderPlugin extends Plugin {
   }
 
   async readFromSelection() {
+    const activeFile = typeof this.app.workspace.getActiveFile === 'function'
+      ? this.app.workspace.getActiveFile()
+      : null;
+    if (isPdfFile(activeFile)) {
+      await this.readCurrentPdfFromSelection(activeFile);
+      return;
+    }
+
     const view = this.getActiveMarkdownView();
     if (!view) {
       return;
@@ -3325,10 +3575,10 @@ class CosyVoiceReaderView extends ItemView {
     const actions = root.createDiv({ cls: 'note-reader-cosyvoice-actions' });
     this.createActionButton(actions, 'play', 'Read selection', () => {
       void this.plugin.readSelection();
-    });
+    }, false, { triggerOnPointerDown: true });
     this.createActionButton(actions, 'list-start', 'Read from selection', () => {
       void this.plugin.readFromSelection();
-    });
+    }, false, { triggerOnPointerDown: true });
     this.createActionButton(actions, 'file-text', 'Read file', () => {
       void this.plugin.readCurrentNote();
     });
@@ -3984,6 +4234,8 @@ module.exports = {
     getOpenRouterTtsModels,
     getOpenRouterTtsPresets,
     getOpenRouterTtsVoicePresets,
+    getPdfPageNumberFromNode,
+    getPdfSelectionContext,
     getPluginTempCacheDir,
     getSettingsUiText,
     getTextFromPositionToEnd,
@@ -4006,6 +4258,7 @@ module.exports = {
     normalizeMathReadingLanguage,
     normalizeOpenRouterModel,
     normalizeOpenRouterVoice,
+    normalizePdfSelectionText,
     normalizeSettingsLanguage,
     normalizeSpeechEngine,
     parseRetryAfterMs,
@@ -4014,6 +4267,7 @@ module.exports = {
     readObsidianSecretValue,
     sanitizeTextForSpeech,
     sanitizeLatexForSpeech,
+    slicePdfTextFromSelection,
     selectKnownSettings,
     toVaultRelativePath,
     verbalizeShortLatex,
