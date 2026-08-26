@@ -1,6 +1,6 @@
 # Note and PDF Voice Reader
 
-[English README](README.md)
+**语言：** [English](README.md) | 简体中文
 
 Note and PDF Voice Reader 是一个桌面端 Obsidian 插件，用于把当前 Markdown 笔记、可搜索 PDF、选中文本，或从选中位置开始的后续内容交给本地 CosyVoice、Microsoft Edge 在线语音、用户自己的 Microsoft Azure Speech 资源或 OpenRouter TTS 朗读。插件本身不包含 CosyVoice、语音模型或云端语音服务，它只负责文本提取与清理、分块、调用语音引擎、播放音频和提供控制面板。
 

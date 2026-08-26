@@ -1,6 +1,6 @@
 # Note and PDF Voice Reader
 
-[中文说明](README.zh-CN.md)
+**Language:** English | [简体中文](README.zh-CN.md)
 
 An Obsidian desktop plugin that reads the current Markdown note, searchable PDF, or selected note text through local CosyVoice, Microsoft Edge online voice, a user-configured Microsoft Azure Speech resource, or OpenRouter TTS.
 
