@@ -10,13 +10,14 @@ later versions are discovered from GitHub releases.
 - Run the syntax and test checks documented in the repository.
 - Confirm the local CosyVoice wrapper path in the README is only an example and not a personal path.
 - Confirm `data.json`, API keys, temporary audio, logs, and local test files are not tracked or packaged.
+- Confirm the release assets are built from the tested commit and contain only `main.js`, `manifest.json`, and `styles.css`.
 
 ## GitHub Release
 
 Create a GitHub release whose tag exactly matches `manifest.json`:
 
 ```text
-0.2.9
+0.3.0
 ```
 
 Attach these files as binary assets:

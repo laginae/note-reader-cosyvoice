@@ -1,5 +1,6 @@
 const assert = require('assert');
 const {
+  createIncrementalSpeechChunker,
   sanitizeTextForSpeech,
   splitTextForSpeechChunks,
   normalizeSpeed,
@@ -84,6 +85,18 @@ assert.deepStrictEqual(splitTextForSpeechChunks('甲'.repeat(45), [10, 20]), [
   '甲'.repeat(20),
   '甲'.repeat(15),
 ]);
+
+const incrementalChunker = createIncrementalSpeechChunker([10, 20]);
+const incrementalChunks = [
+  ...incrementalChunker.push('甲'.repeat(8)),
+  ...incrementalChunker.push('乙'.repeat(18)),
+  ...incrementalChunker.push('丙'.repeat(16)),
+  ...incrementalChunker.finish(),
+];
+assert.deepStrictEqual(
+  incrementalChunks,
+  splitTextForSpeechChunks(`${'甲'.repeat(8)} ${'乙'.repeat(18)} ${'丙'.repeat(16)}`, [10, 20])
+);
 
 assert.strictEqual(normalizeSpeed('0.2'), 0.5);
 assert.strictEqual(normalizeSpeed('3'), 2);

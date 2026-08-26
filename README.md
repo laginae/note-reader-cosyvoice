@@ -7,7 +7,8 @@ A privacy-first Obsidian desktop voice reader for Markdown notes and text-based 
 ## Highlights
 
 - **Privacy first:** Local CosyVoice is the default. Each online engine requires separate, explicit consent before it can receive text.
-- **Fast local preparation:** Markdown notes and text-based PDFs are processed locally and are typically ready for speech synthesis within a few seconds.
+- **Progressive PDF start:** Markdown notes and text-based PDFs are parsed locally; ordinary text-based PDFs typically yield their first speech chunk within a few seconds, while later pages continue parsing.
+- **Quota-conscious online synthesis:** Online modes default to synthesizing only the current chunk, so stopping early does not spend API allowance on unsynthesized later chunks.
 - **Flexible PDF selection reading:** Continue reading from a selected position in a PDF, or read only the selected text.
 
 Here, a text-based PDF means a PDF with selectable embedded text. Scanned or image-only PDFs need OCR first.
@@ -25,7 +26,7 @@ Plugin settings. The script path shown here is a redacted example:
 ## Features
 
 - Reads the current Markdown note or text-based PDF, selected text in either view, or from a Markdown/PDF selection start to the end of the active file.
-- Extracts PDF text locally with Obsidian's built-in PDF.js, with page progress and cancellation from the control panel.
+- Extracts PDF text locally with Obsidian's built-in PDF.js and progressively feeds speech chunks while later pages continue parsing, with cancellation from the control panel.
 - Opens a right-side `Voice Reader` control panel.
 - Shows synthesis/playback phase, whole-reading progress, percentage, and text preview.
 - Supports pause, resume, stop, Space to pause or resume in the control panel, repeated Left/Right Arrow 5-second seeking, previous/next chunk buttons, and progress dragging while the current audio chunk is playing.
@@ -33,6 +34,7 @@ Plugin settings. The script path shown here is a redacted example:
 - Lets you choose `Local CosyVoice`, `Microsoft Edge online voice`, `Microsoft Azure Speech`, or `OpenRouter TTS` in settings. Local CosyVoice is the default.
 - Lets you switch the complete plugin settings page between English and Chinese.
 - Requires a separate opt-in before each online engine can receive text.
+- Uses separate local and online chunk limits. Online notes and PDFs default to `200,400,800`, with zero future-chunk synthesis prefetch by default.
 - Uses Obsidian SecretStorage for Azure and OpenRouter API keys by default on Obsidian 1.11.4 or later, with an external key-file compatibility option.
 - Provides common Chinese and English voice presets, model-specific OpenRouter voice menus, and custom voice ID fields.
 - Cleans Markdown before synthesis and converts Markdown tables into speech-friendly column and row descriptions while skipping empty cells.
@@ -55,7 +57,7 @@ By default, the plugin uses local TTS. In `Local CosyVoice` mode, the plugin its
 
 PDF extraction uses Obsidian's bundled PDF.js and `Vault.readBinary`; the PDF file itself is not uploaded by this feature. To support PDF selection commands, the plugin temporarily keeps the selection's page number and up to 2,000 characters of locator text in memory only; it is not saved to settings or diagnostic logs. When an online speech engine is selected and its consent is enabled, extracted PDF text chunks are transmitted under the same rules as note text. Scanned or image-only PDFs need OCR before the plugin can read them.
 
-Edge, Azure, and OpenRouter are opt-in online modes. Edge passes each chunk to the configured `edge-tts` executable. Azure sends each chunk by HTTPS to the selected Azure Speech cloud and region. OpenRouter sends each chunk to OpenRouter and an eligible upstream TTS provider. The plugin will not start an online mode until its separate online-processing consent setting is enabled. OpenRouter consent permits that transmission only; it does not permit non-ZDR routing.
+Edge, Azure, and OpenRouter are opt-in online modes. Edge passes each chunk to the configured `edge-tts` executable. Azure sends each chunk by HTTPS to the selected Azure Speech cloud and region. OpenRouter sends each chunk to OpenRouter and an eligible upstream TTS provider. The plugin will not start an online mode until its separate online-processing consent setting is enabled. OpenRouter consent permits that transmission only; it does not permit non-ZDR routing. By default, only the chunk currently needed for playback is synthesized; later chunks are neither transmitted nor billed by the selected service unless playback reaches them. Provider billing units vary, so this limits avoidable requests rather than guaranteeing a fixed cost reduction.
 
 Temporary text and audio are stored in a vault-specific folder under the operating system temporary directory, not inside the Obsidian vault. With `Clean temporary audio` enabled, plaintext chunk files are removed immediately after synthesis, remaining session files are removed when reading ends or stops, and stale plugin-owned files plus the legacy in-vault cache are cleaned at startup. Diagnostic logging is off by default; when enabled, it records only bounded failure metadata without note names, note text, or child-process output.
 
@@ -213,12 +215,16 @@ The configured script can call another local TTS engine instead of CosyVoice if 
 
 The Edge, Azure, and OpenRouter online modes are separate from the local wrapper contract. They write temporary MP3 files and use their corresponding voice setting. OpenRouter may ignore `Speed` for models whose provider does not support that parameter.
 
-Use `Chunk limits` to balance startup latency and synthesis stability:
+Use `Local chunk limits` to balance local startup latency and synthesis stability:
 
 - CPU-only or low-end GPU: start with `30,60,90,120,160,200`.
 - Mid-range GPU: use the default `40,80,120,160,280,320`.
 - Faster GPU or low-latency local service: try `80,140,220,320,480,640`.
 - If synthesis times out, fails, or the first audio takes too long, lower the numbers. If speech sounds too fragmented and your model is stable, raise them gradually.
+
+`Online chunk limits` applies to both notes and PDFs in Edge, Azure, and OpenRouter modes. Its default is `200,400,800`, which uses a shorter first request and longer later requests to balance startup time, continuity, and request count.
+
+`Online synthesis prefetch` defaults to `0`: the plugin synthesizes the current chunk, plays it, and only then requests the next chunk. This avoids spending API allowance on later audio when you stop early. Set it to `1` only when smoother transitions matter more than the possibility of one unused request.
 
 ## Commands
 
@@ -229,6 +235,10 @@ Use `Chunk limits` to balance startup latency and synthesis stability:
 - `Read selection aloud`
 - `Read from selection aloud`
 - `Pause or resume voice reading`
+- `Seek backward 5 seconds`
+- `Seek forward 5 seconds`
+- `Move to previous reading chunk`
+- `Move to next reading chunk`
 - `Stop voice reading`
 
 ## Keyboard And Progress Seeking
@@ -241,7 +251,7 @@ The progress bar shows whole-reading progress across all chunks. While audio is 
 
 ## PDF Reading
 
-Open a PDF stored in the vault, then click `Read file` in the control panel or run a PDF-capable command. Text extraction happens page by page before speech synthesis begins. The Stop button cancels extraction.
+Open a PDF stored in the vault, then click `Read file` in the control panel or run a PDF-capable command. Text extraction happens locally page by page. Once enough text for the first configured chunk is available, synthesis and playback can begin while later pages continue parsing. The Stop button cancels parsing, playback, and outstanding synthesis requests.
 
 To start at a specific position, select a recognizable phrase in the PDF text layer and click `Read from selection`, or run `Read current PDF from selection aloud`. The plugin starts extraction on that page, matches the selected phrase in the extracted text, and reads through the end of the PDF. `Read selection` reads only the selected PDF text. If the visual text layer cannot be matched to the PDF's embedded text order, the plugin displays a notice and starts at the beginning of the selected page.
 

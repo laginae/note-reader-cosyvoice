@@ -196,7 +196,7 @@ const testVaultPath = path.resolve('test-vault');
 const testAudioPath = path.join(testVaultPath, '.obsidian', 'plugins', 'note-reader-cosyvoice', 'cache', 'a.wav');
 assert.strictEqual(manifest.id, 'note-reader-cosyvoice');
 assert.strictEqual(manifest.name, 'Note and PDF Voice Reader');
-assert.strictEqual(manifest.version, '0.2.9');
+assert.strictEqual(manifest.version, '0.3.0');
 assert.ok(!/\bObsidian\b/.test(manifest.description));
 assert.ok(!code.includes('Note Reader CosyVoice'));
 assert.ok(!code.includes('CosyVoice Reader'));
@@ -282,6 +282,8 @@ assert.deepStrictEqual(moduleObject.exports.__test.createDefaultSettings(), {
   azureSpeechVoice: 'en-GB-RyanNeural',
   cleanupCache: true,
   chunkLimits: '40,80,120,160,280,320',
+  onlineChunkLimits: '200,400,800',
+  onlinePrefetchChunks: 0,
   diagnosticLogging: false,
   edgeTtsConsent: false,
   edgeTtsExecutable: 'edge-tts',
@@ -347,6 +349,28 @@ assert.strictEqual(moduleObject.exports.__test.normalizeSpeechEngine('edge-tts')
 assert.strictEqual(moduleObject.exports.__test.normalizeSpeechEngine('azure-speech'), 'azure-speech');
 assert.strictEqual(moduleObject.exports.__test.normalizeSpeechEngine('openrouter-tts'), 'openrouter-tts');
 assert.strictEqual(moduleObject.exports.__test.normalizeSpeechEngine('bad'), 'local-cosyvoice');
+assert.deepStrictEqual(
+  moduleObject.exports.__test.getChunkLimitsForSpeechEngine({
+    chunkLimits: '10,20',
+    onlineChunkLimits: '200,400,800',
+    speechEngine: 'local-cosyvoice',
+  }),
+  [10, 20]
+);
+assert.deepStrictEqual(
+  moduleObject.exports.__test.getChunkLimitsForSpeechEngine({
+    onlineChunkLimits: 'invalid',
+    speechEngine: 'openrouter-tts',
+  }),
+  [200, 400, 800]
+);
+assert.strictEqual(moduleObject.exports.__test.getSynthesisPrefetchCount({ speechEngine: 'local-cosyvoice' }), 1);
+assert.strictEqual(moduleObject.exports.__test.getSynthesisPrefetchCount({ speechEngine: 'openrouter-tts' }), 0);
+assert.strictEqual(moduleObject.exports.__test.getSynthesisPrefetchCount({
+  onlinePrefetchChunks: 1,
+  speechEngine: 'azure-speech',
+}), 1);
+assert.strictEqual(moduleObject.exports.__test.normalizeOnlinePrefetchChunks(99), 1);
 assert.strictEqual(moduleObject.exports.__test.normalizeEdgeTtsExecutable('  '), 'edge-tts');
 assert.strictEqual(moduleObject.exports.__test.normalizeEdgeTtsExecutable(' C:\\Tools\\edge-tts.exe '), 'C:\\Tools\\edge-tts.exe');
 assert.strictEqual(moduleObject.exports.__test.normalizeEdgeTtsVoice('  '), 'en-GB-RyanNeural');
@@ -858,7 +882,10 @@ assert.deepStrictEqual(chunkNavigationCalls, [-1, 1]);
       revealLeaf: async () => {},
     },
   };
-  startupPlugin.addCommand = () => {};
+  const startupCommandIds = [];
+  startupPlugin.addCommand = (command) => {
+    startupCommandIds.push(command.id);
+  };
   startupPlugin.addRibbonIcon = () => {};
   startupPlugin.addSettingTab = () => {};
   startupPlugin.addStatusBarItem = () => ({ setText: () => {} });
@@ -884,6 +911,10 @@ assert.deepStrictEqual(chunkNavigationCalls, [-1, 1]);
   assert.strictEqual(startupPlugin.settings.edgeTtsVoice, 'en-GB-RyanNeural');
   assert.strictEqual(Object.prototype.hasOwnProperty.call(startupPlugin.settings, 'obsoleteSetting'), false);
   assert.strictEqual(Object.prototype.hasOwnProperty.call(startupSavedData, 'obsoleteSetting'), false);
+  assert.ok(startupCommandIds.includes('seek-backward-5-seconds'));
+  assert.ok(startupCommandIds.includes('seek-forward-5-seconds'));
+  assert.ok(startupCommandIds.includes('previous-reading-chunk'));
+  assert.ok(startupCommandIds.includes('next-reading-chunk'));
   assert.strictEqual(fs.existsSync(legacyOwnedFile), false);
   assert.strictEqual(fs.existsSync(legacyKeepFile), true);
   assert.strictEqual(fs.existsSync(legacyLogFile), false);
@@ -983,6 +1014,58 @@ assert.deepStrictEqual(chunkNavigationCalls, [-1, 1]);
   assert.strictEqual(selectedPdfText, 'selected anchor after.\n\nThird page.');
   assert.deepStrictEqual(selectedPdfPages, [2, 3]);
   assert.strictEqual(selectedPdfSession.pdfSelectionMatched, true);
+
+  const progressivePdfPlugin = Object.create(PluginClass.prototype);
+  progressivePdfPlugin.sequence = 60;
+  progressivePdfPlugin.readerState = moduleObject.exports.__test.createReaderState();
+  progressivePdfPlugin.settings = {
+    ...moduleObject.exports.__test.createDefaultSettings(),
+    speechEngine: 'openrouter-tts',
+    stripMarkdown: false,
+  };
+  progressivePdfPlugin.setReaderState = () => {};
+  const progressivePdfSession = progressivePdfPlugin.createSpeechSession([], 'paper.pdf', {
+    engineLabel: 'OpenRouter TTS',
+    prefetchChunks: 0,
+    speechEngine: 'openrouter-tts',
+  }, {
+    kind: 'pdf-progressive',
+    productionComplete: false,
+  });
+  progressivePdfPlugin.activeSession = progressivePdfSession;
+  let releaseRemainingPdfPages;
+  let firstPdfPageDelivered;
+  const remainingPdfPages = new Promise((resolve) => {
+    releaseRemainingPdfPages = resolve;
+  });
+  const firstPdfPage = new Promise((resolve) => {
+    firstPdfPageDelivered = resolve;
+  });
+  progressivePdfPlugin.extractPdfText = async (_file, _session, options) => {
+    await options.onPageText('A'.repeat(210), { pageNumber: 1, totalPages: 2 });
+    firstPdfPageDelivered();
+    await remainingPdfPages;
+    await options.onPageText('B'.repeat(500), { pageNumber: 2, totalPages: 2 });
+    return '';
+  };
+  const progressivePdfProducer = progressivePdfPlugin.producePdfSpeechChunks(
+    pdfFile,
+    progressivePdfSession,
+    null,
+    [200, 400, 800]
+  );
+  await firstPdfPage;
+  assert.strictEqual(progressivePdfSession.chunks.length, 1);
+  assert.strictEqual(progressivePdfSession.chunks[0], 'A'.repeat(200));
+  releaseRemainingPdfPages();
+  await progressivePdfProducer;
+  assert.deepStrictEqual(
+    progressivePdfSession.chunks,
+    moduleObject.exports.__test.splitTextForSpeechChunks(
+      `${'A'.repeat(210)} ${'B'.repeat(500)}`,
+      [200, 400, 800]
+    )
+  );
   mockPdfJsLib = null;
 
   let cancelledPdfLoading = false;
@@ -1012,6 +1095,61 @@ assert.deepStrictEqual(chunkNavigationCalls, [-1, 1]);
   assert.strictEqual(pdfStopSession.stopped, true);
   assert.strictEqual(pdfStopSession.pdfLoadingTask, null);
   assert.strictEqual(pdfStopPlugin.activeSession, null);
+
+  const demandPlugin = Object.create(PluginClass.prototype);
+  demandPlugin.sequence = 70;
+  demandPlugin.settings = {
+    ...moduleObject.exports.__test.createDefaultSettings(),
+    cleanupCache: false,
+    onlinePrefetchChunks: 0,
+    speechEngine: 'openrouter-tts',
+  };
+  demandPlugin.readerState = moduleObject.exports.__test.createReaderState();
+  demandPlugin.updateStatus = () => {};
+  const demandEvents = [];
+  demandPlugin.queuePrepareChunk = (_text, index) => {
+    demandEvents.push(`prepare:${index}`);
+    return Promise.resolve({ outputPath: `${index}.mp3` });
+  };
+  demandPlugin.playPreparedAudio = async (_prepared, _session, index) => {
+    demandEvents.push(`play:${index}`);
+  };
+  const demandSession = demandPlugin.createSpeechSession(['first', 'second'], 'note', {
+    engineLabel: 'OpenRouter TTS',
+    prefetchChunks: 0,
+    speechEngine: 'openrouter-tts',
+  });
+  demandPlugin.activeSession = demandSession;
+  await demandPlugin.runSpeechSession(demandSession);
+  assert.deepStrictEqual(demandEvents, ['prepare:0', 'play:0', 'prepare:1', 'play:1']);
+
+  const waitingPlugin = Object.create(PluginClass.prototype);
+  waitingPlugin.sequence = 80;
+  waitingPlugin.settings = {
+    ...moduleObject.exports.__test.createDefaultSettings(),
+    cleanupCache: false,
+  };
+  waitingPlugin.readerState = moduleObject.exports.__test.createReaderState();
+  waitingPlugin.currentAudio = null;
+  waitingPlugin.currentProcess = null;
+  waitingPlugin.currentRequests = new Set();
+  waitingPlugin.pauseRequested = false;
+  waitingPlugin.updateStatus = () => {};
+  const waitingSession = waitingPlugin.createSpeechSession([], 'paper.pdf', {
+    engineLabel: 'OpenRouter TTS',
+    prefetchChunks: 0,
+    speechEngine: 'openrouter-tts',
+  }, {
+    kind: 'pdf-progressive',
+    productionComplete: false,
+  });
+  waitingPlugin.activeSession = waitingSession;
+  const waitingRun = waitingPlugin.runSpeechSession(waitingSession);
+  await Promise.resolve();
+  await waitingPlugin.stopReading({ silent: true });
+  await waitingRun;
+  assert.strictEqual(waitingSession.stopped, true);
+  assert.strictEqual(waitingSession.chunkWaiters.size, 0);
 
   const routePlugin = Object.create(PluginClass.prototype);
   let routedPdfFile = null;

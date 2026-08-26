@@ -113,7 +113,7 @@ If the engine exposes an HTTP API, the simplest pattern is still a small PowerSh
 
 ## Chunk Limits By Hardware
 
-`Chunk limits` is a comma-separated list of character limits. The first chunks are intentionally smaller so playback can start sooner. After the list is exhausted, the last number is reused for the remaining text.
+`Local chunk limits` is a comma-separated list of character limits. The first chunks are intentionally smaller so playback can start sooner. After the list is exhausted, the last number is reused for the remaining text.
 
 Smaller chunks:
 

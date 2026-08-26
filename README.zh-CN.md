@@ -7,7 +7,8 @@ Note and PDF Voice Reader 是一个隐私优先的桌面端 Obsidian 语音朗�
 ## 核心亮点
 
 - **隐私优先：** 默认使用本地 CosyVoice；每种在线引擎都必须单独获得用户明确同意后才能接收文本。
-- **快速本地处理：** Markdown 笔记和文本型 PDF 在本地处理，通常几秒内即可完成朗读前的文本解析与准备。
+- **渐进式 PDF 快速开始：** Markdown 笔记和文本型 PDF 均在本地解析；普通文本型 PDF 通常几秒内即可产生第一批朗读分段，后续页面会继续解析。
+- **节约在线 API 额度：** 在线模式默认只合成当前需要播放的分段，提前停止时不会为尚未合成的后续分段消耗额度。
 - **灵活的 PDF 选区朗读：** 可以从 PDF 选中位置继续朗读，也可以只朗读选中文字。
 
 这里的“文本型 PDF”是指包含可选择嵌入文本的 PDF；扫描版或纯图片 PDF 需要先完成 OCR。
@@ -25,7 +26,7 @@ Note and PDF Voice Reader 是一个隐私优先的桌面端 Obsidian 语音朗�
 ## 功能
 
 - 朗读当前 Markdown 笔记或文本型 PDF、两种视图中的当前选中文本，或从 Markdown/PDF 的选中位置开始朗读到当前文件结尾。
-- 使用 Obsidian 内置 PDF.js 在本地逐页提取 PDF 文本，并在控制面板显示进度和支持停止提取。
+- 使用 Obsidian 内置 PDF.js 在本地逐页提取 PDF 文本，边解析边加入朗读队列，并支持从控制面板停止。
 - 在右侧边栏打开 `Voice Reader` 控制面板。
 - 显示合成、播放状态、整体朗读进度、百分比和当前文本预览。
 - 支持暂停、继续、停止；控制面板获得焦点时可用空格暂停/继续，可连续按左右方向键按 5 秒步进前后跳转；进度条两侧提供上一段/下一段按钮；也支持在当前已加载音频块内点击或拖动进度条。
@@ -33,6 +34,7 @@ Note and PDF Voice Reader 是一个隐私优先的桌面端 Obsidian 语音朗�
 - 设置页可以选择 `Local CosyVoice`、`Microsoft Edge online voice`、`Microsoft Azure Speech` 或 `OpenRouter TTS`。默认是本地 CosyVoice。
 - 设置页顶部可以在英文和中文之间切换，切换后整页设置名称、说明、选项和按钮都会改用所选语言。
 - Edge、Azure 与 OpenRouter 三种在线模式分别设置同意开关，未显式同意时插件不会发送文本。
+- 本地与在线模式使用独立分段设置；在线笔记和 PDF 默认使用 `200,400,800`，且默认不预取合成后续分段。
 - 在 Obsidian 1.11.4 及以上版本中，Azure 和 OpenRouter 密钥默认使用 Obsidian SecretStorage，也可切换到库外密钥文件兼容模式。
 - 设置页提供常用中文、粤语、台湾中文和英文音色预设、按 OpenRouter 模型联动的音色目录，也保留自定义 Voice ID。
 - 在合成前清理 Markdown 和常见 LaTeX 标记，并把 Markdown 表格转换为适合朗读的列名与逐行字段说明，自动跳过空单元格。
@@ -54,7 +56,7 @@ Note and PDF Voice Reader 是一个隐私优先的桌面端 Obsidian 语音朗�
 
 PDF 提取使用 Obsidian 内置 PDF.js 和 `Vault.readBinary`，此功能不会上传 PDF 文件本身。为支持 PDF 选择位置命令，插件只在内存中临时保留所选页码和最多 2,000 个字符的定位文本，不会写入设置或诊断日志。如果选择在线语音引擎并开启对应同意开关，从 PDF 提取出的文本分段会按照与笔记文本相同的规则发送。扫描版或纯图片 PDF 必须先完成 OCR 才能朗读。
 
-Edge、Azure 与 OpenRouter 都是主动选择的在线模式。Edge 模式把每个文本分段交给配置的 `edge-tts` 程序；Azure 模式通过 HTTPS 把分段发送到所选云环境和区域下的 Azure Speech 资源；OpenRouter 模式把分段发送到 OpenRouter 及符合条件的上游 TTS 供应商。三种模式都必须先分别开启在线处理同意开关。OpenRouter 的同意开关只表示允许在线传输，不表示允许非 ZDR 路由。
+Edge、Azure 与 OpenRouter 都是主动选择的在线模式。Edge 模式把每个文本分段交给配置的 `edge-tts` 程序；Azure 模式通过 HTTPS 把分段发送到所选云环境和区域下的 Azure Speech 资源；OpenRouter 模式把分段发送到 OpenRouter 及符合条件的上游 TTS 供应商。三种模式都必须先分别开启在线处理同意开关。OpenRouter 的同意开关只表示允许在线传输，不表示允许非 ZDR 路由。默认情况下，插件只合成当前播放所需分段；尚未朗读到的后续分段不会被发送，也不会产生对应的服务计费。不同服务的计费单位并不相同，因此这一机制的准确含义是减少可避免的请求，而不是保证固定比例的费用下降。
 
 临时文本和音频存放在操作系统临时目录下按 Obsidian 库隔离的子目录中，不再写入库内。启用 `Clean temporary audio` 时，明文分段在完成合成后立即删除，朗读结束或停止时删除其余会话文件，插件启动时还会清理遗留的插件临时文件以及旧版库内缓存。诊断日志默认关闭；即使开启，也只记录有大小上限的失败元数据，不记录笔记名、笔记文本或子进程输出。
 
@@ -232,7 +234,7 @@ C:\Users\你的用户名\AppData\Local\note-reader-cosyvoice\openrouter-api-key.
 
 设置页会根据当前模型显示特点，并只展示该模型可用的音色预设。模型、音色和 ZDR 端点会随时间变化，应以实时 [`speech + ZDR` 模型接口](https://openrouter.ai/api/v1/models?output_modalities=speech&zdr=true)为准。Gemini 风格名称来自 [Google Gemini TTS 官方音色表](https://ai.google.dev/gemini-api/docs/speech-generation?hl=zh-cn)，Kokoro 的语言与性别分组来自其[上游音色目录](https://huggingface.co/hexgrad/Kokoro-82M/blob/main/VOICES.md)。自定义模型仍可填写，但如果没有符合条件的 ZDR 端点，插件会报错，而不会取消隐私约束后继续发送。
 
-## 模型存储空间、其他语音模型与 Chunk limits
+## 模型存储空间、其他语音模型与分段设置
 
 插件不会下载模型。安装本地语音模型前，需要先为模型、运行环境和缓存预留磁盘空间：
 
@@ -244,12 +246,16 @@ C:\Users\你的用户名\AppData\Local\note-reader-cosyvoice\openrouter-api-key.
 
 Edge、Azure 与 OpenRouter 是和本地包装脚本并列的在线语音模式，不走上述 WAV 包装脚本约定。三者都会生成临时 MP3，并分别使用对应的音色设置。OpenRouter 某些供应商不支持语速参数时可能忽略 `Speed`。
 
-`Chunk limits` 用来控制文本分块大小。它影响首段音频出现速度、合成稳定性和朗读连贯性：
+`Local chunk limits` 用来控制本地 CosyVoice 的文本分块大小。它影响首段音频出现速度、合成稳定性和朗读连贯性：
 
 - CPU-only 或低性能 GPU：可从 `30,60,90,120,160,200` 开始。
 - 中端 GPU：建议先使用默认值 `40,80,120,160,280,320`。
 - 性能较好的 GPU 或稳定的本地低延迟服务：可尝试 `80,140,220,320,480,640`。
 - 如果合成超时、失败或第一段音频等待太久，就把数值调小；如果朗读过于碎片化且模型稳定，再逐步调大。
+
+`Online chunk limits` 同时用于 Edge、Azure、OpenRouter 模式下的笔记和 PDF，默认值是 `200,400,800`。首段相对较短，便于尽快开始；后续分段较长，可减少请求次数并改善连续性。
+
+`Online synthesis prefetch` 默认为 `0`：插件先合成并播放当前分段，播放结束后才请求下一段。这样在提前停止朗读时不会浪费后续 API 额度。只有更看重分段衔接、并能接受最多一段未使用请求时，才建议改为 `1`。
 
 ## 本地模型与系统建议
 
@@ -277,6 +283,10 @@ Edge、Azure 与 OpenRouter 是和本地包装脚本并列的在线语音模式�
 - `Read selection aloud`
 - `Read from selection aloud`
 - `Pause or resume voice reading`
+- `Seek backward 5 seconds`
+- `Seek forward 5 seconds`
+- `Move to previous reading chunk`
+- `Move to next reading chunk`
 - `Stop voice reading`
 
 也可以使用编辑器中的按钮或右侧边栏控制面板。语速按钮会影响后续合成的音频块；已经合成并正在播放的音频不会被重新变速，除非停止后重新开始朗读。
@@ -291,7 +301,7 @@ Edge、Azure 与 OpenRouter 是和本地包装脚本并列的在线语音模式�
 
 ## PDF 朗读
 
-先在 Obsidian 中打开库内 PDF，再点击控制面板中的 `Read file`，或者执行支持 PDF 的命令。插件会先逐页提取文本，再开始语音合成；提取过程中可用停止按钮取消。
+先在 Obsidian 中打开库内 PDF，再点击控制面板中的 `Read file`，或者执行支持 PDF 的命令。插件会在本地逐页提取文本；达到第一段设置长度后即可开始合成和播放，同时继续解析后续页面。停止按钮会同时取消解析、播放和仍在进行的合成请求。
 
 若要从指定位置开始，请先在 PDF 文本层选中一段容易识别的文字，再点击 `Read from selection`，或执行 `Read current PDF from selection aloud`。插件会从该页开始提取，在第一页匹配选中文字，然后朗读到 PDF 末尾。`Read selection` 只朗读当前选中的 PDF 文字。如果视觉文本层与 PDF 内嵌文本顺序无法精确匹配，插件会显示提示并改为从所选页开头朗读。
 

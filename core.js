@@ -1,6 +1,7 @@
 const path = require('path');
 
 const DEFAULT_CHUNK_LIMITS = [40, 80, 120, 160, 280, 320];
+const DEFAULT_ONLINE_CHUNK_LIMITS = [200, 400, 800];
 const DEFAULT_MATH_READING_LANGUAGE = 'english';
 const LATEX_FORMULA_MAX_CHARS = 12;
 const MATH_READING_LANGUAGES = ['english', 'chinese', 'skip'];
@@ -384,7 +385,7 @@ function escapeRegExp(text) {
   return String(text).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-function parseChunkLimits(value) {
+function parseChunkLimits(value, fallback = DEFAULT_CHUNK_LIMITS) {
   const list = Array.isArray(value)
     ? value
     : String(value || '')
@@ -395,7 +396,12 @@ function parseChunkLimits(value) {
     .map((item) => Math.floor(Number(item)))
     .filter((item) => Number.isFinite(item) && item > 0);
 
-  return limits.length ? limits : DEFAULT_CHUNK_LIMITS.slice();
+  const fallbackLimits = Array.isArray(fallback)
+    ? fallback.filter((item) => Number.isFinite(item) && item > 0)
+    : [];
+  return limits.length
+    ? limits
+    : (fallbackLimits.length ? fallbackLimits.slice() : DEFAULT_CHUNK_LIMITS.slice());
 }
 
 function splitTextForSpeechChunks(text, maxLengths = DEFAULT_CHUNK_LIMITS) {
@@ -426,6 +432,51 @@ function splitTextForSpeechChunks(text, maxLengths = DEFAULT_CHUNK_LIMITS) {
   }
 
   return chunks;
+}
+
+function createIncrementalSpeechChunker(maxLengths = DEFAULT_CHUNK_LIMITS) {
+  const limits = parseChunkLimits(maxLengths);
+  let buffer = '';
+  let chunkCount = 0;
+
+  const takeReadyChunks = (flush) => {
+    const chunks = [];
+
+    while (buffer) {
+      const limit = limits[Math.min(chunkCount, limits.length - 1)];
+      if (buffer.length <= limit) {
+        if (flush) {
+          chunks.push(buffer);
+          buffer = '';
+          chunkCount += 1;
+        }
+        break;
+      }
+
+      const cut = chooseChunkCut(buffer, limit);
+      const chunk = buffer.slice(0, cut).trim();
+      buffer = buffer.slice(cut).trim();
+      if (chunk) {
+        chunks.push(chunk);
+        chunkCount += 1;
+      }
+    }
+
+    return chunks;
+  };
+
+  return {
+    push(text) {
+      const normalized = String(text || '').replace(/\s+/g, ' ').trim();
+      if (normalized) {
+        buffer = buffer ? `${buffer} ${normalized}` : normalized;
+      }
+      return takeReadyChunks(false);
+    },
+    finish() {
+      return takeReadyChunks(true);
+    },
+  };
 }
 
 function chooseChunkCut(text, limit) {
@@ -473,6 +524,7 @@ function normalizeMathReadingLanguage(value) {
 
 module.exports = {
   DEFAULT_CHUNK_LIMITS,
+  DEFAULT_ONLINE_CHUNK_LIMITS,
   DEFAULT_MATH_READING_LANGUAGE,
   LATEX_FORMULA_MAX_CHARS,
   normalizeLineBreaks,
@@ -481,6 +533,7 @@ module.exports = {
   sanitizeLatexForSpeech,
   verbalizeShortLatex,
   parseChunkLimits,
+  createIncrementalSpeechChunker,
   splitTextForSpeechChunks,
   resolveDefaultScriptPath,
   normalizeSpeed,

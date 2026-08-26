@@ -2,7 +2,7 @@
 
 ## Install From ZIP
 
-1. Unzip `note-reader-cosyvoice-0.2.9-install.zip`.
+1. Unzip `note-reader-cosyvoice-0.3.0-install.zip`.
 2. Copy the `note-reader-cosyvoice` folder into your vault:
 
 ```text
@@ -135,6 +135,8 @@ The key value is never saved in the plugin's `data.json`. Every request enforces
 
 Temporary gateway, rate-limit, and network failures are retried up to three total attempts with short bounded delays. Credential, model, voice, privacy-policy, and malformed-request errors are not retried. A final `HTTP 502` means OpenRouter or its upstream provider remained unavailable after those attempts; it does not normally indicate an unsupported character. Short LaTeX absolute-value notation such as `$|Y_{k,h}|$` is converted to spoken text before transmission.
 
+For Edge, Azure, and OpenRouter, `Online chunk limits` defaults to `200,400,800` for both notes and PDFs. `Online synthesis prefetch` defaults to `0`, so the next chunk is not transmitted for synthesis until the current chunk finishes playing. Setting it to `1` may improve continuity but can consume allowance for one chunk that is never played.
+
 ## Temporary Data
 
 Temporary text and audio are stored under the operating system temporary directory rather than inside the vault. Keep `Clean temporary audio` enabled to remove plaintext immediately after synthesis, remove session files after reading, and clear stale plugin-owned files at startup. `Diagnostic logging` is off by default. Use `Clear temporary data` in settings to stop reading and remove current plus legacy plugin temporary data.
@@ -144,7 +146,7 @@ Temporary text and audio are stored under the operating system temporary directo
 - Select text and click `Read selection` to read only the selected text.
 - Select a start point and click `Read from selection` to read from that selection start to the end of the active note.
 - Click `Read file` to read the active Markdown note or searchable PDF.
-- PDF text is extracted locally through Obsidian's built-in PDF.js. Scanned or image-only PDFs require OCR first, and complex multi-column reading order depends on the text order embedded in the PDF.
+- PDF text is extracted locally and progressively through Obsidian's built-in PDF.js. Playback can start once the first speech chunk is ready while later pages continue parsing. Scanned or image-only PDFs require OCR first, and complex multi-column reading order depends on the text order embedded in the PDF.
 - Use `Pause`, `Resume`, and `Stop` from the right-side control panel.
 - Use the right-side `Speed` buttons to select `1x`, `1.25x`, `1.5x`, `2x`, `1.1x`, `1.2x`, `1.3x`, or `1.4x`. The current audio keeps its original speed; later synthesized chunks use the newly saved speed.
 - When the control panel is focused, Space pauses or resumes reading. Repeated Left Arrow or Right Arrow presses seek backward or forward in 5-second steps.

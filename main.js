@@ -10,6 +10,8 @@ const { pathToFileURL } = require('url');
 const PLUGIN_ID = 'note-reader-cosyvoice';
 const VIEW_TYPE = 'note-reader-cosyvoice-control';
 const DEFAULT_CHUNK_LIMITS = [40, 80, 120, 160, 280, 320];
+const DEFAULT_ONLINE_CHUNK_LIMITS = [200, 400, 800];
+const MAX_ONLINE_PREFETCH_CHUNKS = 1;
 const DEFAULT_MATH_READING_LANGUAGE = 'english';
 const DEFAULT_EDGE_TTS_VOICE = 'en-GB-RyanNeural';
 const DEFAULT_EDGE_TTS_EXECUTABLE = 'edge-tts';
@@ -196,8 +198,14 @@ const SETTINGS_UI_TEXT = {
     openRouterPrivacyDesc: 'Always enforced: provider.zdr is true and provider data collection is denied. The plugin never falls back to a non-ZDR endpoint. Keep OpenRouter account-level input/output logging and data sharing disabled for private content.',
     speedName: 'Speed',
     speedDesc: 'Speech speed passed to the selected speech engine.',
-    chunkLimitsName: 'Chunk limits',
-    chunkLimitsDesc: 'Comma-separated character limits. Earlier chunks are shorter so playback starts sooner.',
+    chunkLimitsName: 'Local chunk limits',
+    chunkLimitsDesc: 'Comma-separated character limits used by Local CosyVoice. Earlier chunks are shorter so playback starts sooner.',
+    onlineChunkLimitsName: 'Online chunk limits',
+    onlineChunkLimitsDesc: 'Used by Edge, Azure, and OpenRouter for notes and PDFs. The default 200,400,800 balances startup latency, continuity, and request count.',
+    onlinePrefetchName: 'Online synthesis prefetch',
+    onlinePrefetchDesc: 'How many future chunks an online engine may synthesize early. Zero avoids spending API allowance on audio you may never play.',
+    onlinePrefetchNone: '0 - synthesize only when needed',
+    onlinePrefetchOne: '1 - prefetch one chunk',
     stripMarkdownName: 'Strip Markdown',
     stripMarkdownDesc: 'Remove frontmatter, links, headings, embeds, and common formatting before synthesis.',
     mathLanguageName: 'Math reading language',
@@ -217,7 +225,7 @@ const SETTINGS_UI_TEXT = {
     restoreDefaultsButton: 'Restore defaults',
     settingsRestoredNotice: 'CosyVoice: settings restored to defaults.',
     temporaryDataClearedNotice: 'CosyVoice: temporary text, audio, and diagnostic logs cleared.',
-    commandsFooter: 'Commands: read current note or PDF, read selection, pause or resume, and stop.',
+    commandsFooter: 'Commands also include seek backward or forward 5 seconds and move to the previous or next reading chunk.',
   },
   chinese: {
     settingsLanguageName: '设置界面语言',
@@ -284,8 +292,14 @@ const SETTINGS_UI_TEXT = {
     openRouterPrivacyDesc: '始终强制执行：provider.zdr 为 true，并拒绝供应商收集数据。插件不会降级到非 ZDR 端点。朗读私密内容时，还应关闭 OpenRouter 账户级输入输出日志和数据共享。',
     speedName: '语速',
     speedDesc: '传递给当前语音引擎的朗读速度。',
-    chunkLimitsName: '分段长度',
-    chunkLimitsDesc: '用英文逗号分隔的字符数上限。前几个分段较短，可更快开始播放。',
+    chunkLimitsName: '本地分段长度',
+    chunkLimitsDesc: '本地 CosyVoice 使用的字符数上限，以英文逗号分隔。前几个分段较短，可更快开始播放。',
+    onlineChunkLimitsName: '在线分段长度',
+    onlineChunkLimitsDesc: 'Edge、Azure 和 OpenRouter 朗读笔记或 PDF 时使用。默认 200,400,800，用于平衡启动速度、连贯性和请求次数。',
+    onlinePrefetchName: '在线合成预取',
+    onlinePrefetchDesc: '允许在线引擎提前合成的后续分段数量。选择 0 可避免为可能不会播放的音频消耗 API 额度。',
+    onlinePrefetchNone: '0 - 需要时才合成',
+    onlinePrefetchOne: '1 - 提前合成一段',
     stripMarkdownName: '移除 Markdown 格式',
     stripMarkdownDesc: '合成前移除 frontmatter、链接、标题、嵌入内容和常见格式标记。',
     mathLanguageName: '数学公式朗读语言',
@@ -305,7 +319,7 @@ const SETTINGS_UI_TEXT = {
     restoreDefaultsButton: '恢复默认值',
     settingsRestoredNotice: 'CosyVoice：设置已恢复为默认值。',
     temporaryDataClearedNotice: 'CosyVoice：临时文本、音频和诊断日志已清除。',
-    commandsFooter: '命令：朗读当前笔记或 PDF、朗读选中内容、暂停或继续、停止。',
+    commandsFooter: '命令还包括后退或前进 5 秒，以及跳到上一个或下一个朗读分段。',
   },
 };
 const LATEX_COMMAND_REPLACEMENTS = {
@@ -401,6 +415,8 @@ const DEFAULT_SETTINGS = {
   diagnosticLogging: false,
   mathReadingLanguage: DEFAULT_MATH_READING_LANGUAGE,
   chunkLimits: DEFAULT_CHUNK_LIMITS.join(','),
+  onlineChunkLimits: DEFAULT_ONLINE_CHUNK_LIMITS.join(','),
+  onlinePrefetchChunks: 0,
 };
 
 function normalizeLineBreaks(text) {
@@ -922,7 +938,7 @@ function escapeRegExp(text) {
   return String(text).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-function parseChunkLimits(value) {
+function parseChunkLimits(value, fallback = DEFAULT_CHUNK_LIMITS) {
   const list = Array.isArray(value)
     ? value
     : String(value || '')
@@ -933,7 +949,12 @@ function parseChunkLimits(value) {
     .map((item) => Math.floor(Number(item)))
     .filter((item) => Number.isFinite(item) && item > 0);
 
-  return limits.length ? limits : DEFAULT_CHUNK_LIMITS.slice();
+  const fallbackLimits = Array.isArray(fallback)
+    ? fallback.filter((item) => Number.isFinite(item) && item > 0)
+    : [];
+  return limits.length
+    ? limits
+    : (fallbackLimits.length ? fallbackLimits.slice() : DEFAULT_CHUNK_LIMITS.slice());
 }
 
 function splitTextForSpeechChunks(text, maxLengths = DEFAULT_CHUNK_LIMITS) {
@@ -964,6 +985,51 @@ function splitTextForSpeechChunks(text, maxLengths = DEFAULT_CHUNK_LIMITS) {
   }
 
   return chunks;
+}
+
+function createIncrementalSpeechChunker(maxLengths = DEFAULT_CHUNK_LIMITS) {
+  const limits = parseChunkLimits(maxLengths);
+  let buffer = '';
+  let chunkCount = 0;
+
+  const takeReadyChunks = (flush) => {
+    const chunks = [];
+
+    while (buffer) {
+      const limit = limits[Math.min(chunkCount, limits.length - 1)];
+      if (buffer.length <= limit) {
+        if (flush) {
+          chunks.push(buffer);
+          buffer = '';
+          chunkCount += 1;
+        }
+        break;
+      }
+
+      const cut = chooseChunkCut(buffer, limit);
+      const chunk = buffer.slice(0, cut).trim();
+      buffer = buffer.slice(cut).trim();
+      if (chunk) {
+        chunks.push(chunk);
+        chunkCount += 1;
+      }
+    }
+
+    return chunks;
+  };
+
+  return {
+    push(text) {
+      const normalized = String(text || '').replace(/\s+/g, ' ').trim();
+      if (normalized) {
+        buffer = buffer ? `${buffer} ${normalized}` : normalized;
+      }
+      return takeReadyChunks(false);
+    },
+    finish() {
+      return takeReadyChunks(true);
+    },
+  };
 }
 
 function chooseChunkCut(text, limit) {
@@ -1026,6 +1092,30 @@ function getSettingsUiText(language) {
 function normalizeSpeechEngine(value) {
   const engine = String(value || DEFAULT_SETTINGS.speechEngine).toLowerCase();
   return SPEECH_ENGINES.includes(engine) ? engine : DEFAULT_SETTINGS.speechEngine;
+}
+
+function isOnlineSpeechEngine(value) {
+  return normalizeSpeechEngine(value) !== 'local-cosyvoice';
+}
+
+function normalizeOnlinePrefetchChunks(value) {
+  const count = Math.floor(Number(value));
+  return Number.isFinite(count)
+    ? Math.min(MAX_ONLINE_PREFETCH_CHUNKS, Math.max(0, count))
+    : 0;
+}
+
+function getChunkLimitsForSpeechEngine(settings, speechEngine = normalizeSpeechEngine(settings && settings.speechEngine)) {
+  if (isOnlineSpeechEngine(speechEngine)) {
+    return parseChunkLimits(settings && settings.onlineChunkLimits, DEFAULT_ONLINE_CHUNK_LIMITS);
+  }
+  return parseChunkLimits(settings && settings.chunkLimits, DEFAULT_CHUNK_LIMITS);
+}
+
+function getSynthesisPrefetchCount(settings, speechEngine = normalizeSpeechEngine(settings && settings.speechEngine)) {
+  return isOnlineSpeechEngine(speechEngine)
+    ? normalizeOnlinePrefetchChunks(settings && settings.onlinePrefetchChunks)
+    : 1;
 }
 
 function normalizeEdgeTtsVoice(value) {
@@ -1350,6 +1440,11 @@ function createDefaultSettings() {
     azureSpeechVoice: normalizeAzureSpeechVoice(DEFAULT_SETTINGS.azureSpeechVoice),
     cleanupCache: DEFAULT_SETTINGS.cleanupCache,
     chunkLimits: parseChunkLimits(DEFAULT_SETTINGS.chunkLimits).join(','),
+    onlineChunkLimits: parseChunkLimits(
+      DEFAULT_SETTINGS.onlineChunkLimits,
+      DEFAULT_ONLINE_CHUNK_LIMITS
+    ).join(','),
+    onlinePrefetchChunks: normalizeOnlinePrefetchChunks(DEFAULT_SETTINGS.onlinePrefetchChunks),
     diagnosticLogging: DEFAULT_SETTINGS.diagnosticLogging,
     edgeTtsConsent: DEFAULT_SETTINGS.edgeTtsConsent,
     edgeTtsExecutable: normalizeEdgeTtsExecutable(DEFAULT_SETTINGS.edgeTtsExecutable),
@@ -1794,6 +1889,62 @@ class CosyVoiceReaderPlugin extends Plugin {
     });
 
     this.addCommand({
+      id: 'seek-backward-5-seconds',
+      name: 'Seek backward 5 seconds',
+      checkCallback: (checking) => {
+        if (!this.readerState.canSeek) {
+          return false;
+        }
+        if (!checking) {
+          this.seekCurrentAudioBySeconds(-KEYBOARD_SEEK_SECONDS);
+        }
+        return true;
+      },
+    });
+
+    this.addCommand({
+      id: 'seek-forward-5-seconds',
+      name: 'Seek forward 5 seconds',
+      checkCallback: (checking) => {
+        if (!this.readerState.canSeek) {
+          return false;
+        }
+        if (!checking) {
+          this.seekCurrentAudioBySeconds(KEYBOARD_SEEK_SECONDS);
+        }
+        return true;
+      },
+    });
+
+    this.addCommand({
+      id: 'previous-reading-chunk',
+      name: 'Move to previous reading chunk',
+      checkCallback: (checking) => {
+        if (!this.readerState.canPreviousChunk) {
+          return false;
+        }
+        if (!checking) {
+          this.jumpToAdjacentChunk(-1);
+        }
+        return true;
+      },
+    });
+
+    this.addCommand({
+      id: 'next-reading-chunk',
+      name: 'Move to next reading chunk',
+      checkCallback: (checking) => {
+        if (!this.readerState.canNextChunk) {
+          return false;
+        }
+        if (!checking) {
+          this.jumpToAdjacentChunk(1);
+        }
+        return true;
+      },
+    });
+
+    this.addCommand({
       id: 'stop-reading',
       name: 'Stop voice reading',
       callback: () => {
@@ -1853,6 +2004,11 @@ class CosyVoiceReaderPlugin extends Plugin {
     this.settings.settingsLanguage = normalizeSettingsLanguage(this.settings.settingsLanguage);
     this.settings.scriptPath = String(this.settings.scriptPath || defaults.scriptPath);
     this.settings.chunkLimits = parseChunkLimits(this.settings.chunkLimits).join(',');
+    this.settings.onlineChunkLimits = parseChunkLimits(
+      this.settings.onlineChunkLimits,
+      DEFAULT_ONLINE_CHUNK_LIMITS
+    ).join(',');
+    this.settings.onlinePrefetchChunks = normalizeOnlinePrefetchChunks(this.settings.onlinePrefetchChunks);
     if (removedObsoleteSettings || missingKnownSettings) {
       await this.saveData(this.settings);
     }
@@ -1881,6 +2037,12 @@ class CosyVoiceReaderPlugin extends Plugin {
     this.settings.openRouterSecretName = String(this.settings.openRouterSecretName || '').trim();
     this.settings.openRouterVoice = normalizeOpenRouterVoice(this.settings.openRouterVoice);
     this.settings.settingsLanguage = normalizeSettingsLanguage(this.settings.settingsLanguage);
+    this.settings.chunkLimits = parseChunkLimits(this.settings.chunkLimits).join(',');
+    this.settings.onlineChunkLimits = parseChunkLimits(
+      this.settings.onlineChunkLimits,
+      DEFAULT_ONLINE_CHUNK_LIMITS
+    ).join(',');
+    this.settings.onlinePrefetchChunks = normalizeOnlinePrefetchChunks(this.settings.onlinePrefetchChunks);
     await this.saveData(this.settings);
   }
 
@@ -2110,6 +2272,140 @@ class CosyVoiceReaderPlugin extends Plugin {
     await this.readCurrentPdf(file, { selectionContext });
   }
 
+  getSpeechConfiguration() {
+    const speechEngine = normalizeSpeechEngine(this.settings.speechEngine);
+    const engineLabel = getSpeechEngineLabel(this.settings);
+    const scriptPath = String(this.settings.scriptPath || '').trim();
+    if (speechEngine === 'edge-tts' && !hasEdgeTtsConsent(this.settings)) {
+      new Notice('Edge TTS sends text to Microsoft. Enable online processing consent in the plugin settings before reading.', 10000);
+      return null;
+    }
+    if (speechEngine === 'azure-speech' && !hasAzureSpeechConsent(this.settings)) {
+      new Notice('Azure Speech sends text to your Microsoft Azure Speech resource. Enable Azure online processing consent before reading.', 10000);
+      return null;
+    }
+    if (speechEngine === 'azure-speech') {
+      const configurationError = getAzureSpeechConfigurationError(this.settings, this.vaultBasePath, this.app);
+      if (configurationError) {
+        new Notice(`Azure Speech: ${configurationError}`, 10000);
+        return null;
+      }
+    }
+    if (speechEngine === 'openrouter-tts' && !hasOpenRouterConsent(this.settings)) {
+      new Notice('OpenRouter TTS sends text to OpenRouter and an eligible upstream provider. Enable OpenRouter online processing consent before reading.', 10000);
+      return null;
+    }
+    if (speechEngine === 'openrouter-tts') {
+      const configurationError = getOpenRouterConfigurationError(this.settings, this.vaultBasePath, this.app);
+      if (configurationError) {
+        new Notice(`OpenRouter TTS: ${configurationError}`, 10000);
+        return null;
+      }
+    }
+    if (speechEngine === 'local-cosyvoice' && (!scriptPath || !fs.existsSync(scriptPath))) {
+      new Notice(`CosyVoice: script not found: ${scriptPath || '(empty)'}`, 8000);
+      return null;
+    }
+
+    return {
+      chunkLimits: getChunkLimitsForSpeechEngine(this.settings, speechEngine),
+      engineLabel,
+      prefetchChunks: getSynthesisPrefetchCount(this.settings, speechEngine),
+      speechEngine,
+    };
+  }
+
+  createSpeechSession(chunks, sourceLabel, configuration, options = {}) {
+    const initialChunks = Array.isArray(chunks) ? chunks.slice() : [];
+    return {
+      chunkWaiters: new Set(),
+      chunks: initialChunks,
+      currentChunkIndex: null,
+      engineLabel: configuration.engineLabel,
+      files: [],
+      id: ++this.sequence,
+      kind: options.kind || 'text',
+      pdfLoadingTask: null,
+      pdfSelectionMatched: null,
+      prefetchChunks: configuration.prefetchChunks,
+      producerError: null,
+      productionComplete: options.productionComplete !== false,
+      requestedChunkIndex: null,
+      sourceLabel,
+      speechEngine: configuration.speechEngine,
+      speechStarted: false,
+      stopped: false,
+      totalChunks: initialChunks.length,
+    };
+  }
+
+  notifySessionChunkWaiters(session) {
+    if (!session || !(session.chunkWaiters instanceof Set)) {
+      return;
+    }
+    const waiters = Array.from(session.chunkWaiters);
+    session.chunkWaiters.clear();
+    for (const wake of waiters) {
+      wake();
+    }
+  }
+
+  appendSessionChunks(session, chunks) {
+    if (!this.isActive(session) || !Array.isArray(chunks)) {
+      return 0;
+    }
+    const readableChunks = chunks
+      .map((chunk) => String(chunk || '').trim())
+      .filter(Boolean);
+    if (!readableChunks.length) {
+      return 0;
+    }
+
+    session.chunks.push(...readableChunks);
+    session.totalChunks = session.chunks.length;
+    const currentChunk = this.readerState.currentChunk;
+    this.setReaderState({
+      ...getChunkNavigationState(currentChunk, session.totalChunks),
+      totalChunks: session.totalChunks,
+    });
+    this.notifySessionChunkWaiters(session);
+    return readableChunks.length;
+  }
+
+  completeSessionChunks(session) {
+    session.productionComplete = true;
+    session.totalChunks = session.chunks.length;
+    this.notifySessionChunkWaiters(session);
+  }
+
+  failSessionChunks(session, error) {
+    session.producerError = error instanceof Error ? error : new Error(messageFromError(error));
+    session.productionComplete = true;
+    this.notifySessionChunkWaiters(session);
+  }
+
+  async waitForSessionChunk(session, index) {
+    while (
+      this.isActive(session)
+      && index >= session.chunks.length
+      && !session.productionComplete
+      && !session.producerError
+    ) {
+      await new Promise((resolve) => {
+        const wake = () => {
+          session.chunkWaiters.delete(wake);
+          resolve();
+        };
+        session.chunkWaiters.add(wake);
+      });
+    }
+
+    if (session.producerError) {
+      throw session.producerError;
+    }
+    return index < session.chunks.length ? session.chunks[index] : null;
+  }
+
   async readCurrentPdf(pdfFile = null, options = {}) {
     const file = pdfFile || (
       typeof this.app.workspace.getActiveFile === 'function'
@@ -2126,20 +2422,23 @@ class CosyVoiceReaderPlugin extends Plugin {
       ? options.selectionContext
       : null;
 
+    const configuration = this.getSpeechConfiguration();
+    if (!configuration) {
+      return;
+    }
+
     await this.activateControlView();
     await this.stopReading({ silent: true });
     this.pauseRequested = false;
 
     const sourceLabel = file.basename || file.name || 'PDF';
-    const session = {
-      id: ++this.sequence,
-      stopped: false,
-      files: [],
-      kind: 'pdf-extraction',
-      pdfLoadingTask: null,
-      pdfSelectionMatched: null,
-      totalChunks: 0,
-    };
+    const readingSourceLabel = selectionContext
+      ? `${sourceLabel} (PDF from selection)`
+      : `${sourceLabel} (PDF)`;
+    const session = this.createSpeechSession([], readingSourceLabel, configuration, {
+      kind: 'pdf-progressive',
+      productionComplete: false,
+    });
     this.activeSession = session;
     this.updateStatus('PDF text extraction', {
       canPause: false,
@@ -2160,52 +2459,65 @@ class CosyVoiceReaderPlugin extends Plugin {
       totalChunks: 0,
     });
 
-    try {
-      const text = await this.extractPdfText(file, session, selectionContext ? {
-        selectedText: selectionContext.selectedText,
-        startPageNumber: selectionContext.pageNumber,
-      } : {});
-      if (!this.isActive(session)) {
-        return;
-      }
-      if (!text) {
-        throw new Error('No extractable text was found. This PDF may be scanned or image-only; run OCR first and try again.');
-      }
+    session.producerPromise = this.producePdfSpeechChunks(
+      file,
+      session,
+      selectionContext,
+      configuration.chunkLimits
+    ).then(() => {
+      this.completeSessionChunks(session);
+    }).catch((error) => {
+      this.failSessionChunks(session, error);
+    });
 
-      session.stopped = true;
-      this.activeSession = null;
-      this.updateStatus('CosyVoice idle', createReaderState());
-      if (selectionContext && session.pdfSelectionMatched === false) {
-        new Notice(
-          `CosyVoice PDF: the selected text could not be matched exactly. Reading from the start of page ${selectionContext.pageNumber}.`,
-          10000
-        );
-      }
-      await this.startReading(
-        text,
-        selectionContext ? `${sourceLabel} (PDF from selection)` : `${sourceLabel} (PDF)`
-      );
-    } catch (error) {
-      if (!this.isActive(session)) {
-        return;
-      }
+    new Notice(
+      `${configuration.engineLabel}: progressively reading ${readingSourceLabel}. Online audio is synthesized only as needed.`,
+      6000
+    );
+    await this.runSpeechSession(session);
+  }
 
-      const message = getPdfExtractionErrorMessage(error);
-      session.stopped = true;
-      this.activeSession = null;
-      this.updateStatus('PDF extraction error', {
-        canPause: false,
-        canNextChunk: false,
-        canPreviousChunk: false,
-        canSeek: false,
-        canStop: false,
-        error: message,
-        isPaused: false,
-        phase: 'error',
-        status: 'error',
-      });
-      await this.writeRuntimeLog('failed', { message });
-      new Notice(`CosyVoice PDF: ${message}`, 10000);
+  async producePdfSpeechChunks(file, session, selectionContext, chunkLimits) {
+    const chunker = createIncrementalSpeechChunker(chunkLimits);
+    let readableTextLength = 0;
+    let selectionFallbackNotified = false;
+
+    await this.extractPdfText(file, session, {
+      collectText: false,
+      onPageText: async (pageText, pageInfo) => {
+        if (!this.isActive(session)) {
+          return;
+        }
+        const text = this.settings.stripMarkdown
+          ? sanitizeTextForSpeech(pageText, { mathReadingLanguage: this.settings.mathReadingLanguage })
+          : normalizeLineBreaks(pageText).trim();
+        readableTextLength += text.length;
+        this.appendSessionChunks(session, chunker.push(text));
+
+        if (
+          selectionContext
+          && pageInfo.pageNumber === selectionContext.pageNumber
+          && session.pdfSelectionMatched === false
+          && !selectionFallbackNotified
+        ) {
+          selectionFallbackNotified = true;
+          new Notice(
+            `CosyVoice PDF: the selected text could not be matched exactly. Reading from the start of page ${selectionContext.pageNumber}.`,
+            10000
+          );
+        }
+      },
+      reportProgress: true,
+      selectedText: selectionContext ? selectionContext.selectedText : '',
+      startPageNumber: selectionContext ? selectionContext.pageNumber : 1,
+    });
+
+    if (!this.isActive(session)) {
+      return;
+    }
+    this.appendSessionChunks(session, chunker.finish());
+    if (!readableTextLength || !session.chunks.length) {
+      throw new Error('No extractable text was found. This PDF may be scanned or image-only; run OCR first and try again.');
     }
   }
 
@@ -2259,7 +2571,12 @@ class CosyVoiceReaderPlugin extends Plugin {
       const startPageNumber = Math.max(1, Math.min(totalPages, requestedStartPage));
       const selectedText = String(options.selectedText || '').trim();
 
-      session.totalChunks = totalPages;
+      const collectText = options.collectText !== false;
+      const onPageText = typeof options.onPageText === 'function' ? options.onPageText : null;
+      const reportProgress = options.reportProgress !== false;
+      if (!onPageText) {
+        session.totalChunks = totalPages;
+      }
       const pageTexts = [];
       let textLength = 0;
 
@@ -2268,19 +2585,21 @@ class CosyVoiceReaderPlugin extends Plugin {
           return '';
         }
 
-        this.updateStatus(`PDF page ${pageNumber}/${totalPages}`, {
-          canPause: false,
-          canNextChunk: false,
-          canPreviousChunk: false,
-          canSeek: false,
-          canStop: true,
-          currentChunk: pageNumber - 1,
-          currentText: `Extracting page ${pageNumber} of ${totalPages}...`,
-          phase: 'extracting PDF',
-          progress: (pageNumber - 1) / totalPages,
-          status: 'running',
-          totalChunks: totalPages,
-        });
+        if (reportProgress && !session.speechStarted) {
+          this.updateStatus(`PDF page ${pageNumber}/${totalPages}`, {
+            canPause: false,
+            canNextChunk: false,
+            canPreviousChunk: false,
+            canSeek: false,
+            canStop: true,
+            currentChunk: onPageText ? 0 : pageNumber - 1,
+            currentText: `Extracting page ${pageNumber} of ${totalPages}...`,
+            phase: 'extracting PDF',
+            progress: (pageNumber - 1) / totalPages,
+            status: 'running',
+            totalChunks: onPageText ? session.totalChunks : totalPages,
+          });
+        }
 
         let page = null;
         try {
@@ -2298,10 +2617,15 @@ class CosyVoiceReaderPlugin extends Plugin {
             pageText = selectionSlice.text;
             session.pdfSelectionMatched = selectionSlice.matched;
           }
-          pageTexts.push(pageText);
+          if (collectText) {
+            pageTexts.push(pageText);
+          }
           textLength += pageText.length;
           if (textLength > PDF_MAX_TEXT_CHARS) {
             throw new Error('This PDF contains more than 5,000,000 extractable characters. Split it before reading.');
+          }
+          if (onPageText) {
+            await onPageText(pageText, { pageNumber, totalPages });
           }
         } finally {
           if (page && typeof page.cleanup === 'function') {
@@ -2309,13 +2633,15 @@ class CosyVoiceReaderPlugin extends Plugin {
           }
         }
 
-        this.updateStatus(`PDF page ${pageNumber}/${totalPages}`, {
-          currentChunk: pageNumber,
-          progress: pageNumber / totalPages,
-        });
+        if (reportProgress && !session.speechStarted) {
+          this.updateStatus(`PDF page ${pageNumber}/${totalPages}`, {
+            currentChunk: onPageText ? 0 : pageNumber,
+            progress: pageNumber / totalPages,
+          });
+        }
       }
 
-      return joinPdfPageText(pageTexts);
+      return collectText ? joinPdfPageText(pageTexts) : '';
     } finally {
       const ownsLoadingTask = session.pdfLoadingTask === loadingTask;
       if (ownsLoadingTask) {
@@ -2410,54 +2736,19 @@ class CosyVoiceReaderPlugin extends Plugin {
       return;
     }
 
-    const speechEngine = normalizeSpeechEngine(this.settings.speechEngine);
-    const engineLabel = getSpeechEngineLabel(this.settings);
-    const scriptPath = this.settings.scriptPath.trim();
-    if (speechEngine === 'edge-tts' && !hasEdgeTtsConsent(this.settings)) {
-      new Notice('Edge TTS sends text to Microsoft. Enable online processing consent in the plugin settings before reading.', 10000);
-      return;
-    }
-    if (speechEngine === 'azure-speech' && !hasAzureSpeechConsent(this.settings)) {
-      new Notice('Azure Speech sends text to your Microsoft Azure Speech resource. Enable Azure online processing consent before reading.', 10000);
-      return;
-    }
-    if (speechEngine === 'azure-speech') {
-      const configurationError = getAzureSpeechConfigurationError(this.settings, this.vaultBasePath, this.app);
-      if (configurationError) {
-        new Notice(`Azure Speech: ${configurationError}`, 10000);
-        return;
-      }
-    }
-    if (speechEngine === 'openrouter-tts' && !hasOpenRouterConsent(this.settings)) {
-      new Notice('OpenRouter TTS sends text to OpenRouter and an eligible upstream provider. Enable OpenRouter online processing consent before reading.', 10000);
-      return;
-    }
-    if (speechEngine === 'openrouter-tts') {
-      const configurationError = getOpenRouterConfigurationError(this.settings, this.vaultBasePath, this.app);
-      if (configurationError) {
-        new Notice(`OpenRouter TTS: ${configurationError}`, 10000);
-        return;
-      }
-    }
-    if (speechEngine === 'local-cosyvoice' && (!scriptPath || !fs.existsSync(scriptPath))) {
-      new Notice(`CosyVoice: script not found: ${scriptPath || '(empty)'}`, 8000);
+    const configuration = this.getSpeechConfiguration();
+    if (!configuration) {
       return;
     }
 
     await this.stopReading({ silent: true });
     this.pauseRequested = false;
 
-    const chunks = splitTextForSpeechChunks(text, parseChunkLimits(this.settings.chunkLimits));
-    const session = {
-      id: ++this.sequence,
-      stopped: false,
-      files: [],
-      requestedChunkIndex: null,
-      totalChunks: chunks.length,
-    };
+    const chunks = splitTextForSpeechChunks(text, configuration.chunkLimits);
+    const session = this.createSpeechSession(chunks, sourceLabel, configuration);
 
     this.activeSession = session;
-    this.updateStatus(`${engineLabel} 0/${chunks.length}`, {
+    this.updateStatus(`${configuration.engineLabel} 0/${chunks.length}`, {
       canPause: false,
       canNextChunk: false,
       canPreviousChunk: false,
@@ -2475,25 +2766,55 @@ class CosyVoiceReaderPlugin extends Plugin {
     });
     await this.writeRuntimeLog('start', {
       chunks: chunks.length,
+      prefetchChunks: configuration.prefetchChunks,
       source: sourceLabel,
       textLength: text.length,
     });
-    new Notice(`${engineLabel}: reading ${sourceLabel}. First synthesis may take a while.`, 6000);
+    new Notice(`${configuration.engineLabel}: reading ${sourceLabel}. First synthesis may take a while.`, 6000);
+
+    await this.runSpeechSession(session);
+  }
+
+  async runSpeechSession(session) {
+    const preparedChunks = new Map();
+    const getPreparedChunk = (index) => {
+      if (!preparedChunks.has(index)) {
+        preparedChunks.set(index, this.queuePrepareChunk(session.chunks[index], index, session));
+      }
+
+      return preparedChunks.get(index);
+    };
 
     try {
-      const preparedChunks = new Map();
-      const getPreparedChunk = (index) => {
-        if (!preparedChunks.has(index)) {
-          preparedChunks.set(index, this.queuePrepareChunk(chunks[index], index, session));
+      let index = 0;
+      while (this.isActive(session)) {
+        if (Number.isInteger(session.requestedChunkIndex) && session.chunks.length) {
+          index = Math.max(0, Math.min(session.chunks.length - 1, session.requestedChunkIndex));
+          session.requestedChunkIndex = null;
         }
 
-        return preparedChunks.get(index);
-      };
+        if (
+          session.kind === 'pdf-progressive'
+          && index >= session.chunks.length
+          && !session.productionComplete
+        ) {
+          this.updateStatus('PDF parsing next pages', {
+            canPause: true,
+            canNextChunk: false,
+            canSeek: false,
+            canStop: true,
+            isPaused: false,
+            phase: 'extracting PDF',
+            progress: Math.min(0.99, this.readerState.progress),
+            status: 'running',
+          });
+        }
 
-      getPreparedChunk(0);
-      let index = 0;
-      while (index < chunks.length) {
+        const chunkText = await this.waitForSessionChunk(session, index);
         if (!this.isActive(session)) {
+          break;
+        }
+        if (chunkText === null) {
           break;
         }
 
@@ -2503,21 +2824,24 @@ class CosyVoiceReaderPlugin extends Plugin {
         }
 
         if (Number.isInteger(session.requestedChunkIndex) && session.requestedChunkIndex !== index) {
-          index = Math.max(0, Math.min(chunks.length - 1, session.requestedChunkIndex));
+          index = Math.max(0, Math.min(session.chunks.length - 1, session.requestedChunkIndex));
           session.requestedChunkIndex = null;
           continue;
         }
 
-        if (index + 1 < chunks.length) {
-          getPreparedChunk(index + 1);
+        for (let offset = 1; offset <= session.prefetchChunks; offset += 1) {
+          const prefetchIndex = index + offset;
+          if (prefetchIndex < session.chunks.length) {
+            getPreparedChunk(prefetchIndex);
+          }
         }
 
         session.currentChunkIndex = index;
         session.requestedChunkIndex = null;
-        await this.playPreparedAudio(prepared, session, index, chunks.length);
+        await this.playPreparedAudio(prepared, session, index, session.totalChunks);
 
         if (Number.isInteger(session.requestedChunkIndex)) {
-          index = Math.max(0, Math.min(chunks.length - 1, session.requestedChunkIndex));
+          index = Math.max(0, Math.min(session.chunks.length - 1, session.requestedChunkIndex));
           session.requestedChunkIndex = null;
         } else {
           index += 1;
@@ -2525,10 +2849,11 @@ class CosyVoiceReaderPlugin extends Plugin {
       }
 
       if (this.isActive(session)) {
-        this.updateStatus(`${engineLabel} complete`, {
+        this.updateStatus(`${session.engineLabel} complete`, {
           canPause: false,
           canNextChunk: false,
           canPreviousChunk: false,
+          canSeek: false,
           canStop: false,
           isPaused: false,
           phase: 'complete',
@@ -2539,24 +2864,32 @@ class CosyVoiceReaderPlugin extends Plugin {
       }
     } catch (error) {
       if (this.isActive(session)) {
-        this.updateStatus(`${engineLabel} error`, {
+        const message = session.kind === 'pdf-progressive'
+          ? getPdfExtractionErrorMessage(error)
+          : messageFromError(error);
+        this.updateStatus(`${session.engineLabel} error`, {
           canPause: false,
           canNextChunk: false,
           canPreviousChunk: false,
+          canSeek: false,
           canStop: false,
-          error: messageFromError(error),
+          error: message,
           isPaused: false,
           phase: 'error',
           status: 'error',
         });
         await this.writeRuntimeLog('failed', {
-          message: messageFromError(error),
+          message,
         });
-        new Notice(`${engineLabel} failed: ${messageFromError(error)}`, 10000);
-        session.stopped = true;
+        const noticePrefix = session.kind === 'pdf-progressive' ? 'CosyVoice PDF' : session.engineLabel;
+        new Notice(`${noticePrefix} failed: ${message}`, 10000);
+        await this.cancelSessionOperations(session);
         this.activeSession = null;
       }
     } finally {
+      if (session.producerPromise) {
+        await session.producerPromise.catch(() => {});
+      }
       if (this.settings.cleanupCache) {
         await this.cleanupSessionFiles(session);
       }
@@ -2568,8 +2901,9 @@ class CosyVoiceReaderPlugin extends Plugin {
       throw new Error('Reading stopped.');
     }
 
-    const speechEngine = normalizeSpeechEngine(this.settings.speechEngine);
-    const engineLabel = getSpeechEngineLabel(this.settings);
+    session.speechStarted = true;
+    const speechEngine = normalizeSpeechEngine(session.speechEngine || this.settings.speechEngine);
+    const engineLabel = session.engineLabel || getSpeechEngineLabel(this.settings);
     const outputExtension = speechEngine === 'local-cosyvoice' ? 'wav' : 'mp3';
     const basename = `${Date.now()}-${session.id}-${index}`;
     const inputPath = path.join(this.cacheDir, `${basename}.txt`);
@@ -3085,6 +3419,11 @@ class CosyVoiceReaderPlugin extends Plugin {
     await new Promise((resolve, reject) => {
       let audio;
       let settled = false;
+      const getPlaybackTotal = () => Math.max(
+        1,
+        Math.floor(Number(session.totalChunks) || 0),
+        Math.floor(Number(total) || 0)
+      );
       const finish = (callback, value) => {
         if (settled) {
           return;
@@ -3102,18 +3441,19 @@ class CosyVoiceReaderPlugin extends Plugin {
         audio.noteReaderReleaseSource = source.release;
         audio.preload = 'auto';
         this.currentAudio = audio;
-        this.updateStatus(`${getSpeechEngineLabel(this.settings)} play ${index + 1}/${total}`, {
+        const playbackTotal = getPlaybackTotal();
+        this.updateStatus(`${session.engineLabel || getSpeechEngineLabel(this.settings)} play ${index + 1}/${playbackTotal}`, {
           canPause: true,
-          canNextChunk: index + 1 < total,
+          canNextChunk: index + 1 < playbackTotal,
           canPreviousChunk: index > 0,
           canSeek: true,
           canStop: true,
           currentChunk: index + 1,
           isPaused: false,
           phase: 'playing',
-          progress: total ? index / total : 0,
+          progress: index / playbackTotal,
           status: 'running',
-          totalChunks: total,
+          totalChunks: playbackTotal,
         });
         void this.writeRuntimeLog('play', {
           index,
@@ -3129,19 +3469,22 @@ class CosyVoiceReaderPlugin extends Plugin {
           lastProgressUpdate = now;
           const duration = Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : 0;
           const chunkProgress = duration ? audio.currentTime / duration : 0;
+          const currentTotal = getPlaybackTotal();
           this.setReaderState({
-            progress: total ? (index + chunkProgress) / total : 0,
+            progress: (index + chunkProgress) / currentTotal,
+            totalChunks: currentTotal,
           });
         };
 
         audio.onended = () => {
+          const currentTotal = getPlaybackTotal();
           this.setReaderState({
             canPause: false,
-            canNextChunk: false,
-            canPreviousChunk: false,
+            ...getChunkNavigationState(index + 1, currentTotal),
             canSeek: false,
             isPaused: false,
-            progress: total ? (index + 1) / total : 1,
+            progress: (index + 1) / currentTotal,
+            totalChunks: currentTotal,
           });
           finish(resolve);
         };
@@ -3374,22 +3717,19 @@ class CosyVoiceReaderPlugin extends Plugin {
     }
   }
 
-  async stopReading(options = {}) {
-    const previous = this.activeSession;
-    this.sequence += 1;
-
-    if (previous) {
-      previous.stopped = true;
+  async cancelSessionOperations(session) {
+    if (session) {
+      session.stopped = true;
+      this.notifySessionChunkWaiters(session);
     }
-    this.pauseRequested = false;
 
-    if (previous && previous.pdfLoadingTask && typeof previous.pdfLoadingTask.destroy === 'function') {
+    if (session && session.pdfLoadingTask && typeof session.pdfLoadingTask.destroy === 'function') {
       try {
-        await previous.pdfLoadingTask.destroy();
+        await session.pdfLoadingTask.destroy();
       } catch (error) {
         console.warn(`[${PLUGIN_ID}] Could not cancel PDF loading`, error);
       }
-      previous.pdfLoadingTask = null;
+      session.pdfLoadingTask = null;
     }
 
     if (this.currentProcess) {
@@ -3411,6 +3751,13 @@ class CosyVoiceReaderPlugin extends Plugin {
       this.currentAudio.load();
       this.currentAudio = null;
     }
+  }
+
+  async stopReading(options = {}) {
+    const previous = this.activeSession;
+    this.sequence += 1;
+    this.pauseRequested = false;
+    await this.cancelSessionOperations(previous);
 
     this.activeSession = null;
     this.updateStatus('CosyVoice idle', createReaderState());
@@ -4131,6 +4478,33 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
       });
 
     new Setting(containerEl)
+      .setName(ui.onlineChunkLimitsName)
+      .setDesc(ui.onlineChunkLimitsDesc)
+      .addText((text) => {
+        text.setValue(this.plugin.settings.onlineChunkLimits).onChange(async (value) => {
+          this.plugin.settings.onlineChunkLimits = parseChunkLimits(
+            value,
+            DEFAULT_ONLINE_CHUNK_LIMITS
+          ).join(',');
+          await this.plugin.saveSettings();
+        });
+      });
+
+    new Setting(containerEl)
+      .setName(ui.onlinePrefetchName)
+      .setDesc(ui.onlinePrefetchDesc)
+      .addDropdown((dropdown) => {
+        dropdown
+          .addOption('0', ui.onlinePrefetchNone)
+          .addOption('1', ui.onlinePrefetchOne)
+          .setValue(String(normalizeOnlinePrefetchChunks(this.plugin.settings.onlinePrefetchChunks)))
+          .onChange(async (value) => {
+            this.plugin.settings.onlinePrefetchChunks = normalizeOnlinePrefetchChunks(value);
+            await this.plugin.saveSettings();
+          });
+      });
+
+    new Setting(containerEl)
       .setName(ui.stripMarkdownName)
       .setDesc(ui.stripMarkdownDesc)
       .addToggle((toggle) => {
@@ -4211,6 +4585,7 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
 module.exports = {
   default: CosyVoiceReaderPlugin,
   __test: {
+    DEFAULT_ONLINE_CHUNK_LIMITS,
     VIEW_TYPE,
     buildAzureSpeechEndpoint,
     buildAzureSpeechSsml,
@@ -4219,6 +4594,7 @@ module.exports = {
     calculateCurrentChunkSeekTime,
     createBlobAudioSource,
     createDefaultSettings,
+    createIncrementalSpeechChunker,
     createReaderState,
     createSafeRuntimeLogEvent,
     describeMediaError,
@@ -4234,6 +4610,7 @@ module.exports = {
     getOpenRouterTtsModels,
     getOpenRouterTtsPresets,
     getOpenRouterTtsVoicePresets,
+    getChunkLimitsForSpeechEngine,
     getPdfPageNumberFromNode,
     getPdfSelectionContext,
     getPluginTempCacheDir,
@@ -4241,6 +4618,7 @@ module.exports = {
     getTextFromPositionToEnd,
     getAudioUrlForFile,
     getSpeedPresets,
+    getSynthesisPrefetchCount,
     hasAzureSpeechConsent,
     hasEdgeTtsConsent,
     hasObsidianSecretStorage,
@@ -4248,6 +4626,7 @@ module.exports = {
     isRetryableRemoteError,
     isPdfFile,
     isOwnedCacheFileName,
+    isOnlineSpeechEngine,
     joinPdfPageText,
     normalizeAzureSpeechCloud,
     normalizeAzureSpeechRegion,
@@ -4258,6 +4637,7 @@ module.exports = {
     normalizeMathReadingLanguage,
     normalizeOpenRouterModel,
     normalizeOpenRouterVoice,
+    normalizeOnlinePrefetchChunks,
     normalizePdfSelectionText,
     normalizeSettingsLanguage,
     normalizeSpeechEngine,
@@ -4269,6 +4649,7 @@ module.exports = {
     sanitizeLatexForSpeech,
     slicePdfTextFromSelection,
     selectKnownSettings,
+    splitTextForSpeechChunks,
     toVaultRelativePath,
     verbalizeShortLatex,
   },
