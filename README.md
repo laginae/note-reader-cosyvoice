@@ -28,6 +28,7 @@ Plugin settings. The script path shown here is a redacted example:
 - Uses Obsidian SecretStorage for Azure and OpenRouter API keys by default on Obsidian 1.11.4 or later, with an external key-file compatibility option.
 - Provides common Chinese and English voice presets, model-specific OpenRouter voice menus, and custom voice ID fields.
 - Cleans Markdown before synthesis and converts Markdown tables into speech-friendly column and row descriptions while skipping empty cells.
+- Reads numeric citations such as `[28]`, `[28, 29]`, and `[28-30]` as spoken references while preserving unit labels such as `[s]` and `[%]`.
 - Provides a settings-page `Restore defaults` button for resetting all plugin settings.
 - Handles common LaTeX before synthesis with a configurable `Math reading language` setting:
   - Skips formulas longer than 12 non-space characters.

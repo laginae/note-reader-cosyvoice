@@ -196,7 +196,7 @@ const testVaultPath = path.resolve('test-vault');
 const testAudioPath = path.join(testVaultPath, '.obsidian', 'plugins', 'note-reader-cosyvoice', 'cache', 'a.wav');
 assert.strictEqual(manifest.id, 'note-reader-cosyvoice');
 assert.strictEqual(manifest.name, 'Note and PDF Voice Reader');
-assert.strictEqual(manifest.version, '0.2.7');
+assert.strictEqual(manifest.version, '0.2.8');
 assert.ok(!/\bObsidian\b/.test(manifest.description));
 assert.ok(!code.includes('Note Reader CosyVoice'));
 assert.ok(!code.includes('CosyVoice Reader'));
@@ -318,6 +318,15 @@ assert.ok(sanitizedMarkdownTable.includes('Table columns: Region; Dataset; Inval
 assert.ok(sanitizedMarkdownTable.includes('Row 1. Region: CN-NE; Dataset: 2023; Invalid ratio [%]: 0.5.'));
 assert.ok(!/[|]/.test(sanitizedMarkdownTable));
 assert.ok(!/-{3,}/.test(sanitizedMarkdownTable));
+const reportedCitationText = 'The results are given in Supplementary Material S3 [28], [29], and verified on the test month [30].';
+assert.strictEqual(
+  moduleObject.exports.__test.sanitizeTextForSpeech(reportedCitationText),
+  'The results are given in Supplementary Material S3 reference 28, reference 29, and verified on the test month reference 30.'
+);
+assert.strictEqual(
+  moduleObject.exports.__test.sanitizeTextForSpeech('Units [s] and [%] stay unchanged.'),
+  'Units [s] and [%] stay unchanged.'
+);
 assert.strictEqual(moduleObject.exports.__test.normalizeSettingsLanguage('chinese'), 'chinese');
 assert.strictEqual(moduleObject.exports.__test.normalizeSettingsLanguage('bad'), 'english');
 assert.strictEqual(moduleObject.exports.__test.normalizeCredentialSource('key-file'), 'key-file');

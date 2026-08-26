@@ -615,6 +615,48 @@ function sanitizeMarkdownTablesForSpeech(text) {
   return output.join('\n');
 }
 
+function joinCitationSpeechParts(parts, useChineseLabels) {
+  if (useChineseLabels) {
+    return parts.join('、');
+  }
+  if (parts.length <= 1) {
+    return parts[0] || '';
+  }
+  if (parts.length === 2) {
+    return `${parts[0]} and ${parts[1]}`;
+  }
+  return `${parts.slice(0, -1).join(', ')}, and ${parts.at(-1)}`;
+}
+
+function verbalizeNumericCitationsForSpeech(text) {
+  const value = String(text || '');
+  const useChineseLabels = /[\u3040-\u30ff\u3400-\u9fff\uf900-\ufaff]/.test(value);
+
+  return value.replace(
+    /\[(\d+(?:\s*(?:[,;]|[-–—])\s*\d+)*)\](?:\([^)]*\))?/g,
+    (match, content) => {
+      const numbers = content.match(/\d+/g) || [];
+      if (!numbers.length || numbers.some((number) => Number(number) < 1 || Number(number) > 999)) {
+        return match;
+      }
+
+      const parts = content
+        .split(/\s*[,;]\s*/)
+        .map((part) => {
+          const range = /^(\d+)\s*[-–—]\s*(\d+)$/.exec(part);
+          if (!range) {
+            return part.trim();
+          }
+          return `${range[1]} ${useChineseLabels ? '到' : 'to'} ${range[2]}`;
+        })
+        .filter(Boolean);
+      const isPlural = parts.length > 1 || /[-–—]/.test(content);
+      const label = useChineseLabels ? '参考文献' : (isPlural ? 'references' : 'reference');
+      return ` ${label} ${joinCitationSpeechParts(parts, useChineseLabels)} `;
+    }
+  );
+}
+
 function sanitizeTextForSpeech(text, options = {}) {
   let value = sanitizeLatexForSpeech(normalizeLineBreaks(text), options);
 
@@ -622,9 +664,10 @@ function sanitizeTextForSpeech(text, options = {}) {
   value = value.replace(/```[\s\S]*?```/g, ' ');
   value = value.replace(/!\[\[[^\]]+\]\]/g, ' ');
   value = value.replace(/!\[[^\]]*]\([^)]*\)/g, ' ');
-  value = value.replace(/\[([^\]]+)\]\([^)]*\)/g, '$1');
   value = value.replace(/\[\[([^\]|]+)\|([^\]]+)\]\]/g, '$2');
   value = value.replace(/\[\[([^\]]+)\]\]/g, '$1');
+  value = verbalizeNumericCitationsForSpeech(value);
+  value = value.replace(/\[([^\]]+)\]\([^)]*\)/g, '$1');
   value = sanitizeMarkdownTablesForSpeech(value);
   value = value.replace(/`([^`]+)`/g, '$1');
   value = value.replace(/<[^>]+>/g, ' ');

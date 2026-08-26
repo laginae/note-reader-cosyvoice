@@ -64,6 +64,21 @@ assert.strictEqual(
   'Table columns: Name; Value.\nRow 1. Name: Frequency.'
 );
 
+const reportedCitationText = 'to examine the effect of rolling parameter updates. The results are given in Supplementary Material S3 [28], [29]. The second stage constructs 90% and 95% intervals from the empirical quantiles of training-period hold-out forecasts and then verifies the calibration of the intervals with the empirical coverage on the test month [30].';
+assert.strictEqual(
+  sanitizeTextForSpeech(reportedCitationText),
+  'to examine the effect of rolling parameter updates. The results are given in Supplementary Material S3 reference 28, reference 29. The second stage constructs 90% and 95% intervals from the empirical quantiles of training-period hold-out forecasts and then verifies the calibration of the intervals with the empirical coverage on the test month reference 30.'
+);
+assert.strictEqual(
+  sanitizeTextForSpeech('Evidence is reported in [28, 29] and [28–30].'),
+  'Evidence is reported in references 28 and 29 and references 28 to 30.'
+);
+assert.strictEqual(
+  sanitizeTextForSpeech('Units [s] and [%], year [2023], and interval [0, 1] remain.'),
+  'Units [s] and [%], year [2023], and interval [0, 1] remain.'
+);
+assert.strictEqual(sanitizeTextForSpeech('研究结果见 [28]。'), '研究结果见 参考文献 28。');
+
 assert.deepStrictEqual(splitTextForSpeechChunks('甲'.repeat(45), [10, 20]), [
   '甲'.repeat(10),
   '甲'.repeat(20),
