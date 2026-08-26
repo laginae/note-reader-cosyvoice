@@ -1,4 +1,4 @@
-const { ItemView, MarkdownView, Notice, Plugin, PluginSettingTab, SecretComponent, Setting, setIcon } = require('obsidian');
+const { ItemView, MarkdownView, Notice, Plugin, PluginSettingTab, SecretComponent, Setting, loadPdfJs, setIcon } = require('obsidian');
 const crypto = require('crypto');
 const fs = require('fs');
 const https = require('https');
@@ -29,6 +29,9 @@ const SPEECH_ENGINES = ['local-cosyvoice', 'edge-tts', 'azure-speech', 'openrout
 const AZURE_SPEECH_CLOUDS = ['public', 'china'];
 const REMOTE_TTS_MAX_AUDIO_BYTES = 20 * 1024 * 1024;
 const RUNTIME_LOG_MAX_BYTES = 1024 * 1024;
+const PDF_MAX_BYTES = 200 * 1024 * 1024;
+const PDF_MAX_PAGES = 2000;
+const PDF_MAX_TEXT_CHARS = 5_000_000;
 const OWNED_CACHE_FILE_PATTERN = /^\d{10,}-\d+-\d+\.(?:txt|wav|mp3)$/i;
 const MICROSOFT_VOICE_PRESETS = [
   ['zh-CN-XiaoxiaoNeural', 'Mandarin Chinese - Xiaoxiao (female, warm)', '中文普通话 - 小晓（女声，温暖）'],
@@ -199,7 +202,7 @@ const SETTINGS_UI_TEXT = {
     restoreDefaultsButton: 'Restore defaults',
     settingsRestoredNotice: 'CosyVoice: settings restored to defaults.',
     temporaryDataClearedNotice: 'CosyVoice: temporary text, audio, and diagnostic logs cleared.',
-    commandsFooter: 'Commands: read current note, read selection, pause or resume, and stop.',
+    commandsFooter: 'Commands: read current note or PDF, read selection, pause or resume, and stop.',
   },
   chinese: {
     settingsLanguageName: '设置界面语言',
@@ -287,7 +290,7 @@ const SETTINGS_UI_TEXT = {
     restoreDefaultsButton: '恢复默认值',
     settingsRestoredNotice: 'CosyVoice：设置已恢复为默认值。',
     temporaryDataClearedNotice: 'CosyVoice：临时文本、音频和诊断日志已清除。',
-    commandsFooter: '命令：朗读当前笔记、朗读选中内容、暂停或继续、停止。',
+    commandsFooter: '命令：朗读当前笔记或 PDF、朗读选中内容、暂停或继续、停止。',
   },
 };
 const LATEX_COMMAND_REPLACEMENTS = {
@@ -387,6 +390,91 @@ const DEFAULT_SETTINGS = {
 
 function normalizeLineBreaks(text) {
   return String(text || '').replace(/\r\n?/g, '\n');
+}
+
+function isPdfFile(file) {
+  return Boolean(file && String(file.extension || '').toLowerCase() === 'pdf');
+}
+
+function isCjkCharacter(character) {
+  return /[\u3040-\u30ff\u3400-\u9fff\uf900-\ufaff]/.test(String(character || ''));
+}
+
+function shouldJoinPdfTextTokens(currentLine, token) {
+  const previous = currentLine.slice(-1);
+  const next = token.charAt(0);
+
+  if (!previous || !next) {
+    return true;
+  }
+  if (/[([{\u3008-\u3010\u3014\uff08]/.test(previous)) {
+    return true;
+  }
+  if (/[),.;:!?%\]}\u3001\u3002\u3009-\u3011\u3015\uff01\uff09\uff0c\uff0e\uff1a\uff1b\uff1f]/.test(next)) {
+    return true;
+  }
+  return isCjkCharacter(previous) && isCjkCharacter(next);
+}
+
+function extractTextFromPdfItems(items) {
+  const lines = [];
+  let currentLine = '';
+
+  const flushLine = () => {
+    const line = currentLine.trim();
+    if (line) {
+      lines.push(line);
+    }
+    currentLine = '';
+  };
+
+  for (const item of Array.isArray(items) ? items : []) {
+    if (!item || typeof item.str !== 'string') {
+      continue;
+    }
+
+    const parts = normalizeLineBreaks(item.str).split('\n');
+    parts.forEach((part, index) => {
+      const token = part.replace(/[ \t]+/g, ' ').trim();
+      if (token) {
+        currentLine = currentLine && !shouldJoinPdfTextTokens(currentLine, token)
+          ? `${currentLine} ${token}`
+          : `${currentLine}${token}`;
+      }
+      if (index < parts.length - 1) {
+        flushLine();
+      }
+    });
+
+    if (item.hasEOL) {
+      flushLine();
+    }
+  }
+
+  flushLine();
+  return lines
+    .join('\n')
+    .replace(/([A-Za-z])-\n(?=[a-z])/g, '$1')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+function joinPdfPageText(pageTexts) {
+  return (Array.isArray(pageTexts) ? pageTexts : [])
+    .map((text) => normalizeLineBreaks(text).trim())
+    .filter(Boolean)
+    .join('\n\n');
+}
+
+function getPdfExtractionErrorMessage(error) {
+  const message = messageFromError(error);
+  if (/password/i.test(`${error && error.name ? error.name : ''} ${message}`)) {
+    return 'This PDF is password-protected. Unlock it before reading.';
+  }
+  if (/invalidpdf|invalid pdf|malformed pdf/i.test(`${error && error.name ? error.name : ''} ${message}`)) {
+    return 'This PDF is invalid or damaged and its text could not be extracted.';
+  }
+  return message;
 }
 
 function sanitizeTextForSpeech(text, options = {}) {
@@ -1265,9 +1353,26 @@ class CosyVoiceReaderPlugin extends Plugin {
 
     this.addCommand({
       id: 'read-current-note',
-      name: 'Read current note with CosyVoice',
+      name: 'Read current note or PDF with CosyVoice',
       callback: () => {
         void this.readCurrentNote();
+      },
+    });
+
+    this.addCommand({
+      id: 'read-current-pdf',
+      name: 'Read current PDF with CosyVoice',
+      checkCallback: (checking) => {
+        const file = typeof this.app.workspace.getActiveFile === 'function'
+          ? this.app.workspace.getActiveFile()
+          : null;
+        if (!isPdfFile(file)) {
+          return false;
+        }
+        if (!checking) {
+          void this.readCurrentPdf(file);
+        }
+        return true;
       },
     });
 
@@ -1542,6 +1647,14 @@ class CosyVoiceReaderPlugin extends Plugin {
   }
 
   async readCurrentNote() {
+    const activeFile = typeof this.app.workspace.getActiveFile === 'function'
+      ? this.app.workspace.getActiveFile()
+      : null;
+    if (isPdfFile(activeFile)) {
+      await this.readCurrentPdf(activeFile);
+      return;
+    }
+
     const view = this.getActiveMarkdownView();
     if (!view) {
       return;
@@ -1551,6 +1664,200 @@ class CosyVoiceReaderPlugin extends Plugin {
     const text = selection && selection.trim() ? selection : view.editor.getValue();
     await this.activateControlView();
     await this.startReading(text, selection && selection.trim() ? 'selection' : view.file?.basename || 'note');
+  }
+
+  async readCurrentPdf(pdfFile = null) {
+    const file = pdfFile || (
+      typeof this.app.workspace.getActiveFile === 'function'
+        ? this.app.workspace.getActiveFile()
+        : null
+    );
+    if (!isPdfFile(file)) {
+      new Notice('CosyVoice: no active PDF file.');
+      return;
+    }
+
+    await this.activateControlView();
+    await this.stopReading({ silent: true });
+    this.pauseRequested = false;
+
+    const sourceLabel = file.basename || file.name || 'PDF';
+    const session = {
+      id: ++this.sequence,
+      stopped: false,
+      files: [],
+      kind: 'pdf-extraction',
+      pdfLoadingTask: null,
+      totalChunks: 0,
+    };
+    this.activeSession = session;
+    this.updateStatus('PDF text extraction', {
+      canPause: false,
+      canNextChunk: false,
+      canPreviousChunk: false,
+      canSeek: false,
+      canStop: true,
+      currentChunk: 0,
+      currentText: 'Loading PDF text...',
+      error: '',
+      isPaused: false,
+      phase: 'extracting PDF',
+      progress: 0,
+      source: sourceLabel,
+      status: 'running',
+      totalChunks: 0,
+    });
+
+    try {
+      const text = await this.extractPdfText(file, session);
+      if (!this.isActive(session)) {
+        return;
+      }
+      if (!text) {
+        throw new Error('No extractable text was found. This PDF may be scanned or image-only; run OCR first and try again.');
+      }
+
+      session.stopped = true;
+      this.activeSession = null;
+      this.updateStatus('CosyVoice idle', createReaderState());
+      await this.startReading(text, `${sourceLabel} (PDF)`);
+    } catch (error) {
+      if (!this.isActive(session)) {
+        return;
+      }
+
+      const message = getPdfExtractionErrorMessage(error);
+      session.stopped = true;
+      this.activeSession = null;
+      this.updateStatus('PDF extraction error', {
+        canPause: false,
+        canNextChunk: false,
+        canPreviousChunk: false,
+        canSeek: false,
+        canStop: false,
+        error: message,
+        isPaused: false,
+        phase: 'error',
+        status: 'error',
+      });
+      await this.writeRuntimeLog('failed', { message });
+      new Notice(`CosyVoice PDF: ${message}`, 10000);
+    }
+  }
+
+  async extractPdfText(file, session) {
+    if (!isPdfFile(file)) {
+      throw new Error('The active file is not a PDF.');
+    }
+    if (Number(file.stat && file.stat.size) > PDF_MAX_BYTES) {
+      throw new Error('This PDF is larger than 200 MB. Split or compress it before reading.');
+    }
+    if (typeof loadPdfJs !== 'function') {
+      throw new Error('PDF text extraction is unavailable in this Obsidian version. Update Obsidian and try again.');
+    }
+    if (!this.app.vault || typeof this.app.vault.readBinary !== 'function') {
+      throw new Error('Obsidian could not read the active PDF.');
+    }
+
+    const [pdfjsLib, binary] = await Promise.all([
+      loadPdfJs(),
+      this.app.vault.readBinary(file),
+    ]);
+    if (!this.isActive(session)) {
+      return '';
+    }
+    if (!pdfjsLib || typeof pdfjsLib.getDocument !== 'function') {
+      throw new Error('Obsidian PDF.js did not load correctly.');
+    }
+
+    const data = binary instanceof Uint8Array
+      ? new Uint8Array(binary.buffer, binary.byteOffset, binary.byteLength)
+      : new Uint8Array(binary);
+    const loadingTask = pdfjsLib.getDocument({ data });
+    session.pdfLoadingTask = loadingTask;
+    let pdfDocument = null;
+
+    try {
+      pdfDocument = await loadingTask.promise;
+      if (!this.isActive(session)) {
+        return '';
+      }
+
+      const totalPages = Math.max(0, Math.floor(Number(pdfDocument.numPages) || 0));
+      if (!totalPages) {
+        throw new Error('This PDF contains no readable pages.');
+      }
+      if (totalPages > PDF_MAX_PAGES) {
+        throw new Error(`This PDF has more than ${PDF_MAX_PAGES} pages. Split it before reading.`);
+      }
+
+      session.totalChunks = totalPages;
+      const pageTexts = [];
+      let textLength = 0;
+
+      for (let pageNumber = 1; pageNumber <= totalPages; pageNumber += 1) {
+        if (!this.isActive(session)) {
+          return '';
+        }
+
+        this.updateStatus(`PDF page ${pageNumber}/${totalPages}`, {
+          canPause: false,
+          canNextChunk: false,
+          canPreviousChunk: false,
+          canSeek: false,
+          canStop: true,
+          currentChunk: pageNumber - 1,
+          currentText: `Extracting page ${pageNumber} of ${totalPages}...`,
+          phase: 'extracting PDF',
+          progress: (pageNumber - 1) / totalPages,
+          status: 'running',
+          totalChunks: totalPages,
+        });
+
+        let page = null;
+        try {
+          page = await pdfDocument.getPage(pageNumber);
+          if (!this.isActive(session)) {
+            return '';
+          }
+          const textContent = await page.getTextContent();
+          if (!this.isActive(session)) {
+            return '';
+          }
+          const pageText = extractTextFromPdfItems(textContent && textContent.items);
+          pageTexts.push(pageText);
+          textLength += pageText.length;
+          if (textLength > PDF_MAX_TEXT_CHARS) {
+            throw new Error('This PDF contains more than 5,000,000 extractable characters. Split it before reading.');
+          }
+        } finally {
+          if (page && typeof page.cleanup === 'function') {
+            page.cleanup();
+          }
+        }
+
+        this.updateStatus(`PDF page ${pageNumber}/${totalPages}`, {
+          currentChunk: pageNumber,
+          progress: pageNumber / totalPages,
+        });
+      }
+
+      return joinPdfPageText(pageTexts);
+    } finally {
+      const ownsLoadingTask = session.pdfLoadingTask === loadingTask;
+      if (ownsLoadingTask) {
+        session.pdfLoadingTask = null;
+      }
+      try {
+        if (pdfDocument && typeof pdfDocument.destroy === 'function') {
+          await pdfDocument.destroy();
+        } else if (ownsLoadingTask && loadingTask && typeof loadingTask.destroy === 'function') {
+          loadingTask.destroy();
+        }
+      } catch (error) {
+        console.warn(`[${PLUGIN_ID}] Could not release PDF resources`, error);
+      }
+    }
   }
 
   async readSelection() {
@@ -2142,7 +2449,7 @@ class CosyVoiceReaderPlugin extends Plugin {
         'Content-Length': Buffer.byteLength(body, 'utf8'),
         'Content-Type': 'application/ssml+xml',
         'Ocp-Apim-Subscription-Key': subscriptionKey,
-        'User-Agent': 'note-reader-cosyvoice/0.2.3',
+        'User-Agent': 'note-reader-cosyvoice/0.2.4',
         'X-Microsoft-OutputFormat': AZURE_SPEECH_OUTPUT_FORMAT,
       },
       body,
@@ -2171,7 +2478,7 @@ class CosyVoiceReaderPlugin extends Plugin {
         Authorization: `Bearer ${apiKey}`,
         'Content-Length': Buffer.byteLength(body, 'utf8'),
         'Content-Type': 'application/json',
-        'User-Agent': 'note-reader-cosyvoice/0.2.3',
+        'User-Agent': 'note-reader-cosyvoice/0.2.4',
       },
       body,
       outputPath,
@@ -2522,6 +2829,15 @@ class CosyVoiceReaderPlugin extends Plugin {
     }
     this.pauseRequested = false;
 
+    if (previous && previous.pdfLoadingTask && typeof previous.pdfLoadingTask.destroy === 'function') {
+      try {
+        await previous.pdfLoadingTask.destroy();
+      } catch (error) {
+        console.warn(`[${PLUGIN_ID}] Could not cancel PDF loading`, error);
+      }
+      previous.pdfLoadingTask = null;
+    }
+
     if (this.currentProcess) {
       this.currentProcess.kill();
       this.currentProcess = null;
@@ -2709,7 +3025,7 @@ class CosyVoiceReaderView extends ItemView {
     this.createActionButton(actions, 'list-start', 'Read from selection', () => {
       void this.plugin.readFromSelection();
     });
-    this.createActionButton(actions, 'file-text', 'Read note', () => {
+    this.createActionButton(actions, 'file-text', 'Read file', () => {
       void this.plugin.readCurrentNote();
     });
     this.createActionButton(
@@ -3352,6 +3668,7 @@ module.exports = {
     createReaderState,
     createSafeRuntimeLogEvent,
     describeMediaError,
+    extractTextFromPdfItems,
     formatProgressLabel,
     formatSpeedLabel,
     getAzureSpeechConfigurationError,
@@ -3372,7 +3689,9 @@ module.exports = {
     hasEdgeTtsConsent,
     hasObsidianSecretStorage,
     hasOpenRouterConsent,
+    isPdfFile,
     isOwnedCacheFileName,
+    joinPdfPageText,
     normalizeAzureSpeechCloud,
     normalizeAzureSpeechRegion,
     normalizeAzureSpeechVoice,

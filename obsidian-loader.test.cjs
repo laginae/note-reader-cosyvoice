@@ -11,6 +11,13 @@ class MockSetting {}
 class MockNotice {}
 class MockMarkdownView {}
 function mockSetIcon() {}
+let mockPdfJsLib = null;
+async function mockLoadPdfJs() {
+  if (!mockPdfJsLib) {
+    throw new Error('PDF.js mock is not configured');
+  }
+  return mockPdfJsLib;
+}
 
 class FakeElement {
   constructor(tagName = 'div') {
@@ -164,6 +171,7 @@ function obsidianStyleRequire(request) {
       Plugin: MockPlugin,
       PluginSettingTab: MockPluginSettingTab,
       Setting: MockSetting,
+      loadPdfJs: mockLoadPdfJs,
       setIcon: mockSetIcon,
     };
   }
@@ -589,6 +597,34 @@ assert.strictEqual(
   moduleObject.exports.__test.getTextFromPositionToEnd(['第一行', '第二行内容', '第三行'], { line: 1, ch: 2 }),
   '行内容\n第三行'
 );
+assert.strictEqual(moduleObject.exports.__test.isPdfFile({ extension: 'pdf' }), true);
+assert.strictEqual(moduleObject.exports.__test.isPdfFile({ extension: 'PDF' }), true);
+assert.strictEqual(moduleObject.exports.__test.isPdfFile({ extension: 'md' }), false);
+assert.strictEqual(
+  moduleObject.exports.__test.extractTextFromPdfItems([
+    { str: 'Multi-', hasEOL: true },
+    { str: 'column' },
+    { str: 'reading' },
+    { str: '.', hasEOL: true },
+    { str: '中文' },
+    { str: '朗读' },
+    { str: '。' },
+  ]),
+  'Multicolumn reading.\n中文朗读。'
+);
+assert.strictEqual(
+  moduleObject.exports.__test.extractTextFromPdfItems([
+    { str: 'Hello' },
+    { str: ',' },
+    { str: 'world' },
+    { str: '!' },
+  ]),
+  'Hello, world!'
+);
+assert.strictEqual(
+  moduleObject.exports.__test.joinPdfPageText(['First page.', '', '  第二页。  ']),
+  'First page.\n\n第二页。'
+);
 
 const root = new FakeElement('section');
 let pauseOrResumeCalls = 0;
@@ -778,6 +814,105 @@ assert.deepStrictEqual(chunkNavigationCalls, [-1, 1]);
   await startupPlugin.onunload();
   fs.rmSync(startupTempCacheDir, { force: true, recursive: true });
   fs.rmSync(startupVaultDir, { force: true, recursive: true });
+
+  const pdfFile = {
+    basename: 'paper',
+    extension: 'pdf',
+    name: 'paper.pdf',
+    stat: { size: 1024 },
+  };
+  let pdfDestroyed = false;
+  let pdfPageCleanupCount = 0;
+  let receivedPdfData = null;
+  mockPdfJsLib = {
+    getDocument: ({ data }) => {
+      receivedPdfData = data;
+      return {
+        promise: Promise.resolve({
+          numPages: 2,
+          getPage: async (pageNumber) => ({
+            cleanup: () => {
+              pdfPageCleanupCount += 1;
+            },
+            getTextContent: async () => ({
+              items: pageNumber === 1
+                ? [{ str: 'First' }, { str: 'page' }, { str: '.' }]
+                : [{ str: '第二页' }, { str: '。' }],
+            }),
+          }),
+          destroy: async () => {
+            pdfDestroyed = true;
+          },
+        }),
+      };
+    },
+  };
+  const pdfSession = { id: 41, stopped: false };
+  const pdfStatuses = [];
+  const pdfPlugin = Object.create(PluginClass.prototype);
+  pdfPlugin.app = {
+    vault: {
+      readBinary: async () => Uint8Array.from([0x25, 0x50, 0x44, 0x46]),
+    },
+  };
+  pdfPlugin.activeSession = pdfSession;
+  pdfPlugin.sequence = pdfSession.id;
+  pdfPlugin.updateStatus = (label, state) => {
+    pdfStatuses.push({ label, state });
+  };
+  const extractedPdfText = await pdfPlugin.extractPdfText(pdfFile, pdfSession);
+  assert.strictEqual(extractedPdfText, 'First page.\n\n第二页。');
+  assert.ok(receivedPdfData instanceof Uint8Array);
+  assert.strictEqual(receivedPdfData.byteLength, 4);
+  assert.strictEqual(pdfPageCleanupCount, 2);
+  assert.strictEqual(pdfDestroyed, true);
+  assert.strictEqual(pdfSession.pdfLoadingTask, null);
+  assert.ok(pdfStatuses.some(({ label }) => label === 'PDF page 2/2'));
+  mockPdfJsLib = null;
+
+  let cancelledPdfLoading = false;
+  const pdfStopSession = {
+    id: 42,
+    stopped: false,
+    pdfLoadingTask: {
+      destroy: async () => {
+        cancelledPdfLoading = true;
+      },
+    },
+  };
+  const pdfStopPlugin = Object.create(PluginClass.prototype);
+  pdfStopPlugin.activeSession = pdfStopSession;
+  pdfStopPlugin.currentAudio = null;
+  pdfStopPlugin.currentProcess = null;
+  pdfStopPlugin.currentRequests = new Set();
+  pdfStopPlugin.pauseRequested = false;
+  pdfStopPlugin.sequence = pdfStopSession.id;
+  pdfStopPlugin.settings = {
+    ...moduleObject.exports.__test.createDefaultSettings(),
+    cleanupCache: false,
+  };
+  pdfStopPlugin.updateStatus = () => {};
+  await pdfStopPlugin.stopReading({ silent: true });
+  assert.strictEqual(cancelledPdfLoading, true);
+  assert.strictEqual(pdfStopSession.stopped, true);
+  assert.strictEqual(pdfStopSession.pdfLoadingTask, null);
+  assert.strictEqual(pdfStopPlugin.activeSession, null);
+
+  const routePlugin = Object.create(PluginClass.prototype);
+  let routedPdfFile = null;
+  routePlugin.app = {
+    workspace: {
+      getActiveFile: () => pdfFile,
+    },
+  };
+  routePlugin.getActiveMarkdownView = () => {
+    throw new Error('A PDF must not fall back to the last Markdown note.');
+  };
+  routePlugin.readCurrentPdf = async (file) => {
+    routedPdfFile = file;
+  };
+  await routePlugin.readCurrentNote();
+  assert.strictEqual(routedPdfFile, pdfFile);
 
   const credentialMigrationPlugin = Object.create(PluginClass.prototype);
   let migratedSettings = null;

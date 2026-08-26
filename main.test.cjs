@@ -10,6 +10,9 @@ class MockSetting {}
 class MockNotice {}
 class MockMarkdownView {}
 function mockSetIcon() {}
+async function mockLoadPdfJs() {
+  return {};
+}
 
 Module._load = function loadWithObsidianMock(request, parent, isMain) {
   if (request === 'obsidian') {
@@ -20,6 +23,7 @@ Module._load = function loadWithObsidianMock(request, parent, isMain) {
       Plugin: MockPlugin,
       PluginSettingTab: MockPluginSettingTab,
       Setting: MockSetting,
+      loadPdfJs: mockLoadPdfJs,
       setIcon: mockSetIcon,
     };
   }

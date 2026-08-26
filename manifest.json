@@ -1,9 +1,9 @@
 {
   "id": "note-reader-cosyvoice",
   "name": "Note Reader CosyVoice",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "minAppVersion": "1.5.0",
-  "description": "Read notes through local CosyVoice, Microsoft Edge TTS, Azure Speech, or OpenRouter TTS.",
+  "description": "Read notes and searchable PDFs through local CosyVoice, Edge TTS, Azure Speech, or OpenRouter TTS.",
   "author": "Note Reader CosyVoice Contributors",
   "isDesktopOnly": true
 }

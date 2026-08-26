@@ -2,7 +2,7 @@
 
 [English README](README.md)
 
-Note Reader CosyVoice 是一个桌面端 Obsidian 插件，用于把当前笔记、选中文本，或从选中位置开始的后续内容交给本地 CosyVoice、Microsoft Edge 在线语音、用户自己的 Microsoft Azure Speech 资源或 OpenRouter TTS 朗读。插件本身不包含 CosyVoice、语音模型或云端语音服务，它只负责文本清理、分块、调用语音引擎、播放音频和提供控制面板。
+Note Reader CosyVoice 是一个桌面端 Obsidian 插件，用于把当前 Markdown 笔记、可搜索 PDF、选中文本，或从选中位置开始的后续内容交给本地 CosyVoice、Microsoft Edge 在线语音、用户自己的 Microsoft Azure Speech 资源或 OpenRouter TTS 朗读。插件本身不包含 CosyVoice、语音模型或云端语音服务，它只负责文本提取与清理、分块、调用语音引擎、播放音频和提供控制面板。
 
 ## 界面截图
 
@@ -16,7 +16,8 @@ Note Reader CosyVoice 是一个桌面端 Obsidian 插件，用于把当前笔记
 
 ## 功能
 
-- 朗读当前笔记、当前选中文本，或从选中位置开始朗读到笔记结尾。
+- 朗读当前 Markdown 笔记、可搜索 PDF、当前选中文本，或从选中位置开始朗读到笔记结尾。
+- 使用 Obsidian 内置 PDF.js 在本地逐页提取 PDF 文本，并在控制面板显示进度和支持停止提取。
 - 在右侧边栏打开 `CosyVoice Reader` 控制面板。
 - 显示合成、播放状态、整体朗读进度、百分比和当前文本预览。
 - 支持暂停、继续、停止；控制面板获得焦点时可用空格暂停/继续，可连续按左右方向键按 5 秒步进前后跳转；进度条两侧提供上一段/下一段按钮；也支持在当前已加载音频块内点击或拖动进度条。
@@ -39,7 +40,9 @@ Note Reader CosyVoice 是一个桌面端 Obsidian 插件，用于把当前笔记
 
 ## 安全与隐私
 
-插件默认使用本地语音合成。在 `Local CosyVoice` 模式下，插件本身不会把笔记内容发送到 Microsoft、OpenAI 或其他远程 TTS 服务；但你配置的包装脚本属于同一信任边界，它仍可能按照自身实现发起网络请求。
+插件默认使用本地语音合成。在 `Local CosyVoice` 模式下，插件本身不会把笔记内容或从 PDF 提取的文本发送到 Microsoft、OpenAI 或其他远程 TTS 服务；但你配置的包装脚本属于同一信任边界，它仍可能按照自身实现发起网络请求。
+
+PDF 提取使用 Obsidian 内置 PDF.js 和 `Vault.readBinary`，此功能不会上传 PDF 文件本身。如果选择在线语音引擎并开启对应同意开关，从 PDF 提取出的文本分段会按照与笔记文本相同的规则发送。扫描版或纯图片 PDF 必须先完成 OCR 才能朗读。
 
 Edge、Azure 与 OpenRouter 都是主动选择的在线模式。Edge 模式把每个文本分段交给配置的 `edge-tts` 程序；Azure 模式通过 HTTPS 把分段发送到所选云环境和区域下的 Azure Speech 资源；OpenRouter 模式把分段发送到 OpenRouter 及符合条件的上游 TTS 供应商。三种模式都必须先分别开启在线处理同意开关。OpenRouter 的同意开关只表示允许在线传输，不表示允许非 ZDR 路由。
 
@@ -256,7 +259,8 @@ Edge、Azure 与 OpenRouter 是和本地包装脚本并列的在线语音模式�
 插件提供以下命令：
 
 - `Open CosyVoice reader controls`
-- `Read current note with CosyVoice`
+- `Read current note or PDF with CosyVoice`
+- `Read current PDF with CosyVoice`
 - `Read selection with CosyVoice`
 - `Read from selection with CosyVoice`
 - `Pause or resume CosyVoice reading`
@@ -272,8 +276,15 @@ Edge、Azure 与 OpenRouter 是和本地包装脚本并列的在线语音模式�
 
 右侧边栏进度条显示的是整段朗读任务的整体进度。播放时可以点击或拖动进度条，但跳转范围受当前已加载音频块限制。如果拖动到当前音频块外，插件会自动夹到当前块边界。
 
+## PDF 朗读
+
+先在 Obsidian 中打开库内 PDF，再点击控制面板中的 `Read file`，或者执行任一支持 PDF 的命令。插件会先逐页提取文本，再开始语音合成；提取过程中可用停止按钮取消。
+
+PDF 必须包含可选择的内嵌文本。加密、损坏、扫描版或纯图片 PDF 无法直接提取，需要先解锁或执行 OCR。复杂多栏论文的朗读顺序取决于 PDF 制作者写入的文本顺序，因此可能与页面视觉顺序不完全一致。
+
 ## 常见问题
 
+- PDF 提示没有可提取文本：该文件通常是扫描版或纯图片 PDF，请先做 OCR；也请确认文件未加密且没有损坏。
 - 提示脚本不存在：检查插件设置中的脚本路径是否正确。
 - 本地模式提示无法朗读：先在 PowerShell 中单独测试包装脚本，确认它能生成有效 WAV 文件。
 - Edge 模式提示无法朗读：在 PowerShell 中运行 `edge-tts --help`，确认 `edge-tts` 已安装且 Obsidian 能找到这个命令。

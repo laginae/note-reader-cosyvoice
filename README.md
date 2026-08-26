@@ -2,7 +2,7 @@
 
 [中文说明](README.zh-CN.md)
 
-An Obsidian desktop plugin that reads the current note or selected text through local CosyVoice, Microsoft Edge online voice, a user-configured Microsoft Azure Speech resource, or OpenRouter TTS.
+An Obsidian desktop plugin that reads the current Markdown note, searchable PDF, or selected note text through local CosyVoice, Microsoft Edge online voice, a user-configured Microsoft Azure Speech resource, or OpenRouter TTS.
 
 ## Screenshots
 
@@ -16,7 +16,8 @@ Plugin settings. The script path shown here is a redacted example:
 
 ## Features
 
-- Reads the current note, current selection, or from the current selection start to the end of the note.
+- Reads the current Markdown note, searchable PDF, current note selection, or from the current selection start to the end of the note.
+- Extracts PDF text locally with Obsidian's built-in PDF.js, with page progress and cancellation from the control panel.
 - Opens a right-side `CosyVoice Reader` control panel.
 - Shows synthesis/playback phase, whole-reading progress, percentage, and text preview.
 - Supports pause, resume, stop, Space to pause or resume in the control panel, repeated Left/Right Arrow 5-second seeking, previous/next chunk buttons, and progress dragging while the current audio chunk is playing.
@@ -40,7 +41,9 @@ Plugin settings. The script path shown here is a redacted example:
 
 ## Privacy
 
-By default, the plugin uses local TTS. In `Local CosyVoice` mode, the plugin itself does not send note text to Microsoft, OpenAI, or another remote TTS service. The configured wrapper remains part of your trust boundary and may make its own network requests.
+By default, the plugin uses local TTS. In `Local CosyVoice` mode, the plugin itself does not send note or extracted PDF text to Microsoft, OpenAI, or another remote TTS service. The configured wrapper remains part of your trust boundary and may make its own network requests.
+
+PDF extraction uses Obsidian's bundled PDF.js and `Vault.readBinary`; the PDF file itself is not uploaded by this feature. When an online speech engine is selected and its consent is enabled, extracted PDF text chunks are transmitted under the same rules as note text. Scanned or image-only PDFs need OCR before the plugin can read them.
 
 Edge, Azure, and OpenRouter are opt-in online modes. Edge passes each chunk to the configured `edge-tts` executable. Azure sends each chunk by HTTPS to the selected Azure Speech cloud and region. OpenRouter sends each chunk to OpenRouter and an eligible upstream TTS provider. The plugin will not start an online mode until its separate online-processing consent setting is enabled. OpenRouter consent permits that transmission only; it does not permit non-ZDR routing.
 
@@ -208,7 +211,8 @@ Use `Chunk limits` to balance startup latency and synthesis stability:
 ## Commands
 
 - `Open CosyVoice reader controls`
-- `Read current note with CosyVoice`
+- `Read current note or PDF with CosyVoice`
+- `Read current PDF with CosyVoice`
 - `Read selection with CosyVoice`
 - `Read from selection with CosyVoice`
 - `Pause or resume CosyVoice reading`
@@ -221,6 +225,12 @@ When the `CosyVoice Reader` control panel is focused, Space pauses or resumes re
 The triangle buttons beside the progress bar jump to the previous text chunk or the next text chunk. Already synthesized chunks are reused when possible; otherwise the target chunk is synthesized before playback.
 
 The progress bar shows whole-reading progress across all chunks. While audio is playing, the bar can be clicked or dragged. Seeking is limited to the currently loaded audio chunk; dragging outside that chunk is clamped to the nearest point in the current chunk.
+
+## PDF Reading
+
+Open a PDF stored in the vault, then click `Read file` in the control panel or run either PDF-capable command. Text extraction happens page by page before speech synthesis begins. The Stop button cancels extraction.
+
+The PDF must contain selectable embedded text. Password-protected, damaged, scanned, or image-only files cannot be extracted; run OCR or unlock the file first. Complex multi-column documents are read in the text order embedded by the PDF producer, which may not always match the visual order.
 
 ## Shared Package Contents
 

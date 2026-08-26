@@ -2,7 +2,7 @@
 
 ## Install From ZIP
 
-1. Unzip `note-reader-cosyvoice-0.2.3-install.zip`.
+1. Unzip `note-reader-cosyvoice-0.2.4-install.zip`.
 2. Copy the `note-reader-cosyvoice` folder into your vault:
 
 ```text
@@ -141,7 +141,8 @@ Temporary text and audio are stored under the operating system temporary directo
 
 - Select text and click `Read selection` to read only the selected text.
 - Select a start point and click `Read from selection` to read from that selection start to the end of the active note.
-- Click `Read note` to read the active note.
+- Click `Read file` to read the active Markdown note or searchable PDF.
+- PDF text is extracted locally through Obsidian's built-in PDF.js. Scanned or image-only PDFs require OCR first, and complex multi-column reading order depends on the text order embedded in the PDF.
 - Use `Pause`, `Resume`, and `Stop` from the right-side control panel.
 - Use the right-side `Speed` buttons to select `1x`, `1.25x`, `1.5x`, `2x`, `1.1x`, `1.2x`, `1.3x`, or `1.4x`. The current audio keeps its original speed; later synthesized chunks use the newly saved speed.
 - When the control panel is focused, Space pauses or resumes reading. Repeated Left Arrow or Right Arrow presses seek backward or forward in 5-second steps.
@@ -150,7 +151,7 @@ Temporary text and audio are stored under the operating system temporary directo
 
 ## Troubleshooting
 
-If reading fails, first check the Obsidian notice and the selected engine's configuration. Optional diagnostic logging records only bounded failure metadata in the plugin's operating-system temporary directory; it does not record note text or process output.
+If reading fails, first check the Obsidian notice and the selected engine's configuration. For a PDF, confirm that it contains selectable text, is not password-protected, and is not damaged. Optional diagnostic logging records only bounded failure metadata in the plugin's operating-system temporary directory; it does not record note or PDF text or process output.
 
 For `Local CosyVoice`, also verify the local service:
 
