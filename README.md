@@ -2,7 +2,15 @@
 
 **Language:** English | [简体中文](README.zh-CN.md)
 
-An Obsidian desktop plugin that reads the current Markdown note, searchable PDF, or selected note text through local CosyVoice, Microsoft Edge online voice, a user-configured Microsoft Azure Speech resource, or OpenRouter TTS.
+A privacy-first Obsidian desktop voice reader for Markdown notes and text-based PDFs. Use local CosyVoice by default, or explicitly opt in to Microsoft Edge online voice, Microsoft Azure Speech, or OpenRouter TTS.
+
+## Highlights
+
+- **Privacy first:** Local CosyVoice is the default. Each online engine requires separate, explicit consent before it can receive text.
+- **Fast local preparation:** Markdown notes and text-based PDFs are processed locally and are typically ready for speech synthesis within a few seconds.
+- **Flexible PDF selection reading:** Continue reading from a selected position in a PDF, or read only the selected text.
+
+Here, a text-based PDF means a PDF with selectable embedded text. Scanned or image-only PDFs need OCR first.
 
 ## Screenshots
 
@@ -16,7 +24,7 @@ Plugin settings. The script path shown here is a redacted example:
 
 ## Features
 
-- Reads the current Markdown note or searchable PDF, selected text in either view, or from a Markdown/PDF selection start to the end of the active file.
+- Reads the current Markdown note or text-based PDF, selected text in either view, or from a Markdown/PDF selection start to the end of the active file.
 - Extracts PDF text locally with Obsidian's built-in PDF.js, with page progress and cancellation from the control panel.
 - Opens a right-side `Voice Reader` control panel.
 - Shows synthesis/playback phase, whole-reading progress, percentage, and text preview.

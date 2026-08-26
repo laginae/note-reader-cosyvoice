@@ -2,7 +2,15 @@
 
 **语言：** [English](README.md) | 简体中文
 
-Note and PDF Voice Reader 是一个桌面端 Obsidian 插件，用于把当前 Markdown 笔记、可搜索 PDF、选中文本，或从选中位置开始的后续内容交给本地 CosyVoice、Microsoft Edge 在线语音、用户自己的 Microsoft Azure Speech 资源或 OpenRouter TTS 朗读。插件本身不包含 CosyVoice、语音模型或云端语音服务，它只负责文本提取与清理、分块、调用语音引擎、播放音频和提供控制面板。
+Note and PDF Voice Reader 是一个隐私优先的桌面端 Obsidian 语音朗读插件，支持 Markdown 笔记和文本型 PDF。默认使用本地 CosyVoice，也可以由用户明确选择并同意使用 Microsoft Edge 在线语音、Microsoft Azure Speech 或 OpenRouter TTS。
+
+## 核心亮点
+
+- **隐私优先：** 默认使用本地 CosyVoice；每种在线引擎都必须单独获得用户明确同意后才能接收文本。
+- **快速本地处理：** Markdown 笔记和文本型 PDF 在本地处理，通常几秒内即可完成朗读前的文本解析与准备。
+- **灵活的 PDF 选区朗读：** 可以从 PDF 选中位置继续朗读，也可以只朗读选中文字。
+
+这里的“文本型 PDF”是指包含可选择嵌入文本的 PDF；扫描版或纯图片 PDF 需要先完成 OCR。
 
 ## 界面截图
 
@@ -16,7 +24,7 @@ Note and PDF Voice Reader 是一个桌面端 Obsidian 插件，用于把当前 M
 
 ## 功能
 
-- 朗读当前 Markdown 笔记或可搜索 PDF、两种视图中的当前选中文本，或从 Markdown/PDF 的选中位置开始朗读到当前文件结尾。
+- 朗读当前 Markdown 笔记或文本型 PDF、两种视图中的当前选中文本，或从 Markdown/PDF 的选中位置开始朗读到当前文件结尾。
 - 使用 Obsidian 内置 PDF.js 在本地逐页提取 PDF 文本，并在控制面板显示进度和支持停止提取。
 - 在右侧边栏打开 `Voice Reader` 控制面板。
 - 显示合成、播放状态、整体朗读进度、百分比和当前文本预览。
