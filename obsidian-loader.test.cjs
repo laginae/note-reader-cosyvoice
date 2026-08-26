@@ -196,7 +196,7 @@ const testVaultPath = path.resolve('test-vault');
 const testAudioPath = path.join(testVaultPath, '.obsidian', 'plugins', 'note-reader-cosyvoice', 'cache', 'a.wav');
 assert.strictEqual(manifest.id, 'note-reader-cosyvoice');
 assert.strictEqual(manifest.name, 'Note and PDF Voice Reader');
-assert.strictEqual(manifest.version, '0.2.6');
+assert.strictEqual(manifest.version, '0.2.7');
 assert.ok(!/\bObsidian\b/.test(manifest.description));
 assert.ok(!code.includes('Note Reader CosyVoice'));
 assert.ok(!code.includes('CosyVoice Reader'));
@@ -308,6 +308,16 @@ const reportedOpenRouterText = 'As a reference, the static scheme (S) uses no fo
 const sanitizedReportedOpenRouterText = moduleObject.exports.__test.sanitizeTextForSpeech(reportedOpenRouterText);
 assert.ok(sanitizedReportedOpenRouterText.includes('absolute value of Y subscript k,h'));
 assert.ok(!/[|$\\]/.test(sanitizedReportedOpenRouterText));
+const reportedMarkdownTable = `**Table I. Coverage**
+
+| Region | Dataset | Invalid ratio [%] |
+| :----: | :-----: | ----------------: |
+| CN-NE  | 2023    | 0.5               |`;
+const sanitizedMarkdownTable = moduleObject.exports.__test.sanitizeTextForSpeech(reportedMarkdownTable);
+assert.ok(sanitizedMarkdownTable.includes('Table columns: Region; Dataset; Invalid ratio [%].'));
+assert.ok(sanitizedMarkdownTable.includes('Row 1. Region: CN-NE; Dataset: 2023; Invalid ratio [%]: 0.5.'));
+assert.ok(!/[|]/.test(sanitizedMarkdownTable));
+assert.ok(!/-{3,}/.test(sanitizedMarkdownTable));
 assert.strictEqual(moduleObject.exports.__test.normalizeSettingsLanguage('chinese'), 'chinese');
 assert.strictEqual(moduleObject.exports.__test.normalizeSettingsLanguage('bad'), 'english');
 assert.strictEqual(moduleObject.exports.__test.normalizeCredentialSource('key-file'), 'key-file');

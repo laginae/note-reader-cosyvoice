@@ -75,6 +75,129 @@ function normalizeLineBreaks(text) {
   return String(text || '').replace(/\r\n?/g, '\n');
 }
 
+function splitMarkdownTableRow(line) {
+  let value = String(line || '').trim();
+  if (!value.includes('|')) {
+    return [];
+  }
+
+  if (value.startsWith('|')) {
+    value = value.slice(1);
+  }
+  if (hasUnescapedTrailingPipe(value)) {
+    value = value.slice(0, -1);
+  }
+
+  const cells = [];
+  let current = '';
+  let inCode = false;
+
+  for (let index = 0; index < value.length; index += 1) {
+    const character = value[index];
+    if (character === '\\' && value[index + 1] === '|') {
+      current += '|';
+      index += 1;
+      continue;
+    }
+    if (character === '`') {
+      inCode = !inCode;
+      current += character;
+      continue;
+    }
+    if (character === '|' && !inCode) {
+      cells.push(current.trim());
+      current = '';
+      continue;
+    }
+    current += character;
+  }
+
+  cells.push(current.trim());
+  return cells;
+}
+
+function hasUnescapedTrailingPipe(value) {
+  if (!value.endsWith('|')) {
+    return false;
+  }
+
+  let backslashes = 0;
+  for (let index = value.length - 2; index >= 0 && value[index] === '\\'; index -= 1) {
+    backslashes += 1;
+  }
+  return backslashes % 2 === 0;
+}
+
+function isMarkdownTableDelimiterLine(line) {
+  const cells = splitMarkdownTableRow(line);
+  return cells.length >= 2 && cells.every((cell) => /^:?-{3,}:?$/.test(cell.replace(/\s+/g, '')));
+}
+
+function formatMarkdownTableForSpeech(headers, rows) {
+  const tableText = headers.concat(...rows).join(' ');
+  const useChineseLabels = /[\u3040-\u30ff\u3400-\u9fff\uf900-\ufaff]/.test(tableText);
+  const output = [];
+  const headerLabels = headers.map((header) => header.trim()).filter(Boolean);
+
+  if (headerLabels.length) {
+    output.push(`${useChineseLabels ? '表格列' : 'Table columns'}: ${headerLabels.join('; ')}${useChineseLabels ? '。' : '.'}`);
+  }
+
+  rows.forEach((cells, rowIndex) => {
+    const values = [];
+    const cellCount = Math.max(headers.length, cells.length);
+    for (let cellIndex = 0; cellIndex < cellCount; cellIndex += 1) {
+      const cell = String(cells[cellIndex] || '').trim();
+      if (!cell) {
+        continue;
+      }
+      const header = String(headers[cellIndex] || '').trim();
+      values.push(header ? `${header}: ${cell}` : cell);
+    }
+
+    if (values.length) {
+      const rowLabel = useChineseLabels ? `第 ${rowIndex + 1} 行` : `Row ${rowIndex + 1}`;
+      output.push(`${rowLabel}. ${values.join('; ')}${useChineseLabels ? '。' : '.'}`);
+    }
+  });
+
+  return output.join('\n');
+}
+
+function sanitizeMarkdownTablesForSpeech(text) {
+  const lines = normalizeLineBreaks(text).split('\n');
+  const output = [];
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const headerLine = lines[index];
+    const delimiterLine = lines[index + 1];
+    if (headerLine.includes('|') && isMarkdownTableDelimiterLine(delimiterLine)) {
+      const headers = splitMarkdownTableRow(headerLine);
+      const rows = [];
+      let rowIndex = index + 2;
+
+      while (rowIndex < lines.length && lines[rowIndex].trim() && lines[rowIndex].includes('|')) {
+        const cells = splitMarkdownTableRow(lines[rowIndex]);
+        if (isMarkdownTableDelimiterLine(lines[rowIndex])) {
+          break;
+        }
+        rows.push(cells);
+        rowIndex += 1;
+      }
+
+      output.push(formatMarkdownTableForSpeech(headers, rows));
+      index = rowIndex - 1;
+      continue;
+    }
+
+    if (!isMarkdownTableDelimiterLine(headerLine)) {
+      output.push(headerLine);
+    }
+  }
+
+  return output.join('\n');
+}
+
 function sanitizeTextForSpeech(text, options = {}) {
   let value = sanitizeLatexForSpeech(normalizeLineBreaks(text), options);
 
@@ -85,12 +208,14 @@ function sanitizeTextForSpeech(text, options = {}) {
   value = value.replace(/\[([^\]]+)\]\([^)]*\)/g, '$1');
   value = value.replace(/\[\[([^\]|]+)\|([^\]]+)\]\]/g, '$2');
   value = value.replace(/\[\[([^\]]+)\]\]/g, '$1');
+  value = sanitizeMarkdownTablesForSpeech(value);
   value = value.replace(/`([^`]+)`/g, '$1');
   value = value.replace(/<[^>]+>/g, ' ');
   value = value.replace(/^\s{0,3}#{1,6}\s+/gm, '');
   value = value.replace(/^\s*>\s?/gm, '');
   value = value.replace(/^\s*[-+*]\s+/gm, '');
   value = value.replace(/[*_~]/g, '');
+  value = value.replace(/\|/g, ' ');
   value = value.replace(/[ \t]+/g, ' ');
   value = value.replace(/\s+([，。、；：！？,.])/g, '$1');
   value = value.replace(/([，。、；：！？])\s+/g, '$1');

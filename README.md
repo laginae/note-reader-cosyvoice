@@ -27,7 +27,7 @@ Plugin settings. The script path shown here is a redacted example:
 - Requires a separate opt-in before each online engine can receive text.
 - Uses Obsidian SecretStorage for Azure and OpenRouter API keys by default on Obsidian 1.11.4 or later, with an external key-file compatibility option.
 - Provides common Chinese and English voice presets, model-specific OpenRouter voice menus, and custom voice ID fields.
-- Cleans Markdown before synthesis.
+- Cleans Markdown before synthesis and converts Markdown tables into speech-friendly column and row descriptions while skipping empty cells.
 - Provides a settings-page `Restore defaults` button for resetting all plugin settings.
 - Handles common LaTeX before synthesis with a configurable `Math reading language` setting:
   - Skips formulas longer than 12 non-space characters.

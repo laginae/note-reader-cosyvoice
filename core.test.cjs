@@ -45,6 +45,25 @@ assert.strictEqual(
   '短公式 和 跳过。'
 );
 
+const reportedMarkdownTable = `**Table I. Coverage of the 1 min aggregation of the 2023 frequency data of the three regions**
+
+| Region | Dataset | Raw sampling interval [s] | Valid 15 min periods | Adjacent month pairs | Invalid ratio [%] |
+| :----: | :-----: | ------------------------: | -------------------: | -------------------: | ----------------: |
+|  CN-NE |         |                           |                      |                      |                   |`;
+const sanitizedMarkdownTable = sanitizeTextForSpeech(reportedMarkdownTable);
+assert.strictEqual(
+  sanitizedMarkdownTable,
+  'Table I. Coverage of the 1 min aggregation of the 2023 frequency data of the three regions\n' +
+    'Table columns: Region; Dataset; Raw sampling interval [s]; Valid 15 min periods; Adjacent month pairs; Invalid ratio [%].\n' +
+    'Row 1. Region: CN-NE.'
+);
+assert.ok(!/[|]/.test(sanitizedMarkdownTable));
+assert.ok(!/-{3,}/.test(sanitizedMarkdownTable));
+assert.strictEqual(
+  sanitizeTextForSpeech('| Name | Value |\n| --- | --- |\n| Frequency |'),
+  'Table columns: Name; Value.\nRow 1. Name: Frequency.'
+);
+
 assert.deepStrictEqual(splitTextForSpeechChunks('甲'.repeat(45), [10, 20]), [
   '甲'.repeat(10),
   '甲'.repeat(20),

@@ -27,7 +27,7 @@ Note and PDF Voice Reader 是一个桌面端 Obsidian 插件，用于把当前 M
 - Edge、Azure 与 OpenRouter 三种在线模式分别设置同意开关，未显式同意时插件不会发送文本。
 - 在 Obsidian 1.11.4 及以上版本中，Azure 和 OpenRouter 密钥默认使用 Obsidian SecretStorage，也可切换到库外密钥文件兼容模式。
 - 设置页提供常用中文、粤语、台湾中文和英文音色预设、按 OpenRouter 模型联动的音色目录，也保留自定义 Voice ID。
-- 在合成前清理 Markdown 和常见 LaTeX 标记。
+- 在合成前清理 Markdown 和常见 LaTeX 标记，并把 Markdown 表格转换为适合朗读的列名与逐行字段说明，自动跳过空单元格。
 - 设置页提供 `Restore defaults` 按钮，可以把插件设置恢复为默认值。
 - 提供 `Math reading language` 设置：
   - 默认使用 `English`，例如 `$a_b$` 会处理为 `a subscript b`。
