@@ -46,6 +46,7 @@ Note and PDF Voice Reader 是一个隐私优先的桌面端 Obsidian 语音朗�
 - 在合成前清理 Markdown 和常见 LaTeX 标记，并把 Markdown 表格转换为适合朗读的列名与逐行字段说明，自动跳过空单元格。
 - 将 `[28]`、`[28, 29]`、`[28-30]` 等数字文献引用转换为可朗读的“参考文献”表述，同时保留 `[s]`、`[%]` 等单位标记。
 - 设置页提供 `Restore defaults` 按钮，可以把插件设置恢复为默认值。
+- 设置页提供 [GitHub Issues](https://github.com/laginae/note-reader-cosyvoice/issues) 反馈入口，用于报告问题和提出功能建议。
 - 提供 `Math reading language` 设置：
   - 默认使用 `English`，例如 `$a_b$` 会处理为 `a subscript b`。
   - `Chinese` 会使用中文数学读法，例如 `$a_b$` 会处理为 `a 下标 b`。
@@ -85,6 +86,10 @@ Microsoft 说明其实时文本转语音接口不保留输入文本或生成音�
 - 自动更新：插件不包含自更新机制。
 
 只建议配置你自己检查过的本地脚本。不要把不可信脚本路径填入插件设置。
+
+## 共享架构
+
+不依赖平台的文本清理、语义分段、PDF 坐标排序、朗读位置锚点和播放状态位于独立的 [`note-reader-core`](https://github.com/laginae/note-reader-core) 仓库。本桌面仓库继续负责文件系统、子进程、本地 CosyVoice、`edge-tts`、音频拼接和导出；独立的 [`note-reader-mobile`](https://github.com/laginae/note-reader-mobile) 插件复用同一核心，但不包含桌面 API 或本地可执行程序调用。
 
 ## 安装插件
 
@@ -199,7 +204,7 @@ Azure 模式使用官方实时 Speech REST 接口，支持 Azure 公有云和由
 如果选择库外密钥文件兼容模式，可使用类似路径：
 
 ```text
-C:\Users\你的用户名\AppData\Local\note-reader-cosyvoice\azure-speech-key.txt
+%LOCALAPPDATA%\note-reader-cosyvoice\azure-speech-key.txt
 ```
 
 然后进入 `Settings -> Note and PDF Voice Reader`：
@@ -224,7 +229,7 @@ OpenRouter 提供与 OpenAI Audio Speech 兼容的专用 TTS 接口，输入文�
 在 [OpenRouter API Keys](https://openrouter.ai/settings/keys) 创建专用 API 密钥。建议设置较低的消费上限和适当的到期时间。如果选择库外密钥文件兼容模式，可使用类似路径：
 
 ```text
-C:\Users\你的用户名\AppData\Local\note-reader-cosyvoice\openrouter-api-key.txt
+%LOCALAPPDATA%\note-reader-cosyvoice\openrouter-api-key.txt
 ```
 
 然后进入 `Settings -> Note and PDF Voice Reader`：

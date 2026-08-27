@@ -46,6 +46,7 @@ Plugin settings. The script path shown here is a redacted example:
 - Cleans Markdown before synthesis and converts Markdown tables into speech-friendly column and row descriptions while skipping empty cells.
 - Reads numeric citations such as `[28]`, `[28, 29]`, and `[28-30]` as spoken references while preserving unit labels such as `[s]` and `[%]`.
 - Provides a settings-page `Restore defaults` button for resetting all plugin settings.
+- Provides a settings-page link to [GitHub Issues](https://github.com/laginae/note-reader-cosyvoice/issues) for feedback and bug reports.
 - Handles common LaTeX before synthesis with a configurable `Math reading language` setting:
   - Skips formulas longer than 12 non-space characters.
   - `English` is the default for public releases, for example `$a_b$` -> `a subscript b`.
@@ -88,6 +89,10 @@ Every OpenRouter request forces `provider.zdr: true` and `provider.data_collecti
 ## Requirements
 
 - Obsidian desktop.
+
+## Shared architecture
+
+Platform-neutral text cleanup, semantic chunking, PDF coordinate ordering, reading-position anchors, and playback state live in [`note-reader-core`](https://github.com/laginae/note-reader-core). This desktop repository retains filesystem access, child processes, local CosyVoice, `edge-tts`, audio merging, and export handling. The separate [`note-reader-mobile`](https://github.com/laginae/note-reader-mobile) plugin uses the same core without bundling desktop-only APIs or local executable calls.
 - For `Local CosyVoice`: a working local CosyVoice setup and a PowerShell wrapper compatible with:
 
 ```powershell
@@ -168,7 +173,7 @@ Azure mode uses the official real-time Speech REST endpoint and supports Azure p
 If you select the external key-file fallback, a suitable path is:
 
 ```text
-C:\Users\you\AppData\Local\note-reader-cosyvoice\azure-speech-key.txt
+%LOCALAPPDATA%\note-reader-cosyvoice\azure-speech-key.txt
 ```
 
 Then open `Settings -> Note and PDF Voice Reader`:
@@ -193,7 +198,7 @@ The plugin retries temporary `408`, `425`, `429`, `500`, `502`, `503`, and `504`
 Create a dedicated API key in [OpenRouter API Keys](https://openrouter.ai/settings/keys). Use a low spending limit and an expiration date where appropriate. If you select the external key-file fallback, a suitable path is:
 
 ```text
-C:\Users\you\AppData\Local\note-reader-cosyvoice\openrouter-api-key.txt
+%LOCALAPPDATA%\note-reader-cosyvoice\openrouter-api-key.txt
 ```
 
 Then open `Settings -> Note and PDF Voice Reader`:

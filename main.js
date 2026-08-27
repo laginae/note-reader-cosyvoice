@@ -3,9 +3,9 @@ var __commonJS = (cb, mod) => function __require() {
   return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
 };
 
-// src/pdf-layout.js
+// ../note-reader-core/src/pdf-layout.js
 var require_pdf_layout = __commonJS({
-  "src/pdf-layout.js"(exports2, module2) {
+  "../note-reader-core/src/pdf-layout.js"(exports2, module2) {
     "use strict";
     function normalizeLineBreaks2(text) {
       return String(text || "").replace(/\r\n?/g, "\n");
@@ -290,6 +290,14 @@ var require_pdf_layout = __commonJS({
       hasTwoColumnLayout,
       orderTwoColumnLines
     };
+  }
+});
+
+// src/pdf-layout.js
+var require_pdf_layout2 = __commonJS({
+  "src/pdf-layout.js"(exports2, module2) {
+    "use strict";
+    module2.exports = require_pdf_layout();
   }
 });
 
@@ -685,9 +693,9 @@ var require_audio_export = __commonJS({
   }
 });
 
-// src/reading-position.js
+// ../note-reader-core/src/reading-position.js
 var require_reading_position = __commonJS({
-  "src/reading-position.js"(exports2, module2) {
+  "../note-reader-core/src/reading-position.js"(exports2, module2) {
     "use strict";
     var MAX_READING_POSITIONS = 100;
     var MAX_ANCHOR_LENGTH = 180;
@@ -772,9 +780,17 @@ var require_reading_position = __commonJS({
   }
 });
 
-// src/semantic-chunker.js
+// src/reading-position.js
+var require_reading_position2 = __commonJS({
+  "src/reading-position.js"(exports2, module2) {
+    "use strict";
+    module2.exports = require_reading_position();
+  }
+});
+
+// ../note-reader-core/src/semantic-chunker.js
 var require_semantic_chunker = __commonJS({
-  "src/semantic-chunker.js"(exports2, module2) {
+  "../note-reader-core/src/semantic-chunker.js"(exports2, module2) {
     "use strict";
     var DEFAULT_CHUNK_LIMITS2 = [40, 80, 120, 160, 280, 320];
     function parseChunkLimits2(value, fallback = DEFAULT_CHUNK_LIMITS2) {
@@ -935,9 +951,17 @@ var require_semantic_chunker = __commonJS({
   }
 });
 
-// src/task-state.js
+// src/semantic-chunker.js
+var require_semantic_chunker2 = __commonJS({
+  "src/semantic-chunker.js"(exports2, module2) {
+    "use strict";
+    module2.exports = require_semantic_chunker();
+  }
+});
+
+// ../note-reader-core/src/task-state.js
 var require_task_state = __commonJS({
-  "src/task-state.js"(exports2, module2) {
+  "../note-reader-core/src/task-state.js"(exports2, module2) {
     "use strict";
     var PHASE_TRANSITIONS = {
       idle: /* @__PURE__ */ new Set(["extracting", "queued"]),
@@ -994,6 +1018,14 @@ var require_task_state = __commonJS({
   }
 });
 
+// src/task-state.js
+var require_task_state2 = __commonJS({
+  "src/task-state.js"(exports2, module2) {
+    "use strict";
+    module2.exports = require_task_state();
+  }
+});
+
 // src/main.js
 var { ItemView, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, SecretComponent, Setting, loadPdfJs, setIcon } = require("obsidian");
 var crypto = require("crypto");
@@ -1003,7 +1035,7 @@ var os = require("os");
 var path = require("path");
 var { spawn } = require("child_process");
 var { pathToFileURL } = require("url");
-var { extractPdfTextLayout, extractTextFromPdfItems } = require_pdf_layout();
+var { extractPdfTextLayout, extractTextFromPdfItems } = require_pdf_layout2();
 var {
   MAX_EXPORTED_AUDIO_BYTES,
   bufferToArrayBuffer,
@@ -1016,18 +1048,19 @@ var {
   removeReadingPosition,
   sliceTextFromReadingPosition,
   upsertReadingPosition
-} = require_reading_position();
+} = require_reading_position2();
 var {
   createIncrementalSpeechChunker,
   parseChunkLimits,
   splitTextForSpeechChunks
-} = require_semantic_chunker();
+} = require_semantic_chunker2();
 var {
   createTaskState,
   transitionTaskState
-} = require_task_state();
+} = require_task_state2();
 var PLUGIN_ID = "note-reader-cosyvoice";
 var VIEW_TYPE = "note-reader-cosyvoice-control";
+var GITHUB_ISSUES_URL = "https://github.com/laginae/note-reader-cosyvoice/issues";
 var DEFAULT_CHUNK_LIMITS = [40, 80, 120, 160, 280, 320];
 var DEFAULT_ONLINE_CHUNK_LIMITS = [200, 400, 800];
 var MAX_ONLINE_PREFETCH_CHUNKS = 1;
@@ -1262,6 +1295,10 @@ var SETTINGS_UI_TEXT = {
     restoreDefaultsButton: "Restore defaults",
     settingsRestoredNotice: "CosyVoice: settings restored to defaults.",
     temporaryDataClearedNotice: "CosyVoice: temporary text, audio, and diagnostic logs cleared.",
+    feedbackName: "Feedback and bug reports",
+    feedbackDesc: "Open GitHub Issues to report a problem, request a feature, or follow existing reports. Do not include API keys or private note text.",
+    feedbackButton: "Open GitHub Issues",
+    feedbackTooltip: "Open the feedback page in your browser",
     commandsFooter: "Commands also include resume the current file, seek backward or forward 5 seconds, and move to the previous or next reading chunk."
   },
   chinese: {
@@ -1370,6 +1407,10 @@ var SETTINGS_UI_TEXT = {
     restoreDefaultsButton: "\u6062\u590D\u9ED8\u8BA4\u503C",
     settingsRestoredNotice: "CosyVoice\uFF1A\u8BBE\u7F6E\u5DF2\u6062\u590D\u4E3A\u9ED8\u8BA4\u503C\u3002",
     temporaryDataClearedNotice: "CosyVoice\uFF1A\u4E34\u65F6\u6587\u672C\u3001\u97F3\u9891\u548C\u8BCA\u65AD\u65E5\u5FD7\u5DF2\u6E05\u9664\u3002",
+    feedbackName: "\u53CD\u9988\u4E0E\u95EE\u9898\u62A5\u544A",
+    feedbackDesc: "\u6253\u5F00 GitHub Issues \u62A5\u544A\u95EE\u9898\u3001\u63D0\u51FA\u529F\u80FD\u5EFA\u8BAE\u6216\u67E5\u770B\u73B0\u6709\u53CD\u9988\u3002\u8BF7\u52FF\u63D0\u4EA4 API \u5BC6\u94A5\u6216\u79C1\u5BC6\u7B14\u8BB0\u6B63\u6587\u3002",
+    feedbackButton: "\u6253\u5F00 GitHub Issues",
+    feedbackTooltip: "\u5728\u6D4F\u89C8\u5668\u4E2D\u6253\u5F00\u53CD\u9988\u9875\u9762",
     commandsFooter: "\u547D\u4EE4\u8FD8\u5305\u62EC\u4ECE\u5F53\u524D\u6587\u4EF6\u4FDD\u5B58\u7684\u4F4D\u7F6E\u7EE7\u7EED\u6717\u8BFB\u3001\u540E\u9000\u6216\u524D\u8FDB 5 \u79D2\uFF0C\u4EE5\u53CA\u8DF3\u5230\u4E0A\u4E00\u4E2A\u6216\u4E0B\u4E00\u4E2A\u6717\u8BFB\u5206\u6BB5\u3002"
   }
 };
@@ -2026,6 +2067,12 @@ function normalizeCredentialSource(value) {
 }
 function getSettingsUiText(language) {
   return SETTINGS_UI_TEXT[normalizeSettingsLanguage(language)];
+}
+function openGitHubIssues() {
+  if (typeof window === "undefined" || typeof window.open !== "function") {
+    return false;
+  }
+  return Boolean(window.open(GITHUB_ISSUES_URL, "_blank", "noopener,noreferrer"));
 }
 function normalizeSpeechEngine(value) {
   const engine = String(value || DEFAULT_SETTINGS.speechEngine).toLowerCase();
@@ -6052,7 +6099,7 @@ var CosyVoiceReaderSettingTab = class extends PluginSettingTab {
         }
       } else {
         new Setting(containerEl).setName(ui.azureKeyFileName).setDesc(ui.azureKeyFileDesc).addText((text) => {
-          text.setPlaceholder("C:\\Users\\you\\AppData\\Local\\note-reader-cosyvoice\\azure-speech-key.txt").setValue(this.plugin.settings.azureSpeechKeyPath || "").onChange(async (value) => {
+          text.setPlaceholder("%LOCALAPPDATA%\\note-reader-cosyvoice\\azure-speech-key.txt").setValue(this.plugin.settings.azureSpeechKeyPath || "").onChange(async (value) => {
             this.plugin.settings.azureSpeechKeyPath = value.trim();
             await this.plugin.saveSettings();
           });
@@ -6106,7 +6153,7 @@ var CosyVoiceReaderSettingTab = class extends PluginSettingTab {
         }
       } else {
         new Setting(containerEl).setName(ui.openRouterKeyFileName).setDesc(ui.openRouterKeyFileDesc).addText((text) => {
-          text.setPlaceholder("C:\\Users\\you\\AppData\\Local\\note-reader-cosyvoice\\openrouter-api-key.txt").setValue(this.plugin.settings.openRouterKeyPath || "").onChange(async (value) => {
+          text.setPlaceholder("%LOCALAPPDATA%\\note-reader-cosyvoice\\openrouter-api-key.txt").setValue(this.plugin.settings.openRouterKeyPath || "").onChange(async (value) => {
             this.plugin.settings.openRouterKeyPath = value.trim();
             await this.plugin.saveSettings();
           });
@@ -6253,6 +6300,13 @@ var CosyVoiceReaderSettingTab = class extends PluginSettingTab {
         this.display();
       });
     });
+    new Setting(containerEl).setName(ui.feedbackName).setDesc(ui.feedbackDesc).addButton((button) => {
+      button.setButtonText(ui.feedbackButton).setTooltip(ui.feedbackTooltip).onClick(() => {
+        if (!openGitHubIssues()) {
+          new Notice(GITHUB_ISSUES_URL, 8e3);
+        }
+      });
+    });
     containerEl.createEl("p", {
       cls: "note-reader-cosyvoice-muted",
       text: ui.commandsFooter
@@ -6263,6 +6317,7 @@ module.exports = {
   default: CosyVoiceReaderPlugin,
   __test: {
     DEFAULT_ONLINE_CHUNK_LIMITS,
+    GITHUB_ISSUES_URL,
     VIEW_TYPE,
     buildAzureSpeechEndpoint,
     buildAzureSpeechSsml,
@@ -6336,6 +6391,7 @@ module.exports = {
     normalizeReadingPositions,
     normalizeSettingsLanguage,
     normalizeSpeechEngine,
+    openGitHubIssues,
     parseRetryAfterMs,
     resolveDefaultScriptPath,
     resolvePowerShellExecutable,
