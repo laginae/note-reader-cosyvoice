@@ -18,9 +18,14 @@ function sanitizeExportBaseName(value) {
   return sanitized || 'note';
 }
 
-function buildExportAudioFileName(noteBaseName, extension) {
+function buildExportAudioFileName(noteBaseName, extension, scope = 'entire') {
   const normalizedExtension = String(extension || '').toLowerCase() === 'mp3' ? 'mp3' : 'wav';
-  return `${sanitizeExportBaseName(noteBaseName)} - narration.${normalizedExtension}`;
+  const suffix = scope === 'selection'
+    ? 'selection narration'
+    : scope === 'from-selection'
+      ? 'continued narration'
+      : 'narration';
+  return `${sanitizeExportBaseName(noteBaseName)} - ${suffix}.${normalizedExtension}`;
 }
 
 function parseWaveBuffer(value) {

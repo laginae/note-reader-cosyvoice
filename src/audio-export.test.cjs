@@ -61,6 +61,14 @@ function createId3Tag(payloadLength = 4) {
 test('buildExportAudioFileName creates a filesystem-safe narration name', () => {
   assert.equal(buildExportAudioFileName('Paper: results?', 'mp3'), 'Paper- results- - narration.mp3');
   assert.equal(buildExportAudioFileName('  ', 'invalid'), 'note - narration.wav');
+  assert.equal(
+    buildExportAudioFileName('Paper', 'mp3', 'selection'),
+    'Paper - selection narration.mp3'
+  );
+  assert.equal(
+    buildExportAudioFileName('Paper', 'wav', 'from-selection'),
+    'Paper - continued narration.wav'
+  );
 });
 
 test('bufferToArrayBuffer preserves only the selected buffer bytes', () => {

@@ -290,6 +290,22 @@
   overflow-wrap: anywhere;
 }
 
+.note-reader-cosyvoice-export-scope {
+  display: grid;
+  gap: 6px;
+}
+
+.note-reader-cosyvoice-export-scope > span,
+.note-reader-cosyvoice-export-hint {
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}
+
+.note-reader-cosyvoice-export-scope select {
+  max-width: 100%;
+  width: 100%;
+}
+
 .note-reader-cosyvoice-export-warning {
   border-left: 3px solid var(--color-orange);
   color: var(--text-normal);

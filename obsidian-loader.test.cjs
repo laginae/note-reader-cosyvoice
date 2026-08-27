@@ -199,7 +199,7 @@ const testVaultPath = path.resolve('test-vault');
 const testAudioPath = path.join(testVaultPath, '.obsidian', 'plugins', 'note-reader-cosyvoice', 'cache', 'a.wav');
 assert.strictEqual(manifest.id, 'note-reader-cosyvoice');
 assert.strictEqual(manifest.name, 'Note and PDF Voice Reader');
-assert.strictEqual(manifest.version, '0.4.1');
+assert.strictEqual(manifest.version, '0.4.2');
 assert.ok(!/\bObsidian\b/.test(manifest.description));
 assert.ok(!code.includes('Note Reader CosyVoice'));
 assert.ok(!code.includes('CosyVoice Reader'));
@@ -648,18 +648,62 @@ assert.strictEqual(
 );
 const onlineExportSummary = moduleObject.exports.__test.createAudioExportSummary({
   chunkCount: 12,
+  documentKind: 'pdf',
   engineLabel: 'OpenRouter TTS',
   insertAfterExport: true,
   noteName: 'Paper',
+  scope: 'from-selection',
   speechEngine: 'openrouter-tts',
   targetPath: 'Audio/Paper - narration.mp3',
   textLength: 1234,
 });
 assert.strictEqual(onlineExportSummary.isOnline, true);
 assert.strictEqual(onlineExportSummary.insertAfterExport, true);
+assert.strictEqual(onlineExportSummary.documentKind, 'pdf');
+assert.strictEqual(onlineExportSummary.scope, 'from-selection');
 assert.ok(moduleObject.exports.__test.getAudioExportUiText('english', onlineExportSummary).quotaWarning.includes('12 planned sequential segments'));
 assert.strictEqual(moduleObject.exports.__test.getAudioExportUiText('english', onlineExportSummary).locationLabel, 'Planned save location');
+assert.strictEqual(moduleObject.exports.__test.getAudioExportUiText('english', onlineExportSummary).scopeValue, 'From selection to end');
 assert.ok(moduleObject.exports.__test.getAudioExportUiText('chinese', onlineExportSummary).acknowledge.includes('API 额度'));
+assert.strictEqual(moduleObject.exports.__test.normalizeAudioExportScope('selection'), 'selection');
+assert.strictEqual(moduleObject.exports.__test.normalizeAudioExportScope('unknown'), 'entire');
+assert.strictEqual(
+  moduleObject.exports.__test.selectMarkdownAudioExportText(
+    'First line\nSecond selected line\nThird line',
+    'Second selected line',
+    { line: 1, ch: 0 },
+    'selection'
+  ),
+  'Second selected line'
+);
+assert.strictEqual(
+  moduleObject.exports.__test.selectMarkdownAudioExportText(
+    'First line\nSecond selected line\nThird line',
+    'Second selected line',
+    { line: 1, ch: 7 },
+    'from-selection'
+  ),
+  'selected line\nThird line'
+);
+assert.strictEqual(
+  moduleObject.exports.__test.getAudioExportScopeUiText('chinese', {
+    documentKind: 'pdf',
+    hasSelection: true,
+  }).fromSelection,
+  '从选中位置到末尾'
+);
+const quotaError = moduleObject.exports.__test.createRemoteHttpError('OpenRouter TTS', 402, 'fallback');
+assert.strictEqual(quotaError.category, 'quota');
+assert.ok(quotaError.message.includes('credit, balance, or spending limit'));
+const rateLimitError = moduleObject.exports.__test.createRemoteHttpError('OpenRouter TTS', 429, 'fallback', '2');
+assert.strictEqual(rateLimitError.category, 'rate-limit');
+assert.ok(rateLimitError.message.includes('rate limit or request quota'));
+assert.ok(rateLimitError.message.includes('Retry-After delay of 2 seconds'));
+assert.ok(moduleObject.exports.__test.createRemoteRetryExhaustedError(
+  'OpenRouter TTS',
+  rateLimitError,
+  3
+).message.includes('rate limit or request quota is still exceeded'));
 assert.strictEqual(moduleObject.exports.__test.createSafeRuntimeLogEvent('start'), null);
 assert.deepStrictEqual(
   moduleObject.exports.__test.createSafeRuntimeLogEvent(
@@ -903,7 +947,7 @@ const readerView = new moduleObject.exports.__test.CosyVoiceReaderView({}, {
   readFromSelection: () => {},
   readSelection: () => {},
   runUserAction: async (_label, action) => action(),
-  exportCurrentNoteAudio: (options) => {
+  exportCurrentFileAudio: (options) => {
     exportNoteCalls.push(options);
   },
   seekCurrentAudioBySeconds: (deltaSeconds) => {
@@ -928,7 +972,7 @@ assert.strictEqual(readFileCalls, 1);
 assert.strictEqual(readFilePointerEvent.defaultPrevented, true);
 readFileButton.dispatchEvent(createPointerEvent({ type: 'click' }));
 assert.strictEqual(readFileCalls, 1);
-const exportNoteButton = findElementByAriaLabel(root, 'Export full audio');
+const exportNoteButton = findElementByAriaLabel(root, 'Export audio');
 const exportInsertButton = findElementByAriaLabel(root, 'Export & insert audio');
 assert.ok(exportNoteButton);
 assert.ok(exportInsertButton);
@@ -1103,6 +1147,7 @@ assert.deepStrictEqual(chunkNavigationCalls, [-1, 1]);
   assert.ok(startupCommandIds.includes('resume-current-file'));
   assert.ok(startupCommandIds.includes('export-current-note-audio'));
   assert.ok(startupCommandIds.includes('export-current-note-audio-and-insert'));
+  assert.ok(startupCommandIds.includes('retry-audio-export-merge'));
   assert.strictEqual(fs.existsSync(legacyOwnedFile), false);
   assert.strictEqual(fs.existsSync(legacyKeepFile), true);
   assert.strictEqual(fs.existsSync(legacyLogFile), false);
@@ -1141,6 +1186,7 @@ assert.deepStrictEqual(chunkNavigationCalls, [-1, 1]);
   exportPlugin.currentProcess = null;
   exportPlugin.currentRequests = new Set();
   exportPlugin.readerState = moduleObject.exports.__test.createReaderState();
+  exportPlugin.readerViews = new Set();
   exportPlugin.sequence = 0;
   exportPlugin.lastMarkdownView = exportView;
   exportPlugin.lastReadableFile = exportFile;
@@ -1239,6 +1285,104 @@ assert.deepStrictEqual(chunkNavigationCalls, [-1, 1]);
   assert.strictEqual(exportedAttachmentInput.toString('ascii', 0, 4), 'RIFF');
   assert.strictEqual(insertedExport, true);
   assert.strictEqual(exportPlugin.activeSession, null);
+
+  exportPlugin.cleanupSessionFiles = PluginClass.prototype.cleanupSessionFiles;
+  exportPlugin.removeTempFile = PluginClass.prototype.removeTempFile;
+  exportPlugin.pendingAudioMerge = null;
+  let mergeFailurePrepareCalls = 0;
+  exportPlugin.prepareChunk = async (_text, index, session) => {
+    mergeFailurePrepareCalls += 1;
+    const outputPath = path.join(exportTempDir, `merge-failure-chunk-${index}.wav`);
+    fs.writeFileSync(outputPath, index === 1 ? Buffer.alloc(64) : createExportTestWave(index + 10));
+    session.files.push(outputPath);
+    return { outputPath };
+  };
+  exportPlugin.createVaultAudioAttachment = async () => {
+    throw new Error('Attachment creation must not run before a successful merge.');
+  };
+  const failedMergeExport = await exportPlugin.exportCurrentNoteAudio({ insertAfterExport: false });
+  assert.strictEqual(failedMergeExport, null);
+  assert.ok(exportPlugin.pendingAudioMerge);
+  assert.strictEqual(exportPlugin.pendingAudioMerge.preparedPaths.length, exportSummary.chunkCount);
+  assert.ok(exportPlugin.pendingAudioMerge.preparedPaths.every((filePath) => fs.existsSync(filePath)));
+  assert.ok(exportPlugin.readerState.error.includes('Retry merge only'));
+  assert.ok(exportPlugin.readerState.error.includes('does not call the TTS API again'));
+
+  const keptMergePaths = exportPlugin.pendingAudioMerge.preparedPaths.slice();
+  keptMergePaths.forEach((filePath, index) => {
+    fs.writeFileSync(filePath, createExportTestWave(index + 20));
+  });
+  exportPlugin.prepareChunk = async () => {
+    throw new Error('Retry merge only must not synthesize any audio.');
+  };
+  exportPlugin.createVaultAudioAttachment = async (_noteFile, temporaryAudioPath, extension, targetPlan) => {
+    assert.strictEqual(extension, 'wav');
+    assert.strictEqual(fs.readFileSync(temporaryAudioPath).toString('ascii', 0, 4), 'RIFF');
+    assert.strictEqual(targetPlan.targetPath, 'Notes/Research note - narration.wav');
+    return { path: 'Attachments/Research note - narration retry.wav' };
+  };
+  const retriedMergeAttachment = await exportPlugin.retryPendingAudioMerge();
+  assert.strictEqual(retriedMergeAttachment.path, 'Attachments/Research note - narration retry.wav');
+  assert.strictEqual(exportPlugin.pendingAudioMerge, null);
+  assert.strictEqual(mergeFailurePrepareCalls, exportSummary.chunkCount);
+  assert.ok(keptMergePaths.every((filePath) => !fs.existsSync(filePath)));
+
+  const pdfExportFile = {
+    basename: 'Research paper',
+    extension: 'pdf',
+    name: 'Research paper.pdf',
+    path: 'Papers/Research paper.pdf',
+    stat: { mtime: 2222 },
+  };
+  const pdfSelectionContext = {
+    pageNumber: 3,
+    selectedText: 'Selected PDF paragraph for audio export.',
+    selectionPosition: { xRatio: 0.6, yRatio: 0.3 },
+  };
+  exportPlugin.getCurrentAudioExportContext = () => ({
+    documentKind: 'pdf',
+    file: pdfExportFile,
+    fileMtime: 2222,
+    fileName: 'Research paper',
+    hasSelection: true,
+    selectionContext: pdfSelectionContext,
+  });
+  exportPlugin.isAudioExportContextCurrent = () => true;
+  exportPlugin.settings.audioExportLocation = 'note-folder';
+  const pdfPreparedText = [];
+  exportPlugin.prepareChunk = async (text, index, session) => {
+    pdfPreparedText.push(text);
+    const outputPath = path.join(exportTempDir, `pdf-export-chunk-${index}.wav`);
+    fs.writeFileSync(outputPath, createExportTestWave(index + 30));
+    session.files.push(outputPath);
+    return { outputPath };
+  };
+  let pdfExportTargetPlan = null;
+  exportPlugin.createVaultAudioAttachment = async (_file, temporaryAudioPath, extension, targetPlan) => {
+    assert.strictEqual(extension, 'wav');
+    assert.strictEqual(fs.readFileSync(temporaryAudioPath).toString('ascii', 0, 4), 'RIFF');
+    pdfExportTargetPlan = targetPlan;
+    return { path: targetPlan.targetPath };
+  };
+  const selectedPdfAudio = await exportPlugin.exportCurrentFileAudio({
+    insertAfterExport: false,
+    scope: 'selection',
+  });
+  assert.strictEqual(selectedPdfAudio.path, 'Papers/Research paper - selection narration.wav');
+  assert.strictEqual(pdfExportTargetPlan.targetPath, selectedPdfAudio.path);
+  assert.ok(pdfPreparedText.join(' ').includes('Selected PDF paragraph for audio export'));
+
+  let extractedPdfScope = null;
+  exportPlugin.extractPdfAudioExportText = async (_context, scope) => {
+    extractedPdfScope = scope;
+    return 'Selected PDF paragraph followed by the remaining pages.';
+  };
+  const continuedPdfAudio = await exportPlugin.exportCurrentFileAudio({
+    insertAfterExport: false,
+    scope: 'from-selection',
+  });
+  assert.strictEqual(extractedPdfScope, 'from-selection');
+  assert.strictEqual(continuedPdfAudio.path, 'Papers/Research paper - continued narration.wav');
 
   const attachmentSourcePath = path.join(exportTempDir, 'attachment-source.wav');
   fs.writeFileSync(attachmentSourcePath, createExportTestWave(7));

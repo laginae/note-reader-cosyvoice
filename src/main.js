@@ -50,6 +50,7 @@ const LATEX_FORMULA_MAX_CHARS = 12;
 const MATH_READING_LANGUAGES = ['english', 'chinese', 'skip'];
 const SETTINGS_LANGUAGES = ['english', 'chinese'];
 const AUDIO_EXPORT_LOCATIONS = ['obsidian-attachment', 'note-folder', 'custom-folder'];
+const AUDIO_EXPORT_SCOPES = ['entire', 'selection', 'from-selection'];
 const CREDENTIAL_SOURCES = ['obsidian-secret', 'key-file'];
 const SPEECH_ENGINES = ['local-cosyvoice', 'edge-tts', 'azure-speech', 'openrouter-tts'];
 const AZURE_SPEECH_CLOUDS = ['public', 'china'];
@@ -57,7 +58,7 @@ const REMOTE_TTS_MAX_AUDIO_BYTES = 20 * 1024 * 1024;
 const REMOTE_TTS_MAX_ATTEMPTS = 3;
 const REMOTE_TTS_RETRY_DELAYS_MS = [750, 1500];
 const REMOTE_TTS_RETRY_AFTER_MAX_MS = 10_000;
-const REMOTE_TTS_RETRYABLE_STATUS_CODES = new Set([408, 425, 429, 500, 502, 503, 504]);
+const REMOTE_TTS_RETRYABLE_STATUS_CODES = new Set([408, 425, 429, 500, 502, 503, 504, 524, 529]);
 const REMOTE_TTS_RETRYABLE_ERROR_CODES = new Set([
   'EAI_AGAIN',
   'ECONNREFUSED',
@@ -234,8 +235,8 @@ const SETTINGS_UI_TEXT = {
     onlinePrefetchDesc: 'How many future chunks an online engine may synthesize early. The default 1 improves continuity while limiting unused work to at most one chunk; choose 0 for strict on-demand synthesis.',
     onlinePrefetchNone: '0 - synthesize only when needed',
     onlinePrefetchOne: '1 - prefetch one chunk',
-    audioExportLocationName: 'Full-note audio save location',
-    audioExportLocationDesc: 'Choose where exported full-note audio is saved. The confirmation dialog shows the planned vault path before synthesis starts.',
+    audioExportLocationName: 'Audio export save location',
+    audioExportLocationDesc: 'Choose where audio exported from notes or PDFs is saved. The confirmation dialog shows the selected scope and planned vault path before synthesis starts.',
     audioExportLocationAttachment: 'Obsidian attachment folder (default)',
     audioExportLocationNote: 'Same folder as the note',
     audioExportLocationCustom: 'Custom folder in this vault',
@@ -342,8 +343,8 @@ const SETTINGS_UI_TEXT = {
     onlinePrefetchDesc: '允许在线引擎提前合成的后续分段数量。默认 1 可改善衔接，并把可能未使用的提前合成限制为最多一段；选择 0 可严格按需合成。',
     onlinePrefetchNone: '0 - 需要时才合成',
     onlinePrefetchOne: '1 - 提前合成一段',
-    audioExportLocationName: '整篇音频保存位置',
-    audioExportLocationDesc: '选择整篇笔记音频的保存位置。开始合成前，确认窗口会显示预计的库内路径。',
+    audioExportLocationName: '音频导出保存位置',
+    audioExportLocationDesc: '选择从笔记或 PDF 导出的音频保存位置。开始合成前，确认窗口会显示所选范围和预计的库内路径。',
     audioExportLocationAttachment: 'Obsidian 附件目录（默认）',
     audioExportLocationNote: '与原笔记相同的目录',
     audioExportLocationCustom: '本库内的自定义目录',
@@ -1757,26 +1758,73 @@ function isRetryableRemoteError(error) {
   return REMOTE_TTS_RETRYABLE_ERROR_CODES.has(String(error.code || '').toUpperCase());
 }
 
+function getRemoteHttpErrorDetail(statusCode, failureHint) {
+  const fallback = failureHint || 'Check the service configuration and account status.';
+  if (statusCode === 400 || statusCode === 422) {
+    return `The provider rejected the request. Check the selected model, voice, text length, and request format. ${fallback}`;
+  }
+  if (statusCode === 401) {
+    return 'Authentication failed. The API key may be missing, invalid, expired, or associated with a different service account.';
+  }
+  if (statusCode === 402) {
+    return 'Account credit, balance, or spending limit is exhausted. Add credit or raise the provider budget before retrying.';
+  }
+  if (statusCode === 403) {
+    return `The request was forbidden. Check API-key permissions, model or provider access, and required privacy routing. ${fallback}`;
+  }
+  if (statusCode === 404) {
+    return `The requested endpoint, model, voice, region, or resource was not found. ${fallback}`;
+  }
+  if (statusCode === 413) {
+    return 'The text request is too large for the provider. Reduce the online chunk limits and try again.';
+  }
+  if (statusCode === 429) {
+    return 'The service rate limit or request quota has been reached. Wait for the provider reset time, reduce request frequency, or review the account limits.';
+  }
+  if (statusCode === 408 || statusCode === 425 || statusCode >= 500) {
+    return 'The upstream service is temporarily unavailable, busy, or timed out.';
+  }
+  return fallback;
+}
+
 function createRemoteHttpError(serviceLabel, statusCode, failureHint, retryAfterValue) {
-  const isTemporary = REMOTE_TTS_RETRYABLE_STATUS_CODES.has(statusCode);
-  const detail = isTemporary
-    ? 'The upstream service is temporarily unavailable or busy.'
-    : failureHint || 'Check the service configuration and account status.';
-  const error = new Error(`${serviceLabel} returned HTTP ${statusCode}. ${detail}`);
+  const retryAfterMs = parseRetryAfterMs(retryAfterValue);
+  const retryAfterDetail = Number.isFinite(retryAfterMs) && retryAfterMs > 0
+    ? ` A Retry-After delay of ${Math.ceil(retryAfterMs / 1000)} seconds will be observed before the next attempt.`
+    : '';
+  const error = new Error(
+    `${serviceLabel} returned HTTP ${statusCode}. ${getRemoteHttpErrorDetail(statusCode, failureHint)}${retryAfterDetail}`
+  );
   error.statusCode = statusCode;
-  error.retryAfterMs = parseRetryAfterMs(retryAfterValue);
+  error.retryAfterMs = retryAfterMs;
+  error.category = statusCode === 402
+    ? 'quota'
+    : statusCode === 429
+      ? 'rate-limit'
+      : statusCode === 401
+        ? 'authentication'
+        : statusCode === 403
+          ? 'access'
+          : REMOTE_TTS_RETRYABLE_STATUS_CODES.has(statusCode)
+            ? 'temporary'
+            : 'request';
   return error;
 }
 
 function createRemoteRetryExhaustedError(serviceLabel, error, attempts) {
   const statusCode = Number(error && error.statusCode) || 0;
   const failure = statusCode ? `HTTP ${statusCode}` : messageFromError(error);
+  const detail = statusCode === 429
+    ? 'The rate limit or request quota is still exceeded. Wait for the provider reset time or review the account limits.'
+    : 'The upstream provider may be temporarily unavailable. Try again shortly or select another model.';
   const exhaustedError = new Error(
     `${serviceLabel} returned ${failure} after ${attempts} attempts. ` +
-    'The upstream provider may be temporarily unavailable. Try again shortly or select another model.'
+    detail
   );
   exhaustedError.statusCode = statusCode || undefined;
   exhaustedError.code = error && error.code;
+  exhaustedError.category = error && error.category;
+  exhaustedError.retryAfterMs = error && error.retryAfterMs;
   return exhaustedError;
 }
 
@@ -1883,6 +1931,11 @@ function getAudioExportExtension(speechEngine) {
   return normalizeSpeechEngine(speechEngine) === 'local-cosyvoice' ? 'wav' : 'mp3';
 }
 
+function normalizeAudioExportScope(value) {
+  const normalized = String(value || '').trim();
+  return AUDIO_EXPORT_SCOPES.includes(normalized) ? normalized : 'entire';
+}
+
 function normalizeAudioExportLocation(value) {
   const normalized = String(value || '').trim();
   return AUDIO_EXPORT_LOCATIONS.includes(normalized)
@@ -1936,16 +1989,88 @@ function getAvailableVaultAudioPath(vault, requestedPath) {
   throw new Error('Could not choose a non-conflicting name for the exported audio.');
 }
 
+function selectMarkdownAudioExportText(documentText, selectionText, selectionStart, scopeValue) {
+  const scope = normalizeAudioExportScope(scopeValue);
+  if (scope === 'selection') {
+    return String(selectionText || '').trim();
+  }
+  if (scope === 'from-selection') {
+    return getTextFromPositionToEnd(
+      normalizeLineBreaks(documentText).split('\n'),
+      selectionStart
+    ).trim();
+  }
+  return String(documentText || '').trim();
+}
+
 function createAudioExportSummary(options = {}) {
   return {
     chunkCount: Math.max(0, Math.floor(Number(options.chunkCount) || 0)),
+    documentKind: options.documentKind === 'pdf' ? 'pdf' : 'markdown',
     engineLabel: String(options.engineLabel || 'Speech engine'),
+    fileName: String(options.fileName || options.noteName || 'document'),
     insertAfterExport: options.insertAfterExport === true,
     isOnline: isOnlineSpeechEngine(options.speechEngine),
-    noteName: String(options.noteName || 'note'),
+    noteName: String(options.fileName || options.noteName || 'document'),
+    scope: normalizeAudioExportScope(options.scope),
     speechEngine: normalizeSpeechEngine(options.speechEngine),
     targetPath: String(options.targetPath || '').trim(),
     textLength: Math.max(0, Math.floor(Number(options.textLength) || 0)),
+  };
+}
+
+function getAudioExportScopeLabel(languageValue, scopeValue) {
+  const useChinese = normalizeSettingsLanguage(languageValue) === 'chinese';
+  const scope = normalizeAudioExportScope(scopeValue);
+  const labels = useChinese
+    ? {
+      entire: '全部内容',
+      selection: '仅选中内容',
+      'from-selection': '从选中位置到末尾',
+    }
+    : {
+      entire: 'Entire document',
+      selection: 'Selected text only',
+      'from-selection': 'From selection to end',
+    };
+  return labels[scope];
+}
+
+function getAudioExportScopeUiText(languageValue, context = {}) {
+  const useChinese = normalizeSettingsLanguage(languageValue) === 'chinese';
+  const isPdf = context.documentKind === 'pdf';
+  const hasSelection = context.hasSelection === true;
+  if (useChinese) {
+    return {
+      cancel: '取消',
+      continue: '继续',
+      description: isPdf
+        ? '选择要从当前文本型 PDF 导出的内容范围。下一步会先在本地解析并计算准确分段，再要求确认。'
+        : '选择要从当前 Markdown 笔记导出的内容范围。下一步会计算准确分段并要求确认。',
+      entire: '全部内容',
+      fileLabel: isPdf ? 'PDF' : '笔记',
+      fromSelection: '从选中位置到末尾',
+      noSelection: '当前文件没有可用选区。请先选中文字，再使用后两种范围。',
+      scopeLabel: '导出范围',
+      selection: '仅选中内容',
+      selectionAvailable: hasSelection,
+      title: '选择音频导出范围',
+    };
+  }
+  return {
+    cancel: 'Cancel',
+    continue: 'Continue',
+    description: isPdf
+      ? 'Choose what to export from the current text-based PDF. The plugin will parse locally, calculate exact segments, and then ask for confirmation.'
+      : 'Choose what to export from the current Markdown note. The plugin will calculate exact segments and then ask for confirmation.',
+    entire: 'Entire document',
+    fileLabel: isPdf ? 'PDF' : 'Note',
+    fromSelection: 'From selection to end',
+    noSelection: 'There is no usable selection in the current file. Select text first to use the other two scopes.',
+    scopeLabel: 'Export scope',
+    selection: 'Selected text only',
+    selectionAvailable: hasSelection,
+    title: 'Choose audio export scope',
   };
 }
 
@@ -1956,8 +2081,8 @@ function getAudioExportUiText(languageValue, summaryValue) {
   if (useChinese) {
     return {
       acknowledge: summary.isOnline
-        ? '我了解：整篇可朗读文本将分段发送给所选在线语音服务，并可能消耗 API 额度或产生费用。'
-        : '我了解：插件将为整篇笔记执行本地语音合成，过程可能需要较长时间。',
+        ? '我了解：上述范围内的可朗读文本将分段发送给所选在线语音服务，并可能消耗 API 额度或产生费用。'
+        : '我了解：插件将为上述范围执行本地语音合成，过程可能需要较长时间。',
       cancel: '取消',
       characterLabel: '可朗读字符数',
       confirm: summary.insertAfterExport ? '导出并插入' : '导出音频',
@@ -1965,19 +2090,21 @@ function getAudioExportUiText(languageValue, summaryValue) {
         ? '全部分段成功后，音频会保存到下方位置并插入原笔记。'
         : '全部分段成功后，音频会保存到下方位置。',
       engineLabel: '语音引擎',
+      fileLabel: summary.documentKind === 'pdf' ? 'PDF' : '笔记',
       locationLabel: '预计保存位置',
-      noteLabel: '笔记',
       quotaWarning: summary.isOnline
         ? `将发送 ${numberFormatter.format(summary.textLength)} 个字符，计划按 ${numberFormatter.format(summary.chunkCount)} 个分段顺序合成；临时失败可能触发有限重试，因此实际网络尝试次数可能更高。不会为播放连续性额外预合成。实际额度或费用由服务商和模型决定。`
         : `将执行 ${numberFormatter.format(summary.chunkCount)} 个本地合成分段；不会调用在线 API。`,
       requestLabel: summary.isOnline ? '预计在线请求' : '合成分段',
-      title: '导出整篇笔记音频？',
+      scopeLabel: '导出范围',
+      scopeValue: getAudioExportScopeLabel('chinese', summary.scope),
+      title: '确认导出音频？',
     };
   }
   return {
     acknowledge: summary.isOnline
-      ? 'I understand that all readable note text will be sent in chunks to the selected online speech service and may use API quota or incur charges.'
-      : 'I understand that the entire note will be synthesized locally and may take a long time.',
+      ? 'I understand that readable text in the selected scope will be sent in chunks to the selected online speech service and may use API quota or incur charges.'
+      : 'I understand that the selected scope will be synthesized locally and may take a long time.',
     cancel: 'Cancel',
     characterLabel: 'Readable characters',
     confirm: summary.insertAfterExport ? 'Export and insert' : 'Export audio',
@@ -1985,14 +2112,84 @@ function getAudioExportUiText(languageValue, summaryValue) {
       ? 'After every segment succeeds, the audio will be saved at the location below and embedded in the original note.'
       : 'After every segment succeeds, the audio will be saved at the location below.',
     engineLabel: 'Speech engine',
+    fileLabel: summary.documentKind === 'pdf' ? 'PDF' : 'Note',
     locationLabel: 'Planned save location',
-    noteLabel: 'Note',
     quotaWarning: summary.isOnline
       ? `${numberFormatter.format(summary.textLength)} characters will be sent in ${numberFormatter.format(summary.chunkCount)} planned sequential segments. Temporary failures may trigger bounded retries, so the network attempt count can be higher. No playback-continuity chunks are prefetched. Actual quota or cost depends on the provider and model.`
       : `${numberFormatter.format(summary.chunkCount)} local synthesis segments will run. No online API is used.`,
     requestLabel: summary.isOnline ? 'Estimated online requests' : 'Synthesis segments',
-    title: 'Export the entire note as audio?',
+    scopeLabel: 'Export scope',
+    scopeValue: getAudioExportScopeLabel('english', summary.scope),
+    title: 'Confirm audio export?',
   };
+}
+
+class AudioExportScopeModal extends Modal {
+  constructor(app, language, context) {
+    super(app);
+    this.language = language;
+    this.context = context || {};
+    this.settled = false;
+    this.resultPromise = new Promise((resolve) => {
+      this.resolveResult = resolve;
+    });
+  }
+
+  finish(result) {
+    if (this.settled) {
+      return;
+    }
+    this.settled = true;
+    this.resolveResult(result ? normalizeAudioExportScope(result) : null);
+    this.close();
+  }
+
+  openAndWait() {
+    this.open();
+    return this.resultPromise;
+  }
+
+  onOpen() {
+    const ui = getAudioExportScopeUiText(this.language, this.context);
+    this.titleEl.setText(ui.title);
+    this.contentEl.empty();
+    this.contentEl.addClass('note-reader-cosyvoice-export-modal');
+    this.contentEl.createEl('p', { text: ui.description });
+
+    const fileSummary = this.contentEl.createEl('dl', { cls: 'note-reader-cosyvoice-export-summary' });
+    fileSummary.createEl('dt', { text: ui.fileLabel });
+    fileSummary.createEl('dd', { text: String(this.context.fileName || 'document') });
+
+    const scopeRow = this.contentEl.createEl('label', { cls: 'note-reader-cosyvoice-export-scope' });
+    scopeRow.createSpan({ text: ui.scopeLabel });
+    const select = scopeRow.createEl('select', { attr: { 'aria-label': ui.scopeLabel } });
+    const addOption = (value, label, disabled = false) => {
+      const option = select.createEl('option', { attr: { value }, text: label });
+      option.disabled = disabled;
+    };
+    addOption('entire', ui.entire);
+    addOption('selection', ui.selection, !ui.selectionAvailable);
+    addOption('from-selection', ui.fromSelection, !ui.selectionAvailable);
+    select.value = 'entire';
+
+    if (!ui.selectionAvailable) {
+      this.contentEl.createDiv({ cls: 'note-reader-cosyvoice-export-hint', text: ui.noSelection });
+    }
+
+    const actions = this.contentEl.createDiv({ cls: 'note-reader-cosyvoice-export-actions' });
+    const cancelButton = actions.createEl('button', { text: ui.cancel });
+    const continueButton = actions.createEl('button', { cls: 'mod-cta', text: ui.continue });
+    cancelButton.addEventListener('click', () => this.finish(null));
+    continueButton.addEventListener('click', () => this.finish(select.value));
+  }
+
+  onClose() {
+    this.contentEl.empty();
+    if (!this.settled) {
+      this.settled = true;
+      this.resolveResult(null);
+    }
+  }
 }
 
 class AudioExportConfirmModal extends Modal {
@@ -2032,7 +2229,8 @@ class AudioExportConfirmModal extends Modal {
       summaryEl.createEl('dt', { text: label });
       summaryEl.createEl('dd', { text: String(value) });
     };
-    addSummaryRow(ui.noteLabel, this.summary.noteName);
+    addSummaryRow(ui.fileLabel, this.summary.fileName);
+    addSummaryRow(ui.scopeLabel, ui.scopeValue);
     addSummaryRow(ui.engineLabel, this.summary.engineLabel);
     addSummaryRow(ui.locationLabel, this.summary.targetPath);
     addSummaryRow(ui.characterLabel, new Intl.NumberFormat().format(this.summary.textLength));
@@ -2087,6 +2285,7 @@ class CosyVoiceReaderPlugin extends Plugin {
     this.lastMarkdownView = null;
     this.lastReadableFile = null;
     this.lastPdfSelection = null;
+    this.pendingAudioMerge = null;
     this.pauseRequested = false;
     this.readerState = createReaderState();
     this.readerViews = new Set();
@@ -2151,13 +2350,13 @@ class CosyVoiceReaderPlugin extends Plugin {
 
     this.addCommand({
       id: 'export-current-note-audio',
-      name: 'Export full note audio',
+      name: 'Export audio from current note or PDF',
       checkCallback: (checking) => {
-        if (!this.canExportCurrentNote()) {
+        if (!this.canExportCurrentFile()) {
           return false;
         }
         if (!checking) {
-          void this.runUserAction('Export full audio', () => this.exportCurrentNoteAudio({ insertAfterExport: false }));
+          void this.runUserAction('Export audio', () => this.exportCurrentFileAudio({ insertAfterExport: false }));
         }
         return true;
       },
@@ -2165,13 +2364,27 @@ class CosyVoiceReaderPlugin extends Plugin {
 
     this.addCommand({
       id: 'export-current-note-audio-and-insert',
-      name: 'Export full note audio and insert it into the note',
+      name: 'Export audio from the current note and insert it',
       checkCallback: (checking) => {
-        if (!this.canExportCurrentNote()) {
+        if (!this.canInsertAudioExportIntoCurrentNote()) {
           return false;
         }
         if (!checking) {
-          void this.runUserAction('Export and insert audio', () => this.exportCurrentNoteAudio({ insertAfterExport: true }));
+          void this.runUserAction('Export and insert audio', () => this.exportCurrentFileAudio({ insertAfterExport: true }));
+        }
+        return true;
+      },
+    });
+
+    this.addCommand({
+      id: 'retry-audio-export-merge',
+      name: 'Retry pending audio export merge only',
+      checkCallback: (checking) => {
+        if (!this.hasPendingAudioMerge()) {
+          return false;
+        }
+        if (!checking) {
+          void this.runUserAction('Retry merge only', () => this.retryPendingAudioMerge());
         }
         return true;
       },
@@ -2323,6 +2536,9 @@ class CosyVoiceReaderPlugin extends Plugin {
 
   async onunload() {
     await this.stopReading({ silent: true });
+    if (this.settings && this.settings.cleanupCache) {
+      await this.discardPendingAudioMerge({ silent: true });
+    }
   }
 
   async loadSettings() {
@@ -2512,6 +2728,7 @@ class CosyVoiceReaderPlugin extends Plugin {
 
   async clearTemporaryData() {
     await this.stopReading({ silent: true });
+    this.pendingAudioMerge = null;
     await this.cleanupStaleTemporaryData();
     new Notice(getSettingsUiText(this.settings.settingsLanguage).temporaryDataClearedNotice);
   }
@@ -2673,12 +2890,77 @@ class CosyVoiceReaderPlugin extends Plugin {
     return context ? context.view : null;
   }
 
+  getCurrentAudioExportContext(options = {}) {
+    const notify = options.notify !== false;
+    const file = this.getCurrentReadableFile();
+    if (isMarkdownFile(file)) {
+      const view = this.findMarkdownViewForFile(file);
+      if (!view || !view.editor) {
+        if (notify) {
+          new Notice('CosyVoice: open the Markdown note before exporting audio.', 8000);
+        }
+        return null;
+      }
+      const documentText = String(view.editor.getValue() || '');
+      const selectionText = typeof view.editor.getSelection === 'function'
+        ? String(view.editor.getSelection() || '')
+        : '';
+      const selectionStart = typeof view.editor.getCursor === 'function'
+        ? view.editor.getCursor('from')
+        : null;
+      return {
+        documentKind: 'markdown',
+        documentText,
+        file,
+        fileMtime: getFileMtime(file),
+        fileName: file.basename || file.name || 'note',
+        hasSelection: Boolean(selectionText.trim()),
+        selectionStart,
+        selectionText,
+        view,
+      };
+    }
+    if (isPdfFile(file)) {
+      const selectionContext = this.getPdfSelectionForFile(file);
+      return {
+        documentKind: 'pdf',
+        file,
+        fileMtime: getFileMtime(file),
+        fileName: file.basename || file.name || 'PDF',
+        hasSelection: Boolean(selectionContext && selectionContext.selectedText),
+        selectionContext,
+      };
+    }
+    if (notify) {
+      new Notice('CosyVoice: open a Markdown note or text-based PDF before exporting audio.', 8000);
+    }
+    return null;
+  }
+
+  canExportCurrentFile() {
+    return Boolean(this.getCurrentAudioExportContext({ notify: false }));
+  }
+
+  canInsertAudioExportIntoCurrentNote() {
+    const context = this.getCurrentAudioExportContext({ notify: false });
+    return Boolean(context && context.documentKind === 'markdown');
+  }
+
   canExportCurrentNote() {
-    return Boolean(this.getCurrentMarkdownContext({ notify: false }));
+    return this.canInsertAudioExportIntoCurrentNote();
   }
 
   getCurrentNoteExportContext() {
     return this.getCurrentMarkdownContext({ notify: true });
+  }
+
+  requestAudioExportScope(context) {
+    const modal = new AudioExportScopeModal(
+      this.app,
+      this.settings && this.settings.settingsLanguage,
+      context
+    );
+    return modal.openAndWait();
   }
 
   requestAudioExportConfirmation(summary) {
@@ -2690,14 +2972,15 @@ class CosyVoiceReaderPlugin extends Plugin {
     return modal.openAndWait();
   }
 
-  async getAudioExportTargetPlan(noteFile, extension) {
+  async getAudioExportTargetPlan(noteFile, extension, scope = 'entire') {
     const normalizedExtension = String(extension || '').trim().toLowerCase().replace(/^\./, '');
     if (!['mp3', 'wav'].includes(normalizedExtension)) {
       throw new Error('The selected speech engine returned an unsupported export format.');
     }
     const fileName = buildExportAudioFileName(
       noteFile && (noteFile.basename || noteFile.name) || 'note',
-      normalizedExtension
+      normalizedExtension,
+      normalizeAudioExportScope(scope)
     );
     const location = normalizeAudioExportLocation(
       this.settings && this.settings.audioExportLocation
@@ -2830,19 +3113,379 @@ class CosyVoiceReaderPlugin extends Plugin {
     throw new Error('The audio was exported, but the original note is no longer open and cannot be updated safely.');
   }
 
-  async exportCurrentNoteAudio(options = {}) {
-    const context = this.getCurrentNoteExportContext();
+  getPendingAudioMerge() {
+    const pending = this.pendingAudioMerge;
+    const preparedPaths = pending && Array.isArray(pending.preparedPaths)
+      ? pending.preparedPaths
+      : [];
+    const isValid = Boolean(
+      pending
+      && preparedPaths.length
+      && preparedPaths.every((filePath) => (
+        this.cacheDir
+        && isInsideDirectory(filePath, this.cacheDir)
+        && fs.existsSync(filePath)
+      ))
+    );
+    if (!isValid) {
+      this.pendingAudioMerge = null;
+      return null;
+    }
+    return pending;
+  }
+
+  hasPendingAudioMerge() {
+    return Boolean(this.getPendingAudioMerge());
+  }
+
+  preservePendingAudioMerge(job, session) {
+    const preparedPaths = Array.isArray(job && job.preparedPaths)
+      ? job.preparedPaths.filter((filePath) => (
+        this.cacheDir
+        && isInsideDirectory(filePath, this.cacheDir)
+        && fs.existsSync(filePath)
+      ))
+      : [];
+    if (!preparedPaths.length) {
+      return false;
+    }
+    this.pendingAudioMerge = {
+      ...job,
+      preparedPaths: preparedPaths.slice(),
+    };
+    if (session) {
+      session.preservedAudioPaths = preparedPaths.slice();
+    }
+    this.renderReaderViews();
+    return true;
+  }
+
+  async discardPendingAudioMerge(options = {}) {
+    const pending = this.pendingAudioMerge;
+    this.pendingAudioMerge = null;
+    const paths = pending
+      ? [
+        ...(Array.isArray(pending.preparedPaths) ? pending.preparedPaths : []),
+        pending.temporaryOutputPath,
+      ].filter(Boolean)
+      : [];
+    for (const filePath of paths) {
+      await this.removeTempFile(filePath);
+    }
+    this.renderReaderViews();
+    if (!options.silent && pending) {
+      new Notice('CosyVoice: kept export segments were removed.');
+    }
+  }
+
+  createAudioMergeRetryError(error, segmentCount, stage = 'merge') {
+    const action = stage === 'merge' ? 'Audio merging' : 'Audio export finalization';
+    const retryError = new Error(
+      `${action} failed: ${messageFromError(error)} ` +
+      `${segmentCount} synthesized segments were kept locally. Use "Retry merge only"; ` +
+      'it reuses those files and does not call the TTS API again.'
+    );
+    retryError.code = 'AUDIO_MERGE_RETRY_AVAILABLE';
+    retryError.cause = error;
+    return retryError;
+  }
+
+  async finalizeMergedAudioExport(job, merged, session) {
+    const audioFile = await this.createVaultAudioAttachment(
+      job.context.file,
+      job.temporaryOutputPath,
+      job.extension,
+      job.exportPlan
+    );
+    if (!this.isActive(session)) {
+      new Notice(`CosyVoice: the completed audio was saved to ${audioFile.path} after export was stopped.`, 10000);
+      return audioFile;
+    }
+
+    let insertionLocation = '';
+    let insertionError = null;
+    if (job.insertAfterExport) {
+      try {
+        insertionLocation = await this.insertAudioAttachmentIntoNote(job.context.file, audioFile);
+      } catch (error) {
+        insertionError = error;
+      }
+    }
+
+    this.updateStatus(`${job.configuration.engineLabel} audio export complete`, {
+      canPause: false,
+      canNextChunk: false,
+      canPreviousChunk: false,
+      canSeek: false,
+      canStop: false,
+      currentChunk: job.preparedPaths.length,
+      currentText: audioFile.path,
+      error: insertionError ? messageFromError(insertionError) : '',
+      isPaused: false,
+      phase: 'complete',
+      progress: 1,
+      status: 'complete',
+      totalChunks: job.preparedPaths.length,
+    });
+    await this.writeRuntimeLog('audio-export-complete', {
+      bytes: merged.bytes,
+      chunks: job.preparedPaths.length,
+      documentKind: job.context.documentKind,
+      inserted: Boolean(insertionLocation),
+      scope: job.scope,
+    });
+    this.activeSession = null;
+
+    const insertedMessage = insertionLocation === 'cursor'
+      ? ' and inserted at the current cursor'
+      : insertionLocation === 'end'
+        ? ' and appended to the original note'
+        : '';
+    if (insertionError) {
+      new Notice(
+        `CosyVoice: audio was exported to ${audioFile.path}, but it could not be inserted: ${messageFromError(insertionError)}`,
+        12000
+      );
+    } else {
+      new Notice(`CosyVoice: exported ${audioFile.path}${insertedMessage}.`, 10000);
+    }
+    return audioFile;
+  }
+
+  async retryPendingAudioMerge() {
+    const job = this.getPendingAudioMerge();
+    if (!job) {
+      new Notice('CosyVoice: no synthesized export segments are available for merge retry.', 6000);
+      this.renderReaderViews();
+      return null;
+    }
+
+    await this.activateControlView();
+    await this.stopReading({ silent: true });
+    this.pauseRequested = false;
+    const segmentCount = job.preparedPaths.length;
+    const session = this.createSpeechSession(
+      Array.from({ length: segmentCount }, () => 'kept audio segment'),
+      job.sourceLabel,
+      job.configuration,
+      {
+        file: job.context.file,
+        kind: 'audio-export',
+        sourceKind: job.context.documentKind,
+      }
+    );
+    session.files.push(...job.preparedPaths, job.temporaryOutputPath);
+    this.activeSession = session;
+    this.updateStatus(`${job.configuration.engineLabel} retrying merge`, {
+      canPause: false,
+      canNextChunk: false,
+      canPreviousChunk: false,
+      canSeek: false,
+      canStop: true,
+      currentChunk: segmentCount,
+      currentText: `Combining ${segmentCount} kept synthesized segments without new TTS requests...`,
+      error: '',
+      isPaused: false,
+      phase: 'synthesizing',
+      progress: 0.99,
+      source: job.sourceLabel,
+      status: 'running',
+      totalChunks: segmentCount,
+    });
+    new Notice(
+      `CosyVoice: retrying the merge from ${segmentCount} kept segments. No TTS API request will be made.`,
+      8000
+    );
+
+    try {
+      const merged = await mergeAudioFiles(
+        job.preparedPaths,
+        job.temporaryOutputPath,
+        job.extension
+      );
+      if (!this.isActive(session)) {
+        throw new Error('Audio export stopped.');
+      }
+      const audioFile = await this.finalizeMergedAudioExport(job, merged, session);
+      this.pendingAudioMerge = null;
+      this.renderReaderViews();
+      return audioFile;
+    } catch (error) {
+      if (this.isActive(session)) {
+        this.preservePendingAudioMerge(job, session);
+        const retryError = error && error.code === 'AUDIO_MERGE_RETRY_AVAILABLE'
+          ? error
+          : this.createAudioMergeRetryError(error, segmentCount, 'merge');
+        const message = messageFromError(retryError);
+        this.updateStatus(`${job.configuration.engineLabel} merge retry error`, {
+          canPause: false,
+          canNextChunk: false,
+          canPreviousChunk: false,
+          canSeek: false,
+          canStop: false,
+          error: message,
+          isPaused: false,
+          phase: 'error',
+          status: 'error',
+        });
+        await this.writeRuntimeLog('failed', { message });
+        new Notice(`CosyVoice merge retry failed: ${message}`, 12000);
+        await this.cancelSessionOperations(session);
+        this.activeSession = null;
+        this.renderReaderViews();
+      }
+      return null;
+    } finally {
+      if (this.settings.cleanupCache) {
+        await this.cleanupSessionFiles(session, {
+          preservePaths: session.preservedAudioPaths,
+        });
+      }
+    }
+  }
+
+  sanitizeAudioExportText(value) {
+    return this.settings.stripMarkdown
+      ? sanitizeTextForSpeech(value, {
+        mathReadingLanguage: this.settings.mathReadingLanguage,
+      })
+      : normalizeLineBreaks(value).trim();
+  }
+
+  isAudioExportContextCurrent(context) {
+    const currentFile = this.getCurrentReadableFile();
+    if (!currentFile || getPdfFileIdentity(currentFile) !== getPdfFileIdentity(context.file)) {
+      return false;
+    }
+    if (context.documentKind === 'markdown') {
+      const view = this.findMarkdownViewForFile(currentFile);
+      return Boolean(view && view.editor && String(view.editor.getValue() || '') === context.documentText);
+    }
+    return getFileMtime(currentFile) === context.fileMtime;
+  }
+
+  async extractPdfAudioExportText(context, scope, configuration) {
+    await this.activateControlView();
+    await this.stopReading({ silent: true });
+    this.pauseRequested = false;
+
+    const sourceLabel = `${context.fileName} (PDF export preparation)`;
+    const session = this.createSpeechSession([], sourceLabel, configuration, {
+      file: context.file,
+      kind: 'audio-export',
+      sourceKind: 'pdf',
+    });
+    this.activeSession = session;
+    this.updateStatus('PDF export preparation', {
+      canPause: false,
+      canNextChunk: false,
+      canPreviousChunk: false,
+      canSeek: false,
+      canStop: true,
+      currentChunk: 0,
+      currentText: scope === 'from-selection'
+        ? `Extracting PDF from page ${context.selectionContext.pageNumber}...`
+        : 'Extracting complete PDF text...',
+      error: '',
+      isPaused: false,
+      phase: 'extracting PDF',
+      progress: 0,
+      source: sourceLabel,
+      status: 'running',
+      totalChunks: 0,
+    });
+
+    try {
+      const selectionContext = scope === 'from-selection' ? context.selectionContext : null;
+      const extractedText = await this.extractPdfText(context.file, session, {
+        reportProgress: true,
+        selectedText: selectionContext ? selectionContext.selectedText : '',
+        selectionPosition: selectionContext ? selectionContext.selectionPosition : null,
+        startPageNumber: selectionContext ? selectionContext.pageNumber : 1,
+      });
+      if (!this.isActive(session)) {
+        return null;
+      }
+      if (selectionContext && session.pdfSelectionMatched === false) {
+        throw new Error('The selected PDF position could not be matched reliably. Select a slightly longer phrase and try again.');
+      }
+      const text = this.sanitizeAudioExportText(extractedText);
+      if (!text) {
+        throw new Error('No extractable text was found. This PDF may be scanned or image-only; run OCR first and try again.');
+      }
+      this.updateStatus('PDF export preparation complete', {
+        canPause: false,
+        canNextChunk: false,
+        canPreviousChunk: false,
+        canSeek: false,
+        canStop: false,
+        currentText: previewText(text),
+        isPaused: false,
+        phase: 'complete',
+        progress: 1,
+        status: 'complete',
+      });
+      session.stopped = true;
+      this.activeSession = null;
+      return text;
+    } catch (error) {
+      if (this.isActive(session)) {
+        const message = getPdfExtractionErrorMessage(error);
+        this.updateStatus('PDF export preparation error', {
+          canPause: false,
+          canNextChunk: false,
+          canPreviousChunk: false,
+          canSeek: false,
+          canStop: false,
+          error: message,
+          isPaused: false,
+          phase: 'error',
+          status: 'error',
+        });
+        await this.writeRuntimeLog('failed', { message });
+        new Notice(`CosyVoice PDF export failed: ${message}`, 10000);
+        await this.cancelSessionOperations(session);
+        this.activeSession = null;
+      }
+      return null;
+    } finally {
+      if (this.settings.cleanupCache) {
+        await this.cleanupSessionFiles(session);
+      }
+    }
+  }
+
+  async exportCurrentFileAudio(options = {}) {
+    if (this.hasPendingAudioMerge()) {
+      new Notice(
+        'CosyVoice: a previous export is waiting for "Retry merge only". Retry it first, or use Clear temporary data in settings to discard the kept segments.',
+        12000
+      );
+      return null;
+    }
+    const context = this.getCurrentAudioExportContext({ notify: true });
     if (!context) {
       return null;
     }
+    if (options.expectedDocumentKind && context.documentKind !== options.expectedDocumentKind) {
+      new Notice('CosyVoice: open a Markdown note before using this action.', 8000);
+      return null;
+    }
+
     const insertAfterExport = options.insertAfterExport === true;
-    const text = this.settings.stripMarkdown
-      ? sanitizeTextForSpeech(context.view.editor.getValue(), {
-        mathReadingLanguage: this.settings.mathReadingLanguage,
-      })
-      : normalizeLineBreaks(context.view.editor.getValue()).trim();
-    if (!text) {
-      new Notice('CosyVoice: nothing readable in this note.', 6000);
+    if (insertAfterExport && context.documentKind !== 'markdown') {
+      new Notice('CosyVoice: PDF audio can be saved as an attachment but cannot be inserted into the PDF.', 8000);
+      return null;
+    }
+
+    const scope = Object.prototype.hasOwnProperty.call(options, 'scope')
+      ? normalizeAudioExportScope(options.scope)
+      : await this.requestAudioExportScope(context);
+    if (!scope) {
+      return null;
+    }
+    if (scope !== 'entire' && !context.hasSelection) {
+      new Notice('CosyVoice: select text before using the selected-text export scopes.', 8000);
       return null;
     }
 
@@ -2851,17 +3494,36 @@ class CosyVoiceReaderPlugin extends Plugin {
       return null;
     }
     const extension = getAudioExportExtension(configuration.speechEngine);
-    const exportPlan = await this.getAudioExportTargetPlan(context.file, extension);
+    const exportPlan = await this.getAudioExportTargetPlan(context.file, extension, scope);
+    let text = '';
+    if (context.documentKind === 'markdown') {
+      text = this.sanitizeAudioExportText(selectMarkdownAudioExportText(
+        context.documentText,
+        context.selectionText,
+        context.selectionStart,
+        scope
+      ));
+    } else if (scope === 'selection') {
+      text = this.sanitizeAudioExportText(context.selectionContext.selectedText);
+    } else {
+      text = await this.extractPdfAudioExportText(context, scope, configuration);
+      if (!text) {
+        return null;
+      }
+    }
+
     const chunks = splitTextForSpeechChunks(text, configuration.chunkLimits);
-    if (!chunks.length) {
-      new Notice('CosyVoice: nothing readable in this note.', 6000);
+    if (!text || !chunks.length) {
+      new Notice('CosyVoice: nothing readable in the selected export scope.', 6000);
       return null;
     }
     const summary = createAudioExportSummary({
       chunkCount: chunks.length,
+      documentKind: context.documentKind,
       engineLabel: configuration.engineLabel,
+      fileName: context.fileName,
       insertAfterExport,
-      noteName: context.file.basename || context.file.name || 'note',
+      scope,
       speechEngine: configuration.speechEngine,
       targetPath: exportPlan.targetPath,
       textLength: text.length,
@@ -2869,31 +3531,19 @@ class CosyVoiceReaderPlugin extends Plugin {
     if (!await this.requestAudioExportConfirmation(summary)) {
       return null;
     }
-
-    const confirmedContext = this.getCurrentNoteExportContext();
-    if (!confirmedContext
-      || getPdfFileIdentity(confirmedContext.file) !== getPdfFileIdentity(context.file)) {
-      new Notice('CosyVoice: the active note changed. Start the export again to review the new estimate.', 8000);
-      return null;
-    }
-    const confirmedText = this.settings.stripMarkdown
-      ? sanitizeTextForSpeech(confirmedContext.view.editor.getValue(), {
-        mathReadingLanguage: this.settings.mathReadingLanguage,
-      })
-      : normalizeLineBreaks(confirmedContext.view.editor.getValue()).trim();
-    if (confirmedText !== text) {
-      new Notice('CosyVoice: the note changed while confirmation was open. Start the export again to review the new estimate.', 8000);
+    if (!this.isAudioExportContextCurrent(context)) {
+      new Notice('CosyVoice: the active file changed while export was being prepared. Start again to review a new estimate.', 8000);
       return null;
     }
 
     await this.activateControlView();
     await this.stopReading({ silent: true });
     this.pauseRequested = false;
-    const sourceLabel = `${context.file.basename || context.file.name || 'note'} (audio export)`;
+    const sourceLabel = `${context.fileName} (${getAudioExportScopeLabel('english', scope)} audio export)`;
     const session = this.createSpeechSession(chunks, sourceLabel, configuration, {
       file: context.file,
       kind: 'audio-export',
-      sourceKind: 'markdown',
+      sourceKind: context.documentKind,
     });
     this.activeSession = session;
     this.updateStatus(`${configuration.engineLabel} export 0/${chunks.length}`, {
@@ -2914,7 +3564,9 @@ class CosyVoiceReaderPlugin extends Plugin {
     });
     await this.writeRuntimeLog('audio-export-start', {
       chunks: chunks.length,
+      documentKind: context.documentKind,
       insertAfterExport,
+      scope,
       textLength: text.length,
     });
     new Notice(`${configuration.engineLabel}: exporting ${chunks.length} audio segments.`, 6000);
@@ -2925,6 +3577,27 @@ class CosyVoiceReaderPlugin extends Plugin {
     );
     session.files.push(temporaryOutputPath);
     const preparedPaths = [];
+    let exportStage = 'synthesis';
+    let synthesisComplete = false;
+    const createMergeJob = () => ({
+      configuration: {
+        engineLabel: configuration.engineLabel,
+        prefetchChunks: 0,
+        speechEngine: configuration.speechEngine,
+      },
+      context: {
+        documentKind: context.documentKind,
+        file: context.file,
+        fileName: context.fileName,
+      },
+      exportPlan: { ...exportPlan },
+      extension,
+      insertAfterExport,
+      preparedPaths: preparedPaths.slice(),
+      scope,
+      sourceLabel,
+      temporaryOutputPath,
+    });
 
     try {
       for (let index = 0; index < chunks.length; index += 1) {
@@ -2935,10 +3608,12 @@ class CosyVoiceReaderPlugin extends Plugin {
         const prepared = await this.prepareChunk(chunks[index], index, session);
         preparedPaths.push(prepared.outputPath);
       }
+      synthesisComplete = preparedPaths.length === chunks.length;
       if (!this.isActive(session)) {
         throw new Error('Audio export stopped.');
       }
 
+      exportStage = 'merge';
       this.updateStatus(`${configuration.engineLabel} merging audio`, {
         canPause: false,
         canNextChunk: false,
@@ -2957,64 +3632,22 @@ class CosyVoiceReaderPlugin extends Plugin {
       if (!this.isActive(session)) {
         throw new Error('Audio export stopped.');
       }
-      const audioFile = await this.createVaultAudioAttachment(
-        context.file,
-        temporaryOutputPath,
-        extension,
-        exportPlan
-      );
-      if (!this.isActive(session)) {
-        new Notice(`CosyVoice: the completed audio was saved to ${audioFile.path}, but insertion was cancelled.`, 10000);
-        return audioFile;
-      }
-      let insertionLocation = '';
-      let insertionError = null;
-      if (insertAfterExport) {
-        try {
-          insertionLocation = await this.insertAudioAttachmentIntoNote(context.file, audioFile);
-        } catch (error) {
-          insertionError = error;
-        }
-      }
-
-      this.updateStatus(`${configuration.engineLabel} audio export complete`, {
-        canPause: false,
-        canNextChunk: false,
-        canPreviousChunk: false,
-        canSeek: false,
-        canStop: false,
-        currentChunk: chunks.length,
-        currentText: audioFile.path,
-        error: insertionError ? messageFromError(insertionError) : '',
-        isPaused: false,
-        phase: 'complete',
-        progress: 1,
-        status: 'complete',
-        totalChunks: chunks.length,
-      });
-      await this.writeRuntimeLog('audio-export-complete', {
-        bytes: merged.bytes,
-        chunks: chunks.length,
-        inserted: Boolean(insertionLocation),
-      });
-      this.activeSession = null;
-      const insertedMessage = insertionLocation === 'cursor'
-        ? ' and inserted at the current cursor'
-        : insertionLocation === 'end'
-          ? ' and appended to the original note'
-          : '';
-      if (insertionError) {
-        new Notice(
-          `CosyVoice: audio was exported to ${audioFile.path}, but it could not be inserted: ${messageFromError(insertionError)}`,
-          12000
-        );
-      } else {
-        new Notice(`CosyVoice: exported ${audioFile.path}${insertedMessage}.`, 10000);
-      }
-      return audioFile;
+      exportStage = 'finalization';
+      return await this.finalizeMergedAudioExport(createMergeJob(), merged, session);
     } catch (error) {
       if (this.isActive(session)) {
-        const message = messageFromError(error);
+        let reportedError = error;
+        if (synthesisComplete && preparedPaths.length === chunks.length) {
+          const mergeJob = createMergeJob();
+          if (this.preservePendingAudioMerge(mergeJob, session)) {
+            reportedError = this.createAudioMergeRetryError(
+              error,
+              preparedPaths.length,
+              exportStage === 'merge' ? 'merge' : 'finalization'
+            );
+          }
+        }
+        const message = messageFromError(reportedError);
         this.updateStatus(`${configuration.engineLabel} audio export error`, {
           canPause: false,
           canNextChunk: false,
@@ -3030,13 +3663,24 @@ class CosyVoiceReaderPlugin extends Plugin {
         new Notice(`CosyVoice audio export failed: ${message}`, 10000);
         await this.cancelSessionOperations(session);
         this.activeSession = null;
+        this.renderReaderViews();
       }
       return null;
     } finally {
       if (this.settings.cleanupCache) {
-        await this.cleanupSessionFiles(session);
+        await this.cleanupSessionFiles(session, {
+          preservePaths: session.preservedAudioPaths,
+        });
       }
     }
+  }
+
+  async exportCurrentNoteAudio(options = {}) {
+    return this.exportCurrentFileAudio({
+      ...options,
+      expectedDocumentKind: 'markdown',
+      scope: Object.prototype.hasOwnProperty.call(options, 'scope') ? options.scope : 'entire',
+    });
   }
 
   async readCurrentNote() {
@@ -4796,12 +5440,20 @@ class CosyVoiceReaderPlugin extends Plugin {
     }
   }
 
-  async cleanupSessionFiles(session) {
+  async cleanupSessionFiles(session, options = {}) {
     if (!session || !Array.isArray(session.files)) {
       return;
     }
 
+    const preservedPaths = new Set(
+      (Array.isArray(options.preservePaths) ? options.preservePaths : [])
+        .filter(Boolean)
+        .map((filePath) => path.resolve(filePath))
+    );
     for (const filePath of session.files) {
+      if (preservedPaths.has(path.resolve(filePath))) {
+        continue;
+      }
       await this.removeTempFile(filePath);
     }
   }
@@ -4948,6 +5600,10 @@ class CosyVoiceReaderView extends ItemView {
     this.createSpeedPanel(root);
 
     const actions = root.createDiv({ cls: 'note-reader-cosyvoice-actions' });
+    const canExportFile = typeof this.plugin.canExportCurrentFile !== 'function'
+      || this.plugin.canExportCurrentFile();
+    const canInsertExport = typeof this.plugin.canInsertAudioExportIntoCurrentNote !== 'function'
+      || this.plugin.canInsertAudioExportIntoCurrentNote();
     this.createActionButton(actions, 'play', 'Read selection', () => {
       this.runPluginAction('Read selection', () => this.plugin.readSelection());
     }, false, { triggerOnPointerDown: true });
@@ -4957,12 +5613,30 @@ class CosyVoiceReaderView extends ItemView {
     this.createActionButton(actions, 'file-text', 'Read file', () => {
       this.runPluginAction('Read file', () => this.plugin.readCurrentNote());
     }, false, { triggerOnPointerDown: true });
-    this.createActionButton(actions, 'download', 'Export full audio', () => {
-      this.runPluginAction('Export full audio', () => this.plugin.exportCurrentNoteAudio({ insertAfterExport: false }));
-    }, false, { triggerOnPointerDown: true });
+    this.createActionButton(actions, 'download', 'Export audio', () => {
+      this.runPluginAction('Export audio', () => this.plugin.exportCurrentFileAudio({ insertAfterExport: false }));
+    }, !canExportFile, {
+      title: 'Export all, selected, or remaining audio from the current note or PDF',
+      triggerOnPointerDown: true,
+    });
     this.createActionButton(actions, 'paperclip', 'Export & insert audio', () => {
-      this.runPluginAction('Export and insert audio', () => this.plugin.exportCurrentNoteAudio({ insertAfterExport: true }));
-    }, false, { triggerOnPointerDown: true });
+      this.runPluginAction('Export and insert audio', () => this.plugin.exportCurrentFileAudio({ insertAfterExport: true }));
+    }, !canInsertExport, {
+      title: canInsertExport
+        ? 'Export audio and insert it into the current Markdown note'
+        : 'Audio can be inserted into Markdown notes, not PDF files',
+      triggerOnPointerDown: true,
+    });
+    const hasPendingAudioMerge = typeof this.plugin.hasPendingAudioMerge === 'function'
+      && this.plugin.hasPendingAudioMerge();
+    if (hasPendingAudioMerge) {
+      this.createActionButton(actions, 'refresh-cw', 'Retry merge only', () => {
+        this.runPluginAction('Retry merge only', () => this.plugin.retryPendingAudioMerge());
+      }, Boolean(this.plugin.activeSession), {
+        title: 'Reuse the kept synthesized segments without making any TTS API requests',
+        triggerOnPointerDown: true,
+      });
+    }
     const canResumeFile = typeof this.plugin.canResumeCurrentFile === 'function'
       && this.plugin.canResumeCurrentFile();
     this.createActionButton(actions, 'history', 'Resume file', () => {
@@ -5712,6 +6386,8 @@ module.exports = {
     createIncrementalSpeechChunker,
     createReadingAnchor,
     createReaderState,
+    createRemoteHttpError,
+    createRemoteRetryExhaustedError,
     createSafeRuntimeLogEvent,
     createTaskState,
     describeMediaError,
@@ -5737,8 +6413,11 @@ module.exports = {
     getTextFromPositionToEnd,
     getAudioUrlForFile,
     getAudioExportExtension,
+    getAudioExportScopeLabel,
+    getAudioExportScopeUiText,
     getAudioExportUiText,
     getAvailableVaultAudioPath,
+    getRemoteHttpErrorDetail,
     getSpeedPresets,
     getSynthesisPrefetchCount,
     hasAzureSpeechConsent,
@@ -5756,6 +6435,7 @@ module.exports = {
     normalizeAzureSpeechVoice,
     normalizeAudioExportFolder,
     normalizeAudioExportLocation,
+    normalizeAudioExportScope,
     normalizeCredentialSource,
     normalizeEdgeTtsExecutable,
     normalizeEdgeTtsVoice,
@@ -5776,6 +6456,7 @@ module.exports = {
     slicePdfTextFromSelection,
     sliceTextFromReadingPosition,
     selectKnownSettings,
+    selectMarkdownAudioExportText,
     splitTextForSpeechChunks,
     transitionTaskState,
     upsertReadingPosition,

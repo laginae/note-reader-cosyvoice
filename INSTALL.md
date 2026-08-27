@@ -2,7 +2,7 @@
 
 ## Install From ZIP
 
-1. Unzip `note-reader-cosyvoice-0.4.1-install.zip`.
+1. Unzip `note-reader-cosyvoice-0.4.2-install.zip`.
 2. Copy the `note-reader-cosyvoice` folder into your vault:
 
 ```text
@@ -141,14 +141,14 @@ For Edge, Azure, and OpenRouter, `Online chunk limits` defaults to `200,400,800`
 
 ## Temporary Data
 
-Temporary text and audio are stored under the operating system temporary directory rather than inside the vault. Keep `Clean temporary audio` enabled to remove plaintext immediately after synthesis, remove session files after reading, and clear stale plugin-owned files at startup. `Diagnostic logging` is off by default. Use `Clear temporary data` in settings to stop reading and remove current plus legacy plugin temporary data.
+Temporary text and audio are stored under the operating system temporary directory rather than inside the vault. Keep `Clean temporary audio` enabled to remove plaintext immediately after synthesis, remove session files after reading, and clear stale plugin-owned files at startup. If every export segment is synthesized but merge or attachment finalization fails, the audio segments are kept for `Retry merge only`; that retry makes no TTS request. A successful retry, `Clear temporary data`, or plugin unload while cleanup is enabled removes them. `Diagnostic logging` is off by default.
 
 ## Usage
 
 - Select text and click `Read selection` to read only the selected text.
 - Select a start point and click `Read from selection` to read from that selection start to the end of the active note.
 - Click `Read file` to read the active Markdown note or searchable PDF.
-- Use `Export full audio` to export the complete active Markdown note as one audio attachment, or `Export & insert audio` to save and embed it. Settings can place the file in Obsidian's attachment folder, beside the note, or in a custom vault folder. A mandatory confirmation shows the readable character count, planned synthesis segment count, and planned save path before any full-note work begins; bounded retries can increase the actual online attempt count. Local mode exports WAV; online modes export MP3.
+- Use `Export audio` with either a Markdown note or text-based PDF, then choose the entire document, selected text only, or from the selection to the end. Settings can place the result in Obsidian's attachment folder, beside the source file, or in a custom vault folder. A mandatory confirmation shows the exact readable character count, planned synthesis segments, scope, and save path before synthesis; bounded retries can increase the actual online attempt count. Local mode exports WAV and online modes export MP3. `Export & insert audio` is available for Markdown notes only; PDF export saves an attachment without modifying the PDF.
 - PDF text is extracted locally and progressively through Obsidian's built-in PDF.js. Playback can start once the first speech chunk is ready while later pages continue parsing. Common two-column pages use coordinate-aware left-column-then-right-column ordering. Scanned or image-only PDFs require OCR first.
 - Use `Resume file` after enabling `Remember reading position` to continue the active note or PDF from its saved anchor.
 - Use `Pause`, `Resume`, and `Stop` from the right-side control panel.
@@ -171,6 +171,6 @@ For `Microsoft Edge online voice`, run `edge-tts --help` in PowerShell to confir
 
 For `Microsoft Azure Speech`, verify the selected cloud, region, selected SecretStorage entry or external key-file path, resource status, quota, and voice ID.
 
-For `OpenRouter TTS`, verify the selected SecretStorage entry or external key-file path, account balance, model, and voice. An error about no eligible endpoint means that the selected model currently has no provider satisfying the enforced privacy routing policy. A `502` is a temporary bad-gateway response; retry later or select another compatible model if all automatic attempts fail.
+For `OpenRouter TTS`, verify the selected SecretStorage entry or external key-file path, account balance, model, and voice. `HTTP 401` means authentication failed, `HTTP 402` means payment, credit, or spending-limit failure, `HTTP 403` means access or privacy routing was forbidden, and `HTTP 429` means a rate or request-quota limit. An error about no eligible endpoint means that the selected model currently has no provider satisfying the enforced privacy routing policy. A `502`, `524`, or `529` response is treated as a temporary upstream failure and retried within the bounded policy.
 
 The first synthesis after starting the local model may take longer than later reads.

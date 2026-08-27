@@ -7,7 +7,7 @@ A privacy-first Obsidian desktop voice reader for Markdown notes and text-based 
 ## Highlights
 
 - **Privacy first:** Local CosyVoice is the default. Each online engine requires separate, explicit consent before it can receive text.
-- **Confirmed whole-note audio export:** Export a complete Markdown note as audio, or export and embed it in the note. Before synthesis, a mandatory confirmation shows the readable character count, segment/request count, and planned save path.
+- **Confirmed, scoped audio export:** Export all content, selected text only, or from the selection to the end from either a Markdown note or a text-based PDF. A mandatory confirmation shows the exact readable character count, segment/request count, scope, and planned save path before synthesis.
 - **Layout-aware PDF reading:** Local PDF extraction uses text coordinates to read common two-column papers left column first, while preserving full-width headings and section boundaries.
 - **Progressive PDF start:** Markdown notes and text-based PDFs are parsed locally; ordinary text-based PDFs typically yield their first speech chunk within a few seconds, while later pages continue parsing.
 - **Private, optional resume:** Reading-position history is off by default. When enabled, it stores only bounded resume metadata and a short text anchor, never the complete note or PDF body.
@@ -32,7 +32,7 @@ Plugin settings. The script path shown here is a redacted example:
 - Extracts PDF text locally with Obsidian's built-in PDF.js, uses coordinates to improve common two-column reading order, and progressively feeds speech chunks while later pages continue parsing.
 - Uses paragraph-, line-, sentence-, and clause-aware chunk boundaries while keeping configured character limits as hard upper bounds.
 - Can optionally remember and resume the current Markdown or PDF position. The setting is disabled by default and includes a separate clear-history control.
-- Exports an entire Markdown note as one WAV file in local mode or one MP3 file in online modes. Save it in Obsidian's attachment folder, beside the note, or in a custom vault folder; a second action also embeds the completed file in the note.
+- Exports all, selected, or remaining content from Markdown notes and text-based PDFs as one WAV file in local mode or one MP3 file in online modes. Save it in Obsidian's attachment folder, beside the source file, or in a custom vault folder; Markdown notes also support exporting and inserting the completed attachment.
 - Opens a right-side `Voice Reader` control panel.
 - Shows synthesis/playback phase, whole-reading progress, percentage, and text preview.
 - Supports pause, resume, stop, Space to pause or resume in the control panel, repeated Left/Right Arrow 5-second seeking, previous/next chunk buttons, and progress dragging while the current audio chunk is playing.
@@ -67,9 +67,9 @@ PDF extraction uses Obsidian's bundled PDF.js and `Vault.readBinary`; the PDF fi
 
 Edge, Azure, and OpenRouter are opt-in online modes. Edge passes each chunk to the configured `edge-tts` executable. Azure sends each chunk by HTTPS to the selected Azure Speech cloud and region. OpenRouter sends each chunk to OpenRouter and an eligible upstream TTS provider. The plugin will not start an online mode until its separate online-processing consent setting is enabled. OpenRouter consent permits that transmission only; it does not permit non-ZDR routing. By default, the plugin may synthesize the next chunk while the current chunk is playing, but it never prefetches more than one future chunk. Stopping early can therefore leave at most one prefetched chunk unused. Set prefetch to `0` for strict on-demand synthesis. Provider billing units vary, so this bounds avoidable work rather than guaranteeing a fixed cost reduction.
 
-Whole-note audio export always requires a separate per-export acknowledgement before synthesis starts. The dialog shows the cleaned readable character count, exact number of planned synthesis segments, and planned vault-relative save path. For an online engine, every readable character in the note is sent through those sequential segments and may consume provider quota or incur charges. Temporary failures can trigger the existing bounded retry policy, so the number of network attempts can exceed the planned segment count. Export does not prefetch extra playback-continuity chunks, creates no vault attachment until every segment and the final merge succeed, and can be cancelled with `Stop`. The completed audio attachment is intentionally retained in the vault; it is not temporary cache data.
+Audio export always requires a separate per-export acknowledgement before synthesis starts. For an entire PDF or a PDF export from selection, local extraction and selection matching finish before the confirmation appears. The dialog then shows the selected scope, cleaned readable character count, exact number of planned synthesis segments, and planned vault-relative save path. For an online engine, only readable text in that scope is sent through those sequential segments and may consume provider quota or incur charges. Temporary failures can trigger bounded retries, so the number of network attempts can exceed the planned segment count. Export does not prefetch playback-continuity chunks, creates no vault attachment until every segment and finalization succeed, and can be cancelled with `Stop`.
 
-Temporary text and audio are stored in a vault-specific folder under the operating system temporary directory, not inside the Obsidian vault. With `Clean temporary audio` enabled, plaintext chunk files are removed immediately after synthesis, remaining session files are removed when reading ends or stops, and stale plugin-owned files plus the legacy in-vault cache are cleaned at startup. Diagnostic logging is off by default; when enabled, it records only bounded failure metadata without note names, note text, or child-process output.
+Temporary text and audio are stored in a vault-specific folder under the operating system temporary directory, not inside the Obsidian vault. With `Clean temporary audio` enabled, plaintext chunk files are removed immediately after synthesis, remaining session files are removed when reading ends or stops, and stale plugin-owned files plus the legacy in-vault cache are cleaned at startup. The deliberate exception is a post-synthesis export failure: completed audio segments are kept locally for the current plugin session so `Retry merge only` can reuse them without another TTS request. A successful retry, `Clear temporary data`, or unloading the plugin while cleanup is enabled removes them. Diagnostic logging is off by default; when enabled, it records only bounded failure metadata without note names, note text, or child-process output.
 
 Azure and OpenRouter keys use Obsidian SecretStorage by default on Obsidian 1.11.4 or later. The plugin's `data.json` contains only the selected secret identifier, not the secret value. Obsidian documents SecretStorage as vault-specific local secret storage; it should not be described as a guaranteed operating-system credential manager or macOS Keychain integration. A one-line key file outside every vault remains available as a compatibility fallback, and existing key-file configurations retain that mode when upgraded. See the official [Obsidian SecretStorage guide](https://docs.obsidian.md/plugins/guides/secret-storage).
 
@@ -240,8 +240,9 @@ Use `Local chunk limits` to balance local startup latency and synthesis stabilit
 
 - `Open voice reader controls`
 - `Read current note or PDF aloud`
-- `Export full note audio`
-- `Export full note audio and insert it into the note`
+- `Export audio from current note or PDF`
+- `Export audio from the current note and insert it`
+- `Retry pending audio export merge only`
 - `Resume reading current note or PDF`
 - `Read current PDF aloud`
 - `Read current PDF from selection aloud`
@@ -254,13 +255,13 @@ Use `Local chunk limits` to balance local startup latency and synthesis stabilit
 - `Move to next reading chunk`
 - `Stop voice reading`
 
-## Whole-note Audio Export
+## Audio Export
 
-Open a Markdown note and choose `Export full audio` or `Export & insert audio` in the control panel, or run the corresponding command. The confirmation dialog reports the readable character count, selected engine, synthesis segment count, and planned save path. The confirmation checkbox must be selected before export can start.
+Open a Markdown note or text-based PDF and choose `Export audio`. A scope picker offers `Entire document`, `Selected text only`, and `From selection to end`; the latter two require an active text selection. For an entire PDF or a PDF export from selection, local parsing and reliable position matching run first. The subsequent confirmation reports the exact readable character count, selected engine, synthesis segment count, scope, and planned save path, and its checkbox must be selected before synthesis starts.
 
-Local mode combines the generated PCM WAV segments into one WAV file. Edge, Azure, and OpenRouter combine validated MP3 audio frames into one MP3 file. In settings, `Full-note audio save location` can use Obsidian's configured attachment folder (the default), the note's folder, or a custom folder inside the vault. The custom folder is created after synthesis succeeds. Files use names such as `Note name - narration.mp3`, with a numeric suffix added if needed. `Export & insert audio` embeds the completed audio at the current cursor when the original note is still active, otherwise it appends the embed to the original note. The completion notice always reports the actual path used.
+Local mode combines PCM WAV segments into one WAV file. Edge, Azure, and OpenRouter combine validated MP3 frames into one MP3 file. `Audio export save location` can use Obsidian's attachment folder (the default), the source file's folder, or a custom vault folder. Entire, selected, and remaining exports use filenames such as `Note name - narration.mp3`, `Note name - selection narration.mp3`, and `Note name - continued narration.mp3`, with a numeric suffix when needed. For Markdown, `Export & insert audio` embeds the result at the current cursor or appends it to the original note. PDF export saves an audio attachment only because a PDF cannot be edited to insert an Obsidian embed.
 
-Export processes exactly the displayed chunks in sequence and does not perform playback prefetch. If a segment fails or the task is stopped, no partial audio attachment is added to the vault. The current implementation exports Markdown notes; PDF audio export is not included.
+Export processes exactly the displayed chunks in sequence and does not perform playback prefetch. If synthesis fails or the task is stopped, no partial attachment is added. If every segment has already been synthesized but merging or attachment finalization fails, the control panel exposes `Retry merge only`; it reuses the kept local segments and makes no TTS API request. Starting another export is blocked until that retry succeeds or `Clear temporary data` discards the kept segments.
 
 ## Keyboard And Progress Seeking
 
