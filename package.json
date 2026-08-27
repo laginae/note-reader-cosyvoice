@@ -9,5 +9,8 @@
   },
   "devDependencies": {
     "esbuild": "0.25.10"
+  },
+  "dependencies": {
+    "@laginae/note-reader-core": "git+https://github.com/laginae/note-reader-core.git#v0.1.0"
   }
 }

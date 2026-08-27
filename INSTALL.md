@@ -99,7 +99,7 @@ Privacy note: Edge mode sends each text chunk to Microsoft Edge TTS. Use `Local 
 Create a Speech resource in Azure public cloud or Azure China operated by 21Vianet. Prefer the default `Obsidian SecretStorage` option and create or select a secret containing the subscription key. If you select the external key-file fallback, use a plain-text file outside every Obsidian vault, for example:
 
 ```text
-C:\Users\you\AppData\Local\note-reader-cosyvoice\azure-speech-key.txt
+%LOCALAPPDATA%\note-reader-cosyvoice\azure-speech-key.txt
 ```
 
 Do not sync, commit, or share that file. In the plugin settings:
@@ -118,7 +118,7 @@ The selectable presets include Mandarin Chinese female and male voices, Cantones
 Create a dedicated key in [OpenRouter API Keys](https://openrouter.ai/settings/keys). Set a low spending limit and an expiration date where appropriate. Prefer the default `Obsidian SecretStorage` option and create or select a secret containing the key. If you select the external key-file fallback, use a plain-text file outside every Obsidian vault, for example:
 
 ```text
-C:\Users\you\AppData\Local\note-reader-cosyvoice\openrouter-api-key.txt
+%LOCALAPPDATA%\note-reader-cosyvoice\openrouter-api-key.txt
 ```
 
 Do not sync, commit, or share that file. In the plugin settings:

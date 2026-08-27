@@ -41,6 +41,24 @@ try {
     Object.getPrototypeOf(pluginModule.default.prototype),
     MockPlugin.prototype
   );
+  assert.strictEqual(
+    pluginModule.__test.GITHUB_ISSUES_URL,
+    'https://github.com/laginae/note-reader-cosyvoice/issues'
+  );
+  let opened = null;
+  global.window = {
+    open: (...args) => {
+      opened = args;
+      return {};
+    },
+  };
+  assert.strictEqual(pluginModule.__test.openGitHubIssues(), true);
+  assert.deepStrictEqual(opened, [
+    'https://github.com/laginae/note-reader-cosyvoice/issues',
+    '_blank',
+    'noopener,noreferrer',
+  ]);
+  delete global.window;
   console.log('main export tests passed');
 } finally {
   Module._load = originalLoad;

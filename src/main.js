@@ -32,6 +32,7 @@ const {
 
 const PLUGIN_ID = 'note-reader-cosyvoice';
 const VIEW_TYPE = 'note-reader-cosyvoice-control';
+const GITHUB_ISSUES_URL = 'https://github.com/laginae/note-reader-cosyvoice/issues';
 const DEFAULT_CHUNK_LIMITS = [40, 80, 120, 160, 280, 320];
 const DEFAULT_ONLINE_CHUNK_LIMITS = [200, 400, 800];
 const MAX_ONLINE_PREFETCH_CHUNKS = 1;
@@ -268,6 +269,10 @@ const SETTINGS_UI_TEXT = {
     restoreDefaultsButton: 'Restore defaults',
     settingsRestoredNotice: 'CosyVoice: settings restored to defaults.',
     temporaryDataClearedNotice: 'CosyVoice: temporary text, audio, and diagnostic logs cleared.',
+    feedbackName: 'Feedback and bug reports',
+    feedbackDesc: 'Open GitHub Issues to report a problem, request a feature, or follow existing reports. Do not include API keys or private note text.',
+    feedbackButton: 'Open GitHub Issues',
+    feedbackTooltip: 'Open the feedback page in your browser',
     commandsFooter: 'Commands also include resume the current file, seek backward or forward 5 seconds, and move to the previous or next reading chunk.',
   },
   chinese: {
@@ -376,6 +381,10 @@ const SETTINGS_UI_TEXT = {
     restoreDefaultsButton: '恢复默认值',
     settingsRestoredNotice: 'CosyVoice：设置已恢复为默认值。',
     temporaryDataClearedNotice: 'CosyVoice：临时文本、音频和诊断日志已清除。',
+    feedbackName: '反馈与问题报告',
+    feedbackDesc: '打开 GitHub Issues 报告问题、提出功能建议或查看现有反馈。请勿提交 API 密钥或私密笔记正文。',
+    feedbackButton: '打开 GitHub Issues',
+    feedbackTooltip: '在浏览器中打开反馈页面',
     commandsFooter: '命令还包括从当前文件保存的位置继续朗读、后退或前进 5 秒，以及跳到上一个或下一个朗读分段。',
   },
 };
@@ -1187,6 +1196,13 @@ function normalizeCredentialSource(value) {
 
 function getSettingsUiText(language) {
   return SETTINGS_UI_TEXT[normalizeSettingsLanguage(language)];
+}
+
+function openGitHubIssues() {
+  if (typeof window === 'undefined' || typeof window.open !== 'function') {
+    return false;
+  }
+  return Boolean(window.open(GITHUB_ISSUES_URL, '_blank', 'noopener,noreferrer'));
 }
 
 function normalizeSpeechEngine(value) {
@@ -5999,7 +6015,7 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
           .setDesc(ui.azureKeyFileDesc)
           .addText((text) => {
             text
-              .setPlaceholder('C:\\Users\\you\\AppData\\Local\\note-reader-cosyvoice\\azure-speech-key.txt')
+              .setPlaceholder('%LOCALAPPDATA%\\note-reader-cosyvoice\\azure-speech-key.txt')
               .setValue(this.plugin.settings.azureSpeechKeyPath || '')
               .onChange(async (value) => {
                 this.plugin.settings.azureSpeechKeyPath = value.trim();
@@ -6093,7 +6109,7 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
           .setDesc(ui.openRouterKeyFileDesc)
           .addText((text) => {
             text
-              .setPlaceholder('C:\\Users\\you\\AppData\\Local\\note-reader-cosyvoice\\openrouter-api-key.txt')
+              .setPlaceholder('%LOCALAPPDATA%\\note-reader-cosyvoice\\openrouter-api-key.txt')
               .setValue(this.plugin.settings.openRouterKeyPath || '')
               .onChange(async (value) => {
                 this.plugin.settings.openRouterKeyPath = value.trim();
@@ -6363,6 +6379,20 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
           });
       });
 
+    new Setting(containerEl)
+      .setName(ui.feedbackName)
+      .setDesc(ui.feedbackDesc)
+      .addButton((button) => {
+        button
+          .setButtonText(ui.feedbackButton)
+          .setTooltip(ui.feedbackTooltip)
+          .onClick(() => {
+            if (!openGitHubIssues()) {
+              new Notice(GITHUB_ISSUES_URL, 8000);
+            }
+          });
+      });
+
     containerEl.createEl('p', {
       cls: 'note-reader-cosyvoice-muted',
       text: ui.commandsFooter,
@@ -6374,6 +6404,7 @@ module.exports = {
   default: CosyVoiceReaderPlugin,
   __test: {
     DEFAULT_ONLINE_CHUNK_LIMITS,
+    GITHUB_ISSUES_URL,
     VIEW_TYPE,
     buildAzureSpeechEndpoint,
     buildAzureSpeechSsml,
@@ -6447,6 +6478,7 @@ module.exports = {
     normalizeReadingPositions,
     normalizeSettingsLanguage,
     normalizeSpeechEngine,
+    openGitHubIssues,
     parseRetryAfterMs,
     resolveDefaultScriptPath,
     resolvePowerShellExecutable,
