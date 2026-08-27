@@ -7,6 +7,7 @@ Note and PDF Voice Reader 是一个隐私优先的桌面端 Obsidian 语音朗�
 ## 核心亮点
 
 - **隐私优先：** 默认使用本地 CosyVoice；每种在线引擎都必须单独获得用户明确同意后才能接收文本。
+- **整篇音频导出需再次确认：** 可以把完整 Markdown 笔记导出为音频，或在导出后嵌入原笔记；开始前必须确认可朗读字符数、分段/请求数和预计保存路径。
 - **理解 PDF 版面：** 本地提取会利用文字坐标识别常见双栏论文，按左栏后右栏朗读，并保留通栏标题和章节边界。
 - **渐进式 PDF 快速开始：** Markdown 笔记和文本型 PDF 均在本地解析；普通文本型 PDF 通常几秒内即可产生第一批朗读分段，后续页面会继续解析。
 - **隐私友好的可选续读：** 朗读位置记录默认关闭；开启后只保存有上限的恢复元数据和短文本锚点，不保存完整笔记或 PDF 正文。
@@ -31,6 +32,7 @@ Note and PDF Voice Reader 是一个隐私优先的桌面端 Obsidian 语音朗�
 - 使用 Obsidian 内置 PDF.js 在本地逐页提取 PDF 文本，利用坐标改善常见双栏页面的朗读顺序，边解析边加入朗读队列，并支持从控制面板停止。
 - 分段时优先保留段落、行、句子和分句边界，同时把用户设置的字符数作为不可突破的上限。
 - 可以选择记住并继续当前 Markdown 或 PDF 的朗读位置；该功能默认关闭，并提供单独的清除记录按钮。
+- 可以把整篇 Markdown 笔记导出为一个音频文件：本地模式生成 WAV，在线模式生成 MP3；可保存到 Obsidian 附件目录、笔记同目录或指定的库内目录，也可在成功后直接嵌入原笔记。
 - 在右侧边栏打开 `Voice Reader` 控制面板。
 - 显示合成、播放状态、整体朗读进度、百分比和当前文本预览。
 - 支持暂停、继续、停止；控制面板获得焦点时可用空格暂停/继续，可连续按左右方向键按 5 秒步进前后跳转；进度条两侧提供上一段/下一段按钮；也支持在当前已加载音频块内点击或拖动进度条。
@@ -58,11 +60,13 @@ Note and PDF Voice Reader 是一个隐私优先的桌面端 Obsidian 语音朗�
 
 插件默认使用本地语音合成。在 `Local CosyVoice` 模式下，插件本身不会把笔记内容或从 PDF 提取的文本发送到 Microsoft、OpenAI 或其他远程 TTS 服务；但你配置的包装脚本属于同一信任边界，它仍可能按照自身实现发起网络请求。
 
-PDF 提取使用 Obsidian 内置 PDF.js 和 `Vault.readBinary`，此功能不会上传 PDF 文件本身。为支持 PDF 选择位置命令，插件只在内存中临时保留所选页码和最多 2,000 个字符的定位文本，不会写入设置或诊断日志。如果选择在线语音引擎并开启对应同意开关，从 PDF 提取出的文本分段会按照与笔记文本相同的规则发送。扫描版或纯图片 PDF 必须先完成 OCR 才能朗读。
+PDF 提取使用 Obsidian 内置 PDF.js 和 `Vault.readBinary`，此功能不会上传 PDF 文件本身。为支持 PDF 选择位置命令，插件只在内存中临时保留所选页码、页内相对坐标和最多 2,000 个字符的定位文本；这些选区定位信息都不会写入设置或诊断日志。如果选择在线语音引擎并开启对应同意开关，从 PDF 提取出的文本分段会按照与笔记文本相同的规则发送。扫描版或纯图片 PDF 必须先完成 OCR 才能朗读。
 
 `记住朗读位置` 默认关闭。开启后，`data.json` 只保存文件路径、文件时间、PDF 页码或朗读分段序号、更新时间，以及不超过 180 个字符的规范化文本锚点，不保存完整笔记或 PDF 正文。可以用 `清除已保存的朗读位置` 删除全部锚点；关闭该设置会停止后续使用和更新，但不会在未提示的情况下自动删除已有记录。
 
 Edge、Azure 与 OpenRouter 都是主动选择的在线模式。Edge 模式把每个文本分段交给配置的 `edge-tts` 程序；Azure 模式通过 HTTPS 把分段发送到所选云环境和区域下的 Azure Speech 资源；OpenRouter 模式把分段发送到 OpenRouter 及符合条件的上游 TTS 供应商。三种模式都必须先分别开启在线处理同意开关。OpenRouter 的同意开关只表示允许在线传输，不表示允许非 ZDR 路由。默认情况下，插件可能在播放当前分段时提前合成下一段，但不会提前超过一段；提前停止时最多可能留下一个未播放的预合成分段。把预合成设为 `0` 后可严格按需合成。不同服务的计费单位并不相同，因此这一机制只能限制可避免的额外工作，而不是保证固定比例的费用下降。
+
+整篇笔记音频导出在每次执行时都会再次要求确认。确认窗口会列出清理后的可朗读字符数、计划合成的准确分段数和预计的库内保存路径；使用在线引擎时，整篇可朗读文本会通过这些顺序分段发送，可能消耗服务商额度或产生费用。临时失败仍可能触发现有的有限重试，因此实际网络尝试次数可能高于计划分段数。导出不会为播放连续性额外预合成分段，只有全部分段和最终合并成功后才会在仓库中创建音频附件，也可以随时用 `Stop` 取消。成功导出的附件属于用户文件，会保留在仓库中，不属于临时缓存。
 
 临时文本和音频存放在操作系统临时目录下按 Obsidian 库隔离的子目录中，不再写入库内。启用 `Clean temporary audio` 时，明文分段在完成合成后立即删除，朗读结束或停止时删除其余会话文件，插件启动时还会清理遗留的插件临时文件以及旧版库内缓存。诊断日志默认关闭；即使开启，也只记录有大小上限的失败元数据，不记录笔记名、笔记文本或子进程输出。
 
@@ -231,14 +235,14 @@ C:\Users\你的用户名\AppData\Local\note-reader-cosyvoice\openrouter-api-key.
 4. 选择内置的 ZDR 兼容模型及其音色，或填写自定义模型 ID 与音色 ID。
 5. 确认 OpenRouter 账户中的输入输出日志和输入输出数据共享保持关闭。
 
-默认模型为 `hexgrad/kokoro-82m`，默认音色为英式英语男声 `bm_george`，更偏克制的长文与学术朗读。不同模型的音色 ID 不能混用。内置目录已于 2026-08-26 按 OpenRouter 实时 `speech` 与 `zdr=true` 联合过滤接口核对：
+默认模型为 `hexgrad/kokoro-82m`，默认音色为英式英语男声 `bm_george`，更偏克制的长文与学术朗读。不同模型的音色 ID 不能混用。OpenRouter 已公开的音色 ID 于 2026-08-26 按实时 `speech` 与 `zdr=true` 联合过滤接口核对；MAI-Voice-2 中文兼容音色于 2026-08-27 按微软官方 MAI 音色目录核对：
 
 - `microsoft/mai-voice-2-flash`：列出 OpenRouter 当前公开的全部 4 个音色，即美式英语 `Harper`、墨西哥西班牙语 `Valeria`、法语 `Soleil` 和德语 `Klaus`。
-- `microsoft/mai-voice-2`：同样列出当前公开的全部 4 个音色。OpenRouter 明确说明 MAI-Voice-2 只附带 4 个音色，因此插件不能安全地凑足 6 个，也不能加入接口不接受的中文或英式英语音色 ID。
+- `microsoft/mai-voice-2`：除 OpenRouter 元数据当前公开的 4 个音色外，还加入微软官方发布的普通话男声 `zh-CN-Bo:MAI-Voice-2`、普通话女声 `zh-CN-Lan:MAI-Voice-2` 和 `zh-CN-Mei:MAI-Voice-2`。这 3 个属于兼容预设：OpenRouter 即使未在 `supported_voices` 中列出也可能接受，但实际可用性可能随上游端点变化。
 - `google/gemini-3.1-flash-tts-preview`：从 OpenRouter 当前公开的 30 个音色中精选 12 个，涵盖信息型、清晰、平稳、博学、坚定、成熟、温暖、温和与轻快等风格。Google 按朗读风格而非固定性别或英美口音描述这些多语言音色。
 - `hexgrad/kokoro-82m`：提供 12 个预设，中文女声、中文男声、美式英语女声、美式英语男声、英式英语女声和英式英语男声六类各 2 个。
 
-设置页会根据当前模型显示特点，并只展示该模型可用的音色预设。模型、音色和 ZDR 端点会随时间变化，应以实时 [`speech + ZDR` 模型接口](https://openrouter.ai/api/v1/models?output_modalities=speech&zdr=true)为准。Gemini 风格名称来自 [Google Gemini TTS 官方音色表](https://ai.google.dev/gemini-api/docs/speech-generation?hl=zh-cn)，Kokoro 的语言与性别分组来自其[上游音色目录](https://huggingface.co/hexgrad/Kokoro-82M/blob/main/VOICES.md)。自定义模型仍可填写，但如果没有符合条件的 ZDR 端点，插件会报错，而不会取消隐私约束后继续发送。
+设置页会根据当前模型显示特点，并只展示该模型对应的音色预设。模型、音色和 ZDR 端点会随时间变化；OpenRouter 实时 [`speech + ZDR` 模型接口](https://openrouter.ai/api/v1/models?output_modalities=speech&zdr=true)用于核对其公开的路由元数据，微软官方 [MAI 音色目录](https://learn.microsoft.com/zh-cn/azure/ai-services/speech-service/mai-voices)用于核对 MAI ShortName。Gemini 风格名称来自 [Google Gemini TTS 官方音色表](https://ai.google.dev/gemini-api/docs/speech-generation?hl=zh-cn)，Kokoro 的语言与性别分组来自其[上游音色目录](https://huggingface.co/hexgrad/Kokoro-82M/blob/main/VOICES.md)。自定义模型仍可填写，但如果没有符合条件的 ZDR 端点，插件会报错，而不会取消隐私约束后继续发送。
 
 ## 模型存储空间、其他语音模型与分段设置
 
@@ -284,6 +288,8 @@ Edge、Azure 与 OpenRouter 是和本地包装脚本并列的在线语音模式�
 
 - `Open voice reader controls`
 - `Read current note or PDF aloud`
+- `Export full note audio`
+- `Export full note audio and insert it into the note`
 - `Resume reading current note or PDF`
 - `Read current PDF aloud`
 - `Read current PDF from selection aloud`
@@ -298,6 +304,14 @@ Edge、Azure 与 OpenRouter 是和本地包装脚本并列的在线语音模式�
 
 也可以使用编辑器中的按钮或右侧边栏控制面板。语速按钮会影响后续合成的音频块；已经合成并正在播放的音频不会被重新变速，除非停止后重新开始朗读。
 
+## 整篇笔记音频导出
+
+打开 Markdown 笔记后，可以在控制面板点击 `Export full audio` 或 `Export & insert audio`，也可以执行对应命令。确认窗口会显示可朗读字符数、当前语音引擎、合成分段数和预计保存路径；必须勾选确认框后才能开始。
+
+本地模式会把各段 PCM WAV 合并为一个 WAV 文件；Edge、Azure 和 OpenRouter 会把经过校验的 MP3 音频帧合并为一个 MP3 文件。设置中的“整篇音频保存位置”可选择 Obsidian 附件目录（默认）、原笔记同目录或本库内的自定义目录；自定义目录会在合成全部成功后自动创建。文件名类似 `笔记名 - narration.mp3`，遇到同名文件时会自动添加数字后缀。选择 `Export & insert audio` 时，如果原笔记仍处于活动状态，音频会嵌入当前光标位置；否则会追加到原笔记末尾。完成提示始终显示最终实际使用的路径。
+
+导出只按顺序处理确认窗口列出的分段，不使用播放任务的提前预合成。如果某段失败或用户停止任务，仓库中不会留下不完整的音频附件。目前导出功能适用于 Markdown 笔记，尚未包含 PDF 整篇音频导出。
+
 ## 键盘与进度条说明
 
 右侧边栏 `Voice Reader` 控制面板获得焦点时，空格可以暂停或继续朗读。播放中只要当前音频可用，左方向键或右方向键会按 5 秒步进后退或前进。
@@ -310,9 +324,9 @@ Edge、Azure 与 OpenRouter 是和本地包装脚本并列的在线语音模式�
 
 先在 Obsidian 中打开库内 PDF，再点击控制面板中的 `Read file`，或者执行支持 PDF 的命令。插件会在本地逐页提取文本；达到第一段设置长度后即可开始合成和播放，同时继续解析后续页面。停止按钮会同时取消解析、播放和仍在进行的合成请求。
 
-若要从指定位置开始，请先在 PDF 文本层选中一段容易识别的文字，再点击 `Read from selection`，或执行 `Read current PDF from selection aloud`。插件会从该页开始提取，在第一页匹配选中文字，然后朗读到 PDF 末尾。`Read selection` 只朗读当前选中的 PDF 文字。如果视觉文本层与 PDF 内嵌文本顺序无法精确匹配，插件会显示提示并改为从所选页开头朗读。
+若要从指定位置开始，请先在 PDF 文本层选中文字，再点击 `Read from selection`，或执行 `Read current PDF from selection aloud`。插件会结合选区的页内相对坐标与文字匹配，从而区分摘要和后续栏位中重复出现的语句，然后朗读到 PDF 末尾。`Read selection` 只朗读当前选中的 PDF 文字。无法取得坐标时仍会使用文字匹配作为兼容回退；两种定位都失败时，插件会显示提示并改为从所选页开头朗读。
 
-PDF 必须包含可选择的内嵌文本。加密、损坏、扫描版或纯图片 PDF 无法直接提取，需要先解锁或执行 OCR。0.4.0 会利用文字坐标识别常见双栏页面，在每个垂直区段中按左栏后右栏朗读，并把通栏标题作为边界；非常规版式、旋转文字、侧栏和复杂表格仍可能需要从选中位置开始，或改用文本结构更规范的源 PDF。
+PDF 必须包含可选择的内嵌文本。加密、损坏、扫描版或纯图片 PDF 无法直接提取，需要先解锁或执行 OCR。0.4.0 及以上版本会利用文字坐标识别常见双栏页面，在每个垂直区段中按左栏后右栏朗读，并把通栏标题作为边界；非常规版式、旋转文字、侧栏和复杂表格仍可能需要从选中位置开始，或改用文本结构更规范的源 PDF。
 
 开启 `记住朗读位置` 后，可以点击控制面板的 `Resume file`，或执行 `Resume reading current note or PDF`。PDF 会从保存的页码开始重新定位短锚点；Markdown 会匹配同一规范化锚点，笔记发生修改且锚点失效时则回退到最接近的已保存分段。
 

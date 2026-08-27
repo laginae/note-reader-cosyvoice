@@ -6,6 +6,7 @@ const { EventEmitter } = require('events');
 
 class MockPlugin {}
 class MockItemView {}
+class MockModal {}
 class MockPluginSettingTab {}
 class MockSetting {}
 class MockNotice {}
@@ -167,11 +168,13 @@ function obsidianStyleRequire(request) {
     return {
       ItemView: MockItemView,
       MarkdownView: MockMarkdownView,
+      Modal: MockModal,
       Notice: MockNotice,
       Plugin: MockPlugin,
       PluginSettingTab: MockPluginSettingTab,
       Setting: MockSetting,
       loadPdfJs: mockLoadPdfJs,
+      normalizePath: (value) => String(value || '').replace(/\\/g, '/'),
       setIcon: mockSetIcon,
     };
   }
@@ -196,7 +199,7 @@ const testVaultPath = path.resolve('test-vault');
 const testAudioPath = path.join(testVaultPath, '.obsidian', 'plugins', 'note-reader-cosyvoice', 'cache', 'a.wav');
 assert.strictEqual(manifest.id, 'note-reader-cosyvoice');
 assert.strictEqual(manifest.name, 'Note and PDF Voice Reader');
-assert.strictEqual(manifest.version, '0.4.0');
+assert.strictEqual(manifest.version, '0.4.1');
 assert.ok(!/\bObsidian\b/.test(manifest.description));
 assert.ok(!code.includes('Note Reader CosyVoice'));
 assert.ok(!code.includes('CosyVoice Reader'));
@@ -273,6 +276,8 @@ assert.deepStrictEqual(moduleObject.exports.__test.createReaderState(), {
   totalChunks: 0,
 });
 assert.deepStrictEqual(moduleObject.exports.__test.createDefaultSettings(), {
+  audioExportFolder: '',
+  audioExportLocation: 'obsidian-attachment',
   azureSpeechCloud: 'public',
   azureSpeechConsent: false,
   azureSpeechCredentialSource: 'obsidian-secret',
@@ -545,7 +550,7 @@ for (const [model, presets] of openRouterVoicesByModel) {
     moduleObject.exports.__test.getDefaultOpenRouterVoiceForModel(model)
   ), `${model} is missing its default voice preset`);
 }
-const expectedMaiVoices = [
+const expectedMaiFlashVoices = [
   'en-US-Harper:MAI-Voice-2',
   'es-MX-Valeria:MAI-Voice-2',
   'fr-FR-Soleil:MAI-Voice-2',
@@ -553,12 +558,19 @@ const expectedMaiVoices = [
 ];
 assert.deepStrictEqual(
   openRouterVoicesByModel.get('microsoft/mai-voice-2-flash').map(([, voice]) => voice),
-  expectedMaiVoices
+  expectedMaiFlashVoices
 );
+const expectedMaiStandardVoices = [
+  'zh-CN-Bo:MAI-Voice-2',
+  'zh-CN-Lan:MAI-Voice-2',
+  'zh-CN-Mei:MAI-Voice-2',
+  ...expectedMaiFlashVoices,
+];
 assert.deepStrictEqual(
   openRouterVoicesByModel.get('microsoft/mai-voice-2').map(([, voice]) => voice),
-  expectedMaiVoices
+  expectedMaiStandardVoices
 );
+assert.ok(!openRouterVoicesByModel.get('microsoft/mai-voice-2-flash').some(([, voice]) => voice.startsWith('zh-CN-')));
 const geminiVoicePresets = openRouterVoicesByModel.get('google/gemini-3.1-flash-tts-preview');
 assert.ok(geminiVoicePresets.length >= 6);
 assert.ok(geminiVoicePresets.some(([, voice, label]) => voice === 'Sadaltager' && label.includes('knowledgeable')));
@@ -575,6 +587,11 @@ assert.ok(moduleObject.exports.__test.getOpenRouterTtsModels('chinese').find(
     && info.includes('低延迟')
     && info.includes('只列出 4 个音色')
 ));
+assert.ok(moduleObject.exports.__test.getOpenRouterTtsModels('chinese').find(
+  ([model, , , info]) => model === 'microsoft/mai-voice-2'
+    && info.includes('3 个普通话')
+    && info.includes('兼容预设')
+));
 assert.strictEqual(
   moduleObject.exports.__test.getDefaultOpenRouterVoiceForModel('microsoft/mai-voice-2'),
   'en-US-Harper:MAI-Voice-2'
@@ -587,6 +604,14 @@ assert.ok(moduleObject.exports.__test.getOpenRouterTtsVoicePresets(
   'microsoft/mai-voice-2-flash',
   'chinese'
 ).some(([, voice, label]) => voice === 'en-US-Harper:MAI-Voice-2' && label.includes('美式英语')));
+for (const voice of ['zh-CN-Bo:MAI-Voice-2', 'zh-CN-Lan:MAI-Voice-2', 'zh-CN-Mei:MAI-Voice-2']) {
+  assert.ok(moduleObject.exports.__test.getOpenRouterTtsVoicePresets(
+    'microsoft/mai-voice-2',
+    'chinese'
+  ).some(([, presetVoice, label]) => presetVoice === voice
+    && label.includes('中文普通话')
+    && label.includes('元数据未列出')));
+}
 assert.ok(moduleObject.exports.__test.getOpenRouterTtsPresets().some(
   ([model, voice]) => model === 'hexgrad/kokoro-82m' && voice === 'zf_xiaoxiao'
 ));
@@ -600,8 +625,41 @@ assert.ok(moduleObject.exports.__test.getEdgeTtsVoicePresets().some(([id]) => id
 assert.ok(moduleObject.exports.__test.getEdgeTtsVoicePresets().some(([id]) => id === 'en-US-GuyNeural'));
 assert.ok(moduleObject.exports.__test.getEdgeTtsVoicePresets().some(([id]) => id === 'en-GB-RyanNeural'));
 assert.strictEqual(moduleObject.exports.__test.isOwnedCacheFileName('1750000000000-7-1.txt'), true);
+assert.strictEqual(moduleObject.exports.__test.isOwnedCacheFileName('1750000000000-7-export.mp3'), true);
 assert.strictEqual(moduleObject.exports.__test.isOwnedCacheFileName('diagnostic.log'), true);
 assert.strictEqual(moduleObject.exports.__test.isOwnedCacheFileName('keep-me.txt'), false);
+assert.strictEqual(moduleObject.exports.__test.getAudioExportExtension('local-cosyvoice'), 'wav');
+assert.strictEqual(moduleObject.exports.__test.getAudioExportExtension('openrouter-tts'), 'mp3');
+assert.strictEqual(moduleObject.exports.__test.normalizeAudioExportLocation('note-folder'), 'note-folder');
+assert.strictEqual(moduleObject.exports.__test.normalizeAudioExportLocation('custom-folder'), 'custom-folder');
+assert.strictEqual(moduleObject.exports.__test.normalizeAudioExportLocation('outside-vault'), 'obsidian-attachment');
+assert.strictEqual(moduleObject.exports.__test.normalizeAudioExportFolder('Audio\\Academic/'), 'Audio/Academic');
+assert.strictEqual(moduleObject.exports.__test.normalizeAudioExportFolder('../outside'), '');
+assert.strictEqual(moduleObject.exports.__test.normalizeAudioExportFolder('Audio/ .. /outside'), '');
+assert.strictEqual(moduleObject.exports.__test.normalizeAudioExportFolder('Audio\0outside'), '');
+assert.strictEqual(moduleObject.exports.__test.normalizeAudioExportFolder('C:\\outside'), '');
+assert.strictEqual(
+  moduleObject.exports.__test.getAvailableVaultAudioPath({
+    getAbstractFileByPath: (candidate) => candidate === 'Audio/Paper - narration.mp3'
+      ? { path: candidate }
+      : null,
+  }, 'Audio/Paper - narration.mp3'),
+  'Audio/Paper - narration 1.mp3'
+);
+const onlineExportSummary = moduleObject.exports.__test.createAudioExportSummary({
+  chunkCount: 12,
+  engineLabel: 'OpenRouter TTS',
+  insertAfterExport: true,
+  noteName: 'Paper',
+  speechEngine: 'openrouter-tts',
+  targetPath: 'Audio/Paper - narration.mp3',
+  textLength: 1234,
+});
+assert.strictEqual(onlineExportSummary.isOnline, true);
+assert.strictEqual(onlineExportSummary.insertAfterExport, true);
+assert.ok(moduleObject.exports.__test.getAudioExportUiText('english', onlineExportSummary).quotaWarning.includes('12 planned sequential segments'));
+assert.strictEqual(moduleObject.exports.__test.getAudioExportUiText('english', onlineExportSummary).locationLabel, 'Planned save location');
+assert.ok(moduleObject.exports.__test.getAudioExportUiText('chinese', onlineExportSummary).acknowledge.includes('API 额度'));
 assert.strictEqual(moduleObject.exports.__test.createSafeRuntimeLogEvent('start'), null);
 assert.deepStrictEqual(
   moduleObject.exports.__test.createSafeRuntimeLogEvent(
@@ -709,6 +767,53 @@ assert.deepStrictEqual(
   moduleObject.exports.__test.slicePdfTextFromSelection('Page text only.', 'missing selection'),
   { matched: false, text: 'Page text only.' }
 );
+const repeatedPdfLayout = {
+  lines: [
+    { text: 'Repeated passage in the full-width abstract.', xMax: 550, xMin: 50, y: 700 },
+    { text: 'Left-column context.', xMax: 280, xMin: 50, y: 500 },
+    { text: 'Repeated passage in the right-column body.', xMax: 550, xMin: 320, y: 500 },
+    { text: 'Right-column continuation.', xMax: 550, xMin: 320, y: 480 },
+  ],
+  pageHeight: 800,
+  pageWidth: 600,
+  twoColumn: true,
+};
+const repeatedPdfText = repeatedPdfLayout.lines.map((line) => line.text).join('\n');
+assert.deepStrictEqual(
+  moduleObject.exports.__test.slicePdfTextFromSelection(repeatedPdfText, 'Repeated passage'),
+  {
+    matched: true,
+    text: 'Repeated passage in the full-width abstract. Left-column context. Repeated passage in the right-column body. Right-column continuation.',
+  }
+);
+assert.deepStrictEqual(
+  moduleObject.exports.__test.slicePdfTextFromSelection(
+    repeatedPdfText,
+    'Repeated passage',
+    {
+      layout: repeatedPdfLayout,
+      selectionPosition: { xRatio: 0.6, yRatio: 0.375 },
+    }
+  ),
+  {
+    matched: true,
+    text: 'Repeated passage in the right-column body. Right-column continuation.',
+  }
+);
+assert.deepStrictEqual(
+  moduleObject.exports.__test.slicePdfTextFromSelection(
+    repeatedPdfText,
+    'Re',
+    {
+      layout: repeatedPdfLayout,
+      selectionPosition: { xRatio: 0.6, yRatio: 0.375 },
+    }
+  ),
+  {
+    matched: true,
+    text: 'Repeated passage in the right-column body. Right-column continuation.',
+  }
+);
 const pdfSelectionRoot = {
   contains(node) {
     return node === pdfSelectionTextNode || node === pdfSelectionPage;
@@ -734,9 +839,38 @@ assert.deepStrictEqual(pdfSelectionContext, {
   pageNumber: 3,
   selectedText: 'Selected PDF passage',
 });
+pdfSelectionPage.getBoundingClientRect = () => ({
+  height: 700,
+  left: 100,
+  top: 100,
+  width: 500,
+});
+const positionedPdfSelectionContext = moduleObject.exports.__test.getPdfSelectionContext({
+  rangeCount: 1,
+  getRangeAt: () => ({
+    cloneRange: () => ({
+      collapse: () => {},
+      getClientRects: () => [{ height: 14, left: 360, top: 250, width: 1 }],
+    }),
+    startContainer: pdfSelectionTextNode,
+  }),
+  toString: () => 'Selected PDF passage',
+}, [{ view: { containerEl: pdfSelectionRoot, file: pdfSelectionFile } }], null, 12345);
+assert.deepStrictEqual(positionedPdfSelectionContext, {
+  capturedAt: 12345,
+  filePath: 'papers/paper.pdf',
+  pageNumber: 3,
+  selectedText: 'Selected PDF passage',
+  selectionPosition: {
+    xRatio: 0.52,
+    yRatio: 157 / 700,
+  },
+});
 
 const root = new FakeElement('section');
 let pauseOrResumeCalls = 0;
+let readFileCalls = 0;
+const exportNoteCalls = [];
 const seekBySecondsCalls = [];
 const chunkNavigationCalls = [];
 const readerView = new moduleObject.exports.__test.CosyVoiceReaderView({}, {
@@ -763,9 +897,15 @@ const readerView = new moduleObject.exports.__test.CosyVoiceReaderView({}, {
   pauseOrResume: async () => {
     pauseOrResumeCalls += 1;
   },
-  readCurrentNote: () => {},
+  readCurrentNote: () => {
+    readFileCalls += 1;
+  },
   readFromSelection: () => {},
   readSelection: () => {},
+  runUserAction: async (_label, action) => action(),
+  exportCurrentNoteAudio: (options) => {
+    exportNoteCalls.push(options);
+  },
   seekCurrentAudioBySeconds: (deltaSeconds) => {
     seekBySecondsCalls.push(deltaSeconds);
     return true;
@@ -779,6 +919,27 @@ readerView.containerEl = { children: [null, root] };
 readerView.render();
 
 assert.strictEqual(root.attributes.tabindex, '0');
+const readFileButton = findElementByAriaLabel(root, 'Read file');
+assert.ok(readFileButton);
+assert.strictEqual(readFileButton.disabled, false);
+const readFilePointerEvent = createPointerEvent();
+readFileButton.dispatchEvent(readFilePointerEvent);
+assert.strictEqual(readFileCalls, 1);
+assert.strictEqual(readFilePointerEvent.defaultPrevented, true);
+readFileButton.dispatchEvent(createPointerEvent({ type: 'click' }));
+assert.strictEqual(readFileCalls, 1);
+const exportNoteButton = findElementByAriaLabel(root, 'Export full audio');
+const exportInsertButton = findElementByAriaLabel(root, 'Export & insert audio');
+assert.ok(exportNoteButton);
+assert.ok(exportInsertButton);
+assert.strictEqual(exportNoteButton.disabled, false);
+assert.strictEqual(exportInsertButton.disabled, false);
+exportNoteButton.dispatchEvent(createPointerEvent());
+exportInsertButton.dispatchEvent(createPointerEvent());
+assert.deepStrictEqual(exportNoteCalls, [
+  { insertAfterExport: false },
+  { insertAfterExport: true },
+]);
 const spaceEvent = createKeyboardEvent();
 root.dispatchEvent(spaceEvent);
 assert.strictEqual(pauseOrResumeCalls, 1);
@@ -833,10 +994,27 @@ assert.strictEqual(inputArrowEvent.defaultPrevented, false);
 
 const pauseButton = findElementByAriaLabel(root, 'Pause');
 assert.ok(pauseButton);
+assert.strictEqual(pauseButton.attributes.title, 'Pause reading (or press Space)');
 const pausePointerEvent = createPointerEvent();
 pauseButton.dispatchEvent(pausePointerEvent);
 assert.strictEqual(pauseOrResumeCalls, 2);
 assert.strictEqual(pausePointerEvent.defaultPrevented, true);
+
+const pausedRoot = new FakeElement('section');
+readerView.plugin.readerState = moduleObject.exports.__test.createReaderState({
+  canPause: true,
+  isPaused: true,
+  label: 'CosyVoice paused',
+  phase: 'paused',
+  status: 'paused',
+});
+const pausedReaderView = new moduleObject.exports.__test.CosyVoiceReaderView({}, readerView.plugin);
+pausedReaderView.contentEl = pausedRoot;
+pausedReaderView.containerEl = { children: [null, pausedRoot] };
+pausedReaderView.render();
+const resumeButton = findElementByAriaLabel(pausedRoot, 'Resume');
+assert.ok(resumeButton);
+assert.strictEqual(resumeButton.attributes.title, 'Resume reading (or press Space)');
 
 const previousChunkButton = findElementByAriaLabel(root, 'Previous chunk');
 assert.ok(previousChunkButton);
@@ -923,6 +1101,8 @@ assert.deepStrictEqual(chunkNavigationCalls, [-1, 1]);
   assert.ok(startupCommandIds.includes('previous-reading-chunk'));
   assert.ok(startupCommandIds.includes('next-reading-chunk'));
   assert.ok(startupCommandIds.includes('resume-current-file'));
+  assert.ok(startupCommandIds.includes('export-current-note-audio'));
+  assert.ok(startupCommandIds.includes('export-current-note-audio-and-insert'));
   assert.strictEqual(fs.existsSync(legacyOwnedFile), false);
   assert.strictEqual(fs.existsSync(legacyKeepFile), true);
   assert.strictEqual(fs.existsSync(legacyLogFile), false);
@@ -931,6 +1111,248 @@ assert.deepStrictEqual(chunkNavigationCalls, [-1, 1]);
   await startupPlugin.onunload();
   fs.rmSync(startupTempCacheDir, { force: true, recursive: true });
   fs.rmSync(startupVaultDir, { force: true, recursive: true });
+
+  const exportTempDir = path.join(__dirname, '.test-audio-export');
+  fs.rmSync(exportTempDir, { force: true, recursive: true });
+  fs.mkdirSync(exportTempDir, { recursive: true });
+  const exportFile = {
+    basename: 'Research note',
+    extension: 'md',
+    name: 'Research note.md',
+    path: 'Notes/Research note.md',
+    stat: { mtime: 1234 },
+  };
+  const exportView = {
+    editor: {
+      getValue: () => 'First paragraph for export. Second paragraph for export.',
+    },
+    file: exportFile,
+  };
+  const exportPlugin = Object.create(PluginClass.prototype);
+  exportPlugin.app = {
+    workspace: {
+      getActiveFile: () => exportFile,
+      getActiveViewOfType: () => null,
+      getLeavesOfType: (type) => type === 'markdown' ? [{ view: exportView }] : [],
+    },
+  };
+  exportPlugin.cacheDir = exportTempDir;
+  exportPlugin.currentAudio = null;
+  exportPlugin.currentProcess = null;
+  exportPlugin.currentRequests = new Set();
+  exportPlugin.readerState = moduleObject.exports.__test.createReaderState();
+  exportPlugin.sequence = 0;
+  exportPlugin.lastMarkdownView = exportView;
+  exportPlugin.lastReadableFile = exportFile;
+  exportPlugin.settings = {
+    ...moduleObject.exports.__test.createDefaultSettings(),
+    cleanupCache: true,
+    chunkLimits: '18,24',
+    speechEngine: 'local-cosyvoice',
+  };
+  exportPlugin.getSpeechConfiguration = () => ({
+    chunkLimits: [18, 24],
+    engineLabel: 'Local CosyVoice',
+    prefetchChunks: 1,
+    speechEngine: 'local-cosyvoice',
+  });
+  assert.strictEqual(exportPlugin.canExportCurrentNote(), true);
+  assert.strictEqual(exportPlugin.getCurrentNoteExportContext().view, exportView);
+  let exportSummary = null;
+  let exportPrepareCalls = 0;
+  let exportStopCalls = 0;
+  exportPlugin.requestAudioExportConfirmation = async (summary) => {
+    exportSummary = summary;
+    return false;
+  };
+  exportPlugin.activateControlView = async () => {};
+  exportPlugin.stopReading = async () => {
+    exportStopCalls += 1;
+  };
+  exportPlugin.prepareChunk = async () => {
+    exportPrepareCalls += 1;
+    throw new Error('confirmation gate failed');
+  };
+  assert.strictEqual(await exportPlugin.exportCurrentNoteAudio(), null);
+  assert.ok(exportSummary.chunkCount > 1);
+  assert.strictEqual(exportSummary.targetPath, 'Notes/Research note - narration.wav');
+  assert.strictEqual(exportPrepareCalls, 0);
+  assert.strictEqual(exportStopCalls, 0);
+
+  function createExportTestWave(sample) {
+    const output = Buffer.alloc(46);
+    output.write('RIFF', 0, 'ascii');
+    output.writeUInt32LE(38, 4);
+    output.write('WAVE', 8, 'ascii');
+    output.write('fmt ', 12, 'ascii');
+    output.writeUInt32LE(16, 16);
+    output.writeUInt16LE(1, 20);
+    output.writeUInt16LE(1, 22);
+    output.writeUInt32LE(24000, 24);
+    output.writeUInt32LE(48000, 28);
+    output.writeUInt16LE(2, 32);
+    output.writeUInt16LE(16, 34);
+    output.write('data', 36, 'ascii');
+    output.writeUInt32LE(2, 40);
+    output.writeInt16LE(sample, 44);
+    return output;
+  }
+
+  exportPlugin.requestAudioExportConfirmation = async () => true;
+  exportPlugin.createSpeechSession = PluginClass.prototype.createSpeechSession;
+  exportPlugin.isActive = PluginClass.prototype.isActive;
+  exportPlugin.updateStatus = (_label, patch = {}) => {
+    exportPlugin.readerState = { ...exportPlugin.readerState, ...patch };
+  };
+  exportPlugin.writeRuntimeLog = async () => {};
+  exportPlugin.cleanupSessionFiles = async () => {};
+  exportPlugin.cancelSessionOperations = async (session) => {
+    session.stopped = true;
+  };
+  exportPlugin.prepareChunk = async (_text, index, session) => {
+    exportPrepareCalls += 1;
+    const outputPath = path.join(exportTempDir, `chunk-${index}.wav`);
+    fs.writeFileSync(outputPath, createExportTestWave(index + 1));
+    session.files.push(outputPath);
+    return { outputPath };
+  };
+  let exportedAttachmentInput = null;
+  exportPlugin.createVaultAudioAttachment = async (_noteFile, temporaryAudioPath, extension, targetPlan) => {
+    exportedAttachmentInput = fs.readFileSync(temporaryAudioPath);
+    assert.strictEqual(extension, 'wav');
+    assert.deepStrictEqual(targetPlan, {
+      location: 'obsidian-attachment',
+      targetPath: 'Notes/Research note - narration.wav',
+    });
+    return { path: 'Attachments/Research note - narration.wav' };
+  };
+  let insertedExport = false;
+  exportPlugin.insertAudioAttachmentIntoNote = async () => {
+    insertedExport = true;
+    return 'cursor';
+  };
+  exportPrepareCalls = 0;
+  const exportedAttachment = await exportPlugin.exportCurrentNoteAudio({ insertAfterExport: true });
+  assert.strictEqual(exportStopCalls, 1);
+  assert.strictEqual(exportPrepareCalls, exportSummary.chunkCount);
+  assert.strictEqual(exportedAttachment.path, 'Attachments/Research note - narration.wav');
+  assert.strictEqual(exportedAttachmentInput.toString('ascii', 0, 4), 'RIFF');
+  assert.strictEqual(insertedExport, true);
+  assert.strictEqual(exportPlugin.activeSession, null);
+
+  const attachmentSourcePath = path.join(exportTempDir, 'attachment-source.wav');
+  fs.writeFileSync(attachmentSourcePath, createExportTestWave(7));
+  const attachmentPlugin = Object.create(PluginClass.prototype);
+  let requestedAttachment = null;
+  let createdAttachment = null;
+  const createdAudioFile = { path: 'Attachments/Research note - narration.wav' };
+  attachmentPlugin.app = {
+    fileManager: {
+      generateMarkdownLink: (file, sourcePath) => {
+        assert.strictEqual(file, createdAudioFile);
+        assert.strictEqual(sourcePath, exportFile.path);
+        return '[[Attachments/Research note - narration.wav]]';
+      },
+      getAvailablePathForAttachment: async (fileName, sourcePath) => {
+        requestedAttachment = { fileName, sourcePath };
+        return createdAudioFile.path;
+      },
+    },
+    vault: {
+      createBinary: async (targetPath, arrayBuffer) => {
+        createdAttachment = { bytes: Buffer.from(arrayBuffer), targetPath };
+        return createdAudioFile;
+      },
+    },
+    workspace: {
+      getActiveViewOfType: () => null,
+    },
+  };
+  assert.strictEqual(
+    await attachmentPlugin.createVaultAudioAttachment(exportFile, attachmentSourcePath, 'wav'),
+    createdAudioFile
+  );
+  assert.deepStrictEqual(requestedAttachment, {
+    fileName: 'Research note - narration.wav',
+    sourcePath: exportFile.path,
+  });
+  assert.strictEqual(createdAttachment.targetPath, createdAudioFile.path);
+  assert.strictEqual(createdAttachment.bytes.toString('ascii', 0, 4), 'RIFF');
+
+  attachmentPlugin.settings = {
+    ...moduleObject.exports.__test.createDefaultSettings(),
+    audioExportLocation: 'note-folder',
+  };
+  attachmentPlugin.app.vault.getAbstractFileByPath = (candidate) => (
+    candidate === 'Notes/Research note - narration.wav' ? { path: candidate } : null
+  );
+  assert.deepStrictEqual(
+    await attachmentPlugin.getAudioExportTargetPlan(exportFile, 'wav'),
+    {
+      location: 'note-folder',
+      targetPath: 'Notes/Research note - narration 1.wav',
+    }
+  );
+
+  const customFolders = new Set();
+  let customCreatedAttachment = null;
+  attachmentPlugin.settings.audioExportLocation = 'custom-folder';
+  attachmentPlugin.settings.audioExportFolder = 'Audio exports/Academic';
+  attachmentPlugin.app.vault.getAbstractFileByPath = (candidate) => (
+    customFolders.has(candidate) ? { children: [], path: candidate } : null
+  );
+  attachmentPlugin.app.vault.createFolder = async (folderPath) => {
+    customFolders.add(folderPath);
+  };
+  attachmentPlugin.app.vault.createBinary = async (targetPath, arrayBuffer) => {
+    customCreatedAttachment = { bytes: Buffer.from(arrayBuffer), path: targetPath };
+    return customCreatedAttachment;
+  };
+  const customPlan = await attachmentPlugin.getAudioExportTargetPlan(exportFile, 'wav');
+  assert.deepStrictEqual(customPlan, {
+    location: 'custom-folder',
+    targetPath: 'Audio exports/Academic/Research note - narration.wav',
+  });
+  assert.strictEqual(
+    await attachmentPlugin.createVaultAudioAttachment(
+      exportFile,
+      attachmentSourcePath,
+      'wav',
+      customPlan
+    ),
+    customCreatedAttachment
+  );
+  assert.deepStrictEqual([...customFolders], ['Audio exports', 'Audio exports/Academic']);
+  assert.strictEqual(customCreatedAttachment.path, customPlan.targetPath);
+  assert.strictEqual(customCreatedAttachment.bytes.toString('ascii', 0, 4), 'RIFF');
+
+  let insertedText = '';
+  attachmentPlugin.app.workspace.getActiveViewOfType = () => ({
+    editor: {
+      getCursor: () => ({ ch: 0, line: 2 }),
+      replaceRange: (text) => {
+        insertedText = text;
+      },
+    },
+    file: exportFile,
+  });
+  assert.strictEqual(
+    await attachmentPlugin.insertAudioAttachmentIntoNote(exportFile, createdAudioFile),
+    'cursor'
+  );
+  assert.strictEqual(insertedText, '\n![[Attachments/Research note - narration.wav]]\n');
+
+  let processedNote = '';
+  attachmentPlugin.app.workspace.getActiveViewOfType = () => null;
+  attachmentPlugin.app.vault.process = async (_file, updater) => {
+    processedNote = updater('Note body\n');
+  };
+  assert.strictEqual(
+    await attachmentPlugin.insertAudioAttachmentIntoNote(exportFile, createdAudioFile),
+    'end'
+  );
+  assert.strictEqual(processedNote, 'Note body\n\n![[Attachments/Research note - narration.wav]]\n');
+  fs.rmSync(exportTempDir, { force: true, recursive: true });
 
   const pdfFile = {
     basename: 'paper',
@@ -1249,6 +1671,50 @@ assert.deepStrictEqual(chunkNavigationCalls, [-1, 1]);
   };
   await routePlugin.readCurrentNote();
   assert.strictEqual(routedPdfFile, pdfFile);
+
+  const noteFile = {
+    basename: 'Full note',
+    extension: 'md',
+    name: 'Full note.md',
+    path: 'Notes/Full note.md',
+  };
+  const noteRoutePlugin = Object.create(PluginClass.prototype);
+  let routedNoteReading = null;
+  noteRoutePlugin.app = {
+    workspace: {
+      getActiveFile: () => noteFile,
+    },
+  };
+  noteRoutePlugin.getActiveMarkdownView = () => ({
+    editor: {
+      getSelection: () => 'stale selected words',
+      getValue: () => 'The complete note body.',
+    },
+    file: noteFile,
+  });
+  noteRoutePlugin.activateControlView = async () => {};
+  noteRoutePlugin.startReading = async (text, source, options) => {
+    routedNoteReading = { options, source, text };
+  };
+  await noteRoutePlugin.readCurrentNote();
+  assert.strictEqual(routedNoteReading.text, 'The complete note body.');
+  assert.strictEqual(routedNoteReading.source, 'Full note');
+  assert.strictEqual(routedNoteReading.options.file, noteFile);
+  assert.strictEqual(routedNoteReading.options.sourceKind, 'markdown');
+
+  const panelRoutePlugin = Object.create(PluginClass.prototype);
+  let panelRoutedPdfFile = null;
+  panelRoutePlugin.app = {
+    workspace: {
+      getActiveFile: () => null,
+    },
+  };
+  panelRoutePlugin.lastReadableFile = pdfFile;
+  panelRoutePlugin.readCurrentPdf = async (file) => {
+    panelRoutedPdfFile = file;
+  };
+  await panelRoutePlugin.readCurrentNote();
+  assert.strictEqual(panelRoutedPdfFile, pdfFile);
 
   const pdfFromSelectionRoutePlugin = Object.create(PluginClass.prototype);
   let routedPdfSelectionFile = null;

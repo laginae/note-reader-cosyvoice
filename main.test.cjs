@@ -5,6 +5,7 @@ const originalLoad = Module._load;
 
 class MockPlugin {}
 class MockItemView {}
+class MockModal {}
 class MockPluginSettingTab {}
 class MockSetting {}
 class MockNotice {}
@@ -19,11 +20,13 @@ Module._load = function loadWithObsidianMock(request, parent, isMain) {
     return {
       ItemView: MockItemView,
       MarkdownView: MockMarkdownView,
+      Modal: MockModal,
       Notice: MockNotice,
       Plugin: MockPlugin,
       PluginSettingTab: MockPluginSettingTab,
       Setting: MockSetting,
       loadPdfJs: mockLoadPdfJs,
+      normalizePath: (value) => String(value || '').replace(/\\/g, '/'),
       setIcon: mockSetIcon,
     };
   }

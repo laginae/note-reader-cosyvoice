@@ -2,7 +2,7 @@
 
 ## Install From ZIP
 
-1. Unzip `note-reader-cosyvoice-0.4.0-install.zip`.
+1. Unzip `note-reader-cosyvoice-0.4.1-install.zip`.
 2. Copy the `note-reader-cosyvoice` folder into your vault:
 
 ```text
@@ -129,7 +129,7 @@ Do not sync, commit, or share that file. In the plugin settings:
 4. Select a built-in ZDR-compatible model and one of its voices, or enter custom IDs.
 5. Keep account-level input/output logging and input/output data sharing disabled.
 
-The consent switch permits online transmission; it does not permit non-ZDR routing. Voice menus follow the selected model because voice IDs are not interchangeable. The two MAI models currently expose all four available voices; Gemini exposes 12 curated multilingual style presets from its 30 listed voices; and Kokoro exposes 12 presets covering Chinese, US English, and UK English female and male voices. MAI cannot safely offer six presets because OpenRouter currently documents only four accepted voice IDs. These catalogs were checked against OpenRouter's speech plus ZDR filter on 2026-08-26.
+The consent switch permits online transmission; it does not permit non-ZDR routing. Voice menus follow the selected model because voice IDs are not interchangeable. MAI-Voice-2 Flash keeps the four IDs currently listed by OpenRouter. Standard MAI-Voice-2 also offers Microsoft's published Mandarin voices `zh-CN-Bo:MAI-Voice-2`, `zh-CN-Lan:MAI-Voice-2`, and `zh-CN-Mei:MAI-Voice-2` as compatibility presets because OpenRouter may accept them while omitting them from `supported_voices`; endpoint availability can still change. Gemini exposes 12 curated multilingual style presets from its 30 listed voices, and Kokoro exposes 12 presets covering Chinese, US English, and UK English female and male voices.
 
 The key value is never saved in the plugin's `data.json`. Every request enforces `provider.zdr: true` and `provider.data_collection: "deny"`; synthesis fails if no eligible endpoint satisfies those restrictions. Model and voice availability changes over time, so check the live [`speech + ZDR` model API](https://openrouter.ai/api/v1/models?output_modalities=speech&zdr=true) when a preset stops working. See the official [OpenRouter TTS documentation](https://openrouter.ai/docs/guides/overview/multimodal/tts), [data collection documentation](https://openrouter.ai/docs/guides/privacy/data-collection), and [Zero Data Retention documentation](https://openrouter.ai/docs/guides/features/zdr).
 
@@ -148,6 +148,7 @@ Temporary text and audio are stored under the operating system temporary directo
 - Select text and click `Read selection` to read only the selected text.
 - Select a start point and click `Read from selection` to read from that selection start to the end of the active note.
 - Click `Read file` to read the active Markdown note or searchable PDF.
+- Use `Export full audio` to export the complete active Markdown note as one audio attachment, or `Export & insert audio` to save and embed it. Settings can place the file in Obsidian's attachment folder, beside the note, or in a custom vault folder. A mandatory confirmation shows the readable character count, planned synthesis segment count, and planned save path before any full-note work begins; bounded retries can increase the actual online attempt count. Local mode exports WAV; online modes export MP3.
 - PDF text is extracted locally and progressively through Obsidian's built-in PDF.js. Playback can start once the first speech chunk is ready while later pages continue parsing. Common two-column pages use coordinate-aware left-column-then-right-column ordering. Scanned or image-only PDFs require OCR first.
 - Use `Resume file` after enabling `Remember reading position` to continue the active note or PDF from its saved anchor.
 - Use `Pause`, `Resume`, and `Stop` from the right-side control panel.

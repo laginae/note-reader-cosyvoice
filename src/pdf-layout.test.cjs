@@ -1,7 +1,7 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
 
-const { extractTextFromPdfItems } = require('./pdf-layout');
+const { extractPdfTextLayout, extractTextFromPdfItems } = require('./pdf-layout');
 
 function item(str, x, y, width = 100) {
   return { height: 12, str, transform: [1, 0, 0, 12, x, y], width };
@@ -21,6 +21,21 @@ test('two-column pages read the left column before the right column', () => {
     extractTextFromPdfItems(items, { viewport: { width: 600 } }),
     'Paper heading\nLeft one.\nLeft two.\nRight one.\nRight two.\nPage 1'
   );
+  const layout = extractPdfTextLayout(items, { viewport: { height: 900, width: 600 } });
+  assert.equal(layout.twoColumn, true);
+  assert.equal(layout.pageHeight, 900);
+  assert.equal(layout.pageWidth, 600);
+  assert.deepEqual(
+    layout.lines.map(({ text, xMin, y }) => ({ text, xMin, y })),
+    [
+      { text: 'Paper heading', xMin: 100, y: 800 },
+      { text: 'Left one.', xMin: 50, y: 700 },
+      { text: 'Left two.', xMin: 50, y: 680 },
+      { text: 'Right one.', xMin: 330, y: 700 },
+      { text: 'Right two.', xMin: 330, y: 680 },
+      { text: 'Page 1', xMin: 220, y: 100 },
+    ]
+  );
 });
 
 test('full-width lines divide independent two-column reading bands', () => {
@@ -38,6 +53,55 @@ test('full-width lines divide independent two-column reading bands', () => {
   assert.equal(
     extractTextFromPdfItems(items, { viewport: { width: 600 } }),
     'Section A\nA left.\nA right.\nSection B\nB left.\nB left two.\nB right.\nB right two.'
+  );
+});
+
+test('narrow gutters are detected from content bounds instead of the crop-box midpoint', () => {
+  const items = [
+    item('Section heading', 70, 760, 450),
+    item('Left first.', 44, 730, 251),
+    item('Right first.', 307, 730, 251),
+    item('Left second.', 44, 710, 251),
+    item('Right second.', 307, 710, 251),
+    item('Left third.', 44, 690, 251),
+    item('Right third.', 307, 690, 251),
+  ];
+
+  assert.equal(
+    extractTextFromPdfItems(items, { viewport: { width: 555 } }),
+    'Section heading\nLeft first.\nLeft second.\nLeft third.\nRight first.\nRight second.\nRight third.'
+  );
+});
+
+test('an isolated central gap on a single-column page does not create two columns', () => {
+  const items = [
+    item('First full-width line.', 44, 730, 514),
+    item('A phrase before the gap', 44, 710, 251),
+    item('continues on the same line.', 307, 710, 251),
+    item('Last full-width line.', 44, 690, 514),
+  ];
+
+  assert.equal(
+    extractTextFromPdfItems(items, { viewport: { width: 555 } }),
+    'First full-width line.\nA phrase before the gap continues on the same line.\nLast full-width line.'
+  );
+});
+
+test('staggered title and author lines keep vertical order above two-column body text', () => {
+  const items = [
+    item('Main title', 70, 800, 450),
+    item('Title continuation', 340, 780, 180),
+    item('Author names', 44, 760, 251),
+    item('Full-width abstract', 70, 730, 450),
+    item('Left body one.', 44, 700, 251),
+    item('Right body one.', 307, 700, 251),
+    item('Left body two.', 44, 680, 251),
+    item('Right body two.', 307, 680, 251),
+  ];
+
+  assert.equal(
+    extractTextFromPdfItems(items, { viewport: { width: 555 } }),
+    'Main title\nTitle continuation\nAuthor names\nFull-width abstract\nLeft body one.\nLeft body two.\nRight body one.\nRight body two.'
   );
 });
 

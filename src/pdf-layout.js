@@ -114,7 +114,38 @@ function normalizePositionedItem(item) {
   return { height, str: item.str, width, x, y };
 }
 
-function groupItemsIntoLines(items, requestedPageWidth = 0) {
+function getHorizontalMetrics(entries, requestedPageWidth = 0) {
+  const normalized = (Array.isArray(entries) ? entries : [])
+    .map((entry) => {
+      const xMin = Number(typeof entry.xMin !== 'undefined' ? entry.xMin : entry.x);
+      const xMax = Number(typeof entry.xMax !== 'undefined'
+        ? entry.xMax
+        : Number(entry.x) + Math.max(0, Number(entry.width) || 0));
+      return Number.isFinite(xMin) && Number.isFinite(xMax) && xMax >= xMin
+        ? { xMax, xMin }
+        : null;
+    })
+    .filter(Boolean);
+  const pageWidth = Number.isFinite(Number(requestedPageWidth)) && Number(requestedPageWidth) > 0
+    ? Number(requestedPageWidth)
+    : 0;
+  if (!normalized.length) {
+    const fallbackWidth = Math.max(1, pageWidth);
+    return {
+      contentWidth: fallbackWidth,
+      midpoint: fallbackWidth / 2,
+    };
+  }
+  const contentLeft = Math.min(...normalized.map((entry) => entry.xMin));
+  const contentRight = Math.max(...normalized.map((entry) => entry.xMax));
+  const contentWidth = Math.max(1, contentRight - contentLeft);
+  return {
+    contentWidth,
+    midpoint: (contentLeft + contentRight) / 2,
+  };
+}
+
+function groupItemsIntoLines(items, requestedPageWidth = 0, options = {}) {
   const positioned = (Array.isArray(items) ? items : [])
     .map(normalizePositionedItem)
     .filter(Boolean);
@@ -125,6 +156,9 @@ function groupItemsIntoLines(items, requestedPageWidth = 0) {
   const pageWidth = Number.isFinite(Number(requestedPageWidth)) && Number(requestedPageWidth) > 0
     ? Number(requestedPageWidth)
     : Math.max(...positioned.map((item) => item.x + item.width), 1);
+  const splitColumns = options.splitColumns !== false;
+  const horizontal = getHorizontalMetrics(positioned, pageWidth);
+  const minimumCentralGap = Math.max(4, horizontal.contentWidth * 0.012);
   positioned.sort((left, right) => (right.y - left.y) || (left.x - right.x));
   const baselines = [];
 
@@ -146,9 +180,9 @@ function groupItemsIntoLines(items, requestedPageWidth = 0) {
       const previous = cluster[cluster.length - 1];
       const gap = previous ? item.x - (previous.x + previous.width) : 0;
       const crossesMidpoint = previous
-        && previous.x + previous.width < pageWidth * 0.48
-        && item.x > pageWidth * 0.52;
-      if (previous && crossesMidpoint && gap > Math.max(24, pageWidth * 0.06)) {
+        && previous.x + previous.width <= horizontal.midpoint
+        && item.x >= horizontal.midpoint;
+      if (splitColumns && crossesMidpoint && gap >= minimumCentralGap) {
         lineClusters.push({ items: cluster, y: baseline.y });
         cluster = [];
       }
@@ -174,11 +208,20 @@ function groupItemsIntoLines(items, requestedPageWidth = 0) {
     .sort((left, right) => (right.y - left.y) || (left.xMin - right.xMin));
 }
 
-function classifyLine(line, pageWidth) {
-  const midpoint = pageWidth / 2;
-  const gutter = pageWidth * 0.035;
+function getLineLayoutMetrics(lines, pageWidth) {
+  const horizontal = getHorizontalMetrics(lines, pageWidth);
+  return {
+    fullWidth: horizontal.contentWidth * 0.62,
+    gutter: Math.max(6, horizontal.contentWidth * 0.025),
+    midpoint: horizontal.midpoint,
+  };
+}
+
+function classifyLine(line, pageWidth, requestedMetrics = null) {
+  const metrics = requestedMetrics || getLineLayoutMetrics([line], pageWidth);
+  const { fullWidth, gutter, midpoint } = metrics;
   const lineWidth = Math.max(0, line.xMax - line.xMin);
-  if (lineWidth >= pageWidth * 0.58 || (line.xMin < midpoint - gutter && line.xMax > midpoint + gutter)) {
+  if (lineWidth >= fullWidth || (line.xMin < midpoint - gutter && line.xMax > midpoint + gutter)) {
     return 'full';
   }
   if (line.xMax <= midpoint + gutter && (line.xMin + line.xMax) / 2 < midpoint) {
@@ -191,9 +234,14 @@ function classifyLine(line, pageWidth) {
 }
 
 function hasTwoColumnLayout(lines, pageWidth) {
-  const left = lines.filter((line) => classifyLine(line, pageWidth) === 'left');
-  const right = lines.filter((line) => classifyLine(line, pageWidth) === 'right');
+  const metrics = getLineLayoutMetrics(lines, pageWidth);
+  const left = lines.filter((line) => classifyLine(line, pageWidth, metrics) === 'left');
+  const right = lines.filter((line) => classifyLine(line, pageWidth, metrics) === 'right');
   if (left.length < 2 || right.length < 2) {
+    return false;
+  }
+  const directionalCount = left.length + right.length;
+  if (directionalCount < Math.max(4, Math.ceil(lines.length * 0.35))) {
     return false;
   }
   const leftTop = Math.max(...left.map((line) => line.y));
@@ -206,22 +254,30 @@ function hasTwoColumnLayout(lines, pageWidth) {
 function orderTwoColumnLines(lines, pageWidth) {
   const output = [];
   let band = [];
+  const metrics = getLineLayoutMetrics(lines, pageWidth);
   const flushBand = () => {
     if (!band.length) {
       return;
     }
     const left = band
-      .filter((line) => classifyLine(line, pageWidth) === 'left')
+      .filter((line) => classifyLine(line, pageWidth, metrics) === 'left')
       .sort((a, b) => b.y - a.y);
     const right = band
-      .filter((line) => classifyLine(line, pageWidth) === 'right')
+      .filter((line) => classifyLine(line, pageWidth, metrics) === 'right')
       .sort((a, b) => b.y - a.y);
-    output.push(...left, ...right);
+    const columnsOverlap = left.length && right.length
+      && Math.min(left[0].y, right[0].y)
+        > Math.max(left[left.length - 1].y, right[right.length - 1].y);
+    if (columnsOverlap) {
+      output.push(...left, ...right);
+    } else {
+      output.push(...band.slice().sort((a, b) => (b.y - a.y) || (a.xMin - b.xMin)));
+    }
     band = [];
   };
 
   for (const line of lines) {
-    if (classifyLine(line, pageWidth) === 'full') {
+    if (classifyLine(line, pageWidth, metrics) === 'full') {
       flushBand();
       output.push(line);
     } else {
@@ -232,36 +288,64 @@ function orderTwoColumnLines(lines, pageWidth) {
   return output;
 }
 
-function extractTextFromPdfItems(items, options = {}) {
+function extractPdfTextLayout(items, options = {}) {
   const textItems = (Array.isArray(items) ? items : [])
     .filter((item) => item && typeof item.str === 'string' && item.str.trim());
   const positionedCount = textItems
     .filter((item) => normalizePositionedItem(item)).length;
+  const viewportWidth = Number(options.viewport && options.viewport.width);
+  const viewportHeight = Number(options.viewport && options.viewport.height);
   if (positionedCount < Math.max(2, Math.ceil(textItems.length * 0.7))) {
-    return extractTextInItemOrder(items);
+    return {
+      lines: [],
+      pageHeight: Number.isFinite(viewportHeight) && viewportHeight > 0 ? viewportHeight : 0,
+      pageWidth: Number.isFinite(viewportWidth) && viewportWidth > 0 ? viewportWidth : 0,
+      text: extractTextInItemOrder(items),
+      twoColumn: false,
+    };
   }
 
-  const viewportWidth = Number(options.viewport && options.viewport.width);
   const positionedItems = textItems
     .map(normalizePositionedItem)
     .filter(Boolean);
   const requestedPageWidth = Number.isFinite(viewportWidth) && viewportWidth > 0
     ? viewportWidth
     : Math.max(...positionedItems.map((item) => item.x + item.width), 1);
-  const lines = groupItemsIntoLines(items, requestedPageWidth);
-  if (!lines.length) {
-    return extractTextInItemOrder(items);
+  const candidateLines = groupItemsIntoLines(items, requestedPageWidth, { splitColumns: true });
+  if (!candidateLines.length) {
+    return {
+      lines: [],
+      pageHeight: Number.isFinite(viewportHeight) && viewportHeight > 0 ? viewportHeight : 0,
+      pageWidth: requestedPageWidth,
+      text: extractTextInItemOrder(items),
+      twoColumn: false,
+    };
   }
   const pageWidth = Number.isFinite(viewportWidth) && viewportWidth > 0
     ? viewportWidth
-    : Math.max(...lines.map((line) => line.xMax), 1);
-  const ordered = hasTwoColumnLayout(lines, pageWidth)
+    : Math.max(...candidateLines.map((line) => line.xMax), 1);
+  const twoColumn = hasTwoColumnLayout(candidateLines, pageWidth);
+  const lines = twoColumn
+    ? candidateLines
+    : groupItemsIntoLines(items, requestedPageWidth, { splitColumns: false });
+  const ordered = twoColumn
     ? orderTwoColumnLines(lines, pageWidth)
     : lines;
-  return cleanupExtractedText(ordered.map((line) => line.text));
+  return {
+    lines: ordered.map((line) => ({ ...line })),
+    pageHeight: Number.isFinite(viewportHeight) && viewportHeight > 0 ? viewportHeight : 0,
+    pageWidth,
+    text: cleanupExtractedText(ordered.map((line) => line.text)),
+    twoColumn,
+  };
+}
+
+function extractTextFromPdfItems(items, options = {}) {
+  return extractPdfTextLayout(items, options).text;
 }
 
 module.exports = {
+  extractPdfTextLayout,
   extractTextFromPdfItems,
   extractTextInItemOrder,
   groupItemsIntoLines,

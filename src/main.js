@@ -1,4 +1,4 @@
-const { ItemView, MarkdownView, Notice, Plugin, PluginSettingTab, SecretComponent, Setting, loadPdfJs, setIcon } = require('obsidian');
+const { ItemView, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, SecretComponent, Setting, loadPdfJs, setIcon } = require('obsidian');
 const crypto = require('crypto');
 const fs = require('fs');
 const https = require('https');
@@ -6,7 +6,13 @@ const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
 const { pathToFileURL } = require('url');
-const { extractTextFromPdfItems } = require('./pdf-layout');
+const { extractPdfTextLayout, extractTextFromPdfItems } = require('./pdf-layout');
+const {
+  MAX_EXPORTED_AUDIO_BYTES,
+  bufferToArrayBuffer,
+  buildExportAudioFileName,
+  mergeAudioFiles,
+} = require('./audio-export');
 const {
   createReadingAnchor,
   normalizeReadingPositions,
@@ -43,6 +49,7 @@ const KEYBOARD_SEEK_SECONDS = 5;
 const LATEX_FORMULA_MAX_CHARS = 12;
 const MATH_READING_LANGUAGES = ['english', 'chinese', 'skip'];
 const SETTINGS_LANGUAGES = ['english', 'chinese'];
+const AUDIO_EXPORT_LOCATIONS = ['obsidian-attachment', 'note-folder', 'custom-folder'];
 const CREDENTIAL_SOURCES = ['obsidian-secret', 'key-file'];
 const SPEECH_ENGINES = ['local-cosyvoice', 'edge-tts', 'azure-speech', 'openrouter-tts'];
 const AZURE_SPEECH_CLOUDS = ['public', 'china'];
@@ -66,7 +73,7 @@ const RUNTIME_LOG_MAX_BYTES = 1024 * 1024;
 const PDF_MAX_BYTES = 200 * 1024 * 1024;
 const PDF_MAX_PAGES = 2000;
 const PDF_MAX_TEXT_CHARS = 5_000_000;
-const OWNED_CACHE_FILE_PATTERN = /^\d{10,}-\d+-\d+\.(?:txt|wav|mp3)$/i;
+const OWNED_CACHE_FILE_PATTERN = /^\d{10,}-\d+-(?:\d+|export)\.(?:txt|wav|mp3)$/i;
 const MICROSOFT_VOICE_PRESETS = [
   ['zh-CN-XiaoxiaoNeural', 'Mandarin Chinese - Xiaoxiao (female, warm)', '中文普通话 - 小晓（女声，温暖）'],
   ['zh-CN-XiaoyiNeural', 'Mandarin Chinese - Xiaoyi (female, lively)', '中文普通话 - 小艺（女声，活泼）'],
@@ -92,10 +99,10 @@ const OPENROUTER_TTS_MODELS = [
   [
     'microsoft/mai-voice-2',
     'en-US-Harper:MAI-Voice-2',
-    'Microsoft MAI-Voice-2 - expressive, 4 listed voices',
-    'Microsoft MAI-Voice-2 - 表现力强、当前公开 4 个音色',
-    'An expressive Microsoft model for natural long-form narration. OpenRouter currently lists only four voices: US English, Mexican Spanish, French, and German; no Chinese or UK English voice IDs are exposed.',
-    '微软表现力语音模型，适合自然长文叙述。OpenRouter 当前只列出 4 个音色：美式英语、墨西哥西班牙语、法语和德语，未公开中文或英式英语音色 ID。',
+    'Microsoft MAI-Voice-2 - expressive, with Mandarin compatibility voices',
+    'Microsoft MAI-Voice-2 - 表现力强、含中文兼容音色',
+    'An expressive Microsoft model for natural long-form narration. In addition to the four voices listed by OpenRouter, the plugin offers three Microsoft-published Mandarin ShortNames as compatibility presets. OpenRouter endpoint availability can change.',
+    '微软表现力语音模型，适合自然长文叙述。除 OpenRouter 元数据列出的 4 个音色外，插件还提供微软官方发布的 3 个普通话 ShortName 作为兼容预设；OpenRouter 端点的实际可用性可能变化。',
   ],
   [
     'google/gemini-3.1-flash-tts-preview',
@@ -114,12 +121,16 @@ const OPENROUTER_TTS_MODELS = [
     'OpenRouter 列出 54 个音色。本插件提供 12 个精选预设，完整覆盖中文、美式英语和英式英语的男女声；默认 George 男声适合较克制的学术朗读。',
   ],
 ];
-// Voice IDs verified against OpenRouter's speech + ZDR models API on 2026-08-26.
+// OpenRouter-listed IDs were checked against its speech + ZDR model API on 2026-08-26.
+// Standard MAI Mandarin compatibility IDs follow Microsoft's MAI voice catalog on 2026-08-27.
 const OPENROUTER_TTS_PRESETS = [
   ['microsoft/mai-voice-2-flash', 'en-US-Harper:MAI-Voice-2', 'Harper (US English)', 'Harper（美式英语）'],
   ['microsoft/mai-voice-2-flash', 'es-MX-Valeria:MAI-Voice-2', 'Valeria (Mexican Spanish)', 'Valeria（墨西哥西班牙语）'],
   ['microsoft/mai-voice-2-flash', 'fr-FR-Soleil:MAI-Voice-2', 'Soleil (French)', 'Soleil（法语）'],
   ['microsoft/mai-voice-2-flash', 'de-DE-Klaus:MAI-Voice-2', 'Klaus (German)', 'Klaus（德语）'],
+  ['microsoft/mai-voice-2', 'zh-CN-Bo:MAI-Voice-2', 'Bo (Mandarin male; not listed in OpenRouter metadata)', 'Bo（中文普通话男声；OpenRouter 元数据未列出）'],
+  ['microsoft/mai-voice-2', 'zh-CN-Lan:MAI-Voice-2', 'Lan (Mandarin female; not listed in OpenRouter metadata)', 'Lan（中文普通话女声；OpenRouter 元数据未列出）'],
+  ['microsoft/mai-voice-2', 'zh-CN-Mei:MAI-Voice-2', 'Mei (Mandarin female; not listed in OpenRouter metadata)', 'Mei（中文普通话女声；OpenRouter 元数据未列出）'],
   ['microsoft/mai-voice-2', 'en-US-Harper:MAI-Voice-2', 'Harper (US English)', 'Harper（美式英语）'],
   ['microsoft/mai-voice-2', 'es-MX-Valeria:MAI-Voice-2', 'Valeria (Mexican Spanish)', 'Valeria（墨西哥西班牙语）'],
   ['microsoft/mai-voice-2', 'fr-FR-Soleil:MAI-Voice-2', 'Soleil (French)', 'Soleil（法语）'],
@@ -208,7 +219,7 @@ const SETTINGS_UI_TEXT = {
     openRouterModelInfoName: 'Selected model characteristics',
     customModelInfo: 'Custom model: check its language, voice, and speech-output support in OpenRouter. The request fails if no ZDR endpoint is eligible.',
     openRouterVoicesName: 'Common voices for this model',
-    openRouterVoicesDesc: 'Only model-compatible voice IDs currently published by OpenRouter are listed. Gemini labels use official delivery styles; Kokoro labels use language and gender. MAI currently exposes only four voices.',
+    openRouterVoicesDesc: 'Model-specific presets are listed. MAI-Voice-2 also includes Microsoft-published Mandarin IDs that OpenRouter may accept even when its supported_voices metadata omits them; availability can vary by endpoint.',
     openRouterVoiceName: 'OpenRouter TTS voice',
     openRouterVoiceDesc: 'Voice ID supported by the selected model. Voice catalogs differ between models.',
     openRouterPrivacyName: 'OpenRouter privacy routing',
@@ -223,6 +234,14 @@ const SETTINGS_UI_TEXT = {
     onlinePrefetchDesc: 'How many future chunks an online engine may synthesize early. The default 1 improves continuity while limiting unused work to at most one chunk; choose 0 for strict on-demand synthesis.',
     onlinePrefetchNone: '0 - synthesize only when needed',
     onlinePrefetchOne: '1 - prefetch one chunk',
+    audioExportLocationName: 'Full-note audio save location',
+    audioExportLocationDesc: 'Choose where exported full-note audio is saved. The confirmation dialog shows the planned vault path before synthesis starts.',
+    audioExportLocationAttachment: 'Obsidian attachment folder (default)',
+    audioExportLocationNote: 'Same folder as the note',
+    audioExportLocationCustom: 'Custom folder in this vault',
+    audioExportFolderName: 'Custom audio folder',
+    audioExportFolderDesc: 'Enter a vault-relative folder such as Audio exports. Absolute paths and parent-directory segments are rejected.',
+    audioExportFolderPlaceholder: 'Audio exports',
     stripMarkdownName: 'Strip Markdown',
     stripMarkdownDesc: 'Remove frontmatter, links, headings, embeds, and common formatting before synthesis.',
     mathLanguageName: 'Math reading language',
@@ -308,7 +327,7 @@ const SETTINGS_UI_TEXT = {
     openRouterModelInfoName: '所选模型特点',
     customModelInfo: '自定义模型：请在 OpenRouter 核对其语言、音色和语音输出能力；如果没有符合条件的 ZDR 端点，请求会失败。',
     openRouterVoicesName: '该模型的常用音色',
-    openRouterVoicesDesc: '这里只列出 OpenRouter 当前公开且与所选模型兼容的音色 ID。Gemini 按官方朗读风格标注，Kokoro 按语言和性别标注；MAI 当前只公开 4 个音色。',
+    openRouterVoicesDesc: '这里只列出与所选模型对应的预设。MAI-Voice-2 还加入了微软官方发布、但 OpenRouter supported_voices 元数据可能遗漏的普通话音色；实际可用性可能随端点变化。',
     openRouterVoiceName: 'OpenRouter TTS 音色',
     openRouterVoiceDesc: '所选模型支持的音色 ID。不同模型的音色目录并不相同。',
     openRouterPrivacyName: 'OpenRouter 隐私路由',
@@ -323,6 +342,14 @@ const SETTINGS_UI_TEXT = {
     onlinePrefetchDesc: '允许在线引擎提前合成的后续分段数量。默认 1 可改善衔接，并把可能未使用的提前合成限制为最多一段；选择 0 可严格按需合成。',
     onlinePrefetchNone: '0 - 需要时才合成',
     onlinePrefetchOne: '1 - 提前合成一段',
+    audioExportLocationName: '整篇音频保存位置',
+    audioExportLocationDesc: '选择整篇笔记音频的保存位置。开始合成前，确认窗口会显示预计的库内路径。',
+    audioExportLocationAttachment: 'Obsidian 附件目录（默认）',
+    audioExportLocationNote: '与原笔记相同的目录',
+    audioExportLocationCustom: '本库内的自定义目录',
+    audioExportFolderName: '自定义音频目录',
+    audioExportFolderDesc: '填写库内相对目录，例如“导出音频”。不允许绝对路径或返回上级目录的路径。',
+    audioExportFolderPlaceholder: '导出音频',
     stripMarkdownName: '移除 Markdown 格式',
     stripMarkdownDesc: '合成前移除 frontmatter、链接、标题、嵌入内容和常见格式标记。',
     mathLanguageName: '数学公式朗读语言',
@@ -422,6 +449,8 @@ const DEFAULT_SETTINGS = {
   settingsLanguage: 'english',
   scriptPath: resolveDefaultScriptPath(),
   speechEngine: 'local-cosyvoice',
+  audioExportLocation: 'obsidian-attachment',
+  audioExportFolder: '',
   edgeTtsConsent: false,
   edgeTtsExecutable: DEFAULT_EDGE_TTS_EXECUTABLE,
   edgeTtsVoice: DEFAULT_EDGE_TTS_VOICE,
@@ -466,7 +495,7 @@ function getFileMtime(file) {
   return Math.max(0, Math.floor(Number(file && file.stat && file.stat.mtime) || 0));
 }
 
-function getPdfPageNumberFromNode(node, root) {
+function getPdfPageInfoFromNode(node, root) {
   let element = node && node.nodeType === 1 ? node : node && node.parentElement;
 
   while (element) {
@@ -476,19 +505,19 @@ function getPdfPageNumberFromNode(node, root) {
     const pageNumberValue = getAttribute('data-page-number');
     const pageNumber = Number(pageNumberValue);
     if (pageNumberValue !== null && Number.isInteger(pageNumber) && pageNumber >= 1) {
-      return pageNumber;
+      return { element, pageNumber };
     }
 
     const pageIndexValue = getAttribute('data-page-index');
     const pageIndex = Number(pageIndexValue);
     if (pageIndexValue !== null && Number.isInteger(pageIndex) && pageIndex >= 0) {
-      return pageIndex + 1;
+      return { element, pageNumber: pageIndex + 1 };
     }
 
     const identity = `${getAttribute('id') || ''} ${getAttribute('aria-label') || ''}`;
     const identityMatch = /(?:pageContainer|page[-_]|\bpage\s+)(\d+)\b/i.exec(identity);
     if (identityMatch) {
-      return Number(identityMatch[1]);
+      return { element, pageNumber: Number(identityMatch[1]) };
     }
 
     if (element === root) {
@@ -498,6 +527,91 @@ function getPdfPageNumberFromNode(node, root) {
   }
 
   return null;
+}
+
+function getPdfPageNumberFromNode(node, root) {
+  const pageInfo = getPdfPageInfoFromNode(node, root);
+  return pageInfo ? pageInfo.pageNumber : null;
+}
+
+function getFirstRangeRect(range) {
+  if (!range) {
+    return null;
+  }
+  try {
+    if (typeof range.getClientRects === 'function') {
+      const rects = range.getClientRects();
+      if (rects && rects.length) {
+        return rects[0];
+      }
+    }
+    if (typeof range.getBoundingClientRect === 'function') {
+      return range.getBoundingClientRect();
+    }
+  } catch (error) {
+    return null;
+  }
+  return null;
+}
+
+function getPdfSelectionPosition(range, pageElement) {
+  if (!range || !pageElement || typeof pageElement.getBoundingClientRect !== 'function') {
+    return null;
+  }
+  let pageRect;
+  try {
+    pageRect = pageElement.getBoundingClientRect();
+  } catch (error) {
+    return null;
+  }
+  const pageLeft = Number(pageRect && pageRect.left);
+  const pageTop = Number(pageRect && pageRect.top);
+  const pageWidth = Number(pageRect && pageRect.width);
+  const pageHeight = Number(pageRect && pageRect.height);
+  if (![pageLeft, pageTop, pageWidth, pageHeight].every(Number.isFinite) || pageWidth <= 0 || pageHeight <= 0) {
+    return null;
+  }
+
+  let selectionRect = null;
+  if (typeof range.cloneRange === 'function') {
+    try {
+      const startRange = range.cloneRange();
+      if (startRange && typeof startRange.collapse === 'function') {
+        startRange.collapse(true);
+        selectionRect = getFirstRangeRect(startRange);
+      }
+    } catch (error) {
+      selectionRect = null;
+    }
+  }
+  const isRectInsidePage = (rect) => {
+    const left = Number(rect && rect.left);
+    const top = Number(rect && rect.top);
+    const width = Math.max(0, Number(rect && rect.width) || 0);
+    const height = Math.max(0, Number(rect && rect.height) || 0);
+    return Number.isFinite(left)
+      && Number.isFinite(top)
+      && (width > 0 || height > 0)
+      && left >= pageLeft - 2
+      && left <= pageLeft + pageWidth + 2
+      && top >= pageTop - 2
+      && top <= pageTop + pageHeight + 2;
+  };
+  if (!isRectInsidePage(selectionRect)) {
+    selectionRect = getFirstRangeRect(range);
+  }
+  if (!isRectInsidePage(selectionRect)) {
+    return null;
+  }
+
+  const selectionLeft = Number(selectionRect.left);
+  const selectionTop = Number(selectionRect.top);
+  const selectionHeight = Math.max(0, Number(selectionRect.height) || 0);
+  const clampRatio = (value) => Math.max(0, Math.min(1, value));
+  return {
+    xRatio: clampRatio((selectionLeft - pageLeft) / pageWidth),
+    yRatio: clampRatio((selectionTop + selectionHeight / 2 - pageTop) / pageHeight),
+  };
 }
 
 function getPdfSelectionContext(selection, leaves, fallbackFile = null, capturedAt = Date.now()) {
@@ -532,16 +646,18 @@ function getPdfSelectionContext(selection, leaves, fallbackFile = null, captured
     if (!isPdfFile(file)) {
       continue;
     }
-    const pageNumber = getPdfPageNumberFromNode(startNode, root);
-    if (!pageNumber) {
+    const pageInfo = getPdfPageInfoFromNode(startNode, root);
+    if (!pageInfo) {
       continue;
     }
+    const selectionPosition = getPdfSelectionPosition(range, pageInfo.element);
 
     return {
       capturedAt: Number(capturedAt) || Date.now(),
       filePath: getPdfFileIdentity(file),
-      pageNumber,
+      pageNumber: pageInfo.pageNumber,
       selectedText: selectedText.slice(0, 2000),
+      ...(selectionPosition ? { selectionPosition } : {}),
     };
   }
 
@@ -557,29 +673,158 @@ function normalizePdfSelectionText(text) {
     .trim();
 }
 
-function slicePdfTextFromSelection(pageText, selectedText) {
+function createNormalizedPdfLayoutMap(layout) {
+  const sourceLines = layout && Array.isArray(layout.lines) ? layout.lines : [];
+  const lines = [];
+  let text = '';
+
+  for (const sourceLine of sourceLines) {
+    const lineText = normalizePdfSelectionText(sourceLine && sourceLine.text);
+    if (!lineText) {
+      continue;
+    }
+    let start = 0;
+    if (text) {
+      if (/[A-Za-z]-$/.test(text) && /^[a-z]/.test(lineText)) {
+        text = text.slice(0, -1);
+        start = text.length;
+      } else {
+        text += ' ';
+        start = text.length;
+      }
+    }
+    text += lineText;
+    lines.push({
+      ...sourceLine,
+      normalizedEnd: text.length,
+      normalizedStart: start,
+    });
+  }
+
+  return { lines, text };
+}
+
+function getPdfSpatialLineAnchor(pageText, layout, selectionPosition) {
+  const xRatio = Number(selectionPosition && selectionPosition.xRatio);
+  const yRatio = Number(selectionPosition && selectionPosition.yRatio);
+  const pageWidth = Number(layout && layout.pageWidth);
+  const pageHeight = Number(layout && layout.pageHeight);
+  if (
+    ![xRatio, yRatio, pageWidth, pageHeight].every(Number.isFinite)
+    || xRatio < 0
+    || xRatio > 1
+    || yRatio < 0
+    || yRatio > 1
+    || pageWidth <= 0
+    || pageHeight <= 0
+  ) {
+    return null;
+  }
+
+  const mapped = createNormalizedPdfLayoutMap(layout);
+  if (!mapped.lines.length || mapped.text !== pageText) {
+    return null;
+  }
+  const targetX = xRatio * pageWidth;
+  const targetY = (1 - yRatio) * pageHeight;
+  let best = null;
+
+  for (const line of mapped.lines) {
+    const xMin = Number(line.xMin);
+    const xMax = Number(line.xMax);
+    const y = Number(line.y);
+    if (![xMin, xMax, y].every(Number.isFinite)) {
+      continue;
+    }
+    const horizontalDistance = targetX < xMin
+      ? xMin - targetX
+      : targetX > xMax
+        ? targetX - xMax
+        : 0;
+    const verticalDistance = Math.abs(targetY - y);
+    const score = verticalDistance + horizontalDistance * 0.4;
+    if (!best || score < best.score) {
+      best = { horizontalDistance, line, score, verticalDistance };
+    }
+  }
+
+  if (
+    !best
+    || best.verticalDistance > Math.max(24, pageHeight * 0.04)
+    || best.horizontalDistance > Math.max(30, pageWidth * 0.12)
+  ) {
+    return null;
+  }
+  return best.line.normalizedStart;
+}
+
+function findPdfSelectionMatchIndices(pageLower, candidateLower) {
+  const indexes = [];
+  let searchFrom = 0;
+  while (candidateLower && searchFrom <= pageLower.length) {
+    const index = pageLower.indexOf(candidateLower, searchFrom);
+    if (index < 0) {
+      break;
+    }
+    indexes.push(index);
+    searchFrom = index + 1;
+  }
+  return indexes;
+}
+
+function slicePdfTextFromSelection(pageText, selectedText, options = {}) {
   const page = normalizePdfSelectionText(pageText);
   const selected = normalizePdfSelectionText(selectedText);
   if (!page || !selected) {
     return { matched: false, text: page };
   }
 
-  const candidateLengths = [selected.length, 400, 240, 160, 100, 60, 30, 16, 8]
+  const spatialAnchor = getPdfSpatialLineAnchor(
+    page,
+    options.layout,
+    options.selectionPosition
+  );
+  const minimumCandidateLength = spatialAnchor === null ? 8 : 2;
+  const candidateLengths = [selected.length, 400, 240, 160, 100, 60, 30, 16, 8, 4, 2]
     .map((length) => Math.min(selected.length, length))
-    .filter((length, index, values) => length >= 8 && values.indexOf(length) === index);
+    .filter((length, index, values) => (
+      length >= minimumCandidateLength && values.indexOf(length) === index
+    ));
   const pageLower = page.toLocaleLowerCase();
 
   for (const length of candidateLengths) {
     const candidate = selected.slice(0, length);
-    let matchIndex = page.indexOf(candidate);
-    if (matchIndex < 0) {
-      matchIndex = pageLower.indexOf(candidate.toLocaleLowerCase());
+    if (spatialAnchor === null) {
+      let matchIndex = page.indexOf(candidate);
+      if (matchIndex < 0) {
+        matchIndex = pageLower.indexOf(candidate.toLocaleLowerCase());
+      }
+      if (matchIndex >= 0) {
+        return { matched: true, text: page.slice(matchIndex) };
+      }
+      continue;
     }
-    if (matchIndex >= 0) {
-      return { matched: true, text: page.slice(matchIndex) };
+
+    const matchIndices = findPdfSelectionMatchIndices(
+      pageLower,
+      candidate.toLocaleLowerCase()
+    );
+    if (!matchIndices.length) {
+      continue;
+    }
+    const closestIndex = matchIndices.reduce((closest, current) => (
+      Math.abs(current - spatialAnchor) < Math.abs(closest - spatialAnchor)
+        ? current
+        : closest
+    ));
+    if (Math.abs(closestIndex - spatialAnchor) <= Math.max(240, selected.length)) {
+      return { matched: true, text: page.slice(closestIndex) };
     }
   }
 
+  if (spatialAnchor !== null) {
+    return { matched: true, text: page.slice(spatialAnchor) };
+  }
   return { matched: false, text: page };
 }
 
@@ -1285,6 +1530,8 @@ function selectKnownSettings(defaults, candidate) {
 
 function createDefaultSettings() {
   return {
+    audioExportFolder: normalizeAudioExportFolder(DEFAULT_SETTINGS.audioExportFolder),
+    audioExportLocation: normalizeAudioExportLocation(DEFAULT_SETTINGS.audioExportLocation),
     azureSpeechCloud: normalizeAzureSpeechCloud(DEFAULT_SETTINGS.azureSpeechCloud),
     azureSpeechConsent: DEFAULT_SETTINGS.azureSpeechConsent,
     azureSpeechCredentialSource: normalizeCredentialSource(DEFAULT_SETTINGS.azureSpeechCredentialSource),
@@ -1628,6 +1875,208 @@ function resolvePowerShellExecutable() {
   return 'powershell.exe';
 }
 
+function isMarkdownFile(file) {
+  return Boolean(file && String(file.extension || '').toLowerCase() === 'md');
+}
+
+function getAudioExportExtension(speechEngine) {
+  return normalizeSpeechEngine(speechEngine) === 'local-cosyvoice' ? 'wav' : 'mp3';
+}
+
+function normalizeAudioExportLocation(value) {
+  const normalized = String(value || '').trim();
+  return AUDIO_EXPORT_LOCATIONS.includes(normalized)
+    ? normalized
+    : 'obsidian-attachment';
+}
+
+function normalizeVaultRelativeAudioPath(value) {
+  const source = String(value || '');
+  if (source.includes('\0')) {
+    return '';
+  }
+  const normalized = source
+    .trim()
+    .replace(/\\/g, '/')
+    .replace(/\/+/g, '/')
+    .replace(/\/$/, '');
+  const segments = normalized.split('/');
+  if (
+    !normalized
+    || normalized.startsWith('/')
+    || /^[A-Za-z]:/.test(normalized)
+    || segments.some((segment) => segment.trim() === '.' || segment.trim() === '..')
+  ) {
+    return '';
+  }
+  return normalized;
+}
+
+function normalizeAudioExportFolder(value) {
+  return normalizeVaultRelativeAudioPath(value);
+}
+
+function getAvailableVaultAudioPath(vault, requestedPath) {
+  const normalizedPath = normalizeVaultRelativeAudioPath(requestedPath);
+  if (!normalizedPath) {
+    throw new Error('The audio export path must stay inside the current Obsidian vault.');
+  }
+  if (!vault || typeof vault.getAbstractFileByPath !== 'function') {
+    return normalizedPath;
+  }
+
+  const extension = path.posix.extname(normalizedPath);
+  const stem = extension ? normalizedPath.slice(0, -extension.length) : normalizedPath;
+  for (let suffix = 0; suffix < 10000; suffix += 1) {
+    const candidate = `${stem}${suffix ? ` ${suffix}` : ''}${extension}`;
+    if (!vault.getAbstractFileByPath(candidate)) {
+      return candidate;
+    }
+  }
+  throw new Error('Could not choose a non-conflicting name for the exported audio.');
+}
+
+function createAudioExportSummary(options = {}) {
+  return {
+    chunkCount: Math.max(0, Math.floor(Number(options.chunkCount) || 0)),
+    engineLabel: String(options.engineLabel || 'Speech engine'),
+    insertAfterExport: options.insertAfterExport === true,
+    isOnline: isOnlineSpeechEngine(options.speechEngine),
+    noteName: String(options.noteName || 'note'),
+    speechEngine: normalizeSpeechEngine(options.speechEngine),
+    targetPath: String(options.targetPath || '').trim(),
+    textLength: Math.max(0, Math.floor(Number(options.textLength) || 0)),
+  };
+}
+
+function getAudioExportUiText(languageValue, summaryValue) {
+  const summary = createAudioExportSummary(summaryValue);
+  const useChinese = normalizeSettingsLanguage(languageValue) === 'chinese';
+  const numberFormatter = new Intl.NumberFormat(useChinese ? 'zh-CN' : 'en-US');
+  if (useChinese) {
+    return {
+      acknowledge: summary.isOnline
+        ? '我了解：整篇可朗读文本将分段发送给所选在线语音服务，并可能消耗 API 额度或产生费用。'
+        : '我了解：插件将为整篇笔记执行本地语音合成，过程可能需要较长时间。',
+      cancel: '取消',
+      characterLabel: '可朗读字符数',
+      confirm: summary.insertAfterExport ? '导出并插入' : '导出音频',
+      description: summary.insertAfterExport
+        ? '全部分段成功后，音频会保存到下方位置并插入原笔记。'
+        : '全部分段成功后，音频会保存到下方位置。',
+      engineLabel: '语音引擎',
+      locationLabel: '预计保存位置',
+      noteLabel: '笔记',
+      quotaWarning: summary.isOnline
+        ? `将发送 ${numberFormatter.format(summary.textLength)} 个字符，计划按 ${numberFormatter.format(summary.chunkCount)} 个分段顺序合成；临时失败可能触发有限重试，因此实际网络尝试次数可能更高。不会为播放连续性额外预合成。实际额度或费用由服务商和模型决定。`
+        : `将执行 ${numberFormatter.format(summary.chunkCount)} 个本地合成分段；不会调用在线 API。`,
+      requestLabel: summary.isOnline ? '预计在线请求' : '合成分段',
+      title: '导出整篇笔记音频？',
+    };
+  }
+  return {
+    acknowledge: summary.isOnline
+      ? 'I understand that all readable note text will be sent in chunks to the selected online speech service and may use API quota or incur charges.'
+      : 'I understand that the entire note will be synthesized locally and may take a long time.',
+    cancel: 'Cancel',
+    characterLabel: 'Readable characters',
+    confirm: summary.insertAfterExport ? 'Export and insert' : 'Export audio',
+    description: summary.insertAfterExport
+      ? 'After every segment succeeds, the audio will be saved at the location below and embedded in the original note.'
+      : 'After every segment succeeds, the audio will be saved at the location below.',
+    engineLabel: 'Speech engine',
+    locationLabel: 'Planned save location',
+    noteLabel: 'Note',
+    quotaWarning: summary.isOnline
+      ? `${numberFormatter.format(summary.textLength)} characters will be sent in ${numberFormatter.format(summary.chunkCount)} planned sequential segments. Temporary failures may trigger bounded retries, so the network attempt count can be higher. No playback-continuity chunks are prefetched. Actual quota or cost depends on the provider and model.`
+      : `${numberFormatter.format(summary.chunkCount)} local synthesis segments will run. No online API is used.`,
+    requestLabel: summary.isOnline ? 'Estimated online requests' : 'Synthesis segments',
+    title: 'Export the entire note as audio?',
+  };
+}
+
+class AudioExportConfirmModal extends Modal {
+  constructor(app, language, summary) {
+    super(app);
+    this.language = language;
+    this.summary = createAudioExportSummary(summary);
+    this.settled = false;
+    this.resultPromise = new Promise((resolve) => {
+      this.resolveResult = resolve;
+    });
+  }
+
+  finish(result) {
+    if (this.settled) {
+      return;
+    }
+    this.settled = true;
+    this.resolveResult(Boolean(result));
+    this.close();
+  }
+
+  openAndWait() {
+    this.open();
+    return this.resultPromise;
+  }
+
+  onOpen() {
+    const ui = getAudioExportUiText(this.language, this.summary);
+    this.titleEl.setText(ui.title);
+    this.contentEl.empty();
+    this.contentEl.addClass('note-reader-cosyvoice-export-modal');
+    this.contentEl.createEl('p', { text: ui.description });
+
+    const summaryEl = this.contentEl.createEl('dl', { cls: 'note-reader-cosyvoice-export-summary' });
+    const addSummaryRow = (label, value) => {
+      summaryEl.createEl('dt', { text: label });
+      summaryEl.createEl('dd', { text: String(value) });
+    };
+    addSummaryRow(ui.noteLabel, this.summary.noteName);
+    addSummaryRow(ui.engineLabel, this.summary.engineLabel);
+    addSummaryRow(ui.locationLabel, this.summary.targetPath);
+    addSummaryRow(ui.characterLabel, new Intl.NumberFormat().format(this.summary.textLength));
+    addSummaryRow(ui.requestLabel, new Intl.NumberFormat().format(this.summary.chunkCount));
+    this.contentEl.createDiv({
+      cls: 'note-reader-cosyvoice-export-warning',
+      text: ui.quotaWarning,
+    });
+
+    const acknowledgement = this.contentEl.createEl('label', {
+      cls: 'note-reader-cosyvoice-export-acknowledgement',
+    });
+    const checkbox = acknowledgement.createEl('input', {
+      attr: { type: 'checkbox' },
+    });
+    acknowledgement.createSpan({ text: ui.acknowledge });
+
+    const actions = this.contentEl.createDiv({ cls: 'note-reader-cosyvoice-export-actions' });
+    const cancelButton = actions.createEl('button', { text: ui.cancel });
+    const confirmButton = actions.createEl('button', {
+      cls: 'mod-cta',
+      text: ui.confirm,
+    });
+    confirmButton.disabled = true;
+    checkbox.addEventListener('change', () => {
+      confirmButton.disabled = !checkbox.checked;
+    });
+    cancelButton.addEventListener('click', () => this.finish(false));
+    confirmButton.addEventListener('click', () => {
+      if (checkbox.checked) {
+        this.finish(true);
+      }
+    });
+  }
+
+  onClose() {
+    this.contentEl.empty();
+    if (!this.settled) {
+      this.settled = true;
+      this.resolveResult(false);
+    }
+  }
+}
+
 class CosyVoiceReaderPlugin extends Plugin {
   async onload() {
     this.sequence = 0;
@@ -1636,6 +2085,7 @@ class CosyVoiceReaderPlugin extends Plugin {
     this.currentProcess = null;
     this.currentRequests = new Set();
     this.lastMarkdownView = null;
+    this.lastReadableFile = null;
     this.lastPdfSelection = null;
     this.pauseRequested = false;
     this.readerState = createReaderState();
@@ -1652,11 +2102,23 @@ class CosyVoiceReaderPlugin extends Plugin {
 
     this.registerView(VIEW_TYPE, (leaf) => new CosyVoiceReaderView(leaf, this));
     this.lastMarkdownView = this.app.workspace.getActiveViewOfType(MarkdownView);
+    const initiallyActiveFile = typeof this.app.workspace.getActiveFile === 'function'
+      ? this.app.workspace.getActiveFile()
+      : null;
+    if (isMarkdownFile(initiallyActiveFile) || isPdfFile(initiallyActiveFile)) {
+      this.lastReadableFile = initiallyActiveFile;
+    }
     this.registerEvent(
       this.app.workspace.on('active-leaf-change', () => {
         const view = this.app.workspace.getActiveViewOfType(MarkdownView);
         if (view && view.editor) {
           this.lastMarkdownView = view;
+        }
+        const file = typeof this.app.workspace.getActiveFile === 'function'
+          ? this.app.workspace.getActiveFile()
+          : null;
+        if (isMarkdownFile(file) || isPdfFile(file)) {
+          this.lastReadableFile = file;
         }
         this.renderReaderViews();
       })
@@ -1683,7 +2145,35 @@ class CosyVoiceReaderPlugin extends Plugin {
       id: 'read-current-note',
       name: 'Read current note or PDF aloud',
       callback: () => {
-        void this.readCurrentNote();
+        void this.runUserAction('Read file', () => this.readCurrentNote());
+      },
+    });
+
+    this.addCommand({
+      id: 'export-current-note-audio',
+      name: 'Export full note audio',
+      checkCallback: (checking) => {
+        if (!this.canExportCurrentNote()) {
+          return false;
+        }
+        if (!checking) {
+          void this.runUserAction('Export full audio', () => this.exportCurrentNoteAudio({ insertAfterExport: false }));
+        }
+        return true;
+      },
+    });
+
+    this.addCommand({
+      id: 'export-current-note-audio-and-insert',
+      name: 'Export full note audio and insert it into the note',
+      checkCallback: (checking) => {
+        if (!this.canExportCurrentNote()) {
+          return false;
+        }
+        if (!checking) {
+          void this.runUserAction('Export and insert audio', () => this.exportCurrentNoteAudio({ insertAfterExport: true }));
+        }
+        return true;
       },
     });
 
@@ -1848,6 +2338,8 @@ class CosyVoiceReaderPlugin extends Plugin {
     const hadAzureCredentialSource = Object.prototype.hasOwnProperty.call(source, 'azureSpeechCredentialSource');
     const hadOpenRouterCredentialSource = Object.prototype.hasOwnProperty.call(source, 'openRouterCredentialSource');
     this.settings = selectKnownSettings(defaults, source);
+    this.settings.audioExportFolder = normalizeAudioExportFolder(this.settings.audioExportFolder);
+    this.settings.audioExportLocation = normalizeAudioExportLocation(this.settings.audioExportLocation);
     this.settings.speed = normalizeSpeed(this.settings.speed);
     this.settings.speechEngine = normalizeSpeechEngine(this.settings.speechEngine);
     this.settings.azureSpeechCloud = normalizeAzureSpeechCloud(this.settings.azureSpeechCloud);
@@ -1889,6 +2381,8 @@ class CosyVoiceReaderPlugin extends Plugin {
 
   async saveSettings() {
     this.settings = selectKnownSettings(createDefaultSettings(), this.settings);
+    this.settings.audioExportFolder = normalizeAudioExportFolder(this.settings.audioExportFolder);
+    this.settings.audioExportLocation = normalizeAudioExportLocation(this.settings.audioExportLocation);
     this.settings.speed = normalizeSpeed(this.settings.speed);
     this.settings.speechEngine = normalizeSpeechEngine(this.settings.speechEngine);
     this.settings.azureSpeechCloud = normalizeAzureSpeechCloud(this.settings.azureSpeechCloud);
@@ -2064,6 +2558,32 @@ class CosyVoiceReaderPlugin extends Plugin {
     this.renderReaderViews();
   }
 
+  async runUserAction(label, action) {
+    try {
+      return await action();
+    } catch (error) {
+      const message = messageFromError(error);
+      if (!this.activeSession) {
+        this.updateStatus(`CosyVoice ${label} error`, {
+          canPause: false,
+          canNextChunk: false,
+          canPreviousChunk: false,
+          canSeek: false,
+          canStop: false,
+          error: message,
+          isPaused: false,
+          phase: 'error',
+          status: 'error',
+        });
+      }
+      if (typeof this.writeRuntimeLog === 'function') {
+        await this.writeRuntimeLog('failed', { message: `${label}: ${message}` });
+      }
+      new Notice(`CosyVoice ${label} failed: ${message}`, 10000);
+      return null;
+    }
+  }
+
   capturePdfSelection() {
     if (typeof document === 'undefined' || typeof document.getSelection !== 'function') {
       return null;
@@ -2095,24 +2615,439 @@ class CosyVoiceReaderPlugin extends Plugin {
     return context && context.filePath === getPdfFileIdentity(file) ? context : null;
   }
 
-  getActiveMarkdownView() {
-    const view = this.app.workspace.getActiveViewOfType(MarkdownView) || this.lastMarkdownView;
+  getCurrentReadableFile() {
+    const workspace = this.app && this.app.workspace;
+    const activeFile = workspace && typeof workspace.getActiveFile === 'function'
+      ? workspace.getActiveFile()
+      : null;
+    if (activeFile) {
+      if (isMarkdownFile(activeFile) || isPdfFile(activeFile)) {
+        this.lastReadableFile = activeFile;
+      }
+      return activeFile;
+    }
+    return this.lastReadableFile || null;
+  }
 
-    if (!view || !view.editor) {
-      new Notice('CosyVoice: no active Markdown note.');
+  findMarkdownViewForFile(file) {
+    if (!isMarkdownFile(file)) {
+      return null;
+    }
+    const targetPath = getPdfFileIdentity(file);
+    const workspace = this.app && this.app.workspace;
+    const candidates = [];
+    if (workspace && typeof workspace.getActiveViewOfType === 'function') {
+      candidates.push(workspace.getActiveViewOfType(MarkdownView));
+    }
+    candidates.push(this.lastMarkdownView);
+    if (workspace && typeof workspace.getLeavesOfType === 'function') {
+      const leaves = workspace.getLeavesOfType('markdown');
+      for (const leaf of Array.isArray(leaves) ? leaves : []) {
+        candidates.push(leaf && leaf.view);
+      }
+    }
+    const view = candidates.find((candidate) => candidate
+      && candidate.editor
+      && getPdfFileIdentity(candidate.file) === targetPath);
+    if (view) {
+      this.lastMarkdownView = view;
+    }
+    return view || null;
+  }
+
+  getCurrentMarkdownContext(options = {}) {
+    const notify = options.notify !== false;
+    const file = this.getCurrentReadableFile();
+    const view = this.findMarkdownViewForFile(file);
+    if (!file || !view) {
+      if (notify) {
+        new Notice('CosyVoice: open a Markdown note before using this action.', 8000);
+      }
+      return null;
+    }
+    return { file, view };
+  }
+
+  getActiveMarkdownView() {
+    const context = this.getCurrentMarkdownContext({ notify: true });
+    return context ? context.view : null;
+  }
+
+  canExportCurrentNote() {
+    return Boolean(this.getCurrentMarkdownContext({ notify: false }));
+  }
+
+  getCurrentNoteExportContext() {
+    return this.getCurrentMarkdownContext({ notify: true });
+  }
+
+  requestAudioExportConfirmation(summary) {
+    const modal = new AudioExportConfirmModal(
+      this.app,
+      this.settings && this.settings.settingsLanguage,
+      summary
+    );
+    return modal.openAndWait();
+  }
+
+  async getAudioExportTargetPlan(noteFile, extension) {
+    const normalizedExtension = String(extension || '').trim().toLowerCase().replace(/^\./, '');
+    if (!['mp3', 'wav'].includes(normalizedExtension)) {
+      throw new Error('The selected speech engine returned an unsupported export format.');
+    }
+    const fileName = buildExportAudioFileName(
+      noteFile && (noteFile.basename || noteFile.name) || 'note',
+      normalizedExtension
+    );
+    const location = normalizeAudioExportLocation(
+      this.settings && this.settings.audioExportLocation
+    );
+    let requestedPath = '';
+
+    if (
+      location === 'obsidian-attachment'
+      && this.app.fileManager
+      && typeof this.app.fileManager.getAvailablePathForAttachment === 'function'
+    ) {
+      requestedPath = await this.app.fileManager.getAvailablePathForAttachment(
+        fileName,
+        noteFile && noteFile.path
+      );
+    } else {
+      let folder = '';
+      if (location === 'custom-folder') {
+        folder = normalizeAudioExportFolder(this.settings && this.settings.audioExportFolder);
+        if (!folder) {
+          throw new Error('Choose a valid custom audio folder in the plugin settings before exporting.');
+        }
+      } else {
+        const noteFolder = path.posix.dirname(String(noteFile && noteFile.path || ''));
+        folder = noteFolder && noteFolder !== '.' ? noteFolder : '';
+      }
+      requestedPath = folder ? `${folder}/${fileName}` : fileName;
+    }
+
+    return {
+      location,
+      targetPath: getAvailableVaultAudioPath(this.app.vault, requestedPath),
+    };
+  }
+
+  async ensureAudioExportFolder(folderPath) {
+    const normalizedFolder = normalizeAudioExportFolder(folderPath);
+    if (!normalizedFolder) {
+      return;
+    }
+    const vault = this.app && this.app.vault;
+    if (
+      !vault
+      || typeof vault.getAbstractFileByPath !== 'function'
+      || typeof vault.createFolder !== 'function'
+    ) {
+      throw new Error('This Obsidian version cannot create the custom audio export folder.');
+    }
+
+    let currentPath = '';
+    for (const segment of normalizedFolder.split('/')) {
+      currentPath = currentPath ? `${currentPath}/${segment}` : segment;
+      const existing = vault.getAbstractFileByPath(currentPath);
+      if (existing) {
+        if (!Array.isArray(existing.children)) {
+          throw new Error(`Cannot create the audio export folder because ${currentPath} is a file.`);
+        }
+        continue;
+      }
+      try {
+        await vault.createFolder(currentPath);
+      } catch (error) {
+        const concurrentlyCreated = vault.getAbstractFileByPath(currentPath);
+        if (!concurrentlyCreated || !Array.isArray(concurrentlyCreated.children)) {
+          throw error;
+        }
+      }
+    }
+  }
+
+  async createVaultAudioAttachment(noteFile, temporaryAudioPath, extension, targetPlan = null) {
+    if (!this.app.vault || typeof this.app.vault.createBinary !== 'function') {
+      throw new Error('This Obsidian version cannot create binary attachments.');
+    }
+
+    const normalizedExtension = String(extension || '').trim().toLowerCase().replace(/^\./, '');
+    const plan = targetPlan && targetPlan.targetPath
+      ? {
+        location: normalizeAudioExportLocation(targetPlan.location),
+        targetPath: targetPlan.targetPath,
+      }
+      : await this.getAudioExportTargetPlan(noteFile, normalizedExtension);
+    let targetPath = normalizeVaultRelativeAudioPath(plan.targetPath);
+    if (!targetPath || path.posix.extname(targetPath).toLowerCase() !== `.${normalizedExtension}`) {
+      throw new Error('Obsidian returned an invalid attachment path for the exported audio.');
+    }
+    if (
+      typeof this.app.vault.getAbstractFileByPath === 'function'
+      && this.app.vault.getAbstractFileByPath(targetPath)
+    ) {
+      targetPath = getAvailableVaultAudioPath(this.app.vault, targetPath);
+    }
+    if (plan.location === 'custom-folder') {
+      const targetFolder = path.posix.dirname(targetPath);
+      await this.ensureAudioExportFolder(targetFolder === '.' ? '' : targetFolder);
+    }
+
+    const audioBytes = await fs.promises.readFile(temporaryAudioPath);
+    if (!audioBytes.length || audioBytes.length > MAX_EXPORTED_AUDIO_BYTES) {
+      throw new Error(`The exported audio is empty or exceeds the ${Math.floor(MAX_EXPORTED_AUDIO_BYTES / (1024 * 1024))} MB safety limit.`);
+    }
+    return this.app.vault.createBinary(targetPath, bufferToArrayBuffer(audioBytes));
+  }
+
+  async insertAudioAttachmentIntoNote(noteFile, audioFile) {
+    const generatedLink = this.app.fileManager
+      && typeof this.app.fileManager.generateMarkdownLink === 'function'
+      ? this.app.fileManager.generateMarkdownLink(audioFile, noteFile.path)
+      : `[[${audioFile.path}]]`;
+    const embed = generatedLink.startsWith('!') ? generatedLink : `!${generatedLink}`;
+    const workspace = this.app && this.app.workspace;
+    const activeView = workspace && typeof workspace.getActiveViewOfType === 'function'
+      ? workspace.getActiveViewOfType(MarkdownView)
+      : null;
+
+    if (activeView && activeView.editor
+      && getPdfFileIdentity(activeView.file) === getPdfFileIdentity(noteFile)) {
+      activeView.editor.replaceRange(`\n${embed}\n`, activeView.editor.getCursor());
+      return 'cursor';
+    }
+
+    if (this.app.vault && typeof this.app.vault.process === 'function') {
+      await this.app.vault.process(noteFile, (content) => {
+        const trimmed = String(content || '').replace(/\s*$/, '');
+        return `${trimmed}${trimmed ? '\n\n' : ''}${embed}\n`;
+      });
+      return 'end';
+    }
+
+    throw new Error('The audio was exported, but the original note is no longer open and cannot be updated safely.');
+  }
+
+  async exportCurrentNoteAudio(options = {}) {
+    const context = this.getCurrentNoteExportContext();
+    if (!context) {
+      return null;
+    }
+    const insertAfterExport = options.insertAfterExport === true;
+    const text = this.settings.stripMarkdown
+      ? sanitizeTextForSpeech(context.view.editor.getValue(), {
+        mathReadingLanguage: this.settings.mathReadingLanguage,
+      })
+      : normalizeLineBreaks(context.view.editor.getValue()).trim();
+    if (!text) {
+      new Notice('CosyVoice: nothing readable in this note.', 6000);
       return null;
     }
 
-    this.lastMarkdownView = view;
-    return view;
+    const configuration = this.getSpeechConfiguration();
+    if (!configuration) {
+      return null;
+    }
+    const extension = getAudioExportExtension(configuration.speechEngine);
+    const exportPlan = await this.getAudioExportTargetPlan(context.file, extension);
+    const chunks = splitTextForSpeechChunks(text, configuration.chunkLimits);
+    if (!chunks.length) {
+      new Notice('CosyVoice: nothing readable in this note.', 6000);
+      return null;
+    }
+    const summary = createAudioExportSummary({
+      chunkCount: chunks.length,
+      engineLabel: configuration.engineLabel,
+      insertAfterExport,
+      noteName: context.file.basename || context.file.name || 'note',
+      speechEngine: configuration.speechEngine,
+      targetPath: exportPlan.targetPath,
+      textLength: text.length,
+    });
+    if (!await this.requestAudioExportConfirmation(summary)) {
+      return null;
+    }
+
+    const confirmedContext = this.getCurrentNoteExportContext();
+    if (!confirmedContext
+      || getPdfFileIdentity(confirmedContext.file) !== getPdfFileIdentity(context.file)) {
+      new Notice('CosyVoice: the active note changed. Start the export again to review the new estimate.', 8000);
+      return null;
+    }
+    const confirmedText = this.settings.stripMarkdown
+      ? sanitizeTextForSpeech(confirmedContext.view.editor.getValue(), {
+        mathReadingLanguage: this.settings.mathReadingLanguage,
+      })
+      : normalizeLineBreaks(confirmedContext.view.editor.getValue()).trim();
+    if (confirmedText !== text) {
+      new Notice('CosyVoice: the note changed while confirmation was open. Start the export again to review the new estimate.', 8000);
+      return null;
+    }
+
+    await this.activateControlView();
+    await this.stopReading({ silent: true });
+    this.pauseRequested = false;
+    const sourceLabel = `${context.file.basename || context.file.name || 'note'} (audio export)`;
+    const session = this.createSpeechSession(chunks, sourceLabel, configuration, {
+      file: context.file,
+      kind: 'audio-export',
+      sourceKind: 'markdown',
+    });
+    this.activeSession = session;
+    this.updateStatus(`${configuration.engineLabel} export 0/${chunks.length}`, {
+      canPause: false,
+      canNextChunk: false,
+      canPreviousChunk: false,
+      canSeek: false,
+      canStop: true,
+      currentChunk: 0,
+      currentText: previewText(chunks[0]),
+      error: '',
+      isPaused: false,
+      phase: 'queued',
+      progress: 0,
+      source: sourceLabel,
+      status: 'running',
+      totalChunks: chunks.length,
+    });
+    await this.writeRuntimeLog('audio-export-start', {
+      chunks: chunks.length,
+      insertAfterExport,
+      textLength: text.length,
+    });
+    new Notice(`${configuration.engineLabel}: exporting ${chunks.length} audio segments.`, 6000);
+
+    const temporaryOutputPath = path.join(
+      this.cacheDir,
+      `${Date.now()}-${session.id}-export.${extension}`
+    );
+    session.files.push(temporaryOutputPath);
+    const preparedPaths = [];
+
+    try {
+      for (let index = 0; index < chunks.length; index += 1) {
+        if (!this.isActive(session)) {
+          throw new Error('Audio export stopped.');
+        }
+        session.currentChunkIndex = index;
+        const prepared = await this.prepareChunk(chunks[index], index, session);
+        preparedPaths.push(prepared.outputPath);
+      }
+      if (!this.isActive(session)) {
+        throw new Error('Audio export stopped.');
+      }
+
+      this.updateStatus(`${configuration.engineLabel} merging audio`, {
+        canPause: false,
+        canNextChunk: false,
+        canPreviousChunk: false,
+        canSeek: false,
+        canStop: true,
+        currentChunk: chunks.length,
+        currentText: `Combining ${chunks.length} synthesized segments...`,
+        isPaused: false,
+        phase: 'synthesizing',
+        progress: 0.99,
+        status: 'running',
+        totalChunks: chunks.length,
+      });
+      const merged = await mergeAudioFiles(preparedPaths, temporaryOutputPath, extension);
+      if (!this.isActive(session)) {
+        throw new Error('Audio export stopped.');
+      }
+      const audioFile = await this.createVaultAudioAttachment(
+        context.file,
+        temporaryOutputPath,
+        extension,
+        exportPlan
+      );
+      if (!this.isActive(session)) {
+        new Notice(`CosyVoice: the completed audio was saved to ${audioFile.path}, but insertion was cancelled.`, 10000);
+        return audioFile;
+      }
+      let insertionLocation = '';
+      let insertionError = null;
+      if (insertAfterExport) {
+        try {
+          insertionLocation = await this.insertAudioAttachmentIntoNote(context.file, audioFile);
+        } catch (error) {
+          insertionError = error;
+        }
+      }
+
+      this.updateStatus(`${configuration.engineLabel} audio export complete`, {
+        canPause: false,
+        canNextChunk: false,
+        canPreviousChunk: false,
+        canSeek: false,
+        canStop: false,
+        currentChunk: chunks.length,
+        currentText: audioFile.path,
+        error: insertionError ? messageFromError(insertionError) : '',
+        isPaused: false,
+        phase: 'complete',
+        progress: 1,
+        status: 'complete',
+        totalChunks: chunks.length,
+      });
+      await this.writeRuntimeLog('audio-export-complete', {
+        bytes: merged.bytes,
+        chunks: chunks.length,
+        inserted: Boolean(insertionLocation),
+      });
+      this.activeSession = null;
+      const insertedMessage = insertionLocation === 'cursor'
+        ? ' and inserted at the current cursor'
+        : insertionLocation === 'end'
+          ? ' and appended to the original note'
+          : '';
+      if (insertionError) {
+        new Notice(
+          `CosyVoice: audio was exported to ${audioFile.path}, but it could not be inserted: ${messageFromError(insertionError)}`,
+          12000
+        );
+      } else {
+        new Notice(`CosyVoice: exported ${audioFile.path}${insertedMessage}.`, 10000);
+      }
+      return audioFile;
+    } catch (error) {
+      if (this.isActive(session)) {
+        const message = messageFromError(error);
+        this.updateStatus(`${configuration.engineLabel} audio export error`, {
+          canPause: false,
+          canNextChunk: false,
+          canPreviousChunk: false,
+          canSeek: false,
+          canStop: false,
+          error: message,
+          isPaused: false,
+          phase: 'error',
+          status: 'error',
+        });
+        await this.writeRuntimeLog('failed', { message });
+        new Notice(`CosyVoice audio export failed: ${message}`, 10000);
+        await this.cancelSessionOperations(session);
+        this.activeSession = null;
+      }
+      return null;
+    } finally {
+      if (this.settings.cleanupCache) {
+        await this.cleanupSessionFiles(session);
+      }
+    }
   }
 
   async readCurrentNote() {
-    const activeFile = typeof this.app.workspace.getActiveFile === 'function'
-      ? this.app.workspace.getActiveFile()
-      : null;
+    const activeFile = this.getCurrentReadableFile();
     if (isPdfFile(activeFile)) {
       await this.readCurrentPdf(activeFile);
+      return;
+    }
+
+    if (!isMarkdownFile(activeFile)) {
+      new Notice('CosyVoice: open a Markdown note or PDF before reading.', 8000);
       return;
     }
 
@@ -2121,13 +3056,11 @@ class CosyVoiceReaderPlugin extends Plugin {
       return;
     }
 
-    const selection = view.editor.getSelection();
-    const text = selection && selection.trim() ? selection : view.editor.getValue();
     await this.activateControlView();
     await this.startReading(
-      text,
-      selection && selection.trim() ? 'selection' : view.file?.basename || 'note',
-      selection && selection.trim() ? {} : { file: view.file, sourceKind: 'markdown' }
+      view.editor.getValue(),
+      view.file?.basename || 'note',
+      { file: view.file, sourceKind: 'markdown' }
     );
   }
 
@@ -2208,6 +3141,7 @@ class CosyVoiceReaderPlugin extends Plugin {
       || !this.settings
       || !this.settings.rememberReadingPosition
       || !session.filePath
+      || session.kind === 'audio-export'
       || !['markdown', 'pdf'].includes(session.sourceKind)
       || !session.chunks.length
       || !Number.isInteger(session.currentChunkIndex)
@@ -2556,6 +3490,7 @@ class CosyVoiceReaderPlugin extends Plugin {
       },
       reportProgress: true,
       selectedText: selectionContext ? selectionContext.selectedText : '',
+      selectionPosition: selectionContext ? selectionContext.selectionPosition : null,
       startPageNumber: selectionContext ? selectionContext.pageNumber : 1,
     });
 
@@ -2661,9 +3596,13 @@ class CosyVoiceReaderPlugin extends Plugin {
           const viewport = typeof page.getViewport === 'function'
             ? page.getViewport({ scale: 1 })
             : null;
-          let pageText = extractTextFromPdfItems(textContent && textContent.items, { viewport });
+          const pageLayout = extractPdfTextLayout(textContent && textContent.items, { viewport });
+          let pageText = pageLayout.text;
           if (selectedText && pageNumber === startPageNumber) {
-            const selectionSlice = slicePdfTextFromSelection(pageText, selectedText);
+            const selectionSlice = slicePdfTextFromSelection(pageText, selectedText, {
+              layout: pageLayout,
+              selectionPosition: options.selectionPosition,
+            });
             pageText = selectionSlice.text;
             session.pdfSelectionMatched = selectionSlice.matched;
           }
@@ -2979,6 +3918,7 @@ class CosyVoiceReaderPlugin extends Plugin {
     session.files.push(inputPath, outputPath);
     await fs.promises.writeFile(inputPath, chunkText, { encoding: 'utf8', mode: 0o600 });
 
+    const isAudioExport = session.kind === 'audio-export';
     const isBackgroundPrefetch = Boolean(
       this.currentAudio
       && Number.isInteger(session.currentChunkIndex)
@@ -2986,8 +3926,10 @@ class CosyVoiceReaderPlugin extends Plugin {
     );
     if (!isBackgroundPrefetch) {
       this.updateStatus(`${engineLabel} synth ${index + 1}/${session.totalChunks || 0}`, {
-        canPause: true,
-        ...getChunkNavigationState(index + 1, session.totalChunks),
+        canPause: !isAudioExport,
+        ...(isAudioExport
+          ? { canNextChunk: false, canPreviousChunk: false }
+          : getChunkNavigationState(index + 1, session.totalChunks)),
         canSeek: false,
         canStop: true,
         currentChunk: index + 1,
@@ -3746,6 +4688,11 @@ class CosyVoiceReaderPlugin extends Plugin {
   async pauseOrResume() {
     const audio = this.currentAudio;
 
+    if (this.activeSession && this.activeSession.kind === 'audio-export') {
+      new Notice('CosyVoice: audio export can be stopped but not paused.', 6000);
+      return;
+    }
+
     if (!audio) {
       if (!this.activeSession) {
         new Notice('CosyVoice: nothing is playing.');
@@ -4002,14 +4949,20 @@ class CosyVoiceReaderView extends ItemView {
 
     const actions = root.createDiv({ cls: 'note-reader-cosyvoice-actions' });
     this.createActionButton(actions, 'play', 'Read selection', () => {
-      void this.plugin.readSelection();
+      this.runPluginAction('Read selection', () => this.plugin.readSelection());
     }, false, { triggerOnPointerDown: true });
     this.createActionButton(actions, 'list-start', 'Read from selection', () => {
-      void this.plugin.readFromSelection();
+      this.runPluginAction('Read from selection', () => this.plugin.readFromSelection());
     }, false, { triggerOnPointerDown: true });
     this.createActionButton(actions, 'file-text', 'Read file', () => {
-      void this.plugin.readCurrentNote();
-    });
+      this.runPluginAction('Read file', () => this.plugin.readCurrentNote());
+    }, false, { triggerOnPointerDown: true });
+    this.createActionButton(actions, 'download', 'Export full audio', () => {
+      this.runPluginAction('Export full audio', () => this.plugin.exportCurrentNoteAudio({ insertAfterExport: false }));
+    }, false, { triggerOnPointerDown: true });
+    this.createActionButton(actions, 'paperclip', 'Export & insert audio', () => {
+      this.runPluginAction('Export and insert audio', () => this.plugin.exportCurrentNoteAudio({ insertAfterExport: true }));
+    }, false, { triggerOnPointerDown: true });
     const canResumeFile = typeof this.plugin.canResumeCurrentFile === 'function'
       && this.plugin.canResumeCurrentFile();
     this.createActionButton(actions, 'history', 'Resume file', () => {
@@ -4023,7 +4976,12 @@ class CosyVoiceReaderView extends ItemView {
         void this.plugin.pauseOrResume();
       },
       !state.canPause,
-      { triggerOnPointerDown: true }
+      {
+        title: state.isPaused
+          ? 'Resume reading (or press Space)'
+          : 'Pause reading (or press Space)',
+        triggerOnPointerDown: true,
+      }
     );
     this.createActionButton(
       actions,
@@ -4086,6 +5044,21 @@ class CosyVoiceReaderView extends ItemView {
     focusElementWithoutScroll(panel);
   }
 
+  runPluginAction(label, action) {
+    if (this.plugin && typeof this.plugin.runUserAction === 'function') {
+      void this.plugin.runUserAction(label, action);
+      return;
+    }
+    try {
+      const result = action();
+      if (result && typeof result.catch === 'function') {
+        void result.catch((error) => console.error(`[${PLUGIN_ID}] ${label} failed`, error));
+      }
+    } catch (error) {
+      console.error(`[${PLUGIN_ID}] ${label} failed`, error);
+    }
+  }
+
   createIconButton(parent, icon, label, onClick, disabled = false, options = {}) {
     const button = parent.createEl('button', {
       cls: 'note-reader-cosyvoice-icon-button',
@@ -4109,7 +5082,7 @@ class CosyVoiceReaderView extends ItemView {
       cls: 'note-reader-cosyvoice-action',
       attr: {
         'aria-label': label,
-        title: label,
+        title: options.title || label,
       },
     });
     button.disabled = disabled;
@@ -4591,6 +5564,37 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
       });
 
     new Setting(containerEl)
+      .setName(ui.audioExportLocationName)
+      .setDesc(ui.audioExportLocationDesc)
+      .addDropdown((dropdown) => {
+        dropdown
+          .addOption('obsidian-attachment', ui.audioExportLocationAttachment)
+          .addOption('note-folder', ui.audioExportLocationNote)
+          .addOption('custom-folder', ui.audioExportLocationCustom)
+          .setValue(normalizeAudioExportLocation(this.plugin.settings.audioExportLocation))
+          .onChange(async (value) => {
+            this.plugin.settings.audioExportLocation = normalizeAudioExportLocation(value);
+            await this.plugin.saveSettings();
+            this.display();
+          });
+      });
+
+    if (normalizeAudioExportLocation(this.plugin.settings.audioExportLocation) === 'custom-folder') {
+      new Setting(containerEl)
+        .setName(ui.audioExportFolderName)
+        .setDesc(ui.audioExportFolderDesc)
+        .addText((text) => {
+          text
+            .setPlaceholder(ui.audioExportFolderPlaceholder)
+            .setValue(this.plugin.settings.audioExportFolder)
+            .onChange(async (value) => {
+              this.plugin.settings.audioExportFolder = normalizeAudioExportFolder(value);
+              await this.plugin.saveSettings();
+            });
+        });
+    }
+
+    new Setting(containerEl)
       .setName(ui.stripMarkdownName)
       .setDesc(ui.stripMarkdownDesc)
       .addToggle((toggle) => {
@@ -4702,6 +5706,7 @@ module.exports = {
     buildEdgeTtsArgs,
     buildOpenRouterTtsRequestBody,
     calculateCurrentChunkSeekTime,
+    createAudioExportSummary,
     createBlobAudioSource,
     createDefaultSettings,
     createIncrementalSpeechChunker,
@@ -4710,6 +5715,7 @@ module.exports = {
     createSafeRuntimeLogEvent,
     createTaskState,
     describeMediaError,
+    extractPdfTextLayout,
     extractTextFromPdfItems,
     formatProgressLabel,
     formatSpeedLabel,
@@ -4725,10 +5731,14 @@ module.exports = {
     getChunkLimitsForSpeechEngine,
     getPdfPageNumberFromNode,
     getPdfSelectionContext,
+    getPdfSelectionPosition,
     getPluginTempCacheDir,
     getSettingsUiText,
     getTextFromPositionToEnd,
     getAudioUrlForFile,
+    getAudioExportExtension,
+    getAudioExportUiText,
+    getAvailableVaultAudioPath,
     getSpeedPresets,
     getSynthesisPrefetchCount,
     hasAzureSpeechConsent,
@@ -4736,6 +5746,7 @@ module.exports = {
     hasObsidianSecretStorage,
     hasOpenRouterConsent,
     isRetryableRemoteError,
+    isMarkdownFile,
     isPdfFile,
     isOwnedCacheFileName,
     isOnlineSpeechEngine,
@@ -4743,6 +5754,8 @@ module.exports = {
     normalizeAzureSpeechCloud,
     normalizeAzureSpeechRegion,
     normalizeAzureSpeechVoice,
+    normalizeAudioExportFolder,
+    normalizeAudioExportLocation,
     normalizeCredentialSource,
     normalizeEdgeTtsExecutable,
     normalizeEdgeTtsVoice,

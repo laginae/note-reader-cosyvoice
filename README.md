@@ -7,6 +7,7 @@ A privacy-first Obsidian desktop voice reader for Markdown notes and text-based 
 ## Highlights
 
 - **Privacy first:** Local CosyVoice is the default. Each online engine requires separate, explicit consent before it can receive text.
+- **Confirmed whole-note audio export:** Export a complete Markdown note as audio, or export and embed it in the note. Before synthesis, a mandatory confirmation shows the readable character count, segment/request count, and planned save path.
 - **Layout-aware PDF reading:** Local PDF extraction uses text coordinates to read common two-column papers left column first, while preserving full-width headings and section boundaries.
 - **Progressive PDF start:** Markdown notes and text-based PDFs are parsed locally; ordinary text-based PDFs typically yield their first speech chunk within a few seconds, while later pages continue parsing.
 - **Private, optional resume:** Reading-position history is off by default. When enabled, it stores only bounded resume metadata and a short text anchor, never the complete note or PDF body.
@@ -31,6 +32,7 @@ Plugin settings. The script path shown here is a redacted example:
 - Extracts PDF text locally with Obsidian's built-in PDF.js, uses coordinates to improve common two-column reading order, and progressively feeds speech chunks while later pages continue parsing.
 - Uses paragraph-, line-, sentence-, and clause-aware chunk boundaries while keeping configured character limits as hard upper bounds.
 - Can optionally remember and resume the current Markdown or PDF position. The setting is disabled by default and includes a separate clear-history control.
+- Exports an entire Markdown note as one WAV file in local mode or one MP3 file in online modes. Save it in Obsidian's attachment folder, beside the note, or in a custom vault folder; a second action also embeds the completed file in the note.
 - Opens a right-side `Voice Reader` control panel.
 - Shows synthesis/playback phase, whole-reading progress, percentage, and text preview.
 - Supports pause, resume, stop, Space to pause or resume in the control panel, repeated Left/Right Arrow 5-second seeking, previous/next chunk buttons, and progress dragging while the current audio chunk is playing.
@@ -59,11 +61,13 @@ Plugin settings. The script path shown here is a redacted example:
 
 By default, the plugin uses local TTS. In `Local CosyVoice` mode, the plugin itself does not send note or extracted PDF text to Microsoft, OpenAI, or another remote TTS service. The configured wrapper remains part of your trust boundary and may make its own network requests.
 
-PDF extraction uses Obsidian's bundled PDF.js and `Vault.readBinary`; the PDF file itself is not uploaded by this feature. To support PDF selection commands, the plugin temporarily keeps the selection's page number and up to 2,000 characters of locator text in memory only; it is not saved to settings or diagnostic logs. When an online speech engine is selected and its consent is enabled, extracted PDF text chunks are transmitted under the same rules as note text. Scanned or image-only PDFs need OCR before the plugin can read them.
+PDF extraction uses Obsidian's bundled PDF.js and `Vault.readBinary`; the PDF file itself is not uploaded by this feature. To support PDF selection commands, the plugin temporarily keeps the selection's page number, relative in-page coordinates, and up to 2,000 characters of locator text in memory only; none of this selection locator is saved to settings or diagnostic logs. When an online speech engine is selected and its consent is enabled, extracted PDF text chunks are transmitted under the same rules as note text. Scanned or image-only PDFs need OCR before the plugin can read them.
 
 `Remember reading position` is off by default. If you enable it, `data.json` stores the file path, file timestamp, PDF page or speech-chunk index, update time, and a normalized text anchor capped at 180 characters. It does not store the complete note or PDF body. Use `Clear saved reading positions` to remove all saved anchors; disabling the setting stops future use and updates but does not silently delete existing history.
 
 Edge, Azure, and OpenRouter are opt-in online modes. Edge passes each chunk to the configured `edge-tts` executable. Azure sends each chunk by HTTPS to the selected Azure Speech cloud and region. OpenRouter sends each chunk to OpenRouter and an eligible upstream TTS provider. The plugin will not start an online mode until its separate online-processing consent setting is enabled. OpenRouter consent permits that transmission only; it does not permit non-ZDR routing. By default, the plugin may synthesize the next chunk while the current chunk is playing, but it never prefetches more than one future chunk. Stopping early can therefore leave at most one prefetched chunk unused. Set prefetch to `0` for strict on-demand synthesis. Provider billing units vary, so this bounds avoidable work rather than guaranteeing a fixed cost reduction.
+
+Whole-note audio export always requires a separate per-export acknowledgement before synthesis starts. The dialog shows the cleaned readable character count, exact number of planned synthesis segments, and planned vault-relative save path. For an online engine, every readable character in the note is sent through those sequential segments and may consume provider quota or incur charges. Temporary failures can trigger the existing bounded retry policy, so the number of network attempts can exceed the planned segment count. Export does not prefetch extra playback-continuity chunks, creates no vault attachment until every segment and the final merge succeed, and can be cancelled with `Stop`. The completed audio attachment is intentionally retained in the vault; it is not temporary cache data.
 
 Temporary text and audio are stored in a vault-specific folder under the operating system temporary directory, not inside the Obsidian vault. With `Clean temporary audio` enabled, plaintext chunk files are removed immediately after synthesis, remaining session files are removed when reading ends or stops, and stale plugin-owned files plus the legacy in-vault cache are cleaned at startup. Diagnostic logging is off by default; when enabled, it records only bounded failure metadata without note names, note text, or child-process output.
 
@@ -200,14 +204,14 @@ Then open `Settings -> Note and PDF Voice Reader`:
 4. Choose a built-in ZDR-compatible model and one of its voices, or enter custom IDs.
 5. Keep OpenRouter account-level input/output logging and input/output data sharing disabled.
 
-The default is `hexgrad/kokoro-82m` with the UK English male voice `bm_george`, selected for restrained long-form and academic reading. Voice IDs are model-specific and are not interchangeable. The built-in catalogs were checked against OpenRouter's live `speech` plus `zdr=true` model API on 2026-08-26:
+The default is `hexgrad/kokoro-82m` with the UK English male voice `bm_george`, selected for restrained long-form and academic reading. Voice IDs are model-specific and are not interchangeable. OpenRouter-listed IDs were checked against its live `speech` plus `zdr=true` model API on 2026-08-26; the MAI-Voice-2 Mandarin compatibility IDs were checked against Microsoft's official MAI voice catalog on 2026-08-27:
 
 - `microsoft/mai-voice-2-flash`: all four voices currently exposed by OpenRouter: US English `Harper`, Mexican Spanish `Valeria`, French `Soleil`, and German `Klaus`.
-- `microsoft/mai-voice-2`: the same four currently exposed voices. OpenRouter states that MAI-Voice-2 ships four voices, so the plugin cannot safely provide six or add Chinese/UK IDs that the API does not accept.
+- `microsoft/mai-voice-2`: the four voices exposed in OpenRouter metadata plus Microsoft-published Mandarin `zh-CN-Bo:MAI-Voice-2` (male), `zh-CN-Lan:MAI-Voice-2` (female), and `zh-CN-Mei:MAI-Voice-2` (female). These three are compatibility presets because OpenRouter may accept them even when its `supported_voices` metadata omits them; actual endpoint availability can change.
 - `google/gemini-3.1-flash-tts-preview`: 12 curated presets from the 30 voices currently exposed by OpenRouter, including informative, clear, even, knowledgeable, firm, mature, warm, gentle, and breezy delivery styles. Google describes these multilingual voices by style rather than fixed gender or US/UK accent.
 - `hexgrad/kokoro-82m`: 12 presets, with two voices in each requested group: Mandarin Chinese female, Mandarin Chinese male, US English female, US English male, UK English female, and UK English male.
 
-The settings page shows a short characteristics note and only the presets for the selected model. Model, voice, and ZDR endpoint availability can change, so use the live [`speech + ZDR` model API](https://openrouter.ai/api/v1/models?output_modalities=speech&zdr=true) as the source of truth. The delivery-style names come from [Google's Gemini TTS voice list](https://ai.google.dev/gemini-api/docs/speech-generation), and Kokoro language/gender groups follow its [upstream voice catalog](https://huggingface.co/hexgrad/Kokoro-82M/blob/main/VOICES.md). Custom model IDs remain available, but a model with no eligible ZDR endpoint returns an error because the plugin never relaxes its privacy routing rules.
+The settings page shows a short characteristics note and only the presets for the selected model. Model, voice, and ZDR endpoint availability can change. OpenRouter's live [`speech + ZDR` model API](https://openrouter.ai/api/v1/models?output_modalities=speech&zdr=true) remains the source for advertised routing metadata, while Microsoft's [MAI voice catalog](https://learn.microsoft.com/en-us/azure/ai-services/speech-service/mai-voices) supplies the official MAI ShortNames. The delivery-style names come from [Google's Gemini TTS voice list](https://ai.google.dev/gemini-api/docs/speech-generation), and Kokoro language/gender groups follow its [upstream voice catalog](https://huggingface.co/hexgrad/Kokoro-82M/blob/main/VOICES.md). Custom model IDs remain available, but a model with no eligible ZDR endpoint returns an error because the plugin never relaxes its privacy routing rules.
 
 ## Model Storage, Other TTS Engines, And Chunk Limits
 
@@ -236,6 +240,8 @@ Use `Local chunk limits` to balance local startup latency and synthesis stabilit
 
 - `Open voice reader controls`
 - `Read current note or PDF aloud`
+- `Export full note audio`
+- `Export full note audio and insert it into the note`
 - `Resume reading current note or PDF`
 - `Read current PDF aloud`
 - `Read current PDF from selection aloud`
@@ -247,6 +253,14 @@ Use `Local chunk limits` to balance local startup latency and synthesis stabilit
 - `Move to previous reading chunk`
 - `Move to next reading chunk`
 - `Stop voice reading`
+
+## Whole-note Audio Export
+
+Open a Markdown note and choose `Export full audio` or `Export & insert audio` in the control panel, or run the corresponding command. The confirmation dialog reports the readable character count, selected engine, synthesis segment count, and planned save path. The confirmation checkbox must be selected before export can start.
+
+Local mode combines the generated PCM WAV segments into one WAV file. Edge, Azure, and OpenRouter combine validated MP3 audio frames into one MP3 file. In settings, `Full-note audio save location` can use Obsidian's configured attachment folder (the default), the note's folder, or a custom folder inside the vault. The custom folder is created after synthesis succeeds. Files use names such as `Note name - narration.mp3`, with a numeric suffix added if needed. `Export & insert audio` embeds the completed audio at the current cursor when the original note is still active, otherwise it appends the embed to the original note. The completion notice always reports the actual path used.
+
+Export processes exactly the displayed chunks in sequence and does not perform playback prefetch. If a segment fails or the task is stopped, no partial audio attachment is added to the vault. The current implementation exports Markdown notes; PDF audio export is not included.
 
 ## Keyboard And Progress Seeking
 
@@ -260,9 +274,9 @@ The progress bar shows whole-reading progress across all chunks. While audio is 
 
 Open a PDF stored in the vault, then click `Read file` in the control panel or run a PDF-capable command. Text extraction happens locally page by page. Once enough text for the first configured chunk is available, synthesis and playback can begin while later pages continue parsing. The Stop button cancels parsing, playback, and outstanding synthesis requests.
 
-To start at a specific position, select a recognizable phrase in the PDF text layer and click `Read from selection`, or run `Read current PDF from selection aloud`. The plugin starts extraction on that page, matches the selected phrase in the extracted text, and reads through the end of the PDF. `Read selection` reads only the selected PDF text. If the visual text layer cannot be matched to the PDF's embedded text order, the plugin displays a notice and starts at the beginning of the selected page.
+To start at a specific position, select text in the PDF text layer and click `Read from selection`, or run `Read current PDF from selection aloud`. The plugin starts extraction on that page and combines the selection's relative page coordinates with text matching, so repeated wording in an abstract and a later column can be distinguished. `Read selection` reads only the selected PDF text. If coordinates are unavailable, text matching remains as a compatibility fallback; if neither locator can be matched, the plugin displays a notice and starts at the beginning of the selected page.
 
-The PDF must contain selectable embedded text. Password-protected, damaged, scanned, or image-only files cannot be extracted; run OCR or unlock the file first. Version 0.4.0 uses text coordinates to recognize common two-column pages and read each vertical band left column before right column, while treating full-width headings as boundaries. Unusual layouts, rotated text, sidebars, and complex tables can still require a manual selection start or a better-tagged source PDF.
+The PDF must contain selectable embedded text. Password-protected, damaged, scanned, or image-only files cannot be extracted; run OCR or unlock the file first. Version 0.4.0 and later use text coordinates to recognize common two-column pages and read each vertical band left column before right column, while treating full-width headings as boundaries. Unusual layouts, rotated text, sidebars, and complex tables can still require a manual selection start or a better-tagged source PDF.
 
 If `Remember reading position` is enabled, use `Resume file` in the control panel or `Resume reading current note or PDF` in the command palette. PDF resume starts on the saved page and locates the short anchor again; Markdown resume locates the same normalized anchor and falls back to the nearest saved chunk if the note changed.
 

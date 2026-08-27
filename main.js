@@ -100,13 +100,38 @@ var require_pdf_layout = __commonJS({
       const width = Math.max(0, Math.abs(Number(item.width) || 0));
       return { height, str: item.str, width, x, y };
     }
-    function groupItemsIntoLines(items, requestedPageWidth = 0) {
+    function getHorizontalMetrics(entries, requestedPageWidth = 0) {
+      const normalized = (Array.isArray(entries) ? entries : []).map((entry) => {
+        const xMin = Number(typeof entry.xMin !== "undefined" ? entry.xMin : entry.x);
+        const xMax = Number(typeof entry.xMax !== "undefined" ? entry.xMax : Number(entry.x) + Math.max(0, Number(entry.width) || 0));
+        return Number.isFinite(xMin) && Number.isFinite(xMax) && xMax >= xMin ? { xMax, xMin } : null;
+      }).filter(Boolean);
+      const pageWidth = Number.isFinite(Number(requestedPageWidth)) && Number(requestedPageWidth) > 0 ? Number(requestedPageWidth) : 0;
+      if (!normalized.length) {
+        const fallbackWidth = Math.max(1, pageWidth);
+        return {
+          contentWidth: fallbackWidth,
+          midpoint: fallbackWidth / 2
+        };
+      }
+      const contentLeft = Math.min(...normalized.map((entry) => entry.xMin));
+      const contentRight = Math.max(...normalized.map((entry) => entry.xMax));
+      const contentWidth = Math.max(1, contentRight - contentLeft);
+      return {
+        contentWidth,
+        midpoint: (contentLeft + contentRight) / 2
+      };
+    }
+    function groupItemsIntoLines(items, requestedPageWidth = 0, options = {}) {
       const positioned = (Array.isArray(items) ? items : []).map(normalizePositionedItem).filter(Boolean);
       if (positioned.length < 2) {
         return [];
       }
       const tolerance = Math.max(2, median(positioned.map((item) => item.height)) * 0.5);
       const pageWidth = Number.isFinite(Number(requestedPageWidth)) && Number(requestedPageWidth) > 0 ? Number(requestedPageWidth) : Math.max(...positioned.map((item) => item.x + item.width), 1);
+      const splitColumns = options.splitColumns !== false;
+      const horizontal = getHorizontalMetrics(positioned, pageWidth);
+      const minimumCentralGap = Math.max(4, horizontal.contentWidth * 0.012);
       positioned.sort((left, right) => right.y - left.y || left.x - right.x);
       const baselines = [];
       for (const item of positioned) {
@@ -125,8 +150,8 @@ var require_pdf_layout = __commonJS({
         for (const item of baseline.items) {
           const previous = cluster[cluster.length - 1];
           const gap = previous ? item.x - (previous.x + previous.width) : 0;
-          const crossesMidpoint = previous && previous.x + previous.width < pageWidth * 0.48 && item.x > pageWidth * 0.52;
-          if (previous && crossesMidpoint && gap > Math.max(24, pageWidth * 0.06)) {
+          const crossesMidpoint = previous && previous.x + previous.width <= horizontal.midpoint && item.x >= horizontal.midpoint;
+          if (splitColumns && crossesMidpoint && gap >= minimumCentralGap) {
             lineClusters.push({ items: cluster, y: baseline.y });
             cluster = [];
           }
@@ -147,11 +172,19 @@ var require_pdf_layout = __commonJS({
         };
       }).filter((line) => line.text).sort((left, right) => right.y - left.y || left.xMin - right.xMin);
     }
-    function classifyLine(line, pageWidth) {
-      const midpoint = pageWidth / 2;
-      const gutter = pageWidth * 0.035;
+    function getLineLayoutMetrics(lines, pageWidth) {
+      const horizontal = getHorizontalMetrics(lines, pageWidth);
+      return {
+        fullWidth: horizontal.contentWidth * 0.62,
+        gutter: Math.max(6, horizontal.contentWidth * 0.025),
+        midpoint: horizontal.midpoint
+      };
+    }
+    function classifyLine(line, pageWidth, requestedMetrics = null) {
+      const metrics = requestedMetrics || getLineLayoutMetrics([line], pageWidth);
+      const { fullWidth, gutter, midpoint } = metrics;
       const lineWidth = Math.max(0, line.xMax - line.xMin);
-      if (lineWidth >= pageWidth * 0.58 || line.xMin < midpoint - gutter && line.xMax > midpoint + gutter) {
+      if (lineWidth >= fullWidth || line.xMin < midpoint - gutter && line.xMax > midpoint + gutter) {
         return "full";
       }
       if (line.xMax <= midpoint + gutter && (line.xMin + line.xMax) / 2 < midpoint) {
@@ -163,9 +196,14 @@ var require_pdf_layout = __commonJS({
       return "full";
     }
     function hasTwoColumnLayout(lines, pageWidth) {
-      const left = lines.filter((line) => classifyLine(line, pageWidth) === "left");
-      const right = lines.filter((line) => classifyLine(line, pageWidth) === "right");
+      const metrics = getLineLayoutMetrics(lines, pageWidth);
+      const left = lines.filter((line) => classifyLine(line, pageWidth, metrics) === "left");
+      const right = lines.filter((line) => classifyLine(line, pageWidth, metrics) === "right");
       if (left.length < 2 || right.length < 2) {
+        return false;
+      }
+      const directionalCount = left.length + right.length;
+      if (directionalCount < Math.max(4, Math.ceil(lines.length * 0.35))) {
         return false;
       }
       const leftTop = Math.max(...left.map((line) => line.y));
@@ -177,17 +215,23 @@ var require_pdf_layout = __commonJS({
     function orderTwoColumnLines(lines, pageWidth) {
       const output = [];
       let band = [];
+      const metrics = getLineLayoutMetrics(lines, pageWidth);
       const flushBand = () => {
         if (!band.length) {
           return;
         }
-        const left = band.filter((line) => classifyLine(line, pageWidth) === "left").sort((a, b) => b.y - a.y);
-        const right = band.filter((line) => classifyLine(line, pageWidth) === "right").sort((a, b) => b.y - a.y);
-        output.push(...left, ...right);
+        const left = band.filter((line) => classifyLine(line, pageWidth, metrics) === "left").sort((a, b) => b.y - a.y);
+        const right = band.filter((line) => classifyLine(line, pageWidth, metrics) === "right").sort((a, b) => b.y - a.y);
+        const columnsOverlap = left.length && right.length && Math.min(left[0].y, right[0].y) > Math.max(left[left.length - 1].y, right[right.length - 1].y);
+        if (columnsOverlap) {
+          output.push(...left, ...right);
+        } else {
+          output.push(...band.slice().sort((a, b) => b.y - a.y || a.xMin - b.xMin));
+        }
         band = [];
       };
       for (const line of lines) {
-        if (classifyLine(line, pageWidth) === "full") {
+        if (classifyLine(line, pageWidth, metrics) === "full") {
           flushBand();
           output.push(line);
         } else {
@@ -197,29 +241,445 @@ var require_pdf_layout = __commonJS({
       flushBand();
       return output;
     }
-    function extractTextFromPdfItems2(items, options = {}) {
+    function extractPdfTextLayout2(items, options = {}) {
       const textItems = (Array.isArray(items) ? items : []).filter((item) => item && typeof item.str === "string" && item.str.trim());
       const positionedCount = textItems.filter((item) => normalizePositionedItem(item)).length;
-      if (positionedCount < Math.max(2, Math.ceil(textItems.length * 0.7))) {
-        return extractTextInItemOrder(items);
-      }
       const viewportWidth = Number(options.viewport && options.viewport.width);
+      const viewportHeight = Number(options.viewport && options.viewport.height);
+      if (positionedCount < Math.max(2, Math.ceil(textItems.length * 0.7))) {
+        return {
+          lines: [],
+          pageHeight: Number.isFinite(viewportHeight) && viewportHeight > 0 ? viewportHeight : 0,
+          pageWidth: Number.isFinite(viewportWidth) && viewportWidth > 0 ? viewportWidth : 0,
+          text: extractTextInItemOrder(items),
+          twoColumn: false
+        };
+      }
       const positionedItems = textItems.map(normalizePositionedItem).filter(Boolean);
       const requestedPageWidth = Number.isFinite(viewportWidth) && viewportWidth > 0 ? viewportWidth : Math.max(...positionedItems.map((item) => item.x + item.width), 1);
-      const lines = groupItemsIntoLines(items, requestedPageWidth);
-      if (!lines.length) {
-        return extractTextInItemOrder(items);
+      const candidateLines = groupItemsIntoLines(items, requestedPageWidth, { splitColumns: true });
+      if (!candidateLines.length) {
+        return {
+          lines: [],
+          pageHeight: Number.isFinite(viewportHeight) && viewportHeight > 0 ? viewportHeight : 0,
+          pageWidth: requestedPageWidth,
+          text: extractTextInItemOrder(items),
+          twoColumn: false
+        };
       }
-      const pageWidth = Number.isFinite(viewportWidth) && viewportWidth > 0 ? viewportWidth : Math.max(...lines.map((line) => line.xMax), 1);
-      const ordered = hasTwoColumnLayout(lines, pageWidth) ? orderTwoColumnLines(lines, pageWidth) : lines;
-      return cleanupExtractedText(ordered.map((line) => line.text));
+      const pageWidth = Number.isFinite(viewportWidth) && viewportWidth > 0 ? viewportWidth : Math.max(...candidateLines.map((line) => line.xMax), 1);
+      const twoColumn = hasTwoColumnLayout(candidateLines, pageWidth);
+      const lines = twoColumn ? candidateLines : groupItemsIntoLines(items, requestedPageWidth, { splitColumns: false });
+      const ordered = twoColumn ? orderTwoColumnLines(lines, pageWidth) : lines;
+      return {
+        lines: ordered.map((line) => ({ ...line })),
+        pageHeight: Number.isFinite(viewportHeight) && viewportHeight > 0 ? viewportHeight : 0,
+        pageWidth,
+        text: cleanupExtractedText(ordered.map((line) => line.text)),
+        twoColumn
+      };
+    }
+    function extractTextFromPdfItems2(items, options = {}) {
+      return extractPdfTextLayout2(items, options).text;
     }
     module2.exports = {
+      extractPdfTextLayout: extractPdfTextLayout2,
       extractTextFromPdfItems: extractTextFromPdfItems2,
       extractTextInItemOrder,
       groupItemsIntoLines,
       hasTwoColumnLayout,
       orderTwoColumnLines
+    };
+  }
+});
+
+// src/audio-export.js
+var require_audio_export = __commonJS({
+  "src/audio-export.js"(exports2, module2) {
+    "use strict";
+    var fs2 = require("fs");
+    var path2 = require("path");
+    var MAX_EXPORTED_AUDIO_BYTES2 = 256 * 1024 * 1024;
+    function bufferToArrayBuffer2(buffer) {
+      const bytes = Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer || []);
+      return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+    }
+    function sanitizeExportBaseName(value) {
+      const sanitized = String(value || "note").replace(/[<>:"/\\|?*\u0000-\u001f]/g, "-").replace(/[. ]+$/g, "").trim();
+      return sanitized || "note";
+    }
+    function buildExportAudioFileName2(noteBaseName, extension) {
+      const normalizedExtension = String(extension || "").toLowerCase() === "mp3" ? "mp3" : "wav";
+      return `${sanitizeExportBaseName(noteBaseName)} - narration.${normalizedExtension}`;
+    }
+    function parseWaveBuffer(value) {
+      const buffer = Buffer.isBuffer(value) ? value : Buffer.from(value || []);
+      if (buffer.length < 12 || buffer.toString("ascii", 0, 4) !== "RIFF" || buffer.toString("ascii", 8, 12) !== "WAVE") {
+        throw new Error("The local speech engine returned an invalid WAV file.");
+      }
+      let formatChunk = null;
+      const dataChunks = [];
+      let offset = 12;
+      while (offset + 8 <= buffer.length) {
+        const chunkId = buffer.toString("ascii", offset, offset + 4);
+        const chunkSize = buffer.readUInt32LE(offset + 4);
+        const chunkStart = offset + 8;
+        const chunkEnd = chunkStart + chunkSize;
+        if (chunkEnd > buffer.length) {
+          throw new Error("The local speech engine returned a truncated WAV file.");
+        }
+        if (chunkId === "fmt " && !formatChunk) {
+          formatChunk = Buffer.from(buffer.subarray(chunkStart, chunkEnd));
+        } else if (chunkId === "data" && chunkSize > 0) {
+          dataChunks.push(buffer.subarray(chunkStart, chunkEnd));
+        }
+        offset = chunkEnd + chunkSize % 2;
+      }
+      if (!formatChunk || formatChunk.length < 16 || !dataChunks.length) {
+        throw new Error("The local speech engine returned a WAV file without PCM audio data.");
+      }
+      const audioFormat = formatChunk.readUInt16LE(0);
+      const channels = formatChunk.readUInt16LE(2);
+      const sampleRate = formatChunk.readUInt32LE(4);
+      const byteRate = formatChunk.readUInt32LE(8);
+      const blockAlign = formatChunk.readUInt16LE(12);
+      const bitsPerSample = formatChunk.readUInt16LE(14);
+      const isPcm = audioFormat === 1;
+      const isExtensiblePcm = audioFormat === 65534 && formatChunk.length >= 40 && formatChunk.readUInt16LE(24) === 1;
+      if (!isPcm && !isExtensiblePcm) {
+        throw new Error(`WAV export supports PCM audio only; received format ${audioFormat}.`);
+      }
+      if (!channels || !sampleRate || !byteRate || !blockAlign || !bitsPerSample) {
+        throw new Error("The local speech engine returned an invalid WAV format header.");
+      }
+      const dataBytes = dataChunks.reduce((total, chunk) => total + chunk.length, 0);
+      if (dataBytes % blockAlign !== 0) {
+        throw new Error("The local speech engine returned misaligned WAV audio data.");
+      }
+      return {
+        audioFormat,
+        bitsPerSample,
+        blockAlign,
+        byteRate,
+        channels,
+        dataBytes,
+        dataChunks,
+        formatChunk,
+        sampleRate
+      };
+    }
+    function getWaveFormatSignature(parsed) {
+      return [
+        parsed.audioFormat,
+        parsed.channels,
+        parsed.sampleRate,
+        parsed.byteRate,
+        parsed.blockAlign,
+        parsed.bitsPerSample,
+        parsed.formatChunk.toString("hex")
+      ].join(":");
+    }
+    function createWaveHeader(formatChunkValue, dataBytes) {
+      const formatChunk = Buffer.from(formatChunkValue);
+      const formatPadding = formatChunk.length % 2;
+      const headerLength = 12 + 8 + formatChunk.length + formatPadding + 8;
+      const riffSize = headerLength + dataBytes - 8;
+      if (!Number.isSafeInteger(dataBytes) || dataBytes < 0 || riffSize > 4294967295) {
+        throw new Error("The exported WAV file is too large for the WAV format.");
+      }
+      const header = Buffer.alloc(headerLength);
+      header.write("RIFF", 0, "ascii");
+      header.writeUInt32LE(riffSize, 4);
+      header.write("WAVE", 8, "ascii");
+      header.write("fmt ", 12, "ascii");
+      header.writeUInt32LE(formatChunk.length, 16);
+      formatChunk.copy(header, 20);
+      const dataHeaderOffset = 20 + formatChunk.length + formatPadding;
+      header.write("data", dataHeaderOffset, "ascii");
+      header.writeUInt32LE(dataBytes, dataHeaderOffset + 4);
+      return header;
+    }
+    async function writeBufferAt(fileHandle, buffer, position) {
+      let offset = 0;
+      while (offset < buffer.length) {
+        const result = await fileHandle.write(buffer, offset, buffer.length - offset, position + offset);
+        if (!result || !result.bytesWritten) {
+          throw new Error("Unable to write the exported audio file.");
+        }
+        offset += result.bytesWritten;
+      }
+      return position + buffer.length;
+    }
+    async function mergeWaveFiles(inputPaths, outputPath, options = {}) {
+      const paths = Array.isArray(inputPaths) ? inputPaths.filter(Boolean) : [];
+      if (!paths.length) {
+        throw new Error("No WAV segments were generated for export.");
+      }
+      const maxBytes = Number(options.maxBytes) > 0 ? Number(options.maxBytes) : MAX_EXPORTED_AUDIO_BYTES2;
+      let expectedSignature = "";
+      let formatChunk = null;
+      let totalDataBytes = 0;
+      for (const inputPath of paths) {
+        const parsed = parseWaveBuffer(await fs2.promises.readFile(inputPath));
+        const signature = getWaveFormatSignature(parsed);
+        if (expectedSignature && signature !== expectedSignature) {
+          throw new Error("The generated WAV segments use different audio formats and cannot be merged safely.");
+        }
+        expectedSignature = signature;
+        formatChunk = parsed.formatChunk;
+        totalDataBytes += parsed.dataBytes;
+        if (totalDataBytes > maxBytes) {
+          throw new Error(`The exported audio exceeds the ${Math.floor(maxBytes / (1024 * 1024))} MB safety limit.`);
+        }
+      }
+      const header = createWaveHeader(formatChunk, totalDataBytes);
+      if (header.length + totalDataBytes > maxBytes) {
+        throw new Error(`The exported audio exceeds the ${Math.floor(maxBytes / (1024 * 1024))} MB safety limit.`);
+      }
+      let handle = null;
+      try {
+        await fs2.promises.mkdir(path2.dirname(outputPath), { recursive: true });
+        handle = await fs2.promises.open(outputPath, "w", 384);
+        let outputOffset = await writeBufferAt(handle, header, 0);
+        for (const inputPath of paths) {
+          const parsed = parseWaveBuffer(await fs2.promises.readFile(inputPath));
+          for (const chunk of parsed.dataChunks) {
+            outputOffset = await writeBufferAt(handle, chunk, outputOffset);
+          }
+        }
+      } catch (error) {
+        if (handle) {
+          await handle.close().catch(() => {
+          });
+          handle = null;
+        }
+        await fs2.promises.unlink(outputPath).catch(() => {
+        });
+        throw error;
+      } finally {
+        if (handle) {
+          await handle.close().catch(() => {
+          });
+        }
+      }
+      return {
+        bytes: header.length + totalDataBytes,
+        extension: "wav",
+        segments: paths.length
+      };
+    }
+    var MPEG1_LAYER3_BITRATES = [0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320];
+    var MPEG2_LAYER3_BITRATES = [0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160];
+    function parseMp3FrameHeader(buffer, offset) {
+      if (offset + 4 > buffer.length) {
+        return null;
+      }
+      const header = buffer.readUInt32BE(offset) >>> 0;
+      if ((header >>> 21 & 2047) !== 2047) {
+        return null;
+      }
+      const versionBits = header >>> 19 & 3;
+      const layerBits = header >>> 17 & 3;
+      const bitrateIndex = header >>> 12 & 15;
+      const sampleRateIndex = header >>> 10 & 3;
+      if (versionBits === 1 || layerBits !== 1 || bitrateIndex < 1 || bitrateIndex > 14 || sampleRateIndex === 3) {
+        return null;
+      }
+      const baseSampleRates = [44100, 48e3, 32e3];
+      const sampleRateDivisor = versionBits === 3 ? 1 : versionBits === 2 ? 2 : 4;
+      const sampleRate = baseSampleRates[sampleRateIndex] / sampleRateDivisor;
+      const bitrateKbps = (versionBits === 3 ? MPEG1_LAYER3_BITRATES : MPEG2_LAYER3_BITRATES)[bitrateIndex];
+      const padding = header >>> 9 & 1;
+      const frameLength = Math.floor(
+        (versionBits === 3 ? 144 : 72) * bitrateKbps * 1e3 / sampleRate
+      ) + padding;
+      if (frameLength <= 4 || offset + frameLength > buffer.length) {
+        return null;
+      }
+      const channelMode = header >>> 6 & 3;
+      return {
+        bitrateKbps,
+        channels: channelMode === 3 ? 1 : 2,
+        frameLength,
+        layerBits,
+        sampleRate,
+        versionBits
+      };
+    }
+    function readSynchsafeInteger(buffer, offset) {
+      if (offset + 4 > buffer.length) {
+        return -1;
+      }
+      const bytes = buffer.subarray(offset, offset + 4);
+      if (Array.from(bytes).some((byte) => byte & 128)) {
+        return -1;
+      }
+      return bytes[0] << 21 | bytes[1] << 14 | bytes[2] << 7 | bytes[3];
+    }
+    function skipLeadingId3Tags(buffer) {
+      let offset = 0;
+      while (offset + 10 <= buffer.length && buffer.toString("ascii", offset, offset + 3) === "ID3") {
+        const tagSize = readSynchsafeInteger(buffer, offset + 6);
+        if (tagSize < 0) {
+          throw new Error("The online speech engine returned an invalid MP3 metadata tag.");
+        }
+        const hasFooter = Boolean(buffer[offset + 5] & 16);
+        const nextOffset = offset + 10 + tagSize + (hasFooter ? 10 : 0);
+        if (nextOffset > buffer.length) {
+          throw new Error("The online speech engine returned a truncated MP3 metadata tag.");
+        }
+        offset = nextOffset;
+      }
+      return offset;
+    }
+    function isMp3MetadataFrame(frame) {
+      const sample = frame.subarray(0, Math.min(frame.length, 192)).toString("latin1");
+      return sample.includes("Xing") || sample.includes("Info") || sample.includes("VBRI");
+    }
+    function isIgnorableMp3Tail(buffer, offset) {
+      if (offset >= buffer.length) {
+        return true;
+      }
+      if (buffer.length - offset === 128 && buffer.toString("ascii", offset, offset + 3) === "TAG") {
+        return true;
+      }
+      for (let index = offset; index < buffer.length; index += 1) {
+        if (buffer[index] !== 0) {
+          return false;
+        }
+      }
+      return true;
+    }
+    function extractMp3Frames(value) {
+      const buffer = Buffer.isBuffer(value) ? value : Buffer.from(value || []);
+      let offset = skipLeadingId3Tags(buffer);
+      let skippedBeforeFirstFrame = 0;
+      const frames = [];
+      let format = null;
+      while (offset + 4 <= buffer.length) {
+        if (buffer.length - offset === 128 && buffer.toString("ascii", offset, offset + 3) === "TAG") {
+          break;
+        }
+        const header = parseMp3FrameHeader(buffer, offset);
+        if (!header) {
+          if (frames.length) {
+            if (isIgnorableMp3Tail(buffer, offset)) {
+              break;
+            }
+            throw new Error("The online speech engine returned malformed MP3 audio frames.");
+          }
+          offset += 1;
+          skippedBeforeFirstFrame += 1;
+          if (skippedBeforeFirstFrame > 4096) {
+            break;
+          }
+          continue;
+        }
+        const frame = buffer.subarray(offset, offset + header.frameLength);
+        if (format && [
+          header.versionBits,
+          header.layerBits,
+          header.sampleRate,
+          header.channels
+        ].join(":") !== [
+          format.versionBits,
+          format.layerBits,
+          format.sampleRate,
+          format.channels
+        ].join(":")) {
+          throw new Error("The online speech engine returned inconsistent MP3 audio frames.");
+        }
+        frames.push(frame);
+        format = format || header;
+        offset += header.frameLength;
+      }
+      if (frames.length > 1 && isMp3MetadataFrame(frames[0])) {
+        frames.shift();
+      }
+      if (!frames.length || !format) {
+        throw new Error("The online speech engine returned an MP3 file without readable audio frames.");
+      }
+      return {
+        bytes: frames.reduce((total, frame) => total + frame.length, 0),
+        format,
+        frames
+      };
+    }
+    function getMp3FormatSignature(parsed) {
+      return [
+        parsed.format.versionBits,
+        parsed.format.layerBits,
+        parsed.format.sampleRate,
+        parsed.format.channels
+      ].join(":");
+    }
+    async function mergeMp3Files(inputPaths, outputPath, options = {}) {
+      const paths = Array.isArray(inputPaths) ? inputPaths.filter(Boolean) : [];
+      if (!paths.length) {
+        throw new Error("No MP3 segments were generated for export.");
+      }
+      const maxBytes = Number(options.maxBytes) > 0 ? Number(options.maxBytes) : MAX_EXPORTED_AUDIO_BYTES2;
+      let expectedSignature = "";
+      let totalBytes = 0;
+      let totalFrames = 0;
+      let handle = null;
+      try {
+        await fs2.promises.mkdir(path2.dirname(outputPath), { recursive: true });
+        handle = await fs2.promises.open(outputPath, "w", 384);
+        let outputOffset = 0;
+        for (const inputPath of paths) {
+          const parsed = extractMp3Frames(await fs2.promises.readFile(inputPath));
+          const signature = getMp3FormatSignature(parsed);
+          if (expectedSignature && signature !== expectedSignature) {
+            throw new Error("The generated MP3 segments use different sample formats and cannot be merged safely.");
+          }
+          expectedSignature = signature;
+          totalBytes += parsed.bytes;
+          if (totalBytes > maxBytes) {
+            throw new Error(`The exported audio exceeds the ${Math.floor(maxBytes / (1024 * 1024))} MB safety limit.`);
+          }
+          for (const frame of parsed.frames) {
+            outputOffset = await writeBufferAt(handle, frame, outputOffset);
+            totalFrames += 1;
+          }
+        }
+      } catch (error) {
+        if (handle) {
+          await handle.close().catch(() => {
+          });
+          handle = null;
+        }
+        await fs2.promises.unlink(outputPath).catch(() => {
+        });
+        throw error;
+      } finally {
+        if (handle) {
+          await handle.close().catch(() => {
+          });
+        }
+      }
+      return {
+        bytes: totalBytes,
+        extension: "mp3",
+        frames: totalFrames,
+        segments: paths.length
+      };
+    }
+    async function mergeAudioFiles2(inputPaths, outputPath, extension, options = {}) {
+      return String(extension || "").toLowerCase() === "mp3" ? mergeMp3Files(inputPaths, outputPath, options) : mergeWaveFiles(inputPaths, outputPath, options);
+    }
+    module2.exports = {
+      MAX_EXPORTED_AUDIO_BYTES: MAX_EXPORTED_AUDIO_BYTES2,
+      bufferToArrayBuffer: bufferToArrayBuffer2,
+      buildExportAudioFileName: buildExportAudioFileName2,
+      createWaveHeader,
+      extractMp3Frames,
+      mergeAudioFiles: mergeAudioFiles2,
+      mergeMp3Files,
+      mergeWaveFiles,
+      parseMp3FrameHeader,
+      parseWaveBuffer,
+      sanitizeExportBaseName
     };
   }
 });
@@ -534,7 +994,7 @@ var require_task_state = __commonJS({
 });
 
 // src/main.js
-var { ItemView, MarkdownView, Notice, Plugin, PluginSettingTab, SecretComponent, Setting, loadPdfJs, setIcon } = require("obsidian");
+var { ItemView, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, SecretComponent, Setting, loadPdfJs, setIcon } = require("obsidian");
 var crypto = require("crypto");
 var fs = require("fs");
 var https = require("https");
@@ -542,7 +1002,13 @@ var os = require("os");
 var path = require("path");
 var { spawn } = require("child_process");
 var { pathToFileURL } = require("url");
-var { extractTextFromPdfItems } = require_pdf_layout();
+var { extractPdfTextLayout, extractTextFromPdfItems } = require_pdf_layout();
+var {
+  MAX_EXPORTED_AUDIO_BYTES,
+  bufferToArrayBuffer,
+  buildExportAudioFileName,
+  mergeAudioFiles
+} = require_audio_export();
 var {
   createReadingAnchor,
   normalizeReadingPositions,
@@ -578,6 +1044,7 @@ var KEYBOARD_SEEK_SECONDS = 5;
 var LATEX_FORMULA_MAX_CHARS = 12;
 var MATH_READING_LANGUAGES = ["english", "chinese", "skip"];
 var SETTINGS_LANGUAGES = ["english", "chinese"];
+var AUDIO_EXPORT_LOCATIONS = ["obsidian-attachment", "note-folder", "custom-folder"];
 var CREDENTIAL_SOURCES = ["obsidian-secret", "key-file"];
 var SPEECH_ENGINES = ["local-cosyvoice", "edge-tts", "azure-speech", "openrouter-tts"];
 var AZURE_SPEECH_CLOUDS = ["public", "china"];
@@ -601,7 +1068,7 @@ var RUNTIME_LOG_MAX_BYTES = 1024 * 1024;
 var PDF_MAX_BYTES = 200 * 1024 * 1024;
 var PDF_MAX_PAGES = 2e3;
 var PDF_MAX_TEXT_CHARS = 5e6;
-var OWNED_CACHE_FILE_PATTERN = /^\d{10,}-\d+-\d+\.(?:txt|wav|mp3)$/i;
+var OWNED_CACHE_FILE_PATTERN = /^\d{10,}-\d+-(?:\d+|export)\.(?:txt|wav|mp3)$/i;
 var MICROSOFT_VOICE_PRESETS = [
   ["zh-CN-XiaoxiaoNeural", "Mandarin Chinese - Xiaoxiao (female, warm)", "\u4E2D\u6587\u666E\u901A\u8BDD - \u5C0F\u6653\uFF08\u5973\u58F0\uFF0C\u6E29\u6696\uFF09"],
   ["zh-CN-XiaoyiNeural", "Mandarin Chinese - Xiaoyi (female, lively)", "\u4E2D\u6587\u666E\u901A\u8BDD - \u5C0F\u827A\uFF08\u5973\u58F0\uFF0C\u6D3B\u6CFC\uFF09"],
@@ -627,10 +1094,10 @@ var OPENROUTER_TTS_MODELS = [
   [
     "microsoft/mai-voice-2",
     "en-US-Harper:MAI-Voice-2",
-    "Microsoft MAI-Voice-2 - expressive, 4 listed voices",
-    "Microsoft MAI-Voice-2 - \u8868\u73B0\u529B\u5F3A\u3001\u5F53\u524D\u516C\u5F00 4 \u4E2A\u97F3\u8272",
-    "An expressive Microsoft model for natural long-form narration. OpenRouter currently lists only four voices: US English, Mexican Spanish, French, and German; no Chinese or UK English voice IDs are exposed.",
-    "\u5FAE\u8F6F\u8868\u73B0\u529B\u8BED\u97F3\u6A21\u578B\uFF0C\u9002\u5408\u81EA\u7136\u957F\u6587\u53D9\u8FF0\u3002OpenRouter \u5F53\u524D\u53EA\u5217\u51FA 4 \u4E2A\u97F3\u8272\uFF1A\u7F8E\u5F0F\u82F1\u8BED\u3001\u58A8\u897F\u54E5\u897F\u73ED\u7259\u8BED\u3001\u6CD5\u8BED\u548C\u5FB7\u8BED\uFF0C\u672A\u516C\u5F00\u4E2D\u6587\u6216\u82F1\u5F0F\u82F1\u8BED\u97F3\u8272 ID\u3002"
+    "Microsoft MAI-Voice-2 - expressive, with Mandarin compatibility voices",
+    "Microsoft MAI-Voice-2 - \u8868\u73B0\u529B\u5F3A\u3001\u542B\u4E2D\u6587\u517C\u5BB9\u97F3\u8272",
+    "An expressive Microsoft model for natural long-form narration. In addition to the four voices listed by OpenRouter, the plugin offers three Microsoft-published Mandarin ShortNames as compatibility presets. OpenRouter endpoint availability can change.",
+    "\u5FAE\u8F6F\u8868\u73B0\u529B\u8BED\u97F3\u6A21\u578B\uFF0C\u9002\u5408\u81EA\u7136\u957F\u6587\u53D9\u8FF0\u3002\u9664 OpenRouter \u5143\u6570\u636E\u5217\u51FA\u7684 4 \u4E2A\u97F3\u8272\u5916\uFF0C\u63D2\u4EF6\u8FD8\u63D0\u4F9B\u5FAE\u8F6F\u5B98\u65B9\u53D1\u5E03\u7684 3 \u4E2A\u666E\u901A\u8BDD ShortName \u4F5C\u4E3A\u517C\u5BB9\u9884\u8BBE\uFF1BOpenRouter \u7AEF\u70B9\u7684\u5B9E\u9645\u53EF\u7528\u6027\u53EF\u80FD\u53D8\u5316\u3002"
   ],
   [
     "google/gemini-3.1-flash-tts-preview",
@@ -654,6 +1121,9 @@ var OPENROUTER_TTS_PRESETS = [
   ["microsoft/mai-voice-2-flash", "es-MX-Valeria:MAI-Voice-2", "Valeria (Mexican Spanish)", "Valeria\uFF08\u58A8\u897F\u54E5\u897F\u73ED\u7259\u8BED\uFF09"],
   ["microsoft/mai-voice-2-flash", "fr-FR-Soleil:MAI-Voice-2", "Soleil (French)", "Soleil\uFF08\u6CD5\u8BED\uFF09"],
   ["microsoft/mai-voice-2-flash", "de-DE-Klaus:MAI-Voice-2", "Klaus (German)", "Klaus\uFF08\u5FB7\u8BED\uFF09"],
+  ["microsoft/mai-voice-2", "zh-CN-Bo:MAI-Voice-2", "Bo (Mandarin male; not listed in OpenRouter metadata)", "Bo\uFF08\u4E2D\u6587\u666E\u901A\u8BDD\u7537\u58F0\uFF1BOpenRouter \u5143\u6570\u636E\u672A\u5217\u51FA\uFF09"],
+  ["microsoft/mai-voice-2", "zh-CN-Lan:MAI-Voice-2", "Lan (Mandarin female; not listed in OpenRouter metadata)", "Lan\uFF08\u4E2D\u6587\u666E\u901A\u8BDD\u5973\u58F0\uFF1BOpenRouter \u5143\u6570\u636E\u672A\u5217\u51FA\uFF09"],
+  ["microsoft/mai-voice-2", "zh-CN-Mei:MAI-Voice-2", "Mei (Mandarin female; not listed in OpenRouter metadata)", "Mei\uFF08\u4E2D\u6587\u666E\u901A\u8BDD\u5973\u58F0\uFF1BOpenRouter \u5143\u6570\u636E\u672A\u5217\u51FA\uFF09"],
   ["microsoft/mai-voice-2", "en-US-Harper:MAI-Voice-2", "Harper (US English)", "Harper\uFF08\u7F8E\u5F0F\u82F1\u8BED\uFF09"],
   ["microsoft/mai-voice-2", "es-MX-Valeria:MAI-Voice-2", "Valeria (Mexican Spanish)", "Valeria\uFF08\u58A8\u897F\u54E5\u897F\u73ED\u7259\u8BED\uFF09"],
   ["microsoft/mai-voice-2", "fr-FR-Soleil:MAI-Voice-2", "Soleil (French)", "Soleil\uFF08\u6CD5\u8BED\uFF09"],
@@ -742,7 +1212,7 @@ var SETTINGS_UI_TEXT = {
     openRouterModelInfoName: "Selected model characteristics",
     customModelInfo: "Custom model: check its language, voice, and speech-output support in OpenRouter. The request fails if no ZDR endpoint is eligible.",
     openRouterVoicesName: "Common voices for this model",
-    openRouterVoicesDesc: "Only model-compatible voice IDs currently published by OpenRouter are listed. Gemini labels use official delivery styles; Kokoro labels use language and gender. MAI currently exposes only four voices.",
+    openRouterVoicesDesc: "Model-specific presets are listed. MAI-Voice-2 also includes Microsoft-published Mandarin IDs that OpenRouter may accept even when its supported_voices metadata omits them; availability can vary by endpoint.",
     openRouterVoiceName: "OpenRouter TTS voice",
     openRouterVoiceDesc: "Voice ID supported by the selected model. Voice catalogs differ between models.",
     openRouterPrivacyName: "OpenRouter privacy routing",
@@ -757,6 +1227,14 @@ var SETTINGS_UI_TEXT = {
     onlinePrefetchDesc: "How many future chunks an online engine may synthesize early. The default 1 improves continuity while limiting unused work to at most one chunk; choose 0 for strict on-demand synthesis.",
     onlinePrefetchNone: "0 - synthesize only when needed",
     onlinePrefetchOne: "1 - prefetch one chunk",
+    audioExportLocationName: "Full-note audio save location",
+    audioExportLocationDesc: "Choose where exported full-note audio is saved. The confirmation dialog shows the planned vault path before synthesis starts.",
+    audioExportLocationAttachment: "Obsidian attachment folder (default)",
+    audioExportLocationNote: "Same folder as the note",
+    audioExportLocationCustom: "Custom folder in this vault",
+    audioExportFolderName: "Custom audio folder",
+    audioExportFolderDesc: "Enter a vault-relative folder such as Audio exports. Absolute paths and parent-directory segments are rejected.",
+    audioExportFolderPlaceholder: "Audio exports",
     stripMarkdownName: "Strip Markdown",
     stripMarkdownDesc: "Remove frontmatter, links, headings, embeds, and common formatting before synthesis.",
     mathLanguageName: "Math reading language",
@@ -842,7 +1320,7 @@ var SETTINGS_UI_TEXT = {
     openRouterModelInfoName: "\u6240\u9009\u6A21\u578B\u7279\u70B9",
     customModelInfo: "\u81EA\u5B9A\u4E49\u6A21\u578B\uFF1A\u8BF7\u5728 OpenRouter \u6838\u5BF9\u5176\u8BED\u8A00\u3001\u97F3\u8272\u548C\u8BED\u97F3\u8F93\u51FA\u80FD\u529B\uFF1B\u5982\u679C\u6CA1\u6709\u7B26\u5408\u6761\u4EF6\u7684 ZDR \u7AEF\u70B9\uFF0C\u8BF7\u6C42\u4F1A\u5931\u8D25\u3002",
     openRouterVoicesName: "\u8BE5\u6A21\u578B\u7684\u5E38\u7528\u97F3\u8272",
-    openRouterVoicesDesc: "\u8FD9\u91CC\u53EA\u5217\u51FA OpenRouter \u5F53\u524D\u516C\u5F00\u4E14\u4E0E\u6240\u9009\u6A21\u578B\u517C\u5BB9\u7684\u97F3\u8272 ID\u3002Gemini \u6309\u5B98\u65B9\u6717\u8BFB\u98CE\u683C\u6807\u6CE8\uFF0CKokoro \u6309\u8BED\u8A00\u548C\u6027\u522B\u6807\u6CE8\uFF1BMAI \u5F53\u524D\u53EA\u516C\u5F00 4 \u4E2A\u97F3\u8272\u3002",
+    openRouterVoicesDesc: "\u8FD9\u91CC\u53EA\u5217\u51FA\u4E0E\u6240\u9009\u6A21\u578B\u5BF9\u5E94\u7684\u9884\u8BBE\u3002MAI-Voice-2 \u8FD8\u52A0\u5165\u4E86\u5FAE\u8F6F\u5B98\u65B9\u53D1\u5E03\u3001\u4F46 OpenRouter supported_voices \u5143\u6570\u636E\u53EF\u80FD\u9057\u6F0F\u7684\u666E\u901A\u8BDD\u97F3\u8272\uFF1B\u5B9E\u9645\u53EF\u7528\u6027\u53EF\u80FD\u968F\u7AEF\u70B9\u53D8\u5316\u3002",
     openRouterVoiceName: "OpenRouter TTS \u97F3\u8272",
     openRouterVoiceDesc: "\u6240\u9009\u6A21\u578B\u652F\u6301\u7684\u97F3\u8272 ID\u3002\u4E0D\u540C\u6A21\u578B\u7684\u97F3\u8272\u76EE\u5F55\u5E76\u4E0D\u76F8\u540C\u3002",
     openRouterPrivacyName: "OpenRouter \u9690\u79C1\u8DEF\u7531",
@@ -857,6 +1335,14 @@ var SETTINGS_UI_TEXT = {
     onlinePrefetchDesc: "\u5141\u8BB8\u5728\u7EBF\u5F15\u64CE\u63D0\u524D\u5408\u6210\u7684\u540E\u7EED\u5206\u6BB5\u6570\u91CF\u3002\u9ED8\u8BA4 1 \u53EF\u6539\u5584\u8854\u63A5\uFF0C\u5E76\u628A\u53EF\u80FD\u672A\u4F7F\u7528\u7684\u63D0\u524D\u5408\u6210\u9650\u5236\u4E3A\u6700\u591A\u4E00\u6BB5\uFF1B\u9009\u62E9 0 \u53EF\u4E25\u683C\u6309\u9700\u5408\u6210\u3002",
     onlinePrefetchNone: "0 - \u9700\u8981\u65F6\u624D\u5408\u6210",
     onlinePrefetchOne: "1 - \u63D0\u524D\u5408\u6210\u4E00\u6BB5",
+    audioExportLocationName: "\u6574\u7BC7\u97F3\u9891\u4FDD\u5B58\u4F4D\u7F6E",
+    audioExportLocationDesc: "\u9009\u62E9\u6574\u7BC7\u7B14\u8BB0\u97F3\u9891\u7684\u4FDD\u5B58\u4F4D\u7F6E\u3002\u5F00\u59CB\u5408\u6210\u524D\uFF0C\u786E\u8BA4\u7A97\u53E3\u4F1A\u663E\u793A\u9884\u8BA1\u7684\u5E93\u5185\u8DEF\u5F84\u3002",
+    audioExportLocationAttachment: "Obsidian \u9644\u4EF6\u76EE\u5F55\uFF08\u9ED8\u8BA4\uFF09",
+    audioExportLocationNote: "\u4E0E\u539F\u7B14\u8BB0\u76F8\u540C\u7684\u76EE\u5F55",
+    audioExportLocationCustom: "\u672C\u5E93\u5185\u7684\u81EA\u5B9A\u4E49\u76EE\u5F55",
+    audioExportFolderName: "\u81EA\u5B9A\u4E49\u97F3\u9891\u76EE\u5F55",
+    audioExportFolderDesc: "\u586B\u5199\u5E93\u5185\u76F8\u5BF9\u76EE\u5F55\uFF0C\u4F8B\u5982\u201C\u5BFC\u51FA\u97F3\u9891\u201D\u3002\u4E0D\u5141\u8BB8\u7EDD\u5BF9\u8DEF\u5F84\u6216\u8FD4\u56DE\u4E0A\u7EA7\u76EE\u5F55\u7684\u8DEF\u5F84\u3002",
+    audioExportFolderPlaceholder: "\u5BFC\u51FA\u97F3\u9891",
     stripMarkdownName: "\u79FB\u9664 Markdown \u683C\u5F0F",
     stripMarkdownDesc: "\u5408\u6210\u524D\u79FB\u9664 frontmatter\u3001\u94FE\u63A5\u3001\u6807\u9898\u3001\u5D4C\u5165\u5185\u5BB9\u548C\u5E38\u89C1\u683C\u5F0F\u6807\u8BB0\u3002",
     mathLanguageName: "\u6570\u5B66\u516C\u5F0F\u6717\u8BFB\u8BED\u8A00",
@@ -955,6 +1441,8 @@ var DEFAULT_SETTINGS = {
   settingsLanguage: "english",
   scriptPath: resolveDefaultScriptPath(),
   speechEngine: "local-cosyvoice",
+  audioExportLocation: "obsidian-attachment",
+  audioExportFolder: "",
   edgeTtsConsent: false,
   edgeTtsExecutable: DEFAULT_EDGE_TTS_EXECUTABLE,
   edgeTtsVoice: DEFAULT_EDGE_TTS_VOICE,
@@ -994,24 +1482,24 @@ function getPdfFileIdentity(file) {
 function getFileMtime(file) {
   return Math.max(0, Math.floor(Number(file && file.stat && file.stat.mtime) || 0));
 }
-function getPdfPageNumberFromNode(node, root) {
+function getPdfPageInfoFromNode(node, root) {
   let element = node && node.nodeType === 1 ? node : node && node.parentElement;
   while (element) {
     const getAttribute = typeof element.getAttribute === "function" ? (name) => element.getAttribute(name) : () => null;
     const pageNumberValue = getAttribute("data-page-number");
     const pageNumber = Number(pageNumberValue);
     if (pageNumberValue !== null && Number.isInteger(pageNumber) && pageNumber >= 1) {
-      return pageNumber;
+      return { element, pageNumber };
     }
     const pageIndexValue = getAttribute("data-page-index");
     const pageIndex = Number(pageIndexValue);
     if (pageIndexValue !== null && Number.isInteger(pageIndex) && pageIndex >= 0) {
-      return pageIndex + 1;
+      return { element, pageNumber: pageIndex + 1 };
     }
     const identity = `${getAttribute("id") || ""} ${getAttribute("aria-label") || ""}`;
     const identityMatch = /(?:pageContainer|page[-_]|\bpage\s+)(\d+)\b/i.exec(identity);
     if (identityMatch) {
-      return Number(identityMatch[1]);
+      return { element, pageNumber: Number(identityMatch[1]) };
     }
     if (element === root) {
       break;
@@ -1019,6 +1507,80 @@ function getPdfPageNumberFromNode(node, root) {
     element = element.parentElement;
   }
   return null;
+}
+function getPdfPageNumberFromNode(node, root) {
+  const pageInfo = getPdfPageInfoFromNode(node, root);
+  return pageInfo ? pageInfo.pageNumber : null;
+}
+function getFirstRangeRect(range) {
+  if (!range) {
+    return null;
+  }
+  try {
+    if (typeof range.getClientRects === "function") {
+      const rects = range.getClientRects();
+      if (rects && rects.length) {
+        return rects[0];
+      }
+    }
+    if (typeof range.getBoundingClientRect === "function") {
+      return range.getBoundingClientRect();
+    }
+  } catch (error) {
+    return null;
+  }
+  return null;
+}
+function getPdfSelectionPosition(range, pageElement) {
+  if (!range || !pageElement || typeof pageElement.getBoundingClientRect !== "function") {
+    return null;
+  }
+  let pageRect;
+  try {
+    pageRect = pageElement.getBoundingClientRect();
+  } catch (error) {
+    return null;
+  }
+  const pageLeft = Number(pageRect && pageRect.left);
+  const pageTop = Number(pageRect && pageRect.top);
+  const pageWidth = Number(pageRect && pageRect.width);
+  const pageHeight = Number(pageRect && pageRect.height);
+  if (![pageLeft, pageTop, pageWidth, pageHeight].every(Number.isFinite) || pageWidth <= 0 || pageHeight <= 0) {
+    return null;
+  }
+  let selectionRect = null;
+  if (typeof range.cloneRange === "function") {
+    try {
+      const startRange = range.cloneRange();
+      if (startRange && typeof startRange.collapse === "function") {
+        startRange.collapse(true);
+        selectionRect = getFirstRangeRect(startRange);
+      }
+    } catch (error) {
+      selectionRect = null;
+    }
+  }
+  const isRectInsidePage = (rect) => {
+    const left = Number(rect && rect.left);
+    const top = Number(rect && rect.top);
+    const width = Math.max(0, Number(rect && rect.width) || 0);
+    const height = Math.max(0, Number(rect && rect.height) || 0);
+    return Number.isFinite(left) && Number.isFinite(top) && (width > 0 || height > 0) && left >= pageLeft - 2 && left <= pageLeft + pageWidth + 2 && top >= pageTop - 2 && top <= pageTop + pageHeight + 2;
+  };
+  if (!isRectInsidePage(selectionRect)) {
+    selectionRect = getFirstRangeRect(range);
+  }
+  if (!isRectInsidePage(selectionRect)) {
+    return null;
+  }
+  const selectionLeft = Number(selectionRect.left);
+  const selectionTop = Number(selectionRect.top);
+  const selectionHeight = Math.max(0, Number(selectionRect.height) || 0);
+  const clampRatio = (value) => Math.max(0, Math.min(1, value));
+  return {
+    xRatio: clampRatio((selectionLeft - pageLeft) / pageWidth),
+    yRatio: clampRatio((selectionTop + selectionHeight / 2 - pageTop) / pageHeight)
+  };
 }
 function getPdfSelectionContext(selection, leaves, fallbackFile = null, capturedAt = Date.now()) {
   if (!selection || typeof selection.toString !== "function" || typeof selection.getRangeAt !== "function") {
@@ -1048,15 +1610,17 @@ function getPdfSelectionContext(selection, leaves, fallbackFile = null, captured
     if (!isPdfFile(file)) {
       continue;
     }
-    const pageNumber = getPdfPageNumberFromNode(startNode, root);
-    if (!pageNumber) {
+    const pageInfo = getPdfPageInfoFromNode(startNode, root);
+    if (!pageInfo) {
       continue;
     }
+    const selectionPosition = getPdfSelectionPosition(range, pageInfo.element);
     return {
       capturedAt: Number(capturedAt) || Date.now(),
       filePath: getPdfFileIdentity(file),
-      pageNumber,
-      selectedText: selectedText.slice(0, 2e3)
+      pageNumber: pageInfo.pageNumber,
+      selectedText: selectedText.slice(0, 2e3),
+      ...selectionPosition ? { selectionPosition } : {}
     };
   }
   return null;
@@ -1064,23 +1628,121 @@ function getPdfSelectionContext(selection, leaves, fallbackFile = null, captured
 function normalizePdfSelectionText(text) {
   return normalizeLineBreaks(text).normalize("NFKC").replace(/\u00ad/g, "").replace(/([A-Za-z])-\s+(?=[a-z])/g, "$1").replace(/\s+/g, " ").trim();
 }
-function slicePdfTextFromSelection(pageText, selectedText) {
+function createNormalizedPdfLayoutMap(layout) {
+  const sourceLines = layout && Array.isArray(layout.lines) ? layout.lines : [];
+  const lines = [];
+  let text = "";
+  for (const sourceLine of sourceLines) {
+    const lineText = normalizePdfSelectionText(sourceLine && sourceLine.text);
+    if (!lineText) {
+      continue;
+    }
+    let start = 0;
+    if (text) {
+      if (/[A-Za-z]-$/.test(text) && /^[a-z]/.test(lineText)) {
+        text = text.slice(0, -1);
+        start = text.length;
+      } else {
+        text += " ";
+        start = text.length;
+      }
+    }
+    text += lineText;
+    lines.push({
+      ...sourceLine,
+      normalizedEnd: text.length,
+      normalizedStart: start
+    });
+  }
+  return { lines, text };
+}
+function getPdfSpatialLineAnchor(pageText, layout, selectionPosition) {
+  const xRatio = Number(selectionPosition && selectionPosition.xRatio);
+  const yRatio = Number(selectionPosition && selectionPosition.yRatio);
+  const pageWidth = Number(layout && layout.pageWidth);
+  const pageHeight = Number(layout && layout.pageHeight);
+  if (![xRatio, yRatio, pageWidth, pageHeight].every(Number.isFinite) || xRatio < 0 || xRatio > 1 || yRatio < 0 || yRatio > 1 || pageWidth <= 0 || pageHeight <= 0) {
+    return null;
+  }
+  const mapped = createNormalizedPdfLayoutMap(layout);
+  if (!mapped.lines.length || mapped.text !== pageText) {
+    return null;
+  }
+  const targetX = xRatio * pageWidth;
+  const targetY = (1 - yRatio) * pageHeight;
+  let best = null;
+  for (const line of mapped.lines) {
+    const xMin = Number(line.xMin);
+    const xMax = Number(line.xMax);
+    const y = Number(line.y);
+    if (![xMin, xMax, y].every(Number.isFinite)) {
+      continue;
+    }
+    const horizontalDistance = targetX < xMin ? xMin - targetX : targetX > xMax ? targetX - xMax : 0;
+    const verticalDistance = Math.abs(targetY - y);
+    const score = verticalDistance + horizontalDistance * 0.4;
+    if (!best || score < best.score) {
+      best = { horizontalDistance, line, score, verticalDistance };
+    }
+  }
+  if (!best || best.verticalDistance > Math.max(24, pageHeight * 0.04) || best.horizontalDistance > Math.max(30, pageWidth * 0.12)) {
+    return null;
+  }
+  return best.line.normalizedStart;
+}
+function findPdfSelectionMatchIndices(pageLower, candidateLower) {
+  const indexes = [];
+  let searchFrom = 0;
+  while (candidateLower && searchFrom <= pageLower.length) {
+    const index = pageLower.indexOf(candidateLower, searchFrom);
+    if (index < 0) {
+      break;
+    }
+    indexes.push(index);
+    searchFrom = index + 1;
+  }
+  return indexes;
+}
+function slicePdfTextFromSelection(pageText, selectedText, options = {}) {
   const page = normalizePdfSelectionText(pageText);
   const selected = normalizePdfSelectionText(selectedText);
   if (!page || !selected) {
     return { matched: false, text: page };
   }
-  const candidateLengths = [selected.length, 400, 240, 160, 100, 60, 30, 16, 8].map((length) => Math.min(selected.length, length)).filter((length, index, values) => length >= 8 && values.indexOf(length) === index);
+  const spatialAnchor = getPdfSpatialLineAnchor(
+    page,
+    options.layout,
+    options.selectionPosition
+  );
+  const minimumCandidateLength = spatialAnchor === null ? 8 : 2;
+  const candidateLengths = [selected.length, 400, 240, 160, 100, 60, 30, 16, 8, 4, 2].map((length) => Math.min(selected.length, length)).filter((length, index, values) => length >= minimumCandidateLength && values.indexOf(length) === index);
   const pageLower = page.toLocaleLowerCase();
   for (const length of candidateLengths) {
     const candidate = selected.slice(0, length);
-    let matchIndex = page.indexOf(candidate);
-    if (matchIndex < 0) {
-      matchIndex = pageLower.indexOf(candidate.toLocaleLowerCase());
+    if (spatialAnchor === null) {
+      let matchIndex = page.indexOf(candidate);
+      if (matchIndex < 0) {
+        matchIndex = pageLower.indexOf(candidate.toLocaleLowerCase());
+      }
+      if (matchIndex >= 0) {
+        return { matched: true, text: page.slice(matchIndex) };
+      }
+      continue;
     }
-    if (matchIndex >= 0) {
-      return { matched: true, text: page.slice(matchIndex) };
+    const matchIndices = findPdfSelectionMatchIndices(
+      pageLower,
+      candidate.toLocaleLowerCase()
+    );
+    if (!matchIndices.length) {
+      continue;
     }
+    const closestIndex = matchIndices.reduce((closest, current) => Math.abs(current - spatialAnchor) < Math.abs(closest - spatialAnchor) ? current : closest);
+    if (Math.abs(closestIndex - spatialAnchor) <= Math.max(240, selected.length)) {
+      return { matched: true, text: page.slice(closestIndex) };
+    }
+  }
+  if (spatialAnchor !== null) {
+    return { matched: true, text: page.slice(spatialAnchor) };
   }
   return { matched: false, text: page };
 }
@@ -1641,6 +2303,8 @@ function selectKnownSettings(defaults, candidate) {
 }
 function createDefaultSettings() {
   return {
+    audioExportFolder: normalizeAudioExportFolder(DEFAULT_SETTINGS.audioExportFolder),
+    audioExportLocation: normalizeAudioExportLocation(DEFAULT_SETTINGS.audioExportLocation),
     azureSpeechCloud: normalizeAzureSpeechCloud(DEFAULT_SETTINGS.azureSpeechCloud),
     azureSpeechConsent: DEFAULT_SETTINGS.azureSpeechConsent,
     azureSpeechCredentialSource: normalizeCredentialSource(DEFAULT_SETTINGS.azureSpeechCredentialSource),
@@ -1920,6 +2584,168 @@ function describeMediaError(mediaError) {
 function resolvePowerShellExecutable() {
   return "powershell.exe";
 }
+function isMarkdownFile(file) {
+  return Boolean(file && String(file.extension || "").toLowerCase() === "md");
+}
+function getAudioExportExtension(speechEngine) {
+  return normalizeSpeechEngine(speechEngine) === "local-cosyvoice" ? "wav" : "mp3";
+}
+function normalizeAudioExportLocation(value) {
+  const normalized = String(value || "").trim();
+  return AUDIO_EXPORT_LOCATIONS.includes(normalized) ? normalized : "obsidian-attachment";
+}
+function normalizeVaultRelativeAudioPath(value) {
+  const source = String(value || "");
+  if (source.includes("\0")) {
+    return "";
+  }
+  const normalized = source.trim().replace(/\\/g, "/").replace(/\/+/g, "/").replace(/\/$/, "");
+  const segments = normalized.split("/");
+  if (!normalized || normalized.startsWith("/") || /^[A-Za-z]:/.test(normalized) || segments.some((segment) => segment.trim() === "." || segment.trim() === "..")) {
+    return "";
+  }
+  return normalized;
+}
+function normalizeAudioExportFolder(value) {
+  return normalizeVaultRelativeAudioPath(value);
+}
+function getAvailableVaultAudioPath(vault, requestedPath) {
+  const normalizedPath = normalizeVaultRelativeAudioPath(requestedPath);
+  if (!normalizedPath) {
+    throw new Error("The audio export path must stay inside the current Obsidian vault.");
+  }
+  if (!vault || typeof vault.getAbstractFileByPath !== "function") {
+    return normalizedPath;
+  }
+  const extension = path.posix.extname(normalizedPath);
+  const stem = extension ? normalizedPath.slice(0, -extension.length) : normalizedPath;
+  for (let suffix = 0; suffix < 1e4; suffix += 1) {
+    const candidate = `${stem}${suffix ? ` ${suffix}` : ""}${extension}`;
+    if (!vault.getAbstractFileByPath(candidate)) {
+      return candidate;
+    }
+  }
+  throw new Error("Could not choose a non-conflicting name for the exported audio.");
+}
+function createAudioExportSummary(options = {}) {
+  return {
+    chunkCount: Math.max(0, Math.floor(Number(options.chunkCount) || 0)),
+    engineLabel: String(options.engineLabel || "Speech engine"),
+    insertAfterExport: options.insertAfterExport === true,
+    isOnline: isOnlineSpeechEngine(options.speechEngine),
+    noteName: String(options.noteName || "note"),
+    speechEngine: normalizeSpeechEngine(options.speechEngine),
+    targetPath: String(options.targetPath || "").trim(),
+    textLength: Math.max(0, Math.floor(Number(options.textLength) || 0))
+  };
+}
+function getAudioExportUiText(languageValue, summaryValue) {
+  const summary = createAudioExportSummary(summaryValue);
+  const useChinese = normalizeSettingsLanguage(languageValue) === "chinese";
+  const numberFormatter = new Intl.NumberFormat(useChinese ? "zh-CN" : "en-US");
+  if (useChinese) {
+    return {
+      acknowledge: summary.isOnline ? "\u6211\u4E86\u89E3\uFF1A\u6574\u7BC7\u53EF\u6717\u8BFB\u6587\u672C\u5C06\u5206\u6BB5\u53D1\u9001\u7ED9\u6240\u9009\u5728\u7EBF\u8BED\u97F3\u670D\u52A1\uFF0C\u5E76\u53EF\u80FD\u6D88\u8017 API \u989D\u5EA6\u6216\u4EA7\u751F\u8D39\u7528\u3002" : "\u6211\u4E86\u89E3\uFF1A\u63D2\u4EF6\u5C06\u4E3A\u6574\u7BC7\u7B14\u8BB0\u6267\u884C\u672C\u5730\u8BED\u97F3\u5408\u6210\uFF0C\u8FC7\u7A0B\u53EF\u80FD\u9700\u8981\u8F83\u957F\u65F6\u95F4\u3002",
+      cancel: "\u53D6\u6D88",
+      characterLabel: "\u53EF\u6717\u8BFB\u5B57\u7B26\u6570",
+      confirm: summary.insertAfterExport ? "\u5BFC\u51FA\u5E76\u63D2\u5165" : "\u5BFC\u51FA\u97F3\u9891",
+      description: summary.insertAfterExport ? "\u5168\u90E8\u5206\u6BB5\u6210\u529F\u540E\uFF0C\u97F3\u9891\u4F1A\u4FDD\u5B58\u5230\u4E0B\u65B9\u4F4D\u7F6E\u5E76\u63D2\u5165\u539F\u7B14\u8BB0\u3002" : "\u5168\u90E8\u5206\u6BB5\u6210\u529F\u540E\uFF0C\u97F3\u9891\u4F1A\u4FDD\u5B58\u5230\u4E0B\u65B9\u4F4D\u7F6E\u3002",
+      engineLabel: "\u8BED\u97F3\u5F15\u64CE",
+      locationLabel: "\u9884\u8BA1\u4FDD\u5B58\u4F4D\u7F6E",
+      noteLabel: "\u7B14\u8BB0",
+      quotaWarning: summary.isOnline ? `\u5C06\u53D1\u9001 ${numberFormatter.format(summary.textLength)} \u4E2A\u5B57\u7B26\uFF0C\u8BA1\u5212\u6309 ${numberFormatter.format(summary.chunkCount)} \u4E2A\u5206\u6BB5\u987A\u5E8F\u5408\u6210\uFF1B\u4E34\u65F6\u5931\u8D25\u53EF\u80FD\u89E6\u53D1\u6709\u9650\u91CD\u8BD5\uFF0C\u56E0\u6B64\u5B9E\u9645\u7F51\u7EDC\u5C1D\u8BD5\u6B21\u6570\u53EF\u80FD\u66F4\u9AD8\u3002\u4E0D\u4F1A\u4E3A\u64AD\u653E\u8FDE\u7EED\u6027\u989D\u5916\u9884\u5408\u6210\u3002\u5B9E\u9645\u989D\u5EA6\u6216\u8D39\u7528\u7531\u670D\u52A1\u5546\u548C\u6A21\u578B\u51B3\u5B9A\u3002` : `\u5C06\u6267\u884C ${numberFormatter.format(summary.chunkCount)} \u4E2A\u672C\u5730\u5408\u6210\u5206\u6BB5\uFF1B\u4E0D\u4F1A\u8C03\u7528\u5728\u7EBF API\u3002`,
+      requestLabel: summary.isOnline ? "\u9884\u8BA1\u5728\u7EBF\u8BF7\u6C42" : "\u5408\u6210\u5206\u6BB5",
+      title: "\u5BFC\u51FA\u6574\u7BC7\u7B14\u8BB0\u97F3\u9891\uFF1F"
+    };
+  }
+  return {
+    acknowledge: summary.isOnline ? "I understand that all readable note text will be sent in chunks to the selected online speech service and may use API quota or incur charges." : "I understand that the entire note will be synthesized locally and may take a long time.",
+    cancel: "Cancel",
+    characterLabel: "Readable characters",
+    confirm: summary.insertAfterExport ? "Export and insert" : "Export audio",
+    description: summary.insertAfterExport ? "After every segment succeeds, the audio will be saved at the location below and embedded in the original note." : "After every segment succeeds, the audio will be saved at the location below.",
+    engineLabel: "Speech engine",
+    locationLabel: "Planned save location",
+    noteLabel: "Note",
+    quotaWarning: summary.isOnline ? `${numberFormatter.format(summary.textLength)} characters will be sent in ${numberFormatter.format(summary.chunkCount)} planned sequential segments. Temporary failures may trigger bounded retries, so the network attempt count can be higher. No playback-continuity chunks are prefetched. Actual quota or cost depends on the provider and model.` : `${numberFormatter.format(summary.chunkCount)} local synthesis segments will run. No online API is used.`,
+    requestLabel: summary.isOnline ? "Estimated online requests" : "Synthesis segments",
+    title: "Export the entire note as audio?"
+  };
+}
+var AudioExportConfirmModal = class extends Modal {
+  constructor(app, language, summary) {
+    super(app);
+    this.language = language;
+    this.summary = createAudioExportSummary(summary);
+    this.settled = false;
+    this.resultPromise = new Promise((resolve) => {
+      this.resolveResult = resolve;
+    });
+  }
+  finish(result) {
+    if (this.settled) {
+      return;
+    }
+    this.settled = true;
+    this.resolveResult(Boolean(result));
+    this.close();
+  }
+  openAndWait() {
+    this.open();
+    return this.resultPromise;
+  }
+  onOpen() {
+    const ui = getAudioExportUiText(this.language, this.summary);
+    this.titleEl.setText(ui.title);
+    this.contentEl.empty();
+    this.contentEl.addClass("note-reader-cosyvoice-export-modal");
+    this.contentEl.createEl("p", { text: ui.description });
+    const summaryEl = this.contentEl.createEl("dl", { cls: "note-reader-cosyvoice-export-summary" });
+    const addSummaryRow = (label, value) => {
+      summaryEl.createEl("dt", { text: label });
+      summaryEl.createEl("dd", { text: String(value) });
+    };
+    addSummaryRow(ui.noteLabel, this.summary.noteName);
+    addSummaryRow(ui.engineLabel, this.summary.engineLabel);
+    addSummaryRow(ui.locationLabel, this.summary.targetPath);
+    addSummaryRow(ui.characterLabel, new Intl.NumberFormat().format(this.summary.textLength));
+    addSummaryRow(ui.requestLabel, new Intl.NumberFormat().format(this.summary.chunkCount));
+    this.contentEl.createDiv({
+      cls: "note-reader-cosyvoice-export-warning",
+      text: ui.quotaWarning
+    });
+    const acknowledgement = this.contentEl.createEl("label", {
+      cls: "note-reader-cosyvoice-export-acknowledgement"
+    });
+    const checkbox = acknowledgement.createEl("input", {
+      attr: { type: "checkbox" }
+    });
+    acknowledgement.createSpan({ text: ui.acknowledge });
+    const actions = this.contentEl.createDiv({ cls: "note-reader-cosyvoice-export-actions" });
+    const cancelButton = actions.createEl("button", { text: ui.cancel });
+    const confirmButton = actions.createEl("button", {
+      cls: "mod-cta",
+      text: ui.confirm
+    });
+    confirmButton.disabled = true;
+    checkbox.addEventListener("change", () => {
+      confirmButton.disabled = !checkbox.checked;
+    });
+    cancelButton.addEventListener("click", () => this.finish(false));
+    confirmButton.addEventListener("click", () => {
+      if (checkbox.checked) {
+        this.finish(true);
+      }
+    });
+  }
+  onClose() {
+    this.contentEl.empty();
+    if (!this.settled) {
+      this.settled = true;
+      this.resolveResult(false);
+    }
+  }
+};
 var CosyVoiceReaderPlugin = class extends Plugin {
   async onload() {
     this.sequence = 0;
@@ -1928,6 +2754,7 @@ var CosyVoiceReaderPlugin = class extends Plugin {
     this.currentProcess = null;
     this.currentRequests = /* @__PURE__ */ new Set();
     this.lastMarkdownView = null;
+    this.lastReadableFile = null;
     this.lastPdfSelection = null;
     this.pauseRequested = false;
     this.readerState = createReaderState();
@@ -1942,11 +2769,19 @@ var CosyVoiceReaderPlugin = class extends Plugin {
     await this.ensureCacheDir();
     this.registerView(VIEW_TYPE, (leaf) => new CosyVoiceReaderView(leaf, this));
     this.lastMarkdownView = this.app.workspace.getActiveViewOfType(MarkdownView);
+    const initiallyActiveFile = typeof this.app.workspace.getActiveFile === "function" ? this.app.workspace.getActiveFile() : null;
+    if (isMarkdownFile(initiallyActiveFile) || isPdfFile(initiallyActiveFile)) {
+      this.lastReadableFile = initiallyActiveFile;
+    }
     this.registerEvent(
       this.app.workspace.on("active-leaf-change", () => {
         const view = this.app.workspace.getActiveViewOfType(MarkdownView);
         if (view && view.editor) {
           this.lastMarkdownView = view;
+        }
+        const file = typeof this.app.workspace.getActiveFile === "function" ? this.app.workspace.getActiveFile() : null;
+        if (isMarkdownFile(file) || isPdfFile(file)) {
+          this.lastReadableFile = file;
         }
         this.renderReaderViews();
       })
@@ -1970,7 +2805,33 @@ var CosyVoiceReaderPlugin = class extends Plugin {
       id: "read-current-note",
       name: "Read current note or PDF aloud",
       callback: () => {
-        void this.readCurrentNote();
+        void this.runUserAction("Read file", () => this.readCurrentNote());
+      }
+    });
+    this.addCommand({
+      id: "export-current-note-audio",
+      name: "Export full note audio",
+      checkCallback: (checking) => {
+        if (!this.canExportCurrentNote()) {
+          return false;
+        }
+        if (!checking) {
+          void this.runUserAction("Export full audio", () => this.exportCurrentNoteAudio({ insertAfterExport: false }));
+        }
+        return true;
+      }
+    });
+    this.addCommand({
+      id: "export-current-note-audio-and-insert",
+      name: "Export full note audio and insert it into the note",
+      checkCallback: (checking) => {
+        if (!this.canExportCurrentNote()) {
+          return false;
+        }
+        if (!checking) {
+          void this.runUserAction("Export and insert audio", () => this.exportCurrentNoteAudio({ insertAfterExport: true }));
+        }
+        return true;
       }
     });
     this.addCommand({
@@ -2116,6 +2977,8 @@ var CosyVoiceReaderPlugin = class extends Plugin {
     const hadAzureCredentialSource = Object.prototype.hasOwnProperty.call(source, "azureSpeechCredentialSource");
     const hadOpenRouterCredentialSource = Object.prototype.hasOwnProperty.call(source, "openRouterCredentialSource");
     this.settings = selectKnownSettings(defaults, source);
+    this.settings.audioExportFolder = normalizeAudioExportFolder(this.settings.audioExportFolder);
+    this.settings.audioExportLocation = normalizeAudioExportLocation(this.settings.audioExportLocation);
     this.settings.speed = normalizeSpeed(this.settings.speed);
     this.settings.speechEngine = normalizeSpeechEngine(this.settings.speechEngine);
     this.settings.azureSpeechCloud = normalizeAzureSpeechCloud(this.settings.azureSpeechCloud);
@@ -2152,6 +3015,8 @@ var CosyVoiceReaderPlugin = class extends Plugin {
   }
   async saveSettings() {
     this.settings = selectKnownSettings(createDefaultSettings(), this.settings);
+    this.settings.audioExportFolder = normalizeAudioExportFolder(this.settings.audioExportFolder);
+    this.settings.audioExportLocation = normalizeAudioExportLocation(this.settings.audioExportLocation);
     this.settings.speed = normalizeSpeed(this.settings.speed);
     this.settings.speechEngine = normalizeSpeechEngine(this.settings.speechEngine);
     this.settings.azureSpeechCloud = normalizeAzureSpeechCloud(this.settings.azureSpeechCloud);
@@ -2303,6 +3168,31 @@ var CosyVoiceReaderPlugin = class extends Plugin {
     });
     this.renderReaderViews();
   }
+  async runUserAction(label, action) {
+    try {
+      return await action();
+    } catch (error) {
+      const message = messageFromError(error);
+      if (!this.activeSession) {
+        this.updateStatus(`CosyVoice ${label} error`, {
+          canPause: false,
+          canNextChunk: false,
+          canPreviousChunk: false,
+          canSeek: false,
+          canStop: false,
+          error: message,
+          isPaused: false,
+          phase: "error",
+          status: "error"
+        });
+      }
+      if (typeof this.writeRuntimeLog === "function") {
+        await this.writeRuntimeLog("failed", { message: `${label}: ${message}` });
+      }
+      new Notice(`CosyVoice ${label} failed: ${message}`, 1e4);
+      return null;
+    }
+  }
   capturePdfSelection() {
     if (typeof document === "undefined" || typeof document.getSelection !== "function") {
       return null;
@@ -2324,32 +3214,393 @@ var CosyVoiceReaderPlugin = class extends Plugin {
     const context = liveSelection || this.lastPdfSelection;
     return context && context.filePath === getPdfFileIdentity(file) ? context : null;
   }
-  getActiveMarkdownView() {
-    const view = this.app.workspace.getActiveViewOfType(MarkdownView) || this.lastMarkdownView;
-    if (!view || !view.editor) {
-      new Notice("CosyVoice: no active Markdown note.");
+  getCurrentReadableFile() {
+    const workspace = this.app && this.app.workspace;
+    const activeFile = workspace && typeof workspace.getActiveFile === "function" ? workspace.getActiveFile() : null;
+    if (activeFile) {
+      if (isMarkdownFile(activeFile) || isPdfFile(activeFile)) {
+        this.lastReadableFile = activeFile;
+      }
+      return activeFile;
+    }
+    return this.lastReadableFile || null;
+  }
+  findMarkdownViewForFile(file) {
+    if (!isMarkdownFile(file)) {
       return null;
     }
-    this.lastMarkdownView = view;
-    return view;
+    const targetPath = getPdfFileIdentity(file);
+    const workspace = this.app && this.app.workspace;
+    const candidates = [];
+    if (workspace && typeof workspace.getActiveViewOfType === "function") {
+      candidates.push(workspace.getActiveViewOfType(MarkdownView));
+    }
+    candidates.push(this.lastMarkdownView);
+    if (workspace && typeof workspace.getLeavesOfType === "function") {
+      const leaves = workspace.getLeavesOfType("markdown");
+      for (const leaf of Array.isArray(leaves) ? leaves : []) {
+        candidates.push(leaf && leaf.view);
+      }
+    }
+    const view = candidates.find((candidate) => candidate && candidate.editor && getPdfFileIdentity(candidate.file) === targetPath);
+    if (view) {
+      this.lastMarkdownView = view;
+    }
+    return view || null;
+  }
+  getCurrentMarkdownContext(options = {}) {
+    const notify = options.notify !== false;
+    const file = this.getCurrentReadableFile();
+    const view = this.findMarkdownViewForFile(file);
+    if (!file || !view) {
+      if (notify) {
+        new Notice("CosyVoice: open a Markdown note before using this action.", 8e3);
+      }
+      return null;
+    }
+    return { file, view };
+  }
+  getActiveMarkdownView() {
+    const context = this.getCurrentMarkdownContext({ notify: true });
+    return context ? context.view : null;
+  }
+  canExportCurrentNote() {
+    return Boolean(this.getCurrentMarkdownContext({ notify: false }));
+  }
+  getCurrentNoteExportContext() {
+    return this.getCurrentMarkdownContext({ notify: true });
+  }
+  requestAudioExportConfirmation(summary) {
+    const modal = new AudioExportConfirmModal(
+      this.app,
+      this.settings && this.settings.settingsLanguage,
+      summary
+    );
+    return modal.openAndWait();
+  }
+  async getAudioExportTargetPlan(noteFile, extension) {
+    const normalizedExtension = String(extension || "").trim().toLowerCase().replace(/^\./, "");
+    if (!["mp3", "wav"].includes(normalizedExtension)) {
+      throw new Error("The selected speech engine returned an unsupported export format.");
+    }
+    const fileName = buildExportAudioFileName(
+      noteFile && (noteFile.basename || noteFile.name) || "note",
+      normalizedExtension
+    );
+    const location = normalizeAudioExportLocation(
+      this.settings && this.settings.audioExportLocation
+    );
+    let requestedPath = "";
+    if (location === "obsidian-attachment" && this.app.fileManager && typeof this.app.fileManager.getAvailablePathForAttachment === "function") {
+      requestedPath = await this.app.fileManager.getAvailablePathForAttachment(
+        fileName,
+        noteFile && noteFile.path
+      );
+    } else {
+      let folder = "";
+      if (location === "custom-folder") {
+        folder = normalizeAudioExportFolder(this.settings && this.settings.audioExportFolder);
+        if (!folder) {
+          throw new Error("Choose a valid custom audio folder in the plugin settings before exporting.");
+        }
+      } else {
+        const noteFolder = path.posix.dirname(String(noteFile && noteFile.path || ""));
+        folder = noteFolder && noteFolder !== "." ? noteFolder : "";
+      }
+      requestedPath = folder ? `${folder}/${fileName}` : fileName;
+    }
+    return {
+      location,
+      targetPath: getAvailableVaultAudioPath(this.app.vault, requestedPath)
+    };
+  }
+  async ensureAudioExportFolder(folderPath) {
+    const normalizedFolder = normalizeAudioExportFolder(folderPath);
+    if (!normalizedFolder) {
+      return;
+    }
+    const vault = this.app && this.app.vault;
+    if (!vault || typeof vault.getAbstractFileByPath !== "function" || typeof vault.createFolder !== "function") {
+      throw new Error("This Obsidian version cannot create the custom audio export folder.");
+    }
+    let currentPath = "";
+    for (const segment of normalizedFolder.split("/")) {
+      currentPath = currentPath ? `${currentPath}/${segment}` : segment;
+      const existing = vault.getAbstractFileByPath(currentPath);
+      if (existing) {
+        if (!Array.isArray(existing.children)) {
+          throw new Error(`Cannot create the audio export folder because ${currentPath} is a file.`);
+        }
+        continue;
+      }
+      try {
+        await vault.createFolder(currentPath);
+      } catch (error) {
+        const concurrentlyCreated = vault.getAbstractFileByPath(currentPath);
+        if (!concurrentlyCreated || !Array.isArray(concurrentlyCreated.children)) {
+          throw error;
+        }
+      }
+    }
+  }
+  async createVaultAudioAttachment(noteFile, temporaryAudioPath, extension, targetPlan = null) {
+    if (!this.app.vault || typeof this.app.vault.createBinary !== "function") {
+      throw new Error("This Obsidian version cannot create binary attachments.");
+    }
+    const normalizedExtension = String(extension || "").trim().toLowerCase().replace(/^\./, "");
+    const plan = targetPlan && targetPlan.targetPath ? {
+      location: normalizeAudioExportLocation(targetPlan.location),
+      targetPath: targetPlan.targetPath
+    } : await this.getAudioExportTargetPlan(noteFile, normalizedExtension);
+    let targetPath = normalizeVaultRelativeAudioPath(plan.targetPath);
+    if (!targetPath || path.posix.extname(targetPath).toLowerCase() !== `.${normalizedExtension}`) {
+      throw new Error("Obsidian returned an invalid attachment path for the exported audio.");
+    }
+    if (typeof this.app.vault.getAbstractFileByPath === "function" && this.app.vault.getAbstractFileByPath(targetPath)) {
+      targetPath = getAvailableVaultAudioPath(this.app.vault, targetPath);
+    }
+    if (plan.location === "custom-folder") {
+      const targetFolder = path.posix.dirname(targetPath);
+      await this.ensureAudioExportFolder(targetFolder === "." ? "" : targetFolder);
+    }
+    const audioBytes = await fs.promises.readFile(temporaryAudioPath);
+    if (!audioBytes.length || audioBytes.length > MAX_EXPORTED_AUDIO_BYTES) {
+      throw new Error(`The exported audio is empty or exceeds the ${Math.floor(MAX_EXPORTED_AUDIO_BYTES / (1024 * 1024))} MB safety limit.`);
+    }
+    return this.app.vault.createBinary(targetPath, bufferToArrayBuffer(audioBytes));
+  }
+  async insertAudioAttachmentIntoNote(noteFile, audioFile) {
+    const generatedLink = this.app.fileManager && typeof this.app.fileManager.generateMarkdownLink === "function" ? this.app.fileManager.generateMarkdownLink(audioFile, noteFile.path) : `[[${audioFile.path}]]`;
+    const embed = generatedLink.startsWith("!") ? generatedLink : `!${generatedLink}`;
+    const workspace = this.app && this.app.workspace;
+    const activeView = workspace && typeof workspace.getActiveViewOfType === "function" ? workspace.getActiveViewOfType(MarkdownView) : null;
+    if (activeView && activeView.editor && getPdfFileIdentity(activeView.file) === getPdfFileIdentity(noteFile)) {
+      activeView.editor.replaceRange(`
+${embed}
+`, activeView.editor.getCursor());
+      return "cursor";
+    }
+    if (this.app.vault && typeof this.app.vault.process === "function") {
+      await this.app.vault.process(noteFile, (content) => {
+        const trimmed = String(content || "").replace(/\s*$/, "");
+        return `${trimmed}${trimmed ? "\n\n" : ""}${embed}
+`;
+      });
+      return "end";
+    }
+    throw new Error("The audio was exported, but the original note is no longer open and cannot be updated safely.");
+  }
+  async exportCurrentNoteAudio(options = {}) {
+    const context = this.getCurrentNoteExportContext();
+    if (!context) {
+      return null;
+    }
+    const insertAfterExport = options.insertAfterExport === true;
+    const text = this.settings.stripMarkdown ? sanitizeTextForSpeech(context.view.editor.getValue(), {
+      mathReadingLanguage: this.settings.mathReadingLanguage
+    }) : normalizeLineBreaks(context.view.editor.getValue()).trim();
+    if (!text) {
+      new Notice("CosyVoice: nothing readable in this note.", 6e3);
+      return null;
+    }
+    const configuration = this.getSpeechConfiguration();
+    if (!configuration) {
+      return null;
+    }
+    const extension = getAudioExportExtension(configuration.speechEngine);
+    const exportPlan = await this.getAudioExportTargetPlan(context.file, extension);
+    const chunks = splitTextForSpeechChunks(text, configuration.chunkLimits);
+    if (!chunks.length) {
+      new Notice("CosyVoice: nothing readable in this note.", 6e3);
+      return null;
+    }
+    const summary = createAudioExportSummary({
+      chunkCount: chunks.length,
+      engineLabel: configuration.engineLabel,
+      insertAfterExport,
+      noteName: context.file.basename || context.file.name || "note",
+      speechEngine: configuration.speechEngine,
+      targetPath: exportPlan.targetPath,
+      textLength: text.length
+    });
+    if (!await this.requestAudioExportConfirmation(summary)) {
+      return null;
+    }
+    const confirmedContext = this.getCurrentNoteExportContext();
+    if (!confirmedContext || getPdfFileIdentity(confirmedContext.file) !== getPdfFileIdentity(context.file)) {
+      new Notice("CosyVoice: the active note changed. Start the export again to review the new estimate.", 8e3);
+      return null;
+    }
+    const confirmedText = this.settings.stripMarkdown ? sanitizeTextForSpeech(confirmedContext.view.editor.getValue(), {
+      mathReadingLanguage: this.settings.mathReadingLanguage
+    }) : normalizeLineBreaks(confirmedContext.view.editor.getValue()).trim();
+    if (confirmedText !== text) {
+      new Notice("CosyVoice: the note changed while confirmation was open. Start the export again to review the new estimate.", 8e3);
+      return null;
+    }
+    await this.activateControlView();
+    await this.stopReading({ silent: true });
+    this.pauseRequested = false;
+    const sourceLabel = `${context.file.basename || context.file.name || "note"} (audio export)`;
+    const session = this.createSpeechSession(chunks, sourceLabel, configuration, {
+      file: context.file,
+      kind: "audio-export",
+      sourceKind: "markdown"
+    });
+    this.activeSession = session;
+    this.updateStatus(`${configuration.engineLabel} export 0/${chunks.length}`, {
+      canPause: false,
+      canNextChunk: false,
+      canPreviousChunk: false,
+      canSeek: false,
+      canStop: true,
+      currentChunk: 0,
+      currentText: previewText(chunks[0]),
+      error: "",
+      isPaused: false,
+      phase: "queued",
+      progress: 0,
+      source: sourceLabel,
+      status: "running",
+      totalChunks: chunks.length
+    });
+    await this.writeRuntimeLog("audio-export-start", {
+      chunks: chunks.length,
+      insertAfterExport,
+      textLength: text.length
+    });
+    new Notice(`${configuration.engineLabel}: exporting ${chunks.length} audio segments.`, 6e3);
+    const temporaryOutputPath = path.join(
+      this.cacheDir,
+      `${Date.now()}-${session.id}-export.${extension}`
+    );
+    session.files.push(temporaryOutputPath);
+    const preparedPaths = [];
+    try {
+      for (let index = 0; index < chunks.length; index += 1) {
+        if (!this.isActive(session)) {
+          throw new Error("Audio export stopped.");
+        }
+        session.currentChunkIndex = index;
+        const prepared = await this.prepareChunk(chunks[index], index, session);
+        preparedPaths.push(prepared.outputPath);
+      }
+      if (!this.isActive(session)) {
+        throw new Error("Audio export stopped.");
+      }
+      this.updateStatus(`${configuration.engineLabel} merging audio`, {
+        canPause: false,
+        canNextChunk: false,
+        canPreviousChunk: false,
+        canSeek: false,
+        canStop: true,
+        currentChunk: chunks.length,
+        currentText: `Combining ${chunks.length} synthesized segments...`,
+        isPaused: false,
+        phase: "synthesizing",
+        progress: 0.99,
+        status: "running",
+        totalChunks: chunks.length
+      });
+      const merged = await mergeAudioFiles(preparedPaths, temporaryOutputPath, extension);
+      if (!this.isActive(session)) {
+        throw new Error("Audio export stopped.");
+      }
+      const audioFile = await this.createVaultAudioAttachment(
+        context.file,
+        temporaryOutputPath,
+        extension,
+        exportPlan
+      );
+      if (!this.isActive(session)) {
+        new Notice(`CosyVoice: the completed audio was saved to ${audioFile.path}, but insertion was cancelled.`, 1e4);
+        return audioFile;
+      }
+      let insertionLocation = "";
+      let insertionError = null;
+      if (insertAfterExport) {
+        try {
+          insertionLocation = await this.insertAudioAttachmentIntoNote(context.file, audioFile);
+        } catch (error) {
+          insertionError = error;
+        }
+      }
+      this.updateStatus(`${configuration.engineLabel} audio export complete`, {
+        canPause: false,
+        canNextChunk: false,
+        canPreviousChunk: false,
+        canSeek: false,
+        canStop: false,
+        currentChunk: chunks.length,
+        currentText: audioFile.path,
+        error: insertionError ? messageFromError(insertionError) : "",
+        isPaused: false,
+        phase: "complete",
+        progress: 1,
+        status: "complete",
+        totalChunks: chunks.length
+      });
+      await this.writeRuntimeLog("audio-export-complete", {
+        bytes: merged.bytes,
+        chunks: chunks.length,
+        inserted: Boolean(insertionLocation)
+      });
+      this.activeSession = null;
+      const insertedMessage = insertionLocation === "cursor" ? " and inserted at the current cursor" : insertionLocation === "end" ? " and appended to the original note" : "";
+      if (insertionError) {
+        new Notice(
+          `CosyVoice: audio was exported to ${audioFile.path}, but it could not be inserted: ${messageFromError(insertionError)}`,
+          12e3
+        );
+      } else {
+        new Notice(`CosyVoice: exported ${audioFile.path}${insertedMessage}.`, 1e4);
+      }
+      return audioFile;
+    } catch (error) {
+      if (this.isActive(session)) {
+        const message = messageFromError(error);
+        this.updateStatus(`${configuration.engineLabel} audio export error`, {
+          canPause: false,
+          canNextChunk: false,
+          canPreviousChunk: false,
+          canSeek: false,
+          canStop: false,
+          error: message,
+          isPaused: false,
+          phase: "error",
+          status: "error"
+        });
+        await this.writeRuntimeLog("failed", { message });
+        new Notice(`CosyVoice audio export failed: ${message}`, 1e4);
+        await this.cancelSessionOperations(session);
+        this.activeSession = null;
+      }
+      return null;
+    } finally {
+      if (this.settings.cleanupCache) {
+        await this.cleanupSessionFiles(session);
+      }
+    }
   }
   async readCurrentNote() {
-    const activeFile = typeof this.app.workspace.getActiveFile === "function" ? this.app.workspace.getActiveFile() : null;
+    const activeFile = this.getCurrentReadableFile();
     if (isPdfFile(activeFile)) {
       await this.readCurrentPdf(activeFile);
+      return;
+    }
+    if (!isMarkdownFile(activeFile)) {
+      new Notice("CosyVoice: open a Markdown note or PDF before reading.", 8e3);
       return;
     }
     const view = this.getActiveMarkdownView();
     if (!view) {
       return;
     }
-    const selection = view.editor.getSelection();
-    const text = selection && selection.trim() ? selection : view.editor.getValue();
     await this.activateControlView();
     await this.startReading(
-      text,
-      selection && selection.trim() ? "selection" : view.file?.basename || "note",
-      selection && selection.trim() ? {} : { file: view.file, sourceKind: "markdown" }
+      view.editor.getValue(),
+      view.file?.basename || "note",
+      { file: view.file, sourceKind: "markdown" }
     );
   }
   getSavedReadingPosition(file) {
@@ -2412,7 +3663,7 @@ var CosyVoiceReaderPlugin = class extends Plugin {
     new Notice(getSettingsUiText(this.settings.settingsLanguage).positionsClearedNotice);
   }
   async saveSessionReadingPosition(session) {
-    if (!session || !this.settings || !this.settings.rememberReadingPosition || !session.filePath || !["markdown", "pdf"].includes(session.sourceKind) || !session.chunks.length || !Number.isInteger(session.currentChunkIndex)) {
+    if (!session || !this.settings || !this.settings.rememberReadingPosition || !session.filePath || session.kind === "audio-export" || !["markdown", "pdf"].includes(session.sourceKind) || !session.chunks.length || !Number.isInteger(session.currentChunkIndex)) {
       return false;
     }
     let chunkIndex = Math.max(0, Math.min(session.chunks.length - 1, session.currentChunkIndex));
@@ -2692,6 +3943,7 @@ var CosyVoiceReaderPlugin = class extends Plugin {
       },
       reportProgress: true,
       selectedText: selectionContext ? selectionContext.selectedText : "",
+      selectionPosition: selectionContext ? selectionContext.selectionPosition : null,
       startPageNumber: selectionContext ? selectionContext.pageNumber : 1
     });
     if (!this.isActive(session)) {
@@ -2782,9 +4034,13 @@ var CosyVoiceReaderPlugin = class extends Plugin {
             return "";
           }
           const viewport = typeof page.getViewport === "function" ? page.getViewport({ scale: 1 }) : null;
-          let pageText = extractTextFromPdfItems(textContent && textContent.items, { viewport });
+          const pageLayout = extractPdfTextLayout(textContent && textContent.items, { viewport });
+          let pageText = pageLayout.text;
           if (selectedText && pageNumber === startPageNumber) {
-            const selectionSlice = slicePdfTextFromSelection(pageText, selectedText);
+            const selectionSlice = slicePdfTextFromSelection(pageText, selectedText, {
+              layout: pageLayout,
+              selectionPosition: options.selectionPosition
+            });
             pageText = selectionSlice.text;
             session.pdfSelectionMatched = selectionSlice.matched;
           }
@@ -3055,13 +4311,14 @@ var CosyVoiceReaderPlugin = class extends Plugin {
     const outputPath = path.join(this.cacheDir, `${basename}.${outputExtension}`);
     session.files.push(inputPath, outputPath);
     await fs.promises.writeFile(inputPath, chunkText, { encoding: "utf8", mode: 384 });
+    const isAudioExport = session.kind === "audio-export";
     const isBackgroundPrefetch = Boolean(
       this.currentAudio && Number.isInteger(session.currentChunkIndex) && index !== session.currentChunkIndex
     );
     if (!isBackgroundPrefetch) {
       this.updateStatus(`${engineLabel} synth ${index + 1}/${session.totalChunks || 0}`, {
-        canPause: true,
-        ...getChunkNavigationState(index + 1, session.totalChunks),
+        canPause: !isAudioExport,
+        ...isAudioExport ? { canNextChunk: false, canPreviousChunk: false } : getChunkNavigationState(index + 1, session.totalChunks),
         canSeek: false,
         canStop: true,
         currentChunk: index + 1,
@@ -3718,6 +4975,10 @@ var CosyVoiceReaderPlugin = class extends Plugin {
   }
   async pauseOrResume() {
     const audio = this.currentAudio;
+    if (this.activeSession && this.activeSession.kind === "audio-export") {
+      new Notice("CosyVoice: audio export can be stopped but not paused.", 6e3);
+      return;
+    }
     if (!audio) {
       if (!this.activeSession) {
         new Notice("CosyVoice: nothing is playing.");
@@ -3941,14 +5202,20 @@ var CosyVoiceReaderView = class extends ItemView {
     this.createSpeedPanel(root);
     const actions = root.createDiv({ cls: "note-reader-cosyvoice-actions" });
     this.createActionButton(actions, "play", "Read selection", () => {
-      void this.plugin.readSelection();
+      this.runPluginAction("Read selection", () => this.plugin.readSelection());
     }, false, { triggerOnPointerDown: true });
     this.createActionButton(actions, "list-start", "Read from selection", () => {
-      void this.plugin.readFromSelection();
+      this.runPluginAction("Read from selection", () => this.plugin.readFromSelection());
     }, false, { triggerOnPointerDown: true });
     this.createActionButton(actions, "file-text", "Read file", () => {
-      void this.plugin.readCurrentNote();
-    });
+      this.runPluginAction("Read file", () => this.plugin.readCurrentNote());
+    }, false, { triggerOnPointerDown: true });
+    this.createActionButton(actions, "download", "Export full audio", () => {
+      this.runPluginAction("Export full audio", () => this.plugin.exportCurrentNoteAudio({ insertAfterExport: false }));
+    }, false, { triggerOnPointerDown: true });
+    this.createActionButton(actions, "paperclip", "Export & insert audio", () => {
+      this.runPluginAction("Export and insert audio", () => this.plugin.exportCurrentNoteAudio({ insertAfterExport: true }));
+    }, false, { triggerOnPointerDown: true });
     const canResumeFile = typeof this.plugin.canResumeCurrentFile === "function" && this.plugin.canResumeCurrentFile();
     this.createActionButton(actions, "history", "Resume file", () => {
       void this.plugin.resumeCurrentFile();
@@ -3961,7 +5228,10 @@ var CosyVoiceReaderView = class extends ItemView {
         void this.plugin.pauseOrResume();
       },
       !state.canPause,
-      { triggerOnPointerDown: true }
+      {
+        title: state.isPaused ? "Resume reading (or press Space)" : "Pause reading (or press Space)",
+        triggerOnPointerDown: true
+      }
     );
     this.createActionButton(
       actions,
@@ -4016,6 +5286,20 @@ var CosyVoiceReaderView = class extends ItemView {
   focusPanel(panel) {
     focusElementWithoutScroll(panel);
   }
+  runPluginAction(label, action) {
+    if (this.plugin && typeof this.plugin.runUserAction === "function") {
+      void this.plugin.runUserAction(label, action);
+      return;
+    }
+    try {
+      const result = action();
+      if (result && typeof result.catch === "function") {
+        void result.catch((error) => console.error(`[${PLUGIN_ID}] ${label} failed`, error));
+      }
+    } catch (error) {
+      console.error(`[${PLUGIN_ID}] ${label} failed`, error);
+    }
+  }
   createIconButton(parent, icon, label, onClick, disabled = false, options = {}) {
     const button = parent.createEl("button", {
       cls: "note-reader-cosyvoice-icon-button",
@@ -4036,7 +5320,7 @@ var CosyVoiceReaderView = class extends ItemView {
       cls: "note-reader-cosyvoice-action",
       attr: {
         "aria-label": label,
-        title: label
+        title: options.title || label
       }
     });
     button.disabled = disabled;
@@ -4318,6 +5602,21 @@ var CosyVoiceReaderSettingTab = class extends PluginSettingTab {
         await this.plugin.saveSettings();
       });
     });
+    new Setting(containerEl).setName(ui.audioExportLocationName).setDesc(ui.audioExportLocationDesc).addDropdown((dropdown) => {
+      dropdown.addOption("obsidian-attachment", ui.audioExportLocationAttachment).addOption("note-folder", ui.audioExportLocationNote).addOption("custom-folder", ui.audioExportLocationCustom).setValue(normalizeAudioExportLocation(this.plugin.settings.audioExportLocation)).onChange(async (value) => {
+        this.plugin.settings.audioExportLocation = normalizeAudioExportLocation(value);
+        await this.plugin.saveSettings();
+        this.display();
+      });
+    });
+    if (normalizeAudioExportLocation(this.plugin.settings.audioExportLocation) === "custom-folder") {
+      new Setting(containerEl).setName(ui.audioExportFolderName).setDesc(ui.audioExportFolderDesc).addText((text) => {
+        text.setPlaceholder(ui.audioExportFolderPlaceholder).setValue(this.plugin.settings.audioExportFolder).onChange(async (value) => {
+          this.plugin.settings.audioExportFolder = normalizeAudioExportFolder(value);
+          await this.plugin.saveSettings();
+        });
+      });
+    }
     new Setting(containerEl).setName(ui.stripMarkdownName).setDesc(ui.stripMarkdownDesc).addToggle((toggle) => {
       toggle.setValue(this.plugin.settings.stripMarkdown).onChange(async (value) => {
         this.plugin.settings.stripMarkdown = value;
@@ -4383,6 +5682,7 @@ module.exports = {
     buildEdgeTtsArgs,
     buildOpenRouterTtsRequestBody,
     calculateCurrentChunkSeekTime,
+    createAudioExportSummary,
     createBlobAudioSource,
     createDefaultSettings,
     createIncrementalSpeechChunker,
@@ -4391,6 +5691,7 @@ module.exports = {
     createSafeRuntimeLogEvent,
     createTaskState,
     describeMediaError,
+    extractPdfTextLayout,
     extractTextFromPdfItems,
     formatProgressLabel,
     formatSpeedLabel,
@@ -4406,10 +5707,14 @@ module.exports = {
     getChunkLimitsForSpeechEngine,
     getPdfPageNumberFromNode,
     getPdfSelectionContext,
+    getPdfSelectionPosition,
     getPluginTempCacheDir,
     getSettingsUiText,
     getTextFromPositionToEnd,
     getAudioUrlForFile,
+    getAudioExportExtension,
+    getAudioExportUiText,
+    getAvailableVaultAudioPath,
     getSpeedPresets,
     getSynthesisPrefetchCount,
     hasAzureSpeechConsent,
@@ -4417,6 +5722,7 @@ module.exports = {
     hasObsidianSecretStorage,
     hasOpenRouterConsent,
     isRetryableRemoteError,
+    isMarkdownFile,
     isPdfFile,
     isOwnedCacheFileName,
     isOnlineSpeechEngine,
@@ -4424,6 +5730,8 @@ module.exports = {
     normalizeAzureSpeechCloud,
     normalizeAzureSpeechRegion,
     normalizeAzureSpeechVoice,
+    normalizeAudioExportFolder,
+    normalizeAudioExportLocation,
     normalizeCredentialSource,
     normalizeEdgeTtsExecutable,
     normalizeEdgeTtsVoice,
