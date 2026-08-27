@@ -92,27 +92,27 @@ const MICROSOFT_VOICE_PRESETS = [
 const OPENROUTER_TTS_MODELS = [
   [
     'microsoft/mai-voice-2-flash',
-    'en-US-Harper:MAI-Voice-2',
-    'Microsoft MAI-Voice-2 Flash - low latency, 4 listed voices',
-    'Microsoft MAI-Voice-2 Flash - 低延迟、当前公开 4 个音色',
-    'A low-latency Microsoft model for responsive playback. OpenRouter currently lists only four voices: US English, Mexican Spanish, French, and German; no Chinese or UK English voice IDs are exposed.',
-    '微软低延迟语音模型，适合快速开始播放。OpenRouter 当前只列出 4 个音色：美式英语、墨西哥西班牙语、法语和德语，未公开中文或英式英语音色 ID。',
+    'en-US-Ethan:MAI-Voice-2-Flash',
+    'Microsoft MAI-Voice-2 Flash - low latency, US English male default',
+    'Microsoft MAI-Voice-2 Flash - 低延迟、默认美式英语男声',
+    'A low-latency Microsoft model for responsive playback. Ethan is the US English male default from Microsoft\'s MAI catalog. It and the additional Microsoft-published voices are compatibility presets because OpenRouter does not list them all. Microsoft currently publishes no UK English MAI voice.',
+    '微软低延迟语音模型，适合快速开始播放。默认使用微软 MAI 官方目录中的美式英语男声 Ethan；Ethan 及其他微软官方音色属于兼容预设，因为 OpenRouter 未完整列出。微软当前没有发布英式英语 MAI 音色。',
   ],
   [
     'microsoft/mai-voice-2',
-    'en-US-Harper:MAI-Voice-2',
-    'Microsoft MAI-Voice-2 - expressive, with Mandarin compatibility voices',
-    'Microsoft MAI-Voice-2 - 表现力强、含中文兼容音色',
-    'An expressive Microsoft model for natural long-form narration. In addition to the four voices listed by OpenRouter, the plugin offers three Microsoft-published Mandarin ShortNames as compatibility presets. OpenRouter endpoint availability can change.',
-    '微软表现力语音模型，适合自然长文叙述。除 OpenRouter 元数据列出的 4 个音色外，插件还提供微软官方发布的 3 个普通话 ShortName 作为兼容预设；OpenRouter 端点的实际可用性可能变化。',
+    'en-US-Ethan:MAI-Voice-2',
+    'Microsoft MAI-Voice-2 - expressive, US English male default',
+    'Microsoft MAI-Voice-2 - 表现力强、默认美式英语男声',
+    'An expressive Microsoft model for natural long-form narration. Ethan is the US English male default. The plugin also offers other Microsoft-published English and Mandarin ShortNames as compatibility presets even when OpenRouter metadata omits them. Microsoft currently publishes no UK English MAI voice.',
+    '微软表现力语音模型，适合自然长文叙述。默认使用美式英语男声 Ethan；插件还提供 OpenRouter 元数据未列出、但由微软官方发布的其他英文和普通话 ShortName 作为兼容预设。微软当前没有发布英式英语 MAI 音色。',
   ],
   [
     'google/gemini-3.1-flash-tts-preview',
-    'Kore',
+    'Charon',
     'Google Gemini 3.1 Flash TTS Preview - 30 multilingual voices',
     'Google Gemini 3.1 Flash TTS 预览版 - 30 个多语言音色',
-    'OpenRouter lists 30 multilingual voices. Google describes them by delivery style rather than fixed gender or US/UK accent, so the presets use official style labels only.',
-    'OpenRouter 列出 30 个多语言音色。Google 按朗读风格而非固定性别或英美口音描述这些音色，因此预设只使用官方风格标签。',
+    'OpenRouter lists 30 multilingual voices. Charon is the informative default for academic reading. Google describes voices by delivery style rather than fixed gender or US/UK accent, so the plugin does not make an unsupported male or accent claim.',
+    'OpenRouter 列出 30 个多语言音色。默认使用更适合学术朗读的信息型 Charon。Google 按朗读风格而非固定性别或英美口音描述音色，因此插件不会把某个音色无依据地标为男声或特定口音。',
   ],
   [
     'hexgrad/kokoro-82m',
@@ -123,13 +123,22 @@ const OPENROUTER_TTS_MODELS = [
     'OpenRouter 列出 54 个音色。本插件提供 12 个精选预设，完整覆盖中文、美式英语和英式英语的男女声；默认 George 男声适合较克制的学术朗读。',
   ],
 ];
-// OpenRouter-listed IDs were checked against its speech + ZDR model API on 2026-08-26.
-// Standard MAI Mandarin compatibility IDs follow Microsoft's MAI voice catalog on 2026-08-27.
+// OpenRouter-listed IDs were checked against its speech + ZDR model API on 2026-08-27.
+// MAI compatibility IDs follow Microsoft's official MAI voice catalog on 2026-08-27.
 const OPENROUTER_TTS_PRESETS = [
-  ['microsoft/mai-voice-2-flash', 'en-US-Harper:MAI-Voice-2', 'Harper (US English)', 'Harper（美式英语）'],
+  ['microsoft/mai-voice-2-flash', 'en-US-Ethan:MAI-Voice-2-Flash', 'Ethan (US English male; not listed in OpenRouter metadata)', 'Ethan（美式英语男声；OpenRouter 元数据未列出）'],
+  ['microsoft/mai-voice-2-flash', 'en-US-Olivia:MAI-Voice-2-Flash', 'Olivia (US English female; Microsoft compatibility preset)', 'Olivia（美式英语女声；微软兼容预设）'],
+  ['microsoft/mai-voice-2-flash', 'zh-CN-Bo:MAI-Voice-2-Flash', 'Bo (Mandarin male; not listed in OpenRouter metadata)', 'Bo（中文普通话男声；OpenRouter 元数据未列出）'],
+  ['microsoft/mai-voice-2-flash', 'zh-CN-Wei:MAI-Voice-2-Flash', 'Wei (Mandarin male; not listed in OpenRouter metadata)', 'Wei（中文普通话男声；OpenRouter 元数据未列出）'],
+  ['microsoft/mai-voice-2-flash', 'zh-CN-Lan:MAI-Voice-2-Flash', 'Lan (Mandarin female; not listed in OpenRouter metadata)', 'Lan（中文普通话女声；OpenRouter 元数据未列出）'],
+  ['microsoft/mai-voice-2-flash', 'zh-CN-Mei:MAI-Voice-2-Flash', 'Mei (Mandarin female; not listed in OpenRouter metadata)', 'Mei（中文普通话女声；OpenRouter 元数据未列出）'],
+  ['microsoft/mai-voice-2-flash', 'en-US-Harper:MAI-Voice-2', 'Harper (US English female; OpenRouter-listed ID)', 'Harper（美式英语女声；OpenRouter 已列出）'],
   ['microsoft/mai-voice-2-flash', 'es-MX-Valeria:MAI-Voice-2', 'Valeria (Mexican Spanish)', 'Valeria（墨西哥西班牙语）'],
   ['microsoft/mai-voice-2-flash', 'fr-FR-Soleil:MAI-Voice-2', 'Soleil (French)', 'Soleil（法语）'],
   ['microsoft/mai-voice-2-flash', 'de-DE-Klaus:MAI-Voice-2', 'Klaus (German)', 'Klaus（德语）'],
+  ['microsoft/mai-voice-2', 'en-US-Ethan:MAI-Voice-2', 'Ethan (US English male; not listed in OpenRouter metadata)', 'Ethan（美式英语男声；OpenRouter 元数据未列出）'],
+  ['microsoft/mai-voice-2', 'en-US-Grant:MAI-Voice-2', 'Grant (US English male; Microsoft compatibility preset)', 'Grant（美式英语男声；微软兼容预设）'],
+  ['microsoft/mai-voice-2', 'en-US-Jasper:MAI-Voice-2', 'Jasper (US English male; Microsoft compatibility preset)', 'Jasper（美式英语男声；微软兼容预设）'],
   ['microsoft/mai-voice-2', 'zh-CN-Bo:MAI-Voice-2', 'Bo (Mandarin male; not listed in OpenRouter metadata)', 'Bo（中文普通话男声；OpenRouter 元数据未列出）'],
   ['microsoft/mai-voice-2', 'zh-CN-Lan:MAI-Voice-2', 'Lan (Mandarin female; not listed in OpenRouter metadata)', 'Lan（中文普通话女声；OpenRouter 元数据未列出）'],
   ['microsoft/mai-voice-2', 'zh-CN-Mei:MAI-Voice-2', 'Mei (Mandarin female; not listed in OpenRouter metadata)', 'Mei（中文普通话女声；OpenRouter 元数据未列出）'],

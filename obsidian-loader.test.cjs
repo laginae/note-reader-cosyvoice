@@ -199,7 +199,7 @@ const testVaultPath = path.resolve('test-vault');
 const testAudioPath = path.join(testVaultPath, '.obsidian', 'plugins', 'note-reader-cosyvoice', 'cache', 'a.wav');
 assert.strictEqual(manifest.id, 'note-reader-cosyvoice');
 assert.strictEqual(manifest.name, 'Note and PDF Voice Reader');
-assert.strictEqual(manifest.version, '0.4.2');
+assert.strictEqual(manifest.version, '0.4.3');
 assert.ok(!/\bObsidian\b/.test(manifest.description));
 assert.ok(!code.includes('Note Reader CosyVoice'));
 assert.ok(!code.includes('CosyVoice Reader'));
@@ -545,12 +545,20 @@ const openRouterVoicesByModel = new Map(openRouterModelIds.map((model) => [
 ]));
 for (const [model, presets] of openRouterVoicesByModel) {
   const voiceIds = presets.map(([, voice]) => voice);
+  const voiceNames = presets.map(([, , label]) => label.split(' (')[0].trim().toLowerCase());
   assert.strictEqual(new Set(voiceIds).size, voiceIds.length, `${model} has duplicate voice presets`);
+  assert.strictEqual(new Set(voiceNames).size, voiceNames.length, `${model} has duplicate voice names`);
   assert.ok(voiceIds.includes(
     moduleObject.exports.__test.getDefaultOpenRouterVoiceForModel(model)
   ), `${model} is missing its default voice preset`);
 }
 const expectedMaiFlashVoices = [
+  'en-US-Ethan:MAI-Voice-2-Flash',
+  'en-US-Olivia:MAI-Voice-2-Flash',
+  'zh-CN-Bo:MAI-Voice-2-Flash',
+  'zh-CN-Wei:MAI-Voice-2-Flash',
+  'zh-CN-Lan:MAI-Voice-2-Flash',
+  'zh-CN-Mei:MAI-Voice-2-Flash',
   'en-US-Harper:MAI-Voice-2',
   'es-MX-Valeria:MAI-Voice-2',
   'fr-FR-Soleil:MAI-Voice-2',
@@ -561,16 +569,26 @@ assert.deepStrictEqual(
   expectedMaiFlashVoices
 );
 const expectedMaiStandardVoices = [
+  'en-US-Ethan:MAI-Voice-2',
+  'en-US-Grant:MAI-Voice-2',
+  'en-US-Jasper:MAI-Voice-2',
   'zh-CN-Bo:MAI-Voice-2',
   'zh-CN-Lan:MAI-Voice-2',
   'zh-CN-Mei:MAI-Voice-2',
-  ...expectedMaiFlashVoices,
+  'en-US-Harper:MAI-Voice-2',
+  'es-MX-Valeria:MAI-Voice-2',
+  'fr-FR-Soleil:MAI-Voice-2',
+  'de-DE-Klaus:MAI-Voice-2',
 ];
 assert.deepStrictEqual(
   openRouterVoicesByModel.get('microsoft/mai-voice-2').map(([, voice]) => voice),
   expectedMaiStandardVoices
 );
-assert.ok(!openRouterVoicesByModel.get('microsoft/mai-voice-2-flash').some(([, voice]) => voice.startsWith('zh-CN-')));
+assert.ok(openRouterVoicesByModel.get('microsoft/mai-voice-2-flash').some(
+  ([, voice, label]) => voice === 'zh-CN-Bo:MAI-Voice-2-Flash'
+    && label.includes('Mandarin male')
+    && label.includes('not listed')
+));
 const geminiVoicePresets = openRouterVoicesByModel.get('google/gemini-3.1-flash-tts-preview');
 assert.ok(geminiVoicePresets.length >= 6);
 assert.ok(geminiVoicePresets.some(([, voice, label]) => voice === 'Sadaltager' && label.includes('knowledgeable')));
@@ -585,16 +603,25 @@ for (const prefix of ['zf_', 'zm_', 'af_', 'am_', 'bf_', 'bm_']) {
 assert.ok(moduleObject.exports.__test.getOpenRouterTtsModels('chinese').find(
   ([model, , , info]) => model === 'microsoft/mai-voice-2-flash'
     && info.includes('低延迟')
-    && info.includes('只列出 4 个音色')
+    && info.includes('Ethan')
+    && info.includes('没有发布英式英语')
 ));
 assert.ok(moduleObject.exports.__test.getOpenRouterTtsModels('chinese').find(
   ([model, , , info]) => model === 'microsoft/mai-voice-2'
-    && info.includes('3 个普通话')
+    && info.includes('美式英语男声 Ethan')
     && info.includes('兼容预设')
 ));
 assert.strictEqual(
   moduleObject.exports.__test.getDefaultOpenRouterVoiceForModel('microsoft/mai-voice-2'),
-  'en-US-Harper:MAI-Voice-2'
+  'en-US-Ethan:MAI-Voice-2'
+);
+assert.strictEqual(
+  moduleObject.exports.__test.getDefaultOpenRouterVoiceForModel('microsoft/mai-voice-2-flash'),
+  'en-US-Ethan:MAI-Voice-2-Flash'
+);
+assert.strictEqual(
+  moduleObject.exports.__test.getDefaultOpenRouterVoiceForModel('google/gemini-3.1-flash-tts-preview'),
+  'Charon'
 );
 assert.strictEqual(
   moduleObject.exports.__test.getDefaultOpenRouterVoiceForModel('hexgrad/kokoro-82m'),
@@ -604,6 +631,12 @@ assert.ok(moduleObject.exports.__test.getOpenRouterTtsVoicePresets(
   'microsoft/mai-voice-2-flash',
   'chinese'
 ).some(([, voice, label]) => voice === 'en-US-Harper:MAI-Voice-2' && label.includes('美式英语')));
+assert.ok(moduleObject.exports.__test.getOpenRouterTtsVoicePresets(
+  'microsoft/mai-voice-2-flash',
+  'chinese'
+).some(([, voice, label]) => voice === 'en-US-Ethan:MAI-Voice-2-Flash'
+  && label.includes('美式英语男声')
+  && label.includes('元数据未列出')));
 for (const voice of ['zh-CN-Bo:MAI-Voice-2', 'zh-CN-Lan:MAI-Voice-2', 'zh-CN-Mei:MAI-Voice-2']) {
   assert.ok(moduleObject.exports.__test.getOpenRouterTtsVoicePresets(
     'microsoft/mai-voice-2',
@@ -615,6 +648,10 @@ for (const voice of ['zh-CN-Bo:MAI-Voice-2', 'zh-CN-Lan:MAI-Voice-2', 'zh-CN-Mei
 assert.ok(moduleObject.exports.__test.getOpenRouterTtsPresets().some(
   ([model, voice]) => model === 'hexgrad/kokoro-82m' && voice === 'zf_xiaoxiao'
 ));
+for (const voice of ['am_michael', 'am_fenrir', 'bm_george', 'bm_fable']) {
+  assert.ok(kokoroVoicePresets.some(([, presetVoice, label]) => presetVoice === voice
+    && label.includes('English male')));
+}
 assert.ok(moduleObject.exports.__test.getAzureSpeechVoicePresets('chinese').some(
   ([id, label]) => id === 'en-US-JennyNeural' && label.includes('美式英语')
 ));

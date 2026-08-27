@@ -240,12 +240,14 @@ OpenRouter 提供与 OpenAI Audio Speech 兼容的专用 TTS 接口，输入文�
 4. 选择内置的 ZDR 兼容模型及其音色，或填写自定义模型 ID 与音色 ID。
 5. 确认 OpenRouter 账户中的输入输出日志和输入输出数据共享保持关闭。
 
-默认模型为 `hexgrad/kokoro-82m`，默认音色为英式英语男声 `bm_george`，更偏克制的长文与学术朗读。不同模型的音色 ID 不能混用。OpenRouter 已公开的音色 ID 于 2026-08-26 按实时 `speech` 与 `zdr=true` 联合过滤接口核对；MAI-Voice-2 中文兼容音色于 2026-08-27 按微软官方 MAI 音色目录核对：
+整体默认模型为 `hexgrad/kokoro-82m`，默认音色为英式英语男声 `bm_george`，更偏克制的长文与学术朗读。切换到其他内置模型时，插件会在发布方明确标注性别的前提下优先使用英语男声：Microsoft MAI 默认使用美式英语男声 `Ethan`；Gemini 因 Google 未公开固定性别或英美口音标签，改用信息型 `Charon`，但不把它标为已确认男声。不同模型的音色 ID 不能混用。OpenRouter 已公开的音色 ID 和微软官方 MAI 音色目录均于 2026-08-27 核对：
 
-- `microsoft/mai-voice-2-flash`：列出 OpenRouter 当前公开的全部 4 个音色，即美式英语 `Harper`、墨西哥西班牙语 `Valeria`、法语 `Soleil` 和德语 `Klaus`。
-- `microsoft/mai-voice-2`：除 OpenRouter 元数据当前公开的 4 个音色外，还加入微软官方发布的普通话男声 `zh-CN-Bo:MAI-Voice-2`、普通话女声 `zh-CN-Lan:MAI-Voice-2` 和 `zh-CN-Mei:MAI-Voice-2`。这 3 个属于兼容预设：OpenRouter 即使未在 `supported_voices` 中列出也可能接受，但实际可用性可能随上游端点变化。
-- `google/gemini-3.1-flash-tts-preview`：从 OpenRouter 当前公开的 30 个音色中精选 12 个，涵盖信息型、清晰、平稳、博学、坚定、成熟、温暖、温和与轻快等风格。Google 按朗读风格而非固定性别或英美口音描述这些多语言音色。
+- `microsoft/mai-voice-2-flash`：默认使用微软官方发布的美式英语男声 `en-US-Ethan:MAI-Voice-2-Flash`；除 OpenRouter 当前公开的 4 个 ID 外，还加入微软官方发布的美式英语和普通话音色作为兼容预设。
+- `microsoft/mai-voice-2`：默认使用微软官方发布的美式英语男声 `en-US-Ethan:MAI-Voice-2`；其他美式英语男声及普通话 ShortName 也作为兼容预设提供，因为 OpenRouter 可能接受其元数据没有列出的音色。
+- `google/gemini-3.1-flash-tts-preview`：默认使用信息型 `Charon`，并从 OpenRouter 当前公开的 30 个音色中精选 12 个。Google 按朗读风格而非固定性别或英美口音描述这些多语言音色，因此插件不会把 Gemini 预设无依据地标为男声或特定口音。
 - `hexgrad/kokoro-82m`：提供 12 个预设，中文女声、中文男声、美式英语女声、美式英语男声、英式英语女声和英式英语男声六类各 2 个。
+
+目前内置 OpenRouter 模型中，Kokoro 明确同时提供美式英语男声和英式英语男声。微软当前公开的 MAI 官方目录有美式英语男声，但没有英式英语 MAI 音色。若 OpenRouter 或其上游端点拒绝元数据未公开的音色 ID，兼容预设仍可能失败；用户也可以在自定义音色字段中填写自行验证过的 ID。
 
 设置页会根据当前模型显示特点，并只展示该模型对应的音色预设。模型、音色和 ZDR 端点会随时间变化；OpenRouter 实时 [`speech + ZDR` 模型接口](https://openrouter.ai/api/v1/models?output_modalities=speech&zdr=true)用于核对其公开的路由元数据，微软官方 [MAI 音色目录](https://learn.microsoft.com/zh-cn/azure/ai-services/speech-service/mai-voices)用于核对 MAI ShortName。Gemini 风格名称来自 [Google Gemini TTS 官方音色表](https://ai.google.dev/gemini-api/docs/speech-generation?hl=zh-cn)，Kokoro 的语言与性别分组来自其[上游音色目录](https://huggingface.co/hexgrad/Kokoro-82M/blob/main/VOICES.md)。自定义模型仍可填写，但如果没有符合条件的 ZDR 端点，插件会报错，而不会取消隐私约束后继续发送。
 

@@ -1120,27 +1120,27 @@ var MICROSOFT_VOICE_PRESETS = [
 var OPENROUTER_TTS_MODELS = [
   [
     "microsoft/mai-voice-2-flash",
-    "en-US-Harper:MAI-Voice-2",
-    "Microsoft MAI-Voice-2 Flash - low latency, 4 listed voices",
-    "Microsoft MAI-Voice-2 Flash - \u4F4E\u5EF6\u8FDF\u3001\u5F53\u524D\u516C\u5F00 4 \u4E2A\u97F3\u8272",
-    "A low-latency Microsoft model for responsive playback. OpenRouter currently lists only four voices: US English, Mexican Spanish, French, and German; no Chinese or UK English voice IDs are exposed.",
-    "\u5FAE\u8F6F\u4F4E\u5EF6\u8FDF\u8BED\u97F3\u6A21\u578B\uFF0C\u9002\u5408\u5FEB\u901F\u5F00\u59CB\u64AD\u653E\u3002OpenRouter \u5F53\u524D\u53EA\u5217\u51FA 4 \u4E2A\u97F3\u8272\uFF1A\u7F8E\u5F0F\u82F1\u8BED\u3001\u58A8\u897F\u54E5\u897F\u73ED\u7259\u8BED\u3001\u6CD5\u8BED\u548C\u5FB7\u8BED\uFF0C\u672A\u516C\u5F00\u4E2D\u6587\u6216\u82F1\u5F0F\u82F1\u8BED\u97F3\u8272 ID\u3002"
+    "en-US-Ethan:MAI-Voice-2-Flash",
+    "Microsoft MAI-Voice-2 Flash - low latency, US English male default",
+    "Microsoft MAI-Voice-2 Flash - \u4F4E\u5EF6\u8FDF\u3001\u9ED8\u8BA4\u7F8E\u5F0F\u82F1\u8BED\u7537\u58F0",
+    "A low-latency Microsoft model for responsive playback. Ethan is the US English male default from Microsoft's MAI catalog. It and the additional Microsoft-published voices are compatibility presets because OpenRouter does not list them all. Microsoft currently publishes no UK English MAI voice.",
+    "\u5FAE\u8F6F\u4F4E\u5EF6\u8FDF\u8BED\u97F3\u6A21\u578B\uFF0C\u9002\u5408\u5FEB\u901F\u5F00\u59CB\u64AD\u653E\u3002\u9ED8\u8BA4\u4F7F\u7528\u5FAE\u8F6F MAI \u5B98\u65B9\u76EE\u5F55\u4E2D\u7684\u7F8E\u5F0F\u82F1\u8BED\u7537\u58F0 Ethan\uFF1BEthan \u53CA\u5176\u4ED6\u5FAE\u8F6F\u5B98\u65B9\u97F3\u8272\u5C5E\u4E8E\u517C\u5BB9\u9884\u8BBE\uFF0C\u56E0\u4E3A OpenRouter \u672A\u5B8C\u6574\u5217\u51FA\u3002\u5FAE\u8F6F\u5F53\u524D\u6CA1\u6709\u53D1\u5E03\u82F1\u5F0F\u82F1\u8BED MAI \u97F3\u8272\u3002"
   ],
   [
     "microsoft/mai-voice-2",
-    "en-US-Harper:MAI-Voice-2",
-    "Microsoft MAI-Voice-2 - expressive, with Mandarin compatibility voices",
-    "Microsoft MAI-Voice-2 - \u8868\u73B0\u529B\u5F3A\u3001\u542B\u4E2D\u6587\u517C\u5BB9\u97F3\u8272",
-    "An expressive Microsoft model for natural long-form narration. In addition to the four voices listed by OpenRouter, the plugin offers three Microsoft-published Mandarin ShortNames as compatibility presets. OpenRouter endpoint availability can change.",
-    "\u5FAE\u8F6F\u8868\u73B0\u529B\u8BED\u97F3\u6A21\u578B\uFF0C\u9002\u5408\u81EA\u7136\u957F\u6587\u53D9\u8FF0\u3002\u9664 OpenRouter \u5143\u6570\u636E\u5217\u51FA\u7684 4 \u4E2A\u97F3\u8272\u5916\uFF0C\u63D2\u4EF6\u8FD8\u63D0\u4F9B\u5FAE\u8F6F\u5B98\u65B9\u53D1\u5E03\u7684 3 \u4E2A\u666E\u901A\u8BDD ShortName \u4F5C\u4E3A\u517C\u5BB9\u9884\u8BBE\uFF1BOpenRouter \u7AEF\u70B9\u7684\u5B9E\u9645\u53EF\u7528\u6027\u53EF\u80FD\u53D8\u5316\u3002"
+    "en-US-Ethan:MAI-Voice-2",
+    "Microsoft MAI-Voice-2 - expressive, US English male default",
+    "Microsoft MAI-Voice-2 - \u8868\u73B0\u529B\u5F3A\u3001\u9ED8\u8BA4\u7F8E\u5F0F\u82F1\u8BED\u7537\u58F0",
+    "An expressive Microsoft model for natural long-form narration. Ethan is the US English male default. The plugin also offers other Microsoft-published English and Mandarin ShortNames as compatibility presets even when OpenRouter metadata omits them. Microsoft currently publishes no UK English MAI voice.",
+    "\u5FAE\u8F6F\u8868\u73B0\u529B\u8BED\u97F3\u6A21\u578B\uFF0C\u9002\u5408\u81EA\u7136\u957F\u6587\u53D9\u8FF0\u3002\u9ED8\u8BA4\u4F7F\u7528\u7F8E\u5F0F\u82F1\u8BED\u7537\u58F0 Ethan\uFF1B\u63D2\u4EF6\u8FD8\u63D0\u4F9B OpenRouter \u5143\u6570\u636E\u672A\u5217\u51FA\u3001\u4F46\u7531\u5FAE\u8F6F\u5B98\u65B9\u53D1\u5E03\u7684\u5176\u4ED6\u82F1\u6587\u548C\u666E\u901A\u8BDD ShortName \u4F5C\u4E3A\u517C\u5BB9\u9884\u8BBE\u3002\u5FAE\u8F6F\u5F53\u524D\u6CA1\u6709\u53D1\u5E03\u82F1\u5F0F\u82F1\u8BED MAI \u97F3\u8272\u3002"
   ],
   [
     "google/gemini-3.1-flash-tts-preview",
-    "Kore",
+    "Charon",
     "Google Gemini 3.1 Flash TTS Preview - 30 multilingual voices",
     "Google Gemini 3.1 Flash TTS \u9884\u89C8\u7248 - 30 \u4E2A\u591A\u8BED\u8A00\u97F3\u8272",
-    "OpenRouter lists 30 multilingual voices. Google describes them by delivery style rather than fixed gender or US/UK accent, so the presets use official style labels only.",
-    "OpenRouter \u5217\u51FA 30 \u4E2A\u591A\u8BED\u8A00\u97F3\u8272\u3002Google \u6309\u6717\u8BFB\u98CE\u683C\u800C\u975E\u56FA\u5B9A\u6027\u522B\u6216\u82F1\u7F8E\u53E3\u97F3\u63CF\u8FF0\u8FD9\u4E9B\u97F3\u8272\uFF0C\u56E0\u6B64\u9884\u8BBE\u53EA\u4F7F\u7528\u5B98\u65B9\u98CE\u683C\u6807\u7B7E\u3002"
+    "OpenRouter lists 30 multilingual voices. Charon is the informative default for academic reading. Google describes voices by delivery style rather than fixed gender or US/UK accent, so the plugin does not make an unsupported male or accent claim.",
+    "OpenRouter \u5217\u51FA 30 \u4E2A\u591A\u8BED\u8A00\u97F3\u8272\u3002\u9ED8\u8BA4\u4F7F\u7528\u66F4\u9002\u5408\u5B66\u672F\u6717\u8BFB\u7684\u4FE1\u606F\u578B Charon\u3002Google \u6309\u6717\u8BFB\u98CE\u683C\u800C\u975E\u56FA\u5B9A\u6027\u522B\u6216\u82F1\u7F8E\u53E3\u97F3\u63CF\u8FF0\u97F3\u8272\uFF0C\u56E0\u6B64\u63D2\u4EF6\u4E0D\u4F1A\u628A\u67D0\u4E2A\u97F3\u8272\u65E0\u4F9D\u636E\u5730\u6807\u4E3A\u7537\u58F0\u6216\u7279\u5B9A\u53E3\u97F3\u3002"
   ],
   [
     "hexgrad/kokoro-82m",
@@ -1152,10 +1152,19 @@ var OPENROUTER_TTS_MODELS = [
   ]
 ];
 var OPENROUTER_TTS_PRESETS = [
-  ["microsoft/mai-voice-2-flash", "en-US-Harper:MAI-Voice-2", "Harper (US English)", "Harper\uFF08\u7F8E\u5F0F\u82F1\u8BED\uFF09"],
+  ["microsoft/mai-voice-2-flash", "en-US-Ethan:MAI-Voice-2-Flash", "Ethan (US English male; not listed in OpenRouter metadata)", "Ethan\uFF08\u7F8E\u5F0F\u82F1\u8BED\u7537\u58F0\uFF1BOpenRouter \u5143\u6570\u636E\u672A\u5217\u51FA\uFF09"],
+  ["microsoft/mai-voice-2-flash", "en-US-Olivia:MAI-Voice-2-Flash", "Olivia (US English female; Microsoft compatibility preset)", "Olivia\uFF08\u7F8E\u5F0F\u82F1\u8BED\u5973\u58F0\uFF1B\u5FAE\u8F6F\u517C\u5BB9\u9884\u8BBE\uFF09"],
+  ["microsoft/mai-voice-2-flash", "zh-CN-Bo:MAI-Voice-2-Flash", "Bo (Mandarin male; not listed in OpenRouter metadata)", "Bo\uFF08\u4E2D\u6587\u666E\u901A\u8BDD\u7537\u58F0\uFF1BOpenRouter \u5143\u6570\u636E\u672A\u5217\u51FA\uFF09"],
+  ["microsoft/mai-voice-2-flash", "zh-CN-Wei:MAI-Voice-2-Flash", "Wei (Mandarin male; not listed in OpenRouter metadata)", "Wei\uFF08\u4E2D\u6587\u666E\u901A\u8BDD\u7537\u58F0\uFF1BOpenRouter \u5143\u6570\u636E\u672A\u5217\u51FA\uFF09"],
+  ["microsoft/mai-voice-2-flash", "zh-CN-Lan:MAI-Voice-2-Flash", "Lan (Mandarin female; not listed in OpenRouter metadata)", "Lan\uFF08\u4E2D\u6587\u666E\u901A\u8BDD\u5973\u58F0\uFF1BOpenRouter \u5143\u6570\u636E\u672A\u5217\u51FA\uFF09"],
+  ["microsoft/mai-voice-2-flash", "zh-CN-Mei:MAI-Voice-2-Flash", "Mei (Mandarin female; not listed in OpenRouter metadata)", "Mei\uFF08\u4E2D\u6587\u666E\u901A\u8BDD\u5973\u58F0\uFF1BOpenRouter \u5143\u6570\u636E\u672A\u5217\u51FA\uFF09"],
+  ["microsoft/mai-voice-2-flash", "en-US-Harper:MAI-Voice-2", "Harper (US English female; OpenRouter-listed ID)", "Harper\uFF08\u7F8E\u5F0F\u82F1\u8BED\u5973\u58F0\uFF1BOpenRouter \u5DF2\u5217\u51FA\uFF09"],
   ["microsoft/mai-voice-2-flash", "es-MX-Valeria:MAI-Voice-2", "Valeria (Mexican Spanish)", "Valeria\uFF08\u58A8\u897F\u54E5\u897F\u73ED\u7259\u8BED\uFF09"],
   ["microsoft/mai-voice-2-flash", "fr-FR-Soleil:MAI-Voice-2", "Soleil (French)", "Soleil\uFF08\u6CD5\u8BED\uFF09"],
   ["microsoft/mai-voice-2-flash", "de-DE-Klaus:MAI-Voice-2", "Klaus (German)", "Klaus\uFF08\u5FB7\u8BED\uFF09"],
+  ["microsoft/mai-voice-2", "en-US-Ethan:MAI-Voice-2", "Ethan (US English male; not listed in OpenRouter metadata)", "Ethan\uFF08\u7F8E\u5F0F\u82F1\u8BED\u7537\u58F0\uFF1BOpenRouter \u5143\u6570\u636E\u672A\u5217\u51FA\uFF09"],
+  ["microsoft/mai-voice-2", "en-US-Grant:MAI-Voice-2", "Grant (US English male; Microsoft compatibility preset)", "Grant\uFF08\u7F8E\u5F0F\u82F1\u8BED\u7537\u58F0\uFF1B\u5FAE\u8F6F\u517C\u5BB9\u9884\u8BBE\uFF09"],
+  ["microsoft/mai-voice-2", "en-US-Jasper:MAI-Voice-2", "Jasper (US English male; Microsoft compatibility preset)", "Jasper\uFF08\u7F8E\u5F0F\u82F1\u8BED\u7537\u58F0\uFF1B\u5FAE\u8F6F\u517C\u5BB9\u9884\u8BBE\uFF09"],
   ["microsoft/mai-voice-2", "zh-CN-Bo:MAI-Voice-2", "Bo (Mandarin male; not listed in OpenRouter metadata)", "Bo\uFF08\u4E2D\u6587\u666E\u901A\u8BDD\u7537\u58F0\uFF1BOpenRouter \u5143\u6570\u636E\u672A\u5217\u51FA\uFF09"],
   ["microsoft/mai-voice-2", "zh-CN-Lan:MAI-Voice-2", "Lan (Mandarin female; not listed in OpenRouter metadata)", "Lan\uFF08\u4E2D\u6587\u666E\u901A\u8BDD\u5973\u58F0\uFF1BOpenRouter \u5143\u6570\u636E\u672A\u5217\u51FA\uFF09"],
   ["microsoft/mai-voice-2", "zh-CN-Mei:MAI-Voice-2", "Mei (Mandarin female; not listed in OpenRouter metadata)", "Mei\uFF08\u4E2D\u6587\u666E\u901A\u8BDD\u5973\u58F0\uFF1BOpenRouter \u5143\u6570\u636E\u672A\u5217\u51FA\uFF09"],

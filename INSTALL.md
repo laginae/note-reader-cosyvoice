@@ -2,7 +2,7 @@
 
 ## Install From ZIP
 
-1. Unzip `note-reader-cosyvoice-0.4.2-install.zip`.
+1. Unzip `note-reader-cosyvoice-0.4.3-install.zip`.
 2. Copy the `note-reader-cosyvoice` folder into your vault:
 
 ```text
@@ -129,7 +129,7 @@ Do not sync, commit, or share that file. In the plugin settings:
 4. Select a built-in ZDR-compatible model and one of its voices, or enter custom IDs.
 5. Keep account-level input/output logging and input/output data sharing disabled.
 
-The consent switch permits online transmission; it does not permit non-ZDR routing. Voice menus follow the selected model because voice IDs are not interchangeable. MAI-Voice-2 Flash keeps the four IDs currently listed by OpenRouter. Standard MAI-Voice-2 also offers Microsoft's published Mandarin voices `zh-CN-Bo:MAI-Voice-2`, `zh-CN-Lan:MAI-Voice-2`, and `zh-CN-Mei:MAI-Voice-2` as compatibility presets because OpenRouter may accept them while omitting them from `supported_voices`; endpoint availability can still change. Gemini exposes 12 curated multilingual style presets from its 30 listed voices, and Kokoro exposes 12 presets covering Chinese, US English, and UK English female and male voices.
+The consent switch permits online transmission; it does not permit non-ZDR routing. Voice menus follow the selected model because voice IDs are not interchangeable. Kokoro defaults to UK English male `bm_george` and includes both US and UK English male presets. MAI-Voice-2 and MAI-Voice-2 Flash default to Microsoft's US English male `Ethan`; additional Microsoft-published English and Mandarin voices are compatibility presets because OpenRouter may accept them while omitting them from `supported_voices`. Microsoft currently publishes no UK English MAI voice, and compatibility endpoint availability can change. Gemini defaults to informative `Charon`; Google describes its voices by style rather than fixed gender or US/UK accent.
 
 The key value is never saved in the plugin's `data.json`. Every request enforces `provider.zdr: true` and `provider.data_collection: "deny"`; synthesis fails if no eligible endpoint satisfies those restrictions. Model and voice availability changes over time, so check the live [`speech + ZDR` model API](https://openrouter.ai/api/v1/models?output_modalities=speech&zdr=true) when a preset stops working. See the official [OpenRouter TTS documentation](https://openrouter.ai/docs/guides/overview/multimodal/tts), [data collection documentation](https://openrouter.ai/docs/guides/privacy/data-collection), and [Zero Data Retention documentation](https://openrouter.ai/docs/guides/features/zdr).
 
