@@ -34,10 +34,10 @@ Note and PDF Voice Reader 是一个隐私优先的桌面端 Obsidian 语音朗�
 | --- | :---: | :---: | :---: | :---: | :---: | :---: |
 | 本地 CosyVoice | ★★★★★ | ★★☆☆☆ | ★★★☆☆ | ★★★☆☆ | ★★★★★ | ★★★★★ |
 | Microsoft Edge 在线语音 | ★★☆☆☆ | ★★★★☆ | ★★★★☆ | ★★★★★ | ★★★★☆ | ★☆☆☆☆ |
-| Microsoft Azure Speech | ★★★☆☆ | ★★☆☆☆ | ★★★★☆ | ★★★★★ | ★★☆☆☆ | ★☆☆☆☆ |
+| Microsoft Azure Speech | ★★★★☆ | ★★☆☆☆ | ★★★★☆ | ★★★★★ | ★★☆☆☆ | ★☆☆☆☆ |
 | OpenRouter TTS | ★★★★☆ | ★★★★★ | ★★★★☆ | ★★★★★ | ★★☆☆☆ | ★☆☆☆☆ |
 
-- **隐私保护：** 本地 CosyVoice 的可朗读文本不离开设备；三种在线模式都会把文本发送给对应服务商。本插件使用的 `edge-tts` 调用接口未对插件请求提供明确的 ZDR 保证。OpenRouter 请求会强制设置 `provider.zdr = true`、拒绝供应商收集数据，并在没有合规端点时失败而不是降低限制，因此在本插件可用模式之间获得四星相对评分；但它并不等同于本地处理，文本仍会经过 OpenRouter 和上游供应商，朗读私密内容时还应关闭账户级日志和数据共享。
+- **隐私保护：** 本地 CosyVoice 的可朗读文本不离开设备；三种在线模式都会把文本发送给对应服务商。本插件使用的 `edge-tts` 调用接口未对插件请求提供明确的 ZDR 保证。Azure 获得四星，是因为本插件调用实时预生成音色接口，且 [Microsoft 明确说明](https://learn.microsoft.com/zh-cn/azure/foundry/responsible-ai/speech-service/text-to-speech/data-privacy-security)输入文本和输出音频不会存入 Microsoft 日志；仍扣一星，是因为文本必须交由 Microsoft 云端处理。OpenRouter 同样获得四星，是因为请求会强制设置 `provider.zdr = true`、拒绝供应商收集数据，并在没有合规端点时失败而不是降低限制；但它并不等同于本地处理，文本仍会经过 OpenRouter 和上游供应商，朗读私密内容时还应关闭账户级日志和数据共享。
 - **设置便利性：** OpenRouter 在本插件中的配置步骤最少：创建账户密钥、保存到 Obsidian SecretStorage，再选择模型和音色即可，不需要安装本地辅助程序。Edge 需要另外安装第三方 `edge-tts` 可执行程序。Azure 同样由插件直接通过 HTTPS 调用，不需要本地接口程序，但必须配置 Azure Speech 资源、云环境、区域和密钥。本地 CosyVoice 则需要准备本地运行环境、模型和包装脚本。
 - **API 额度：** 本地模式使用本机算力；Edge 模式在本插件中不需要用户 API 密钥，但仍受在线服务可用性和服务条款约束；Azure 与 OpenRouter 会使用账户计量额度。
 - **启动速度：** Edge、Azure 与 OpenRouter 归入同一档首段启动速度，但这不表示三者延迟完全相同。[OpenRouter 表示其网关只增加很小的延迟](https://openrouter.ai/docs/guides/best-practices/latency-and-performance)，但路由、缓存状态、所选模型和上游供应商仍会改变启动时间；硬件、模型预热、网络、服务负载以及所选音色或模型也会影响结果。
