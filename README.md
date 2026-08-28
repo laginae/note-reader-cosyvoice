@@ -22,9 +22,26 @@ Current reader control panel, including scoped audio export actions:
 
 ![Voice Reader control panel](docs/images/reader-controls.png)
 
-Privacy and resource settings. The screenshot contains no API key, vault name, note content, or local path:
+Complete settings page, assembled from sequential views of the same page. Secret values, vault names, note content, local paths, and surrounding Obsidian UI are excluded:
 
 ![Note and PDF Voice Reader settings](docs/images/plugin-settings.png)
+
+## Speech engine comparison
+
+Scores are relative to the experience provided by this plugin. `5/5` always means more favorable: stronger privacy, easier setup, faster first-chunk startup, broader voice choice, less dependence on user-managed paid API quota, or better offline capability. They are usage guidance, not security, provider-policy, pricing, or latency guarantees.
+
+| Engine | Privacy | Setup | Startup speed | Voice choice | API quota | Offline |
+| --- | :---: | :---: | :---: | :---: | :---: | :---: |
+| Local CosyVoice | 5/5 | 2/5 | 3/5 | 3/5 | 5/5 | 5/5 |
+| Microsoft Edge online voice | 2/5 | 4/5 | 4/5 | 5/5 | 4/5 | 1/5 |
+| Microsoft Azure Speech | 3/5 | 2/5 | 4/5 | 5/5 | 2/5 | 1/5 |
+| OpenRouter TTS | 3/5 | 3/5 | 3/5 | 4/5 | 2/5 | 1/5 |
+
+- **Privacy:** Local CosyVoice keeps readable text on the device. Every online mode sends text to its service provider. OpenRouter requests force `provider.zdr = true` and deny provider data collection, but text still passes through OpenRouter and an upstream provider; keep account-level logging and data sharing disabled for private content.
+- **API quota:** Local mode uses local compute. Edge mode does not require a user API key in this plugin, but still depends on the remote service's availability and terms. Azure and OpenRouter use metered account quota.
+- **Speed:** Startup scores describe typical time to the first playable chunk, not full-note/PDF export time. Hardware, model warm-up, network conditions, provider load, and the selected voice or model can change the result.
+
+In practice, choose Local CosyVoice for sensitive or offline reading, Edge for the simplest online setup and broad voice coverage, Azure for a managed Microsoft TTS account, and OpenRouter for model choice with enforced ZDR routing.
 
 ## Features
 
