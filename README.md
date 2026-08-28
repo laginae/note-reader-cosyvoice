@@ -18,11 +18,11 @@ Here, a text-based PDF means a PDF with selectable embedded text. Scanned or ima
 
 ## Screenshots
 
-Reader control panel:
+Current reader control panel, including scoped audio export actions:
 
 ![Voice Reader control panel](docs/images/reader-controls.png)
 
-Plugin settings. The script path shown here is a redacted example:
+Privacy and resource settings. The screenshot contains no API key, vault name, note content, or local path:
 
 ![Note and PDF Voice Reader settings](docs/images/plugin-settings.png)
 

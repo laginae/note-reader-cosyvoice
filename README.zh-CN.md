@@ -18,13 +18,13 @@ Note and PDF Voice Reader 是一个隐私优先的桌面端 Obsidian 语音朗�
 
 ## 界面截图
 
-右侧朗读控制面板：
+当前右侧朗读控制面板，包含分范围音频导出入口：
 
 ![Voice Reader 控制面板](docs/images/reader-controls.png)
 
-插件设置页。截图中的脚本路径是脱敏示例：
+隐私与资源控制设置。截图不包含 API 密钥、Obsidian 库名、笔记内容或本地路径：
 
-![Note and PDF Voice Reader 设置页](docs/images/plugin-settings.png)
+![Note and PDF Voice Reader 设置页](docs/images/plugin-settings.zh-CN.png)
 
 ## 功能
 
