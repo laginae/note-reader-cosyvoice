@@ -45,6 +45,8 @@ try {
     pluginModule.__test.GITHUB_ISSUES_URL,
     'https://github.com/laginae/note-reader-cosyvoice/issues'
   );
+  assert.match(pluginModule.__test.getSettingsUiText('english').edgeConsentDesc, /ZDR/);
+  assert.match(pluginModule.__test.getSettingsUiText('chinese').edgeConsentDesc, /ZDR/);
   let opened = null;
   global.window = {
     open: (...args) => {

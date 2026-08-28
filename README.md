@@ -37,11 +37,40 @@ Scores are relative to the experience provided by this plugin. `5/5` always mean
 | Microsoft Azure Speech | 3/5 | 2/5 | 4/5 | 5/5 | 2/5 | 1/5 |
 | OpenRouter TTS | 3/5 | 3/5 | 3/5 | 4/5 | 2/5 | 1/5 |
 
-- **Privacy:** Local CosyVoice keeps readable text on the device. Every online mode sends text to its service provider. OpenRouter requests force `provider.zdr = true` and deny provider data collection, but text still passes through OpenRouter and an upstream provider; keep account-level logging and data sharing disabled for private content.
+- **Privacy:** Local CosyVoice keeps readable text on the device. Every online mode sends text to its service provider. The `edge-tts` interface used here does not provide an explicit ZDR guarantee for plugin requests. OpenRouter requests force `provider.zdr = true` and deny provider data collection, but text still passes through OpenRouter and an upstream provider; keep account-level logging and data sharing disabled for private content.
 - **API quota:** Local mode uses local compute. Edge mode does not require a user API key in this plugin, but still depends on the remote service's availability and terms. Azure and OpenRouter use metered account quota.
 - **Speed:** Startup scores describe typical time to the first playable chunk, not full-note/PDF export time. Hardware, model warm-up, network conditions, provider load, and the selected voice or model can change the result.
 
 In practice, choose Local CosyVoice for sensitive or offline reading, Edge for the simplest online setup and broad voice coverage, Azure for a managed Microsoft TTS account, and OpenRouter for model choice with enforced ZDR routing.
+
+## Quick start
+
+First install and enable the plugin, then open `Settings -> Community plugins -> Note and PDF Voice Reader`. Only enable an online-processing switch after deciding that the selected service may receive the text you ask the plugin to read.
+
+### 1. OpenRouter TTS
+
+1. Create a dedicated key at [OpenRouter API Keys](https://openrouter.ai/settings/keys), set a suitable spending limit, and make sure the account has usable quota.
+2. Set `Speech engine` to `OpenRouter TTS`, then enable `Allow OpenRouter online processing`.
+3. Keep the recommended `Obsidian SecretStorage`, create or select a secret containing the key, and choose a model and compatible voice.
+4. Keep account-level input/output logging and data sharing disabled. The plugin enforces ZDR routing and denies provider data collection on every request, but text still passes through OpenRouter and an eligible upstream provider.
+
+### 2. Microsoft Azure Speech
+
+1. Create an Azure Speech resource and record its cloud, region, and one subscription key.
+2. Set `Speech engine` to `Microsoft Azure Speech`, enable `Allow Azure online processing`, and select the matching Azure cloud and region.
+3. Store the key in `Obsidian SecretStorage`, then choose a voice preset or enter a valid Azure voice ID.
+
+### 3. Microsoft Edge online voice
+
+1. Install the third-party CLI with `pipx install edge-tts`, open a new terminal, and confirm that `edge-tts --help` works.
+2. Set `Speech engine` to `Microsoft Edge online voice`, enable `Allow Edge online processing`, set `Edge TTS executable` to `edge-tts` or its absolute path, and choose a voice.
+3. No user API key is required by this plugin. Text is still sent online, and the `edge-tts` interface used here does not provide an explicit ZDR guarantee for plugin requests.
+
+### 4. Local CosyVoice
+
+1. Install and test a local CosyVoice runtime and model, then prepare a compatible PowerShell wrapper as described in [Local CosyVoice setup](docs/local-cosyvoice-setup.md).
+2. Set `Speech engine` to `Local CosyVoice` and enter the wrapper's absolute path in `CosyVoice script`.
+3. Use `Read selection` for a short test. This mode needs no online-consent switch and the plugin itself keeps readable text on the device, but the configured wrapper remains part of your trust boundary.
 
 ## Features
 
@@ -175,7 +204,7 @@ Common presets include `zh-CN-XiaoxiaoNeural`, `zh-CN-YunxiNeural`, `zh-CN-Yunya
 
 If Obsidian cannot find `edge-tts`, use the absolute executable path in the plugin settings and fully restart Obsidian. Do not rely on an unrelated application's private virtual environment unless you intentionally trust and maintain that installation.
 
-Privacy note: Edge mode sends each text chunk to Microsoft Edge TTS. Keep `Speech engine` set to `Local CosyVoice` for private or sensitive notes.
+Privacy note: Edge mode sends each text chunk to Microsoft Edge TTS. Microsoft's Edge Read aloud privacy documentation says text and generated audio used for online conversion are deleted immediately after conversion, but the third-party `edge-tts` calling interface used by this plugin does not expose an explicit ZDR guarantee for plugin requests. Treat it as online processing without a guaranteed ZDR control, and keep `Speech engine` set to `Local CosyVoice` for private or sensitive notes. See [User data and privacy in Microsoft Edge](https://learn.microsoft.com/en-us/microsoft-edge/privacy-whitepaper/).
 
 ### Store Azure and OpenRouter API keys
 

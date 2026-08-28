@@ -37,11 +37,40 @@ Note and PDF Voice Reader 是一个隐私优先的桌面端 Obsidian 语音朗�
 | Microsoft Azure Speech | 3/5 | 2/5 | 4/5 | 5/5 | 2/5 | 1/5 |
 | OpenRouter TTS | 3/5 | 3/5 | 3/5 | 4/5 | 2/5 | 1/5 |
 
-- **隐私保护：** 本地 CosyVoice 的可朗读文本不离开设备；三种在线模式都会把文本发送给对应服务商。OpenRouter 请求会强制设置 `provider.zdr = true` 并拒绝供应商收集数据，但文本仍会经过 OpenRouter 和上游服务商；朗读私密内容时还应关闭账户级日志和数据共享。
+- **隐私保护：** 本地 CosyVoice 的可朗读文本不离开设备；三种在线模式都会把文本发送给对应服务商。本插件使用的 `edge-tts` 调用接口未对插件请求提供明确的 ZDR 保证。OpenRouter 请求会强制设置 `provider.zdr = true` 并拒绝供应商收集数据，但文本仍会经过 OpenRouter 和上游服务商；朗读私密内容时还应关闭账户级日志和数据共享。
 - **API 额度：** 本地模式使用本机算力；Edge 模式在本插件中不需要用户 API 密钥，但仍受在线服务可用性和服务条款约束；Azure 与 OpenRouter 会使用账户计量额度。
 - **启动速度：** 评分指通常情况下产生首个可播放分段的速度，不代表整篇笔记或 PDF 的导出时间；硬件、模型预热、网络、服务负载以及所选音色或模型都会影响结果。
 
 实际选择时：私密或离线朗读优先使用本地 CosyVoice；希望在线配置最简单且音色丰富时可选 Edge；已有微软托管语音账户时可选 Azure；希望切换不同模型并强制 ZDR 路由时可选 OpenRouter。
+
+## 快速开始
+
+先安装并启用插件，再进入 `设置 -> 第三方插件 -> Note and PDF Voice Reader`。只有在确认所选服务可以接收待朗读文本后，才开启相应的在线处理开关。
+
+### 1. OpenRouter TTS
+
+1. 在 [OpenRouter API Keys](https://openrouter.ai/settings/keys) 创建专用密钥，设置合适的消费上限，并确认账户有可用额度。
+2. 把 `语音引擎` 设为 `OpenRouter TTS`，然后开启 `允许 OpenRouter 在线处理`。
+3. 保留推荐的 `Obsidian SecretStorage`，创建或选择保存该密钥的 Secret，再选择模型及其兼容音色。
+4. 关闭 OpenRouter 账户级输入/输出日志和数据共享。插件会在每次请求中强制 ZDR 路由并拒绝供应商收集数据，但文本仍会经过 OpenRouter 和符合条件的上游供应商。
+
+### 2. Microsoft Azure Speech
+
+1. 创建 Azure Speech 资源，并记下其云环境、区域和一个订阅密钥。
+2. 把 `语音引擎` 设为 `Microsoft Azure Speech`，开启 `允许 Azure 在线处理`，再选择匹配的 Azure 云环境和区域。
+3. 使用 `Obsidian SecretStorage` 保存密钥，然后选择音色预设或填写有效的 Azure 音色 ID。
+
+### 3. Microsoft Edge 在线语音
+
+1. 使用 `pipx install edge-tts` 安装第三方命令行工具，重新打开终端，并确认 `edge-tts --help` 可以运行。
+2. 把 `语音引擎` 设为 `Microsoft Edge 在线语音`，开启 `允许 Edge 在线处理`，在 `Edge TTS 可执行文件` 中填写 `edge-tts` 或其绝对路径，再选择音色。
+3. 本插件使用该模式不需要用户 API 密钥，但文本仍会在线发送；本插件使用的 `edge-tts` 调用接口未对插件请求提供明确的 ZDR 保证。
+
+### 4. 本地 CosyVoice
+
+1. 安装并测试本地 CosyVoice 运行环境和模型，再按照 [Local CosyVoice setup](docs/local-cosyvoice-setup.md) 准备兼容的 PowerShell 包装脚本。
+2. 把 `语音引擎` 设为 `本地 CosyVoice`，并在 `CosyVoice 脚本` 中填写包装脚本的绝对路径。
+3. 先用“朗读选中内容”进行短文本测试。该模式不需要在线同意开关，插件本身会把可朗读文本保留在设备上，但所配置的包装脚本仍属于你的信任边界。
 
 ## 功能
 
@@ -206,7 +235,7 @@ edge-tts --list-voices
 
 如果 Obsidian 找不到 `edge-tts`，请在插件设置中填写绝对可执行文件路径并完全重启 Obsidian。除非你明确决定信任并维护该安装，否则不要依赖其他应用的私有虚拟环境。
 
-隐私提醒：Edge 模式会把每个文本分段发送给 Microsoft Edge TTS。私密或敏感笔记建议继续使用默认的 `Local CosyVoice`。
+隐私提醒：Edge 模式会把每个文本分段发送给 Microsoft Edge TTS。Microsoft 的 Edge 大声朗读隐私文档说明，在线转换使用的文本和生成音频会在转换完成后立即删除；但本插件使用的第三方 `edge-tts` 调用接口没有为插件请求提供明确的 ZDR 保证。应把它视为没有可保证 ZDR 控制的在线处理方式；私密或敏感笔记建议继续使用默认的 `Local CosyVoice`。参见 [Microsoft Edge 中的用户数据和隐私](https://learn.microsoft.com/zh-cn/microsoft-edge/privacy-whitepaper/)。
 
 ## 保存 Azure 与 OpenRouter 密钥
 
