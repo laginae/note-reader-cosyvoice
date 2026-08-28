@@ -32,15 +32,15 @@ Note and PDF Voice Reader 是一个隐私优先的桌面端 Obsidian 语音朗�
 
 | 模式 | 隐私保护 | 设置便利性 | 启动速度 | 音色选择 | API 额度 | 离线能力 |
 | --- | :---: | :---: | :---: | :---: | :---: | :---: |
-| 本地 CosyVoice | ★★★★★ | ★★☆☆☆ | ★★★☆☆ | ★★★☆☆ | ★★★★★ | ★★★★★ |
-| Microsoft Edge 在线语音 | ★★★☆☆ | ★★★★☆ | ★★★★☆ | ★★★★★ | ★★★★☆ | ★☆☆☆☆ |
-| Microsoft Azure Speech | ★★★★☆ | ★★☆☆☆ | ★★★★☆ | ★★★★★ | ★★☆☆☆ | ★☆☆☆☆ |
-| OpenRouter TTS | ★★★★☆ | ★★★★★ | ★★★★☆ | ★★★★★ | ★★☆☆☆ | ★☆☆☆☆ |
+| 本地 CosyVoice | ★★★★★ | ★★☆☆☆ | ★★★★☆ | ★★★☆☆ | ★★★★★ | ★★★★★ |
+| Microsoft Edge 在线语音 | ★★★☆☆ | ★★★★☆ | ★★★★★ | ★★★★★ | ★★★★☆ | ★☆☆☆☆ |
+| Microsoft Azure Speech | ★★★★☆ | ★★★☆☆ | ★★★★★ | ★★★★★ | ★★☆☆☆ | ★☆☆☆☆ |
+| OpenRouter TTS | ★★★★☆ | ★★★★★ | ★★★★★ | ★★★★★ | ★★☆☆☆ | ★☆☆☆☆ |
 
 - **隐私保护：** 本地 CosyVoice 的可朗读文本不离开设备；三种在线模式都会把文本发送给对应服务商。Edge 获得三星，是因为 [Microsoft 说明](https://learn.microsoft.com/zh-cn/microsoft-edge/privacy-whitepaper/)浏览器“朗读”功能的在线文本和生成音频会加密传输，并在转换完成后立即删除；但本插件是在 Edge 浏览器之外通过第三方 `edge-tts` 程序调用服务，该程序没有为插件请求提供可强制执行的 ZDR 控制或明确保证，因此评分低于 Azure 和 OpenRouter。Azure 获得四星，是因为本插件调用实时预生成音色接口，且 [Microsoft 明确说明](https://learn.microsoft.com/zh-cn/azure/foundry/responsible-ai/speech-service/text-to-speech/data-privacy-security)输入文本和输出音频不会存入 Microsoft 日志；仍扣一星，是因为文本必须交由 Microsoft 云端处理。OpenRouter 同样获得四星，是因为请求会强制设置 `provider.zdr = true`、拒绝供应商收集数据，并在没有合规端点时失败而不是降低限制；但它并不等同于本地处理，文本仍会经过 OpenRouter 和上游供应商，朗读私密内容时还应关闭账户级日志和数据共享。
-- **设置便利性：** OpenRouter 在本插件中的配置步骤最少：创建账户密钥、保存到 Obsidian SecretStorage，再选择模型和音色即可，不需要安装本地辅助程序。Edge 需要另外安装第三方 `edge-tts` 可执行程序。Azure 同样由插件直接通过 HTTPS 调用，不需要本地接口程序，但必须配置 Azure Speech 资源、云环境、区域和密钥。本地 CosyVoice 则需要准备本地运行环境、模型和包装脚本。
+- **设置便利性：** OpenRouter 在本插件中的配置步骤最少：创建账户密钥、保存到 Obsidian SecretStorage，再选择模型和音色即可，不需要安装本地辅助程序。Edge 需要另外安装第三方 `edge-tts` 可执行程序。Azure 获得三星，因为它同样由插件直接通过 HTTPS 调用、不需要本地接口程序，但仍必须配置 Azure Speech 资源、云环境、区域和密钥。本地 CosyVoice 则需要准备本地运行环境、模型和包装脚本。
 - **API 额度：** 本地模式使用本机算力；Edge 模式在本插件中不需要用户 API 密钥，但仍受在线服务可用性和服务条款约束；Azure 与 OpenRouter 会使用账户计量额度。
-- **启动速度：** Edge、Azure 与 OpenRouter 归入同一档首段启动速度，但这不表示三者延迟完全相同。[OpenRouter 表示其网关只增加很小的延迟](https://openrouter.ai/docs/guides/best-practices/latency-and-performance)，但路由、缓存状态、所选模型和上游供应商仍会改变启动时间；硬件、模型预热、网络、服务负载以及所选音色或模型也会影响结果。
+- **启动速度：** 此项只评估引擎已经安装和配置完成后，到首个可播放分段生成所需的时间；首次下载、账户开通和配置工作归入设置便利性。本地 CosyVoice 依靠渐进分段获得四星，但硬件相关的模型预热仍扣一星。Edge、Azure 与 OpenRouter 的典型短首段请求获得五星，但这不表示三者延迟完全相同或始终得到保证。[OpenRouter 表示其网关只增加很小的延迟](https://openrouter.ai/docs/guides/best-practices/latency-and-performance)，而路由、缓存状态、所选模型、网络状况和服务负载仍会改变结果。
 - **音色选择：** Azure 具有较丰富的直接音色目录；OpenRouter 获得同一评分，是因为它可选择多种 TTS 模型及各模型自己的音色目录，而不是因为所有模型都共用 Azure 音色。其 [TTS 文档](https://openrouter.ai/docs/guides/overview/multimodal/tts)明确说明 MAI 使用 Azure 专用处理，而其他模型采用各自依赖供应商的音色；不同模型的音色 ID 不能混用。
 
 实际选择时：私密或离线朗读优先使用本地 CosyVoice；希望用最少步骤直接配置 API、切换模型并强制 ZDR 路由时可选 OpenRouter；更看重无需用户 API 密钥、且可以接受安装辅助程序时可选 Edge；已经管理 Microsoft Speech 资源时可选 Azure。
