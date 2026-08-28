@@ -30,18 +30,20 @@ Complete settings page, assembled from sequential views of the same page. Secret
 
 Scores are relative to the experience provided by this plugin. More filled stars always mean more favorable: stronger privacy, easier setup, faster first-chunk startup, broader voice choice, less dependence on user-managed paid API quota, or better offline capability. `★★★★★` is the strongest rating and `★☆☆☆☆` is the weakest. They are usage guidance, not security, provider-policy, pricing, or latency guarantees.
 
-| Engine | Privacy | Setup | Startup speed | Voice choice | API quota | Offline |
+| Engine | Privacy | Setup convenience | Startup speed | Voice choice | API quota | Offline |
 | --- | :---: | :---: | :---: | :---: | :---: | :---: |
 | Local CosyVoice | ★★★★★ | ★★☆☆☆ | ★★★☆☆ | ★★★☆☆ | ★★★★★ | ★★★★★ |
 | Microsoft Edge online voice | ★★☆☆☆ | ★★★★☆ | ★★★★☆ | ★★★★★ | ★★★★☆ | ★☆☆☆☆ |
 | Microsoft Azure Speech | ★★★☆☆ | ★★☆☆☆ | ★★★★☆ | ★★★★★ | ★★☆☆☆ | ★☆☆☆☆ |
-| OpenRouter TTS | ★★★☆☆ | ★★★☆☆ | ★★★☆☆ | ★★★★☆ | ★★☆☆☆ | ★☆☆☆☆ |
+| OpenRouter TTS | ★★★☆☆ | ★★★★★ | ★★★★☆ | ★★★★★ | ★★☆☆☆ | ★☆☆☆☆ |
 
 - **Privacy:** Local CosyVoice keeps readable text on the device. Every online mode sends text to its service provider. The `edge-tts` interface used here does not provide an explicit ZDR guarantee for plugin requests. OpenRouter requests force `provider.zdr = true` and deny provider data collection, but text still passes through OpenRouter and an upstream provider; keep account-level logging and data sharing disabled for private content.
+- **Setup convenience:** OpenRouter is the shortest setup in this plugin: create an account key, store it in Obsidian SecretStorage, then select a model and voice. It needs no local helper program. Edge needs the separately installed third-party `edge-tts` executable. Azure also uses direct HTTPS and needs no helper executable, but it requires an Azure Speech resource, cloud, region, and key. Local CosyVoice requires a local runtime, model, and wrapper.
 - **API quota:** Local mode uses local compute. Edge mode does not require a user API key in this plugin, but still depends on the remote service's availability and terms. Azure and OpenRouter use metered account quota.
-- **Speed:** Startup scores describe typical time to the first playable chunk, not full-note/PDF export time. Hardware, model warm-up, network conditions, provider load, and the selected voice or model can change the result.
+- **Speed:** Edge, Azure, and OpenRouter are placed in the same broad first-chunk speed tier; this is not a claim of identical latency. [OpenRouter says its gateway adds minimal overhead](https://openrouter.ai/docs/guides/best-practices/latency-and-performance), but routing, cache state, the selected model, and the upstream provider can still change startup time. Hardware, model warm-up, network conditions, provider load, and the selected voice or model can also change the result.
+- **Voice choice:** Azure has a broad direct voice catalog. OpenRouter receives the same rating because it exposes several TTS models and their model-specific voice catalogs, not because every model shares Azure voices. Its [TTS documentation](https://openrouter.ai/docs/guides/overview/multimodal/tts) identifies Azure-specific handling for MAI, while other models use their own provider-dependent voices; voice IDs are not interchangeable between models.
 
-In practice, choose Local CosyVoice for sensitive or offline reading, Edge for the simplest online setup and broad voice coverage, Azure for a managed Microsoft TTS account, and OpenRouter for model choice with enforced ZDR routing.
+In practice, choose Local CosyVoice for sensitive or offline reading, OpenRouter for the shortest direct-API setup plus model choice and enforced ZDR routing, Edge when avoiding a user API key matters more than installing its helper program, and Azure when you already manage a Microsoft Speech resource.
 
 ## Quick start
 
