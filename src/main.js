@@ -33,6 +33,7 @@ const {
 const PLUGIN_ID = 'note-reader-cosyvoice';
 const VIEW_TYPE = 'note-reader-cosyvoice-control';
 const GITHUB_ISSUES_URL = 'https://github.com/laginae/note-reader-cosyvoice/issues';
+const AZURE_TTS_PRIVACY_URL = 'https://learn.microsoft.com/azure/ai-foundry/responsible-ai/speech-service/text-to-speech/data-privacy-security';
 const DEFAULT_CHUNK_LIMITS = [40, 80, 120, 160, 280, 320];
 const DEFAULT_ONLINE_CHUNK_LIMITS = [200, 400, 800];
 const MAX_ONLINE_PREFETCH_CHUNKS = 1;
@@ -40,8 +41,8 @@ const DEFAULT_MATH_READING_LANGUAGE = 'english';
 const DEFAULT_EDGE_TTS_VOICE = 'en-GB-RyanNeural';
 const DEFAULT_EDGE_TTS_EXECUTABLE = 'edge-tts';
 const DEFAULT_AZURE_SPEECH_VOICE = 'en-GB-RyanNeural';
-const DEFAULT_OPENROUTER_TTS_MODEL = 'hexgrad/kokoro-82m';
-const DEFAULT_OPENROUTER_TTS_VOICE = 'bm_george';
+const DEFAULT_OPENROUTER_TTS_MODEL = 'fish-audio/s2.1-pro';
+const DEFAULT_OPENROUTER_TTS_VOICE = 'b7f1aae6de274690b20cfe990b953b67';
 const AZURE_SPEECH_OUTPUT_FORMAT = 'audio-24khz-48kbitrate-mono-mp3';
 const OPENROUTER_TTS_ENDPOINT = 'https://openrouter.ai/api/v1/audio/speech';
 const RECOMMENDED_SCRIPT_PATH = '%LOCALAPPDATA%\\note-reader-cosyvoice\\cosyvoice-wrapper.ps1';
@@ -115,15 +116,25 @@ const OPENROUTER_TTS_MODELS = [
     'OpenRouter 列出 30 个多语言音色。默认使用更适合学术朗读的信息型 Charon。Google 按朗读风格而非固定性别或英美口音描述音色，因此插件不会把某个音色无依据地标为男声或特定口音。',
   ],
   [
+    'fish-audio/s2.1-pro',
+    DEFAULT_OPENROUTER_TTS_VOICE,
+    'Fish Audio S2.1 Pro - expressive multilingual narration, 6 voice presets',
+    'Fish Audio S2.1 Pro - 多语言表现力朗读，提供 6 种音色预设',
+    'Expressive multilingual narration with Fish Audio public voice IDs. Defaults to a measured UK English male voice. OpenRouter currently bills this model per UTF-8 byte, not per character.',
+    '多语言表现力朗读，使用 Fish Audio 公开音色 ID。默认选择沉稳的英式英语男声。OpenRouter 当前按 UTF-8 字节而非字符计费。',
+  ],
+  [
     'hexgrad/kokoro-82m',
     'bm_george',
-    'Kokoro 82M - lightweight, low cost, many preset voices',
-    'Kokoro 82M - 轻量、低成本、预设音色丰富',
-    'OpenRouter lists 54 voices. The plugin provides 12 curated presets covering Chinese, US English, and UK English, with both female and male voices in every group. George remains the restrained academic-reading default.',
-    'OpenRouter 列出 54 个音色。本插件提供 12 个精选预设，完整覆盖中文、美式英语和英式英语的男女声；默认 George 男声适合较克制的学术朗读。',
+    'Kokoro 82M - low-cost multilingual TTS, 12 curated voices',
+    'Kokoro 82M - 低成本多语言语音，提供 12 种精选音色',
+    'A lightweight, low-cost model with preset voices for Chinese, US English, and UK English. OpenRouter lists provider-dependent rates; the lowest currently shown is about $0.62 per million characters, but the ZDR-eligible route may cost more.',
+    '轻量低成本模型，预设覆盖中文、美式英语和英式英语。OpenRouter 按供应商显示不同费率；当前页面最低约为每百万字符 $0.62，但符合 ZDR 的实际路由可能更贵。',
   ],
 ];
-// OpenRouter-listed IDs were checked against its speech + ZDR model API on 2026-08-27.
+// Fish and Kokoro appeared in the speech + ZDR model API check on 2026-09-23;
+// this is point-in-time endpoint availability, not a permanent provider-wide guarantee.
+// Fish voice IDs point to public Fish Audio voices powered by S2.1 Pro.
 // MAI compatibility IDs follow Microsoft's official MAI voice catalog on 2026-08-27.
 const OPENROUTER_TTS_PRESETS = [
   ['microsoft/mai-voice-2-flash', 'en-US-Ethan:MAI-Voice-2-Flash', 'Ethan (US English male; not listed in OpenRouter metadata)', 'Ethan（美式英语男声；OpenRouter 元数据未列出）'],
@@ -158,6 +169,12 @@ const OPENROUTER_TTS_PRESETS = [
   ['google/gemini-3.1-flash-tts-preview', 'Sulafat', 'Sulafat (multilingual, warm)', 'Sulafat（多语言，温暖）'],
   ['google/gemini-3.1-flash-tts-preview', 'Vindemiatrix', 'Vindemiatrix (multilingual, gentle)', 'Vindemiatrix（多语言，温和）'],
   ['google/gemini-3.1-flash-tts-preview', 'Aoede', 'Aoede (multilingual, breezy)', 'Aoede（多语言，轻快）'],
+  ['fish-audio/s2.1-pro', '36ef842120654ee6b38ef43c8f08535a', 'Mandarin male - deep, formal narration', '中文男声 - 浑厚、正式旁白'],
+  ['fish-audio/s2.1-pro', '89ca9f5f239946d6b20cdc49bdd40ff7', 'Mandarin female - calm storytelling', '中文女声 - 平静叙述'],
+  ['fish-audio/s2.1-pro', '653bbd5adbe34b3d8c867a5311f461c4', 'US English male - calm, measured narrator', '美式英语男声 - 沉稳、语速平缓'],
+  ['fish-audio/s2.1-pro', '552756381a5044ba916aeb596ed443bb', 'US English female - clear, measured narrator', '美式英语女声 - 清晰、语速平缓'],
+  ['fish-audio/s2.1-pro', 'b7f1aae6de274690b20cfe990b953b67', 'UK English male - measured narrator (default)', '英式英语男声 - 沉稳旁白（默认）'],
+  ['fish-audio/s2.1-pro', '7fe3682ee0e44dc88d1b12000cc15268', 'UK English female - calm, informative narrator', '英式英语女声 - 平静、信息型旁白'],
   ['hexgrad/kokoro-82m', 'zf_xiaoxiao', 'Xiaoxiao (Chinese female)', '小晓（中文女声）'],
   ['hexgrad/kokoro-82m', 'zf_xiaoyi', 'Xiaoyi (Chinese female)', '小艺（中文女声）'],
   ['hexgrad/kokoro-82m', 'zm_yunjian', 'Yunjian (Chinese male)', '云健（中文男声）'],
@@ -196,6 +213,10 @@ const SETTINGS_UI_TEXT = {
     edgeVoiceDesc: 'Voice ID used by Edge mode. Keep a preset above or enter any ID returned by edge-tts --list-voices.',
     azureConsentName: 'Allow Azure online processing',
     azureConsentDesc: 'Required for Azure mode. Each text chunk is sent by HTTPS to the selected Azure Speech cloud and region. Keep this off for private notes unless that processing is acceptable.',
+    azurePrivacyName: 'Azure real-time privacy',
+    azurePrivacyDesc: 'This plugin uses Azure\'s real-time prebuilt-voice API. Microsoft states that input text and output audio are not retained or stored, so no separate privacy switch is required in Azure. Text is still processed in the selected Azure region. This does not cover batch synthesis, custom voice, or avatar services.',
+    azurePrivacyButton: 'Microsoft privacy statement',
+    azurePrivacyTooltip: 'Open Microsoft\'s text-to-speech privacy statement',
     credentialSourceName: 'API key storage',
     credentialSourceDesc: 'Use Obsidian SecretStorage on Obsidian 1.11.4 or later, or keep a one-line key file outside the vault as a compatibility fallback.',
     credentialSourceSecret: 'Obsidian SecretStorage (recommended)',
@@ -308,6 +329,10 @@ const SETTINGS_UI_TEXT = {
     edgeVoiceDesc: 'Edge 模式使用的音色 ID。可使用上方预设，或填写 edge-tts --list-voices 返回的任意 ID。',
     azureConsentName: '允许 Azure 在线处理',
     azureConsentDesc: 'Azure 模式必须开启。每个文本分段会通过 HTTPS 发送到所选 Azure Speech 云环境和区域。除非可以接受该处理，否则私密笔记应保持关闭。',
+    azurePrivacyName: 'Azure 实时接口隐私说明',
+    azurePrivacyDesc: '本插件使用 Azure 实时预构建音色接口。Microsoft 表示输入文本和输出音频不会被保留或存储，无需在 Azure 门户额外开启独立隐私开关；文本仍会发送到所选 Azure 区域处理。此说明不适用于批量合成、定制音色或虚拟人服务。',
+    azurePrivacyButton: '查看 Microsoft 隐私说明',
+    azurePrivacyTooltip: '在浏览器中打开 Microsoft 官方隐私说明',
     credentialSourceName: 'API 密钥存储方式',
     credentialSourceDesc: 'Obsidian 1.11.4 及以上版本建议使用 SecretStorage；也可以继续使用 Obsidian 库外的单行密钥文件作为兼容回退。',
     credentialSourceSecret: 'Obsidian SecretStorage（推荐）',
@@ -1207,11 +1232,19 @@ function getSettingsUiText(language) {
   return SETTINGS_UI_TEXT[normalizeSettingsLanguage(language)];
 }
 
-function openGitHubIssues() {
+function openExternalUrl(url) {
   if (typeof window === 'undefined' || typeof window.open !== 'function') {
     return false;
   }
-  return Boolean(window.open(GITHUB_ISSUES_URL, '_blank', 'noopener,noreferrer'));
+  return Boolean(window.open(url, '_blank', 'noopener,noreferrer'));
+}
+
+function openGitHubIssues() {
+  return openExternalUrl(GITHUB_ISSUES_URL);
+}
+
+function openAzureTtsPrivacyDocs() {
+  return openExternalUrl(AZURE_TTS_PRIVACY_URL);
 }
 
 function normalizeSpeechEngine(value) {
@@ -5960,6 +5993,20 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
         });
 
       new Setting(containerEl)
+        .setName(ui.azurePrivacyName)
+        .setDesc(ui.azurePrivacyDesc)
+        .addButton((button) => {
+          button
+            .setButtonText(ui.azurePrivacyButton)
+            .setTooltip(ui.azurePrivacyTooltip)
+            .onClick(() => {
+              if (!openAzureTtsPrivacyDocs()) {
+                new Notice(AZURE_TTS_PRIVACY_URL, 8000);
+              }
+            });
+        });
+
+      new Setting(containerEl)
         .setName(ui.azureCloudName)
         .setDesc(ui.azureCloudDesc)
         .addDropdown((dropdown) => {
@@ -6412,6 +6459,7 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
 module.exports = {
   default: CosyVoiceReaderPlugin,
   __test: {
+    AZURE_TTS_PRIVACY_URL,
     DEFAULT_ONLINE_CHUNK_LIMITS,
     GITHUB_ISSUES_URL,
     VIEW_TYPE,
@@ -6487,6 +6535,7 @@ module.exports = {
     normalizeReadingPositions,
     normalizeSettingsLanguage,
     normalizeSpeechEngine,
+    openAzureTtsPrivacyDocs,
     openGitHubIssues,
     parseRetryAfterMs,
     resolveDefaultScriptPath,

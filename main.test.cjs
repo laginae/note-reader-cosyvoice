@@ -45,8 +45,14 @@ try {
     pluginModule.__test.GITHUB_ISSUES_URL,
     'https://github.com/laginae/note-reader-cosyvoice/issues'
   );
+  assert.strictEqual(
+    pluginModule.__test.AZURE_TTS_PRIVACY_URL,
+    'https://learn.microsoft.com/azure/ai-foundry/responsible-ai/speech-service/text-to-speech/data-privacy-security'
+  );
   assert.match(pluginModule.__test.getSettingsUiText('english').edgeConsentDesc, /ZDR/);
   assert.match(pluginModule.__test.getSettingsUiText('chinese').edgeConsentDesc, /ZDR/);
+  assert.match(pluginModule.__test.getSettingsUiText('english').azurePrivacyDesc, /no separate privacy switch/i);
+  assert.match(pluginModule.__test.getSettingsUiText('chinese').azurePrivacyDesc, /无需.*额外开启.*隐私开关/);
   let opened = null;
   global.window = {
     open: (...args) => {
@@ -57,6 +63,12 @@ try {
   assert.strictEqual(pluginModule.__test.openGitHubIssues(), true);
   assert.deepStrictEqual(opened, [
     'https://github.com/laginae/note-reader-cosyvoice/issues',
+    '_blank',
+    'noopener,noreferrer',
+  ]);
+  assert.strictEqual(pluginModule.__test.openAzureTtsPrivacyDocs(), true);
+  assert.deepStrictEqual(opened, [
+    'https://learn.microsoft.com/azure/ai-foundry/responsible-ai/speech-service/text-to-speech/data-privacy-security',
     '_blank',
     'noopener,noreferrer',
   ]);

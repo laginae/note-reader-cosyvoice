@@ -199,7 +199,7 @@ const testVaultPath = path.resolve('test-vault');
 const testAudioPath = path.join(testVaultPath, '.obsidian', 'plugins', 'note-reader-cosyvoice', 'cache', 'a.wav');
 assert.strictEqual(manifest.id, 'note-reader-cosyvoice');
 assert.strictEqual(manifest.name, 'Note and PDF Voice Reader');
-assert.strictEqual(manifest.version, '0.4.3');
+assert.strictEqual(manifest.version, '0.4.4');
 assert.ok(!/\bObsidian\b/.test(manifest.description));
 assert.ok(!code.includes('Note Reader CosyVoice'));
 assert.ok(!code.includes('CosyVoice Reader'));
@@ -299,9 +299,9 @@ assert.deepStrictEqual(moduleObject.exports.__test.createDefaultSettings(), {
   openRouterConsent: false,
   openRouterCredentialSource: 'obsidian-secret',
   openRouterKeyPath: '',
-  openRouterModel: 'hexgrad/kokoro-82m',
+  openRouterModel: 'fish-audio/s2.1-pro',
   openRouterSecretName: '',
-  openRouterVoice: 'bm_george',
+  openRouterVoice: 'b7f1aae6de274690b20cfe990b953b67',
   settingsLanguage: 'english',
   scriptPath: '',
   speechEngine: 'local-cosyvoice',
@@ -436,7 +436,7 @@ assert.strictEqual(
   moduleObject.exports.__test.normalizeOpenRouterModel(' hexgrad/kokoro-82m '),
   'hexgrad/kokoro-82m'
 );
-assert.strictEqual(moduleObject.exports.__test.normalizeOpenRouterModel('https://invalid.test'), 'hexgrad/kokoro-82m');
+assert.strictEqual(moduleObject.exports.__test.normalizeOpenRouterModel('https://invalid.test'), 'fish-audio/s2.1-pro');
 assert.strictEqual(moduleObject.exports.__test.normalizeOpenRouterVoice(' zf_xiaoxiao '), 'zf_xiaoxiao');
 assert.strictEqual(moduleObject.exports.__test.hasOpenRouterConsent({ speechEngine: 'local-cosyvoice' }), true);
 assert.strictEqual(moduleObject.exports.__test.hasOpenRouterConsent({ speechEngine: 'openrouter-tts' }), false);
@@ -532,6 +532,7 @@ assert.deepStrictEqual(openRouterModelIds, [
   'microsoft/mai-voice-2-flash',
   'microsoft/mai-voice-2',
   'google/gemini-3.1-flash-tts-preview',
+  'fish-audio/s2.1-pro',
   'hexgrad/kokoro-82m',
 ]);
 assert.ok(!openRouterModelIds.some((model) => model.startsWith('qwen/')));

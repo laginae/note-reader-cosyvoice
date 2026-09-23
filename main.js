@@ -1061,6 +1061,7 @@ var {
 var PLUGIN_ID = "note-reader-cosyvoice";
 var VIEW_TYPE = "note-reader-cosyvoice-control";
 var GITHUB_ISSUES_URL = "https://github.com/laginae/note-reader-cosyvoice/issues";
+var AZURE_TTS_PRIVACY_URL = "https://learn.microsoft.com/azure/ai-foundry/responsible-ai/speech-service/text-to-speech/data-privacy-security";
 var DEFAULT_CHUNK_LIMITS = [40, 80, 120, 160, 280, 320];
 var DEFAULT_ONLINE_CHUNK_LIMITS = [200, 400, 800];
 var MAX_ONLINE_PREFETCH_CHUNKS = 1;
@@ -1068,8 +1069,8 @@ var DEFAULT_MATH_READING_LANGUAGE = "english";
 var DEFAULT_EDGE_TTS_VOICE = "en-GB-RyanNeural";
 var DEFAULT_EDGE_TTS_EXECUTABLE = "edge-tts";
 var DEFAULT_AZURE_SPEECH_VOICE = "en-GB-RyanNeural";
-var DEFAULT_OPENROUTER_TTS_MODEL = "hexgrad/kokoro-82m";
-var DEFAULT_OPENROUTER_TTS_VOICE = "bm_george";
+var DEFAULT_OPENROUTER_TTS_MODEL = "fish-audio/s2.1-pro";
+var DEFAULT_OPENROUTER_TTS_VOICE = "b7f1aae6de274690b20cfe990b953b67";
 var AZURE_SPEECH_OUTPUT_FORMAT = "audio-24khz-48kbitrate-mono-mp3";
 var OPENROUTER_TTS_ENDPOINT = "https://openrouter.ai/api/v1/audio/speech";
 var RECOMMENDED_SCRIPT_PATH = "%LOCALAPPDATA%\\note-reader-cosyvoice\\cosyvoice-wrapper.ps1";
@@ -1143,12 +1144,20 @@ var OPENROUTER_TTS_MODELS = [
     "OpenRouter \u5217\u51FA 30 \u4E2A\u591A\u8BED\u8A00\u97F3\u8272\u3002\u9ED8\u8BA4\u4F7F\u7528\u66F4\u9002\u5408\u5B66\u672F\u6717\u8BFB\u7684\u4FE1\u606F\u578B Charon\u3002Google \u6309\u6717\u8BFB\u98CE\u683C\u800C\u975E\u56FA\u5B9A\u6027\u522B\u6216\u82F1\u7F8E\u53E3\u97F3\u63CF\u8FF0\u97F3\u8272\uFF0C\u56E0\u6B64\u63D2\u4EF6\u4E0D\u4F1A\u628A\u67D0\u4E2A\u97F3\u8272\u65E0\u4F9D\u636E\u5730\u6807\u4E3A\u7537\u58F0\u6216\u7279\u5B9A\u53E3\u97F3\u3002"
   ],
   [
+    "fish-audio/s2.1-pro",
+    DEFAULT_OPENROUTER_TTS_VOICE,
+    "Fish Audio S2.1 Pro - expressive multilingual narration, 6 voice presets",
+    "Fish Audio S2.1 Pro - \u591A\u8BED\u8A00\u8868\u73B0\u529B\u6717\u8BFB\uFF0C\u63D0\u4F9B 6 \u79CD\u97F3\u8272\u9884\u8BBE",
+    "Expressive multilingual narration with Fish Audio public voice IDs. Defaults to a measured UK English male voice. OpenRouter currently bills this model per UTF-8 byte, not per character.",
+    "\u591A\u8BED\u8A00\u8868\u73B0\u529B\u6717\u8BFB\uFF0C\u4F7F\u7528 Fish Audio \u516C\u5F00\u97F3\u8272 ID\u3002\u9ED8\u8BA4\u9009\u62E9\u6C89\u7A33\u7684\u82F1\u5F0F\u82F1\u8BED\u7537\u58F0\u3002OpenRouter \u5F53\u524D\u6309 UTF-8 \u5B57\u8282\u800C\u975E\u5B57\u7B26\u8BA1\u8D39\u3002"
+  ],
+  [
     "hexgrad/kokoro-82m",
     "bm_george",
-    "Kokoro 82M - lightweight, low cost, many preset voices",
-    "Kokoro 82M - \u8F7B\u91CF\u3001\u4F4E\u6210\u672C\u3001\u9884\u8BBE\u97F3\u8272\u4E30\u5BCC",
-    "OpenRouter lists 54 voices. The plugin provides 12 curated presets covering Chinese, US English, and UK English, with both female and male voices in every group. George remains the restrained academic-reading default.",
-    "OpenRouter \u5217\u51FA 54 \u4E2A\u97F3\u8272\u3002\u672C\u63D2\u4EF6\u63D0\u4F9B 12 \u4E2A\u7CBE\u9009\u9884\u8BBE\uFF0C\u5B8C\u6574\u8986\u76D6\u4E2D\u6587\u3001\u7F8E\u5F0F\u82F1\u8BED\u548C\u82F1\u5F0F\u82F1\u8BED\u7684\u7537\u5973\u58F0\uFF1B\u9ED8\u8BA4 George \u7537\u58F0\u9002\u5408\u8F83\u514B\u5236\u7684\u5B66\u672F\u6717\u8BFB\u3002"
+    "Kokoro 82M - low-cost multilingual TTS, 12 curated voices",
+    "Kokoro 82M - \u4F4E\u6210\u672C\u591A\u8BED\u8A00\u8BED\u97F3\uFF0C\u63D0\u4F9B 12 \u79CD\u7CBE\u9009\u97F3\u8272",
+    "A lightweight, low-cost model with preset voices for Chinese, US English, and UK English. OpenRouter lists provider-dependent rates; the lowest currently shown is about $0.62 per million characters, but the ZDR-eligible route may cost more.",
+    "\u8F7B\u91CF\u4F4E\u6210\u672C\u6A21\u578B\uFF0C\u9884\u8BBE\u8986\u76D6\u4E2D\u6587\u3001\u7F8E\u5F0F\u82F1\u8BED\u548C\u82F1\u5F0F\u82F1\u8BED\u3002OpenRouter \u6309\u4F9B\u5E94\u5546\u663E\u793A\u4E0D\u540C\u8D39\u7387\uFF1B\u5F53\u524D\u9875\u9762\u6700\u4F4E\u7EA6\u4E3A\u6BCF\u767E\u4E07\u5B57\u7B26 $0.62\uFF0C\u4F46\u7B26\u5408 ZDR \u7684\u5B9E\u9645\u8DEF\u7531\u53EF\u80FD\u66F4\u8D35\u3002"
   ]
 ];
 var OPENROUTER_TTS_PRESETS = [
@@ -1184,6 +1193,12 @@ var OPENROUTER_TTS_PRESETS = [
   ["google/gemini-3.1-flash-tts-preview", "Sulafat", "Sulafat (multilingual, warm)", "Sulafat\uFF08\u591A\u8BED\u8A00\uFF0C\u6E29\u6696\uFF09"],
   ["google/gemini-3.1-flash-tts-preview", "Vindemiatrix", "Vindemiatrix (multilingual, gentle)", "Vindemiatrix\uFF08\u591A\u8BED\u8A00\uFF0C\u6E29\u548C\uFF09"],
   ["google/gemini-3.1-flash-tts-preview", "Aoede", "Aoede (multilingual, breezy)", "Aoede\uFF08\u591A\u8BED\u8A00\uFF0C\u8F7B\u5FEB\uFF09"],
+  ["fish-audio/s2.1-pro", "36ef842120654ee6b38ef43c8f08535a", "Mandarin male - deep, formal narration", "\u4E2D\u6587\u7537\u58F0 - \u6D51\u539A\u3001\u6B63\u5F0F\u65C1\u767D"],
+  ["fish-audio/s2.1-pro", "89ca9f5f239946d6b20cdc49bdd40ff7", "Mandarin female - calm storytelling", "\u4E2D\u6587\u5973\u58F0 - \u5E73\u9759\u53D9\u8FF0"],
+  ["fish-audio/s2.1-pro", "653bbd5adbe34b3d8c867a5311f461c4", "US English male - calm, measured narrator", "\u7F8E\u5F0F\u82F1\u8BED\u7537\u58F0 - \u6C89\u7A33\u3001\u8BED\u901F\u5E73\u7F13"],
+  ["fish-audio/s2.1-pro", "552756381a5044ba916aeb596ed443bb", "US English female - clear, measured narrator", "\u7F8E\u5F0F\u82F1\u8BED\u5973\u58F0 - \u6E05\u6670\u3001\u8BED\u901F\u5E73\u7F13"],
+  ["fish-audio/s2.1-pro", "b7f1aae6de274690b20cfe990b953b67", "UK English male - measured narrator (default)", "\u82F1\u5F0F\u82F1\u8BED\u7537\u58F0 - \u6C89\u7A33\u65C1\u767D\uFF08\u9ED8\u8BA4\uFF09"],
+  ["fish-audio/s2.1-pro", "7fe3682ee0e44dc88d1b12000cc15268", "UK English female - calm, informative narrator", "\u82F1\u5F0F\u82F1\u8BED\u5973\u58F0 - \u5E73\u9759\u3001\u4FE1\u606F\u578B\u65C1\u767D"],
   ["hexgrad/kokoro-82m", "zf_xiaoxiao", "Xiaoxiao (Chinese female)", "\u5C0F\u6653\uFF08\u4E2D\u6587\u5973\u58F0\uFF09"],
   ["hexgrad/kokoro-82m", "zf_xiaoyi", "Xiaoyi (Chinese female)", "\u5C0F\u827A\uFF08\u4E2D\u6587\u5973\u58F0\uFF09"],
   ["hexgrad/kokoro-82m", "zm_yunjian", "Yunjian (Chinese male)", "\u4E91\u5065\uFF08\u4E2D\u6587\u7537\u58F0\uFF09"],
@@ -1222,6 +1237,10 @@ var SETTINGS_UI_TEXT = {
     edgeVoiceDesc: "Voice ID used by Edge mode. Keep a preset above or enter any ID returned by edge-tts --list-voices.",
     azureConsentName: "Allow Azure online processing",
     azureConsentDesc: "Required for Azure mode. Each text chunk is sent by HTTPS to the selected Azure Speech cloud and region. Keep this off for private notes unless that processing is acceptable.",
+    azurePrivacyName: "Azure real-time privacy",
+    azurePrivacyDesc: "This plugin uses Azure's real-time prebuilt-voice API. Microsoft states that input text and output audio are not retained or stored, so no separate privacy switch is required in Azure. Text is still processed in the selected Azure region. This does not cover batch synthesis, custom voice, or avatar services.",
+    azurePrivacyButton: "Microsoft privacy statement",
+    azurePrivacyTooltip: "Open Microsoft's text-to-speech privacy statement",
     credentialSourceName: "API key storage",
     credentialSourceDesc: "Use Obsidian SecretStorage on Obsidian 1.11.4 or later, or keep a one-line key file outside the vault as a compatibility fallback.",
     credentialSourceSecret: "Obsidian SecretStorage (recommended)",
@@ -1334,6 +1353,10 @@ var SETTINGS_UI_TEXT = {
     edgeVoiceDesc: "Edge \u6A21\u5F0F\u4F7F\u7528\u7684\u97F3\u8272 ID\u3002\u53EF\u4F7F\u7528\u4E0A\u65B9\u9884\u8BBE\uFF0C\u6216\u586B\u5199 edge-tts --list-voices \u8FD4\u56DE\u7684\u4EFB\u610F ID\u3002",
     azureConsentName: "\u5141\u8BB8 Azure \u5728\u7EBF\u5904\u7406",
     azureConsentDesc: "Azure \u6A21\u5F0F\u5FC5\u987B\u5F00\u542F\u3002\u6BCF\u4E2A\u6587\u672C\u5206\u6BB5\u4F1A\u901A\u8FC7 HTTPS \u53D1\u9001\u5230\u6240\u9009 Azure Speech \u4E91\u73AF\u5883\u548C\u533A\u57DF\u3002\u9664\u975E\u53EF\u4EE5\u63A5\u53D7\u8BE5\u5904\u7406\uFF0C\u5426\u5219\u79C1\u5BC6\u7B14\u8BB0\u5E94\u4FDD\u6301\u5173\u95ED\u3002",
+    azurePrivacyName: "Azure \u5B9E\u65F6\u63A5\u53E3\u9690\u79C1\u8BF4\u660E",
+    azurePrivacyDesc: "\u672C\u63D2\u4EF6\u4F7F\u7528 Azure \u5B9E\u65F6\u9884\u6784\u5EFA\u97F3\u8272\u63A5\u53E3\u3002Microsoft \u8868\u793A\u8F93\u5165\u6587\u672C\u548C\u8F93\u51FA\u97F3\u9891\u4E0D\u4F1A\u88AB\u4FDD\u7559\u6216\u5B58\u50A8\uFF0C\u65E0\u9700\u5728 Azure \u95E8\u6237\u989D\u5916\u5F00\u542F\u72EC\u7ACB\u9690\u79C1\u5F00\u5173\uFF1B\u6587\u672C\u4ECD\u4F1A\u53D1\u9001\u5230\u6240\u9009 Azure \u533A\u57DF\u5904\u7406\u3002\u6B64\u8BF4\u660E\u4E0D\u9002\u7528\u4E8E\u6279\u91CF\u5408\u6210\u3001\u5B9A\u5236\u97F3\u8272\u6216\u865A\u62DF\u4EBA\u670D\u52A1\u3002",
+    azurePrivacyButton: "\u67E5\u770B Microsoft \u9690\u79C1\u8BF4\u660E",
+    azurePrivacyTooltip: "\u5728\u6D4F\u89C8\u5668\u4E2D\u6253\u5F00 Microsoft \u5B98\u65B9\u9690\u79C1\u8BF4\u660E",
     credentialSourceName: "API \u5BC6\u94A5\u5B58\u50A8\u65B9\u5F0F",
     credentialSourceDesc: "Obsidian 1.11.4 \u53CA\u4EE5\u4E0A\u7248\u672C\u5EFA\u8BAE\u4F7F\u7528 SecretStorage\uFF1B\u4E5F\u53EF\u4EE5\u7EE7\u7EED\u4F7F\u7528 Obsidian \u5E93\u5916\u7684\u5355\u884C\u5BC6\u94A5\u6587\u4EF6\u4F5C\u4E3A\u517C\u5BB9\u56DE\u9000\u3002",
     credentialSourceSecret: "Obsidian SecretStorage\uFF08\u63A8\u8350\uFF09",
@@ -2077,11 +2100,17 @@ function normalizeCredentialSource(value) {
 function getSettingsUiText(language) {
   return SETTINGS_UI_TEXT[normalizeSettingsLanguage(language)];
 }
-function openGitHubIssues() {
+function openExternalUrl(url) {
   if (typeof window === "undefined" || typeof window.open !== "function") {
     return false;
   }
-  return Boolean(window.open(GITHUB_ISSUES_URL, "_blank", "noopener,noreferrer"));
+  return Boolean(window.open(url, "_blank", "noopener,noreferrer"));
+}
+function openGitHubIssues() {
+  return openExternalUrl(GITHUB_ISSUES_URL);
+}
+function openAzureTtsPrivacyDocs() {
+  return openExternalUrl(AZURE_TTS_PRIVACY_URL);
 }
 function normalizeSpeechEngine(value) {
   const engine = String(value || DEFAULT_SETTINGS.speechEngine).toLowerCase();
@@ -6077,6 +6106,13 @@ var CosyVoiceReaderSettingTab = class extends PluginSettingTab {
           await this.plugin.saveSettings();
         });
       });
+      new Setting(containerEl).setName(ui.azurePrivacyName).setDesc(ui.azurePrivacyDesc).addButton((button) => {
+        button.setButtonText(ui.azurePrivacyButton).setTooltip(ui.azurePrivacyTooltip).onClick(() => {
+          if (!openAzureTtsPrivacyDocs()) {
+            new Notice(AZURE_TTS_PRIVACY_URL, 8e3);
+          }
+        });
+      });
       new Setting(containerEl).setName(ui.azureCloudName).setDesc(ui.azureCloudDesc).addDropdown((dropdown) => {
         dropdown.addOption("public", ui.azurePublicCloud).addOption("china", ui.azureChinaCloud).setValue(normalizeAzureSpeechCloud(this.plugin.settings.azureSpeechCloud)).onChange(async (value) => {
           this.plugin.settings.azureSpeechCloud = normalizeAzureSpeechCloud(value);
@@ -6325,6 +6361,7 @@ var CosyVoiceReaderSettingTab = class extends PluginSettingTab {
 module.exports = {
   default: CosyVoiceReaderPlugin,
   __test: {
+    AZURE_TTS_PRIVACY_URL,
     DEFAULT_ONLINE_CHUNK_LIMITS,
     GITHUB_ISSUES_URL,
     VIEW_TYPE,
@@ -6400,6 +6437,7 @@ module.exports = {
     normalizeReadingPositions,
     normalizeSettingsLanguage,
     normalizeSpeechEngine,
+    openAzureTtsPrivacyDocs,
     openGitHubIssues,
     parseRetryAfterMs,
     resolveDefaultScriptPath,

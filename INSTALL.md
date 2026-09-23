@@ -2,7 +2,7 @@
 
 ## Install From ZIP
 
-1. Unzip `note-reader-cosyvoice-0.4.3-install.zip`.
+1. Unzip `note-reader-cosyvoice-0.4.4-install.zip`.
 2. Copy the `note-reader-cosyvoice` folder into your vault:
 
 ```text
@@ -21,7 +21,7 @@ Open `Settings -> Note and PDF Voice Reader` and choose `Speech engine`.
 - `Local CosyVoice` is the default and uses your configured PowerShell wrapper.
 - `Microsoft Edge online voice` calls the configured `edge-tts` command-line tool and sends text to Microsoft Edge TTS after explicit consent. Its default voice is UK English male `en-GB-RyanNeural`.
 - `Microsoft Azure Speech` sends text by HTTPS to your selected Azure Speech cloud and region after separate explicit consent. Its default voice is UK English male `en-GB-RyanNeural`.
-- `OpenRouter TTS` sends text to OpenRouter and an eligible upstream TTS provider after separate explicit consent. Its default model and voice are `hexgrad/kokoro-82m` and UK English male `bm_george`.
+- `OpenRouter TTS` sends text to OpenRouter and an eligible upstream TTS provider after separate explicit consent. Its default model is Fish Audio S2.1 Pro with a UK English male voice. Kokoro 82M is also available as a lower-cost model with 12 curated Chinese, US English, and UK English voice presets.
 
 On Obsidian 1.11.4 or later, Azure and OpenRouter use Obsidian SecretStorage by default. The plugin stores only the selected secret identifier in `data.json`, not the key value. An external one-line key file outside every vault remains available for older Obsidian versions and existing configurations. Obsidian documents SecretStorage as vault-specific local secret storage, not as a guaranteed operating-system keychain integration. See the [official SecretStorage guide](https://docs.obsidian.md/plugins/guides/secret-storage).
 
@@ -129,7 +129,7 @@ Do not sync, commit, or share that file. In the plugin settings:
 4. Select a built-in ZDR-compatible model and one of its voices, or enter custom IDs.
 5. Keep account-level input/output logging and input/output data sharing disabled.
 
-The consent switch permits online transmission; it does not permit non-ZDR routing. Voice menus follow the selected model because voice IDs are not interchangeable. Kokoro defaults to UK English male `bm_george` and includes both US and UK English male presets. MAI-Voice-2 and MAI-Voice-2 Flash default to Microsoft's US English male `Ethan`; additional Microsoft-published English and Mandarin voices are compatibility presets because OpenRouter may accept them while omitting them from `supported_voices`. Microsoft currently publishes no UK English MAI voice, and compatibility endpoint availability can change. Gemini defaults to informative `Charon`; Google describes its voices by style rather than fixed gender or US/UK accent.
+The consent switch permits online transmission; it does not permit non-ZDR routing. Voice menus follow the selected model because voice IDs are not interchangeable. Fish S2.1 Pro defaults to a UK English male voice and includes curated Chinese, US English, and UK English male and female options. Kokoro defaults to UK English male `bm_george` and includes both US and UK English male presets. MAI-Voice-2 and MAI-Voice-2 Flash default to Microsoft's US English male `Ethan`; additional Microsoft-published English and Mandarin voices are compatibility presets because OpenRouter may accept them while omitting them from `supported_voices`. Microsoft currently publishes no UK English MAI voice, and compatibility endpoint availability can change. Gemini defaults to informative `Charon`; Google describes its voices by style rather than fixed gender or US/UK accent.
 
 The key value is never saved in the plugin's `data.json`. Every request enforces `provider.zdr: true` and `provider.data_collection: "deny"`; synthesis fails if no eligible endpoint satisfies those restrictions. Model and voice availability changes over time, so check the live [`speech + ZDR` model API](https://openrouter.ai/api/v1/models?output_modalities=speech&zdr=true) when a preset stops working. See the official [OpenRouter TTS documentation](https://openrouter.ai/docs/guides/overview/multimodal/tts), [data collection documentation](https://openrouter.ai/docs/guides/privacy/data-collection), and [Zero Data Retention documentation](https://openrouter.ai/docs/guides/features/zdr).
 
