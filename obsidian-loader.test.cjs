@@ -199,7 +199,7 @@ const testVaultPath = path.resolve('test-vault');
 const testAudioPath = path.join(testVaultPath, '.obsidian', 'plugins', 'note-reader-cosyvoice', 'cache', 'a.wav');
 assert.strictEqual(manifest.id, 'note-reader-cosyvoice');
 assert.strictEqual(manifest.name, 'Note and PDF Voice Reader');
-assert.strictEqual(manifest.version, '0.4.4');
+assert.strictEqual(manifest.version, '0.4.5');
 assert.ok(!/\bObsidian\b/.test(manifest.description));
 assert.ok(!code.includes('Note Reader CosyVoice'));
 assert.ok(!code.includes('CosyVoice Reader'));
@@ -276,6 +276,11 @@ assert.deepStrictEqual(moduleObject.exports.__test.createReaderState(), {
   totalChunks: 0,
 });
 assert.deepStrictEqual(moduleObject.exports.__test.createDefaultSettings(), {
+  mimoConsent: false,
+  mimoCredentialSource: 'obsidian-secret',
+  mimoSecretName: '',
+  mimoKeyPath: '',
+  mimoVoice: '白桦',
   audioExportFolder: '',
   audioExportLocation: 'obsidian-attachment',
   azureSpeechCloud: 'public',
@@ -2568,6 +2573,46 @@ assert.deepStrictEqual(chunkNavigationCalls, [-1, 1]);
   assert.strictEqual(JSON.parse(openRouterRequestBody).response_format, 'mp3');
   assert.strictEqual(fs.statSync(openRouterOutputPath).size, 64);
   assert.strictEqual(openRouterPlugin.currentRequests.size, 0);
+
+  const mimoOutputPath = path.join(prepareTempDir, 'mimo.wav');
+  const mimoWav = Buffer.alloc(46);
+  mimoWav.write('RIFF');
+  mimoWav.writeUInt32LE(38, 4);
+  mimoWav.write('WAVE', 8);
+  openRouterPlugin.settings.mimoConsent = true;
+  openRouterPlugin.settings.mimoSecretName = 'openrouter-api-key';
+  openRouterPlugin.settings.mimoVoice = 'Dean';
+  try {
+    https.request = (endpoint, options, callback) => {
+      assert.strictEqual(String(endpoint), 'https://api.xiaomimimo.com/v1/chat/completions');
+      assert.strictEqual(options.headers['api-key'], 'test-openrouter-key');
+      const request = new EventEmitter();
+      request.setTimeout = () => {};
+      request.destroy = () => request.emit('close');
+      request.end = body => {
+        const payload = JSON.parse(body);
+        assert.strictEqual(payload.model, 'mimo-v2.5-tts');
+        assert.strictEqual(payload.messages[1].role, 'assistant');
+        assert.deepStrictEqual(payload.audio, { format: 'wav', voice: 'Dean' });
+        process.nextTick(() => {
+          const response = new EventEmitter();
+          response.statusCode = 200;
+          response.headers = { 'content-type': 'application/json; charset=utf-8' };
+          callback(response);
+          response.emit('data', Buffer.from(JSON.stringify({ choices: [{ message: { audio: { data: mimoWav.toString('base64') } } }] })));
+          response.emit('end');
+        });
+      };
+      return request;
+    };
+    await openRouterPlugin.runMimoTts(openRouterInputPath, mimoOutputPath, openRouterSession);
+    assert.deepStrictEqual(fs.readFileSync(mimoOutputPath), mimoWav);
+    assert.strictEqual(openRouterPlugin.currentRequests.size, 0);
+    openRouterPlugin.settings.mimoConsent = false;
+    await assert.rejects(() => openRouterPlugin.runMimoTts(openRouterInputPath, mimoOutputPath, openRouterSession), /consent is required/);
+  } finally {
+    https.request = originalHttpsRequest;
+  }
 
   const openRouterRetryOutputPath = path.join(prepareTempDir, 'openrouter-retry.mp3');
   const openRouterRetryDelays = [];

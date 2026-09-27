@@ -301,6 +301,71 @@ var require_pdf_layout2 = __commonJS({
   }
 });
 
+// src/mimo-tts.js
+var require_mimo_tts = __commonJS({
+  "src/mimo-tts.js"(exports2, module2) {
+    var MIMO_ENDPOINT2 = "https://api.xiaomimimo.com/v1/chat/completions";
+    var MIMO_DEFAULTS2 = {
+      mimoConsent: false,
+      mimoCredentialSource: "obsidian-secret",
+      mimoSecretName: "",
+      mimoKeyPath: "",
+      mimoVoice: "\u767D\u6866"
+    };
+    var MIMO_VOICES2 = [
+      ["Dean", "English male", "\u82F1\u6587\u7537\u58F0"],
+      ["Milo", "English male", "\u82F1\u6587\u7537\u58F0"],
+      ["Mia", "English female", "\u82F1\u6587\u5973\u58F0"],
+      ["Chloe", "English female", "\u82F1\u6587\u5973\u58F0"],
+      ["\u82CF\u6253", "Chinese male", "\u4E2D\u6587\u7537\u58F0"],
+      ["\u767D\u6866", "Chinese male", "\u4E2D\u6587\u7537\u58F0"],
+      ["\u51B0\u7CD6", "Chinese female", "\u4E2D\u6587\u5973\u58F0"],
+      ["\u8309\u8389", "Chinese female", "\u4E2D\u6587\u5973\u58F0"]
+    ];
+    function normalizeMimoSettings2(settings) {
+      settings.mimoConsent = settings.mimoConsent === true;
+      settings.mimoCredentialSource = settings.mimoCredentialSource === "key-file" ? "key-file" : "obsidian-secret";
+      settings.mimoSecretName = String(settings.mimoSecretName || "").trim();
+      settings.mimoKeyPath = String(settings.mimoKeyPath || "").trim();
+      settings.mimoVoice = MIMO_VOICES2.some(([id]) => id === settings.mimoVoice) ? settings.mimoVoice : MIMO_DEFAULTS2.mimoVoice;
+    }
+    function buildMimoRequestBody2(text, settings) {
+      const normalized = { ...settings };
+      normalizeMimoSettings2(normalized);
+      const speed = Number(settings.speed);
+      const rate = Number.isFinite(speed) ? Math.min(2, Math.max(0.5, speed)) : 1;
+      return JSON.stringify({
+        model: "mimo-v2.5-tts",
+        messages: [
+          { role: "user", content: `Read the supplied text faithfully in a calm, neutral academic narration style at ${rate} times normal speaking speed. Do not summarize or add words.` },
+          { role: "assistant", content: String(text) }
+        ],
+        audio: { format: "wav", voice: normalized.mimoVoice },
+        stream: false
+      });
+    }
+    function decodeMimoAudio2(bytes) {
+      let data;
+      try {
+        const response = JSON.parse(bytes.toString("utf8"));
+        data = response.choices?.[0]?.message?.audio?.data;
+        if (response.error) throw new Error();
+      } catch {
+        throw new Error("MiMo TTS returned an invalid audio response.");
+      }
+      if (typeof data !== "string" || !data.length || data.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(data)) {
+        throw new Error("MiMo TTS returned missing or invalid base64 audio.");
+      }
+      const audio = Buffer.from(data, "base64");
+      if (audio.length < 44 || audio.toString("ascii", 0, 4) !== "RIFF" || audio.toString("ascii", 8, 12) !== "WAVE") {
+        throw new Error("MiMo TTS returned invalid WAV audio.");
+      }
+      return audio;
+    }
+    module2.exports = { MIMO_ENDPOINT: MIMO_ENDPOINT2, MIMO_DEFAULTS: MIMO_DEFAULTS2, MIMO_VOICES: MIMO_VOICES2, normalizeMimoSettings: normalizeMimoSettings2, buildMimoRequestBody: buildMimoRequestBody2, decodeMimoAudio: decodeMimoAudio2 };
+  }
+});
+
 // src/audio-export.js
 var require_audio_export = __commonJS({
   "src/audio-export.js"(exports2, module2) {
@@ -1036,6 +1101,7 @@ var path = require("path");
 var { spawn } = require("child_process");
 var { pathToFileURL } = require("url");
 var { extractPdfTextLayout, extractTextFromPdfItems } = require_pdf_layout2();
+var { MIMO_ENDPOINT, MIMO_DEFAULTS, MIMO_VOICES, normalizeMimoSettings, buildMimoRequestBody, decodeMimoAudio } = require_mimo_tts();
 var {
   MAX_EXPORTED_AUDIO_BYTES,
   bufferToArrayBuffer,
@@ -1082,7 +1148,7 @@ var SETTINGS_LANGUAGES = ["english", "chinese"];
 var AUDIO_EXPORT_LOCATIONS = ["obsidian-attachment", "note-folder", "custom-folder"];
 var AUDIO_EXPORT_SCOPES = ["entire", "selection", "from-selection"];
 var CREDENTIAL_SOURCES = ["obsidian-secret", "key-file"];
-var SPEECH_ENGINES = ["local-cosyvoice", "edge-tts", "azure-speech", "openrouter-tts"];
+var SPEECH_ENGINES = ["local-cosyvoice", "edge-tts", "azure-speech", "openrouter-tts", "mimo-tts"];
 var AZURE_SPEECH_CLOUDS = ["public", "china"];
 var REMOTE_TTS_MAX_AUDIO_BYTES = 20 * 1024 * 1024;
 var REMOTE_TTS_MAX_ATTEMPTS = 3;
@@ -1219,7 +1285,7 @@ var SETTINGS_UI_TEXT = {
     settingsLanguageEnglish: "English",
     settingsLanguageChinese: "\u4E2D\u6587",
     speechEngineName: "Speech engine",
-    speechEngineDesc: "Choose local CosyVoice, Microsoft Edge online voice, Microsoft Azure Speech, or OpenRouter TTS. Online modes send text to their service providers.",
+    speechEngineDesc: "Choose local CosyVoice, Edge, Azure, OpenRouter, or Xiaomi MiMo TTS. Online modes send text to their service providers.",
     speechEngineLocal: "Local CosyVoice",
     speechEngineEdge: "Microsoft Edge online voice",
     speechEngineAzure: "Microsoft Azure Speech",
@@ -1285,7 +1351,7 @@ var SETTINGS_UI_TEXT = {
     chunkLimitsName: "Local chunk limits",
     chunkLimitsDesc: "Comma-separated character limits used by Local CosyVoice. Earlier chunks are shorter so playback starts sooner.",
     onlineChunkLimitsName: "Online chunk limits",
-    onlineChunkLimitsDesc: "Used by Edge, Azure, and OpenRouter for notes and PDFs. The default 200,400,800 balances startup latency, continuity, and request count.",
+    onlineChunkLimitsDesc: "Used by Edge, Azure, OpenRouter, and MiMo for notes and PDFs. The default 200,400,800 balances startup latency, continuity, and request count.",
     onlinePrefetchName: "Online synthesis prefetch",
     onlinePrefetchDesc: "How many future chunks an online engine may synthesize early. The default 1 improves continuity while limiting unused work to at most one chunk; choose 0 for strict on-demand synthesis.",
     onlinePrefetchNone: "0 - synthesize only when needed",
@@ -1335,7 +1401,7 @@ var SETTINGS_UI_TEXT = {
     settingsLanguageEnglish: "English",
     settingsLanguageChinese: "\u4E2D\u6587",
     speechEngineName: "\u8BED\u97F3\u5F15\u64CE",
-    speechEngineDesc: "\u9009\u62E9\u672C\u5730 CosyVoice\u3001Microsoft Edge \u5728\u7EBF\u8BED\u97F3\u3001Microsoft Azure Speech \u6216 OpenRouter TTS\u3002\u5728\u7EBF\u6A21\u5F0F\u4F1A\u628A\u6587\u672C\u53D1\u9001\u7ED9\u76F8\u5E94\u670D\u52A1\u5546\u3002",
+    speechEngineDesc: "\u9009\u62E9\u672C\u5730 CosyVoice\u3001Edge\u3001Azure\u3001OpenRouter \u6216\u5C0F\u7C73 MiMo TTS\u3002\u5728\u7EBF\u6A21\u5F0F\u4F1A\u628A\u6587\u672C\u53D1\u9001\u7ED9\u76F8\u5E94\u670D\u52A1\u5546\u3002",
     speechEngineLocal: "\u672C\u5730 CosyVoice",
     speechEngineEdge: "Microsoft Edge \u5728\u7EBF\u8BED\u97F3",
     speechEngineAzure: "Microsoft Azure Speech",
@@ -1401,7 +1467,7 @@ var SETTINGS_UI_TEXT = {
     chunkLimitsName: "\u672C\u5730\u5206\u6BB5\u957F\u5EA6",
     chunkLimitsDesc: "\u672C\u5730 CosyVoice \u4F7F\u7528\u7684\u5B57\u7B26\u6570\u4E0A\u9650\uFF0C\u4EE5\u82F1\u6587\u9017\u53F7\u5206\u9694\u3002\u524D\u51E0\u4E2A\u5206\u6BB5\u8F83\u77ED\uFF0C\u53EF\u66F4\u5FEB\u5F00\u59CB\u64AD\u653E\u3002",
     onlineChunkLimitsName: "\u5728\u7EBF\u5206\u6BB5\u957F\u5EA6",
-    onlineChunkLimitsDesc: "Edge\u3001Azure \u548C OpenRouter \u6717\u8BFB\u7B14\u8BB0\u6216 PDF \u65F6\u4F7F\u7528\u3002\u9ED8\u8BA4 200,400,800\uFF0C\u7528\u4E8E\u5E73\u8861\u542F\u52A8\u901F\u5EA6\u3001\u8FDE\u8D2F\u6027\u548C\u8BF7\u6C42\u6B21\u6570\u3002",
+    onlineChunkLimitsDesc: "Edge\u3001Azure\u3001OpenRouter \u548C MiMo \u6717\u8BFB\u7B14\u8BB0\u6216 PDF \u65F6\u4F7F\u7528\u3002\u9ED8\u8BA4 200,400,800\uFF0C\u7528\u4E8E\u5E73\u8861\u542F\u52A8\u901F\u5EA6\u3001\u8FDE\u8D2F\u6027\u548C\u8BF7\u6C42\u6B21\u6570\u3002",
     onlinePrefetchName: "\u5728\u7EBF\u5408\u6210\u9884\u53D6",
     onlinePrefetchDesc: "\u5141\u8BB8\u5728\u7EBF\u5F15\u64CE\u63D0\u524D\u5408\u6210\u7684\u540E\u7EED\u5206\u6BB5\u6570\u91CF\u3002\u9ED8\u8BA4 1 \u53EF\u6539\u5584\u8854\u63A5\uFF0C\u5E76\u628A\u53EF\u80FD\u672A\u4F7F\u7528\u7684\u63D0\u524D\u5408\u6210\u9650\u5236\u4E3A\u6700\u591A\u4E00\u6BB5\uFF1B\u9009\u62E9 0 \u53EF\u4E25\u683C\u6309\u9700\u5408\u6210\u3002",
     onlinePrefetchNone: "0 - \u9700\u8981\u65F6\u624D\u5408\u6210",
@@ -2364,6 +2430,7 @@ function buildEdgeTtsArgs(inputPath, outputPath, settings = {}) {
 }
 function getSpeechEngineLabel(settings = {}) {
   const speechEngine = normalizeSpeechEngine(settings.speechEngine);
+  if (speechEngine === "mimo-tts") return "Xiaomi MiMo TTS";
   if (speechEngine === "edge-tts") {
     return "Edge TTS";
   }
@@ -2390,6 +2457,7 @@ function selectKnownSettings(defaults, candidate) {
 }
 function createDefaultSettings() {
   return {
+    ...MIMO_DEFAULTS,
     audioExportFolder: normalizeAudioExportFolder(DEFAULT_SETTINGS.audioExportFolder),
     audioExportLocation: normalizeAudioExportLocation(DEFAULT_SETTINGS.audioExportLocation),
     azureSpeechCloud: normalizeAzureSpeechCloud(DEFAULT_SETTINGS.azureSpeechCloud),
@@ -2709,7 +2777,7 @@ function isMarkdownFile(file) {
   return Boolean(file && String(file.extension || "").toLowerCase() === "md");
 }
 function getAudioExportExtension(speechEngine) {
-  return normalizeSpeechEngine(speechEngine) === "local-cosyvoice" ? "wav" : "mp3";
+  return ["local-cosyvoice", "mimo-tts"].includes(normalizeSpeechEngine(speechEngine)) ? "wav" : "mp3";
 }
 function normalizeAudioExportScope(value) {
   const normalized = String(value || "").trim();
@@ -3246,6 +3314,7 @@ var CosyVoiceReaderPlugin = class extends Plugin {
     const hadAzureCredentialSource = Object.prototype.hasOwnProperty.call(source, "azureSpeechCredentialSource");
     const hadOpenRouterCredentialSource = Object.prototype.hasOwnProperty.call(source, "openRouterCredentialSource");
     this.settings = selectKnownSettings(defaults, source);
+    normalizeMimoSettings(this.settings);
     this.settings.audioExportFolder = normalizeAudioExportFolder(this.settings.audioExportFolder);
     this.settings.audioExportLocation = normalizeAudioExportLocation(this.settings.audioExportLocation);
     this.settings.speed = normalizeSpeed(this.settings.speed);
@@ -3284,6 +3353,7 @@ var CosyVoiceReaderPlugin = class extends Plugin {
   }
   async saveSettings() {
     this.settings = selectKnownSettings(createDefaultSettings(), this.settings);
+    normalizeMimoSettings(this.settings);
     this.settings.audioExportFolder = normalizeAudioExportFolder(this.settings.audioExportFolder);
     this.settings.audioExportLocation = normalizeAudioExportLocation(this.settings.audioExportLocation);
     this.settings.speed = normalizeSpeed(this.settings.speed);
@@ -4366,6 +4436,21 @@ ${embed}
     const speechEngine = normalizeSpeechEngine(this.settings.speechEngine);
     const engineLabel = getSpeechEngineLabel(this.settings);
     const scriptPath = String(this.settings.scriptPath || "").trim();
+    if (speechEngine === "mimo-tts") {
+      if (this.settings.mimoConsent !== true) {
+        new Notice("MiMo TTS: enable online processing consent in settings before reading. Text is sent to Xiaomi; ZDR is not confirmed.", 1e4);
+        return null;
+      }
+      const error = getRemoteCredentialConfigurationError({
+        credentialSource: this.settings.mimoCredentialSource,
+        secretName: this.settings.mimoSecretName,
+        keyPath: this.settings.mimoKeyPath
+      }, this.vaultBasePath, this.app, "MiMo API");
+      if (error) {
+        new Notice(`MiMo TTS: ${error}`, 1e4);
+        return null;
+      }
+    }
     if (speechEngine === "edge-tts" && !hasEdgeTtsConsent(this.settings)) {
       new Notice("Edge TTS sends text to Microsoft. Enable online processing consent in the plugin settings before reading.", 1e4);
       return null;
@@ -4954,7 +5039,7 @@ ${embed}
     session.speechStarted = true;
     const speechEngine = normalizeSpeechEngine(session.speechEngine || this.settings.speechEngine);
     const engineLabel = session.engineLabel || getSpeechEngineLabel(this.settings);
-    const outputExtension = speechEngine === "local-cosyvoice" ? "wav" : "mp3";
+    const outputExtension = ["local-cosyvoice", "mimo-tts"].includes(speechEngine) ? "wav" : "mp3";
     const basename = `${Date.now()}-${session.id}-${index}`;
     const inputPath = path.join(this.cacheDir, `${basename}.txt`);
     const outputPath = path.join(this.cacheDir, `${basename}.${outputExtension}`);
@@ -5022,6 +5107,9 @@ ${embed}
     }
     if (speechEngine === "openrouter-tts") {
       return this.runOpenRouterTts(inputPath, outputPath, session);
+    }
+    if (speechEngine === "mimo-tts") {
+      return this.runMimoTts(inputPath, outputPath, session);
     }
     return this.runCosyVoice(inputPath, outputPath, session);
   }
@@ -5224,7 +5312,7 @@ ${embed}
       }
     }
   }
-  async requestRemoteAudioOnce({ endpoint, headers, body, outputPath, session, serviceLabel, expectedContentType, failureHint }) {
+  async requestRemoteAudioOnce({ endpoint, headers, body, outputPath, session, serviceLabel, expectedContentType, failureHint, decodeAudio }) {
     await new Promise((resolve, reject) => {
       let settled = false;
       const finish = (callback, value) => {
@@ -5296,7 +5384,9 @@ ${embed}
             return;
           }
           try {
-            await fs.promises.writeFile(outputPath, Buffer.concat(chunks), { mode: 384 });
+            const responseBytes = Buffer.concat(chunks);
+            const audioBytes = decodeAudio ? decodeAudio(responseBytes) : responseBytes;
+            await fs.promises.writeFile(outputPath, audioBytes, { mode: 384 });
             finish(resolve);
           } catch (error) {
             finish(reject, error);
@@ -5346,6 +5436,25 @@ ${embed}
       serviceLabel: "Azure Speech",
       expectedContentType: "audio/mpeg",
       failureHint: "Check the selected API credential, cloud, region, voice, resource status, and quota."
+    });
+  }
+  async runMimoTts(inputPath, outputPath, session) {
+    if (this.settings.mimoConsent !== true) throw new Error("MiMo online processing consent is required.");
+    const apiKey = normalizeCredentialSource(this.settings.mimoCredentialSource) === "obsidian-secret" ? await this.readObsidianSecret(this.settings.mimoSecretName, "MiMo API") : await this.readSecretFileOutsideVault(this.settings.mimoKeyPath, "MiMo API");
+    const text = await fs.promises.readFile(inputPath, "utf8");
+    if (!this.isActive(session)) throw new Error("Reading stopped.");
+    const body = buildMimoRequestBody(text, this.settings);
+    await this.requestRemoteAudio({
+      endpoint: new URL(MIMO_ENDPOINT),
+      headers: { "api-key": apiKey, Accept: "application/json", "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) },
+      body,
+      outputPath,
+      session,
+      serviceLabel: "MiMo TTS",
+      expectedContentType: "application/json",
+      decodeAudio: decodeMimoAudio,
+      failureHint: "Check the MiMo API key, TTS access, account balance, and rate limits. Promotional free access may change.",
+      retryTemporaryFailures: true
     });
   }
   async runOpenRouterTts(inputPath, outputPath, session) {
@@ -6049,12 +6158,64 @@ var CosyVoiceReaderSettingTab = class extends PluginSettingTab {
       });
     });
     new Setting(containerEl).setName(ui.speechEngineName).setDesc(ui.speechEngineDesc).addDropdown((dropdown) => {
-      dropdown.addOption("local-cosyvoice", ui.speechEngineLocal).addOption("edge-tts", ui.speechEngineEdge).addOption("azure-speech", ui.speechEngineAzure).addOption("openrouter-tts", ui.speechEngineOpenRouter).setValue(selectedSpeechEngine).onChange(async (value) => {
+      dropdown.addOption("local-cosyvoice", ui.speechEngineLocal).addOption("edge-tts", ui.speechEngineEdge).addOption("azure-speech", ui.speechEngineAzure).addOption("openrouter-tts", ui.speechEngineOpenRouter).addOption("mimo-tts", "Xiaomi MiMo TTS").setValue(selectedSpeechEngine).onChange(async (value) => {
         this.plugin.settings.speechEngine = normalizeSpeechEngine(value);
         await this.plugin.saveSettings();
         this.display();
       });
     });
+    if (selectedSpeechEngine === "mimo-tts") {
+      const zh = settingsLanguage === "chinese";
+      const label = (en, cn) => zh ? cn : en;
+      new Setting(containerEl).setName(label("Allow MiMo online processing", "\u5141\u8BB8 MiMo \u5728\u7EBF\u5904\u7406")).setDesc(label(
+        "Sends reading text to Xiaomi. Xiaomi states that supplied text is not used for training without prior consent. Zero data retention is NOT confirmed. This switch permits synthesis only, not model training.",
+        "\u6717\u8BFB\u6587\u672C\u4F1A\u53D1\u9001\u7ED9\u5C0F\u7C73\u3002\u5C0F\u7C73\u58F0\u660E\u672A\u7ECF\u4E8B\u5148\u540C\u610F\u4E0D\u4F1A\u5C06\u63D0\u4F9B\u7684\u6587\u672C\u7528\u4E8E\u8BAD\u7EC3\uFF0C\u4F46\u672A\u786E\u8BA4\u96F6\u6570\u636E\u4FDD\u7559\uFF08ZDR\uFF09\u3002\u6B64\u5F00\u5173\u4EC5\u6388\u6743\u5728\u7EBF\u5408\u6210\uFF0C\u4E0D\u6388\u6743\u6A21\u578B\u8BAD\u7EC3\u3002"
+      )).addToggle((toggle) => toggle.setValue(this.plugin.settings.mimoConsent === true).onChange(async (value) => {
+        this.plugin.settings.mimoConsent = value;
+        await this.plugin.saveSettings();
+      }));
+      new Setting(containerEl).setName(label("MiMo model and pricing", "MiMo \u6A21\u578B\u4E0E\u4EF7\u683C")).setDesc(label(
+        "mimo-v2.5-tts with built-in voices. Listed as temporarily free on 2026-09-27; limits and pricing may change. Speed is a natural-language instruction, not an exact synthesis rate.",
+        "\u4F7F\u7528 mimo-v2.5-tts \u5B98\u65B9\u9884\u7F6E\u97F3\u8272\u30022026-09-27 \u5B98\u65B9\u5217\u4E3A\u9650\u65F6\u514D\u8D39\uFF0C\u989D\u5EA6\u53CA\u4EF7\u683C\u53EF\u80FD\u53D8\u5316\u3002\u5408\u6210\u8BED\u901F\u901A\u8FC7\u81EA\u7136\u8BED\u8A00\u6307\u4EE4\u63A7\u5236\uFF0C\u4E0D\u4FDD\u8BC1\u7CBE\u786E\u500D\u7387\u3002"
+      )).addButton((button) => button.setButtonText(label("Pricing", "\u5B98\u65B9\u4EF7\u683C")).onClick(() => window.open("https://mimo.mi.com/docs/zh-CN/price/pay-as-you-go"))).addButton((button) => button.setButtonText(label("Privacy", "\u9690\u79C1\u653F\u7B56")).onClick(() => window.open("https://privacy.mi.com/XiaomiMiMoPlatform/zh_CN/")));
+      const credentialSource = normalizeCredentialSource(this.plugin.settings.mimoCredentialSource);
+      new Setting(containerEl).setName(ui.credentialSourceName).setDesc(ui.credentialSourceDesc).addDropdown((dropdown) => dropdown.addOption("obsidian-secret", ui.credentialSourceSecret).addOption("key-file", ui.credentialSourceFile).setValue(credentialSource).onChange(async (value) => {
+        this.plugin.settings.mimoCredentialSource = normalizeCredentialSource(value);
+        await this.plugin.saveSettings();
+        this.display();
+      }));
+      if (credentialSource === "obsidian-secret") {
+        if (hasObsidianSecretStorageUi(this.app)) {
+          new Setting(containerEl).setName(label("MiMo API secret", "MiMo API \u79D8\u5BC6")).setDesc(label(
+            "Use a regular MiMo API key, not a Token Plan key. Only the secret name is saved in data.json.",
+            "\u4F7F\u7528\u666E\u901A MiMo API Key\uFF0C\u4E0D\u662F Token Plan \u5BC6\u94A5\u3002data.json \u53EA\u4FDD\u5B58\u79D8\u5BC6\u540D\u79F0\uFF0C\u4E0D\u4FDD\u5B58\u5BC6\u94A5\u3002"
+          )).addComponent((element) => new SecretComponent(this.app, element).setValue(this.plugin.settings.mimoSecretName || "").onChange(async (value) => {
+            this.plugin.settings.mimoSecretName = String(value || "").trim();
+            await this.plugin.saveSettings();
+          }));
+        } else {
+          new Setting(containerEl).setName(ui.secretStorageUnavailableName).setDesc(ui.secretStorageUnavailableDesc);
+        }
+      } else {
+        new Setting(containerEl).setName(label("MiMo API key file", "MiMo API \u5BC6\u94A5\u6587\u4EF6")).setDesc(label(
+          "Absolute path to a one-line MiMo API key file outside the vault. Do not paste the key here.",
+          "\u586B\u5199\u5E93\u5916\u5355\u884C MiMo API \u5BC6\u94A5\u6587\u4EF6\u7684\u7EDD\u5BF9\u8DEF\u5F84\uFF0C\u4E0D\u8981\u5728\u8FD9\u91CC\u7C98\u8D34\u5BC6\u94A5\u3002"
+        )).addText((text) => text.setValue(this.plugin.settings.mimoKeyPath || "").onChange(async (value) => {
+          this.plugin.settings.mimoKeyPath = value.trim();
+          await this.plugin.saveSettings();
+        }));
+      }
+      new Setting(containerEl).setName(label("MiMo voice", "MiMo \u97F3\u8272")).setDesc(label(
+        "Eight official voices. English accents are not specified by Xiaomi. Default: Bai Hua (Chinese male).",
+        "8 \u79CD\u5B98\u65B9\u97F3\u8272\u3002\u5B98\u65B9\u672A\u660E\u786E\u533A\u5206\u82F1\u8BED\u97F3\u8272\u7684\u82F1\u5F0F\u6216\u7F8E\u5F0F\u53E3\u97F3\u3002\u9ED8\u8BA4\u767D\u6866\uFF08\u4E2D\u6587\u7537\u58F0\uFF09\u3002"
+      )).addDropdown((dropdown) => {
+        for (const [id, en, cn] of MIMO_VOICES) dropdown.addOption(id, `${id} - ${label(en, cn)}`);
+        dropdown.setValue(this.plugin.settings.mimoVoice || MIMO_DEFAULTS.mimoVoice).onChange(async (value) => {
+          this.plugin.settings.mimoVoice = value;
+          await this.plugin.saveSettings();
+        });
+      });
+    }
     if (selectedSpeechEngine === "local-cosyvoice") {
       new Setting(containerEl).setName(ui.localScriptName).setDesc(ui.localScriptDesc).addText((text) => {
         text.setPlaceholder(RECOMMENDED_SCRIPT_PATH).setValue(this.plugin.settings.scriptPath).onChange(async (value) => {

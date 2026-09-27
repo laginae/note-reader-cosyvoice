@@ -2,7 +2,16 @@
 
 **Language:** English | [简体中文](README.zh-CN.md)
 
-A privacy-first Obsidian desktop voice reader for Markdown notes and text-based PDFs. Use local CosyVoice by default, or explicitly opt in to Microsoft Edge online voice, Microsoft Azure Speech, or OpenRouter TTS.
+A privacy-first Obsidian desktop voice reader for Markdown notes and text-based PDFs. Use local CosyVoice by default, or explicitly opt in to Microsoft Edge online voice, Microsoft Azure Speech, OpenRouter TTS, or Xiaomi MiMo TTS.
+
+### Xiaomi MiMo TTS Quickstart
+
+1. Create a regular API key in the [MiMo console](https://platform.xiaomimimo.com/), not a Token Plan key.
+2. Select **Xiaomi MiMo TTS** in the plugin settings. Store the key with Obsidian SecretStorage, or use a one-line key file outside the vault on older Obsidian versions.
+3. Read the privacy notice and enable **Allow MiMo online processing**. Select one of eight official voices; the default is **Bai Hua / 白桦 (Chinese male)**. Xiaomi does not specify US/UK accents for these presets.
+4. Read or export a note/PDF using the existing controls. The model is `mimo-v2.5-tts`, producing WAV audio. Online chunking and the one-upcoming-chunk prefetch limit also apply. Synthesis speed is requested through a natural-language instruction, not a guaranteed numerical rate.
+
+[Pricing](https://mimo.mi.com/docs/zh-CN/price/pay-as-you-go) lists this model as **temporarily free** as of 2026-09-27; pricing and quotas may change. The [MiMo privacy policy](https://privacy.mi.com/XiaomiMiMoPlatform/zh_CN/) states that supplied text is not used for training without prior consent, but **zero data retention is not confirmed**. Plugin consent only permits synthesis, not training. MiMo is a separate direct API engine, not an OpenRouter ZDR route. Voice cloning and voice design are not included.
 
 ## Highlights
 

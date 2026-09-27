@@ -36,6 +36,10 @@ Module._load = function loadWithObsidianMock(request, parent, isMain) {
 
 try {
   const pluginModule = require('./main');
+  assert.strictEqual(pluginModule.__test.normalizeSpeechEngine('mimo-tts'), 'mimo-tts');
+  assert.strictEqual(pluginModule.__test.isOnlineSpeechEngine('mimo-tts'), true);
+  assert.strictEqual(pluginModule.__test.getAudioExportExtension('mimo-tts'), 'wav');
+  assert.strictEqual(pluginModule.__test.createDefaultSettings().mimoConsent, false);
   assert.strictEqual(typeof pluginModule.default, 'function');
   assert.strictEqual(
     Object.getPrototypeOf(pluginModule.default.prototype),

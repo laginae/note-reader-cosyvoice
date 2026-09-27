@@ -2,7 +2,16 @@
 
 **语言：** [English](README.md) | 简体中文
 
-Note and PDF Voice Reader 是一个隐私优先的桌面端 Obsidian 语音朗读插件，支持 Markdown 笔记和文本型 PDF。默认使用本地 CosyVoice，也可以由用户明确选择并同意使用 Microsoft Edge 在线语音、Microsoft Azure Speech 或 OpenRouter TTS。
+Note and PDF Voice Reader 是一个隐私优先的桌面端 Obsidian 语音朗读插件，支持 Markdown 笔记和文本型 PDF。默认使用本地 CosyVoice，也可以由用户明确选择并同意使用 Microsoft Edge 在线语音、Microsoft Azure Speech、OpenRouter TTS 或小米 MiMo TTS。
+
+### 小米 MiMo TTS 快速开始
+
+1. 在 [MiMo 控制台](https://platform.xiaomimimo.com/)创建普通 API Key，不是 Token Plan 密钥。
+2. 在插件设置中选择 **Xiaomi MiMo TTS**，使用 Obsidian SecretStorage 保存密钥；旧版 Obsidian 可使用库外单行密钥文件。
+3. 阅读隐私说明，开启 **允许 MiMo 在线处理**。提供 8 种官方音色，默认 **白桦（中文男声）**；官方未明确区分这些英语音色的英式或美式口音。
+4. 使用现有按钮朗读或导出笔记/PDF。模型为 `mimo-v2.5-tts`，输出 WAV 音频，沿用在线分块与最多提前预合成一段的限制。合成语速通过自然语言指令控制，不保证精确倍率。
+
+截至 2026-09-27，[官方价格页](https://mimo.mi.com/docs/zh-CN/price/pay-as-you-go)列为**限时免费**，价格及额度可能变化。[隐私政策](https://privacy.mi.com/XiaomiMiMoPlatform/zh_CN/)声明未经事先同意不会将提供的文本用于训练，但**未确认零数据保留（ZDR）**。插件开关仅授权在线合成，不授权训练。MiMo 为独立直连接口，不属于 OpenRouter ZDR 路由；本次不包含音色克隆或音色设计。
 
 ## 核心亮点
 

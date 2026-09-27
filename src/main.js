@@ -7,6 +7,7 @@ const path = require('path');
 const { spawn } = require('child_process');
 const { pathToFileURL } = require('url');
 const { extractPdfTextLayout, extractTextFromPdfItems } = require('./pdf-layout');
+const { MIMO_ENDPOINT, MIMO_DEFAULTS, MIMO_VOICES, normalizeMimoSettings, buildMimoRequestBody, decodeMimoAudio } = require('./mimo-tts');
 const {
   MAX_EXPORTED_AUDIO_BYTES,
   bufferToArrayBuffer,
@@ -54,7 +55,7 @@ const SETTINGS_LANGUAGES = ['english', 'chinese'];
 const AUDIO_EXPORT_LOCATIONS = ['obsidian-attachment', 'note-folder', 'custom-folder'];
 const AUDIO_EXPORT_SCOPES = ['entire', 'selection', 'from-selection'];
 const CREDENTIAL_SOURCES = ['obsidian-secret', 'key-file'];
-const SPEECH_ENGINES = ['local-cosyvoice', 'edge-tts', 'azure-speech', 'openrouter-tts'];
+const SPEECH_ENGINES = ['local-cosyvoice', 'edge-tts', 'azure-speech', 'openrouter-tts', 'mimo-tts'];
 const AZURE_SPEECH_CLOUDS = ['public', 'china'];
 const REMOTE_TTS_MAX_AUDIO_BYTES = 20 * 1024 * 1024;
 const REMOTE_TTS_MAX_ATTEMPTS = 3;
@@ -195,7 +196,7 @@ const SETTINGS_UI_TEXT = {
     settingsLanguageEnglish: 'English',
     settingsLanguageChinese: '中文',
     speechEngineName: 'Speech engine',
-    speechEngineDesc: 'Choose local CosyVoice, Microsoft Edge online voice, Microsoft Azure Speech, or OpenRouter TTS. Online modes send text to their service providers.',
+    speechEngineDesc: 'Choose local CosyVoice, Edge, Azure, OpenRouter, or Xiaomi MiMo TTS. Online modes send text to their service providers.',
     speechEngineLocal: 'Local CosyVoice',
     speechEngineEdge: 'Microsoft Edge online voice',
     speechEngineAzure: 'Microsoft Azure Speech',
@@ -261,7 +262,7 @@ const SETTINGS_UI_TEXT = {
     chunkLimitsName: 'Local chunk limits',
     chunkLimitsDesc: 'Comma-separated character limits used by Local CosyVoice. Earlier chunks are shorter so playback starts sooner.',
     onlineChunkLimitsName: 'Online chunk limits',
-    onlineChunkLimitsDesc: 'Used by Edge, Azure, and OpenRouter for notes and PDFs. The default 200,400,800 balances startup latency, continuity, and request count.',
+    onlineChunkLimitsDesc: 'Used by Edge, Azure, OpenRouter, and MiMo for notes and PDFs. The default 200,400,800 balances startup latency, continuity, and request count.',
     onlinePrefetchName: 'Online synthesis prefetch',
     onlinePrefetchDesc: 'How many future chunks an online engine may synthesize early. The default 1 improves continuity while limiting unused work to at most one chunk; choose 0 for strict on-demand synthesis.',
     onlinePrefetchNone: '0 - synthesize only when needed',
@@ -311,7 +312,7 @@ const SETTINGS_UI_TEXT = {
     settingsLanguageEnglish: 'English',
     settingsLanguageChinese: '中文',
     speechEngineName: '语音引擎',
-    speechEngineDesc: '选择本地 CosyVoice、Microsoft Edge 在线语音、Microsoft Azure Speech 或 OpenRouter TTS。在线模式会把文本发送给相应服务商。',
+    speechEngineDesc: '选择本地 CosyVoice、Edge、Azure、OpenRouter 或小米 MiMo TTS。在线模式会把文本发送给相应服务商。',
     speechEngineLocal: '本地 CosyVoice',
     speechEngineEdge: 'Microsoft Edge 在线语音',
     speechEngineAzure: 'Microsoft Azure Speech',
@@ -377,7 +378,7 @@ const SETTINGS_UI_TEXT = {
     chunkLimitsName: '本地分段长度',
     chunkLimitsDesc: '本地 CosyVoice 使用的字符数上限，以英文逗号分隔。前几个分段较短，可更快开始播放。',
     onlineChunkLimitsName: '在线分段长度',
-    onlineChunkLimitsDesc: 'Edge、Azure 和 OpenRouter 朗读笔记或 PDF 时使用。默认 200,400,800，用于平衡启动速度、连贯性和请求次数。',
+    onlineChunkLimitsDesc: 'Edge、Azure、OpenRouter 和 MiMo 朗读笔记或 PDF 时使用。默认 200,400,800，用于平衡启动速度、连贯性和请求次数。',
     onlinePrefetchName: '在线合成预取',
     onlinePrefetchDesc: '允许在线引擎提前合成的后续分段数量。默认 1 可改善衔接，并把可能未使用的提前合成限制为最多一段；选择 0 可严格按需合成。',
     onlinePrefetchNone: '0 - 需要时才合成',
@@ -1559,6 +1560,7 @@ function buildEdgeTtsArgs(inputPath, outputPath, settings = {}) {
 
 function getSpeechEngineLabel(settings = {}) {
   const speechEngine = normalizeSpeechEngine(settings.speechEngine);
+  if (speechEngine === 'mimo-tts') return 'Xiaomi MiMo TTS';
   if (speechEngine === 'edge-tts') {
     return 'Edge TTS';
   }
@@ -1589,6 +1591,7 @@ function selectKnownSettings(defaults, candidate) {
 
 function createDefaultSettings() {
   return {
+    ...MIMO_DEFAULTS,
     audioExportFolder: normalizeAudioExportFolder(DEFAULT_SETTINGS.audioExportFolder),
     audioExportLocation: normalizeAudioExportLocation(DEFAULT_SETTINGS.audioExportLocation),
     azureSpeechCloud: normalizeAzureSpeechCloud(DEFAULT_SETTINGS.azureSpeechCloud),
@@ -1986,7 +1989,7 @@ function isMarkdownFile(file) {
 }
 
 function getAudioExportExtension(speechEngine) {
-  return normalizeSpeechEngine(speechEngine) === 'local-cosyvoice' ? 'wav' : 'mp3';
+  return ['local-cosyvoice', 'mimo-tts'].includes(normalizeSpeechEngine(speechEngine)) ? 'wav' : 'mp3';
 }
 
 function normalizeAudioExportScope(value) {
@@ -2612,6 +2615,7 @@ class CosyVoiceReaderPlugin extends Plugin {
     const hadAzureCredentialSource = Object.prototype.hasOwnProperty.call(source, 'azureSpeechCredentialSource');
     const hadOpenRouterCredentialSource = Object.prototype.hasOwnProperty.call(source, 'openRouterCredentialSource');
     this.settings = selectKnownSettings(defaults, source);
+    normalizeMimoSettings(this.settings);
     this.settings.audioExportFolder = normalizeAudioExportFolder(this.settings.audioExportFolder);
     this.settings.audioExportLocation = normalizeAudioExportLocation(this.settings.audioExportLocation);
     this.settings.speed = normalizeSpeed(this.settings.speed);
@@ -2655,6 +2659,7 @@ class CosyVoiceReaderPlugin extends Plugin {
 
   async saveSettings() {
     this.settings = selectKnownSettings(createDefaultSettings(), this.settings);
+    normalizeMimoSettings(this.settings);
     this.settings.audioExportFolder = normalizeAudioExportFolder(this.settings.audioExportFolder);
     this.settings.audioExportLocation = normalizeAudioExportLocation(this.settings.audioExportLocation);
     this.settings.speed = normalizeSpeed(this.settings.speed);
@@ -3912,6 +3917,21 @@ class CosyVoiceReaderPlugin extends Plugin {
     const speechEngine = normalizeSpeechEngine(this.settings.speechEngine);
     const engineLabel = getSpeechEngineLabel(this.settings);
     const scriptPath = String(this.settings.scriptPath || '').trim();
+    if (speechEngine === 'mimo-tts') {
+      if (this.settings.mimoConsent !== true) {
+        new Notice('MiMo TTS: enable online processing consent in settings before reading. Text is sent to Xiaomi; ZDR is not confirmed.', 10000);
+        return null;
+      }
+      const error = getRemoteCredentialConfigurationError({
+        credentialSource: this.settings.mimoCredentialSource,
+        secretName: this.settings.mimoSecretName,
+        keyPath: this.settings.mimoKeyPath,
+      }, this.vaultBasePath, this.app, 'MiMo API');
+      if (error) {
+        new Notice(`MiMo TTS: ${error}`, 10000);
+        return null;
+      }
+    }
     if (speechEngine === 'edge-tts' && !hasEdgeTtsConsent(this.settings)) {
       new Notice('Edge TTS sends text to Microsoft. Enable online processing consent in the plugin settings before reading.', 10000);
       return null;
@@ -4612,7 +4632,7 @@ class CosyVoiceReaderPlugin extends Plugin {
     session.speechStarted = true;
     const speechEngine = normalizeSpeechEngine(session.speechEngine || this.settings.speechEngine);
     const engineLabel = session.engineLabel || getSpeechEngineLabel(this.settings);
-    const outputExtension = speechEngine === 'local-cosyvoice' ? 'wav' : 'mp3';
+    const outputExtension = ['local-cosyvoice', 'mimo-tts'].includes(speechEngine) ? 'wav' : 'mp3';
     const basename = `${Date.now()}-${session.id}-${index}`;
     const inputPath = path.join(this.cacheDir, `${basename}.txt`);
     const outputPath = path.join(this.cacheDir, `${basename}.${outputExtension}`);
@@ -4691,6 +4711,9 @@ class CosyVoiceReaderPlugin extends Plugin {
     }
     if (speechEngine === 'openrouter-tts') {
       return this.runOpenRouterTts(inputPath, outputPath, session);
+    }
+    if (speechEngine === 'mimo-tts') {
+      return this.runMimoTts(inputPath, outputPath, session);
     }
 
     return this.runCosyVoice(inputPath, outputPath, session);
@@ -4933,7 +4956,7 @@ class CosyVoiceReaderPlugin extends Plugin {
     }
   }
 
-  async requestRemoteAudioOnce({ endpoint, headers, body, outputPath, session, serviceLabel, expectedContentType, failureHint }) {
+  async requestRemoteAudioOnce({ endpoint, headers, body, outputPath, session, serviceLabel, expectedContentType, failureHint, decodeAudio }) {
     await new Promise((resolve, reject) => {
       let settled = false;
       const finish = (callback, value) => {
@@ -5010,7 +5033,9 @@ class CosyVoiceReaderPlugin extends Plugin {
           }
 
           try {
-            await fs.promises.writeFile(outputPath, Buffer.concat(chunks), { mode: 0o600 });
+            const responseBytes = Buffer.concat(chunks);
+            const audioBytes = decodeAudio ? decodeAudio(responseBytes) : responseBytes;
+            await fs.promises.writeFile(outputPath, audioBytes, { mode: 0o600 });
             finish(resolve);
           } catch (error) {
             finish(reject, error);
@@ -5063,6 +5088,26 @@ class CosyVoiceReaderPlugin extends Plugin {
       serviceLabel: 'Azure Speech',
       expectedContentType: 'audio/mpeg',
       failureHint: 'Check the selected API credential, cloud, region, voice, resource status, and quota.',
+    });
+  }
+
+  async runMimoTts(inputPath, outputPath, session) {
+    if (this.settings.mimoConsent !== true) throw new Error('MiMo online processing consent is required.');
+    const apiKey = normalizeCredentialSource(this.settings.mimoCredentialSource) === 'obsidian-secret'
+      ? await this.readObsidianSecret(this.settings.mimoSecretName, 'MiMo API')
+      : await this.readSecretFileOutsideVault(this.settings.mimoKeyPath, 'MiMo API');
+    const text = await fs.promises.readFile(inputPath, 'utf8');
+    if (!this.isActive(session)) throw new Error('Reading stopped.');
+    const body = buildMimoRequestBody(text, this.settings);
+    await this.requestRemoteAudio({
+      endpoint: new URL(MIMO_ENDPOINT),
+      headers: { 'api-key': apiKey, Accept: 'application/json', 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+      body, outputPath, session,
+      serviceLabel: 'MiMo TTS',
+      expectedContentType: 'application/json',
+      decodeAudio: decodeMimoAudio,
+      failureHint: 'Check the MiMo API key, TTS access, account balance, and rate limits. Promotional free access may change.',
+      retryTemporaryFailures: true,
     });
   }
 
@@ -5897,6 +5942,7 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
           .addOption('edge-tts', ui.speechEngineEdge)
           .addOption('azure-speech', ui.speechEngineAzure)
           .addOption('openrouter-tts', ui.speechEngineOpenRouter)
+          .addOption('mimo-tts', 'Xiaomi MiMo TTS')
           .setValue(selectedSpeechEngine)
           .onChange(async (value) => {
             this.plugin.settings.speechEngine = normalizeSpeechEngine(value);
@@ -5904,6 +5950,66 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
             this.display();
           });
       });
+
+    if (selectedSpeechEngine === 'mimo-tts') {
+      const zh = settingsLanguage === 'chinese';
+      const label = (en, cn) => zh ? cn : en;
+      new Setting(containerEl)
+        .setName(label('Allow MiMo online processing', '允许 MiMo 在线处理'))
+        .setDesc(label(
+          'Sends reading text to Xiaomi. Xiaomi states that supplied text is not used for training without prior consent. Zero data retention is NOT confirmed. This switch permits synthesis only, not model training.',
+          '朗读文本会发送给小米。小米声明未经事先同意不会将提供的文本用于训练，但未确认零数据保留（ZDR）。此开关仅授权在线合成，不授权模型训练。'))
+        .addToggle(toggle => toggle.setValue(this.plugin.settings.mimoConsent === true).onChange(async value => {
+          this.plugin.settings.mimoConsent = value;
+          await this.plugin.saveSettings();
+        }));
+      new Setting(containerEl)
+        .setName(label('MiMo model and pricing', 'MiMo 模型与价格'))
+        .setDesc(label('mimo-v2.5-tts with built-in voices. Listed as temporarily free on 2026-09-27; limits and pricing may change. Speed is a natural-language instruction, not an exact synthesis rate.',
+          '使用 mimo-v2.5-tts 官方预置音色。2026-09-27 官方列为限时免费，额度及价格可能变化。合成语速通过自然语言指令控制，不保证精确倍率。'))
+        .addButton(button => button.setButtonText(label('Pricing', '官方价格')).onClick(() => window.open('https://mimo.mi.com/docs/zh-CN/price/pay-as-you-go')))
+        .addButton(button => button.setButtonText(label('Privacy', '隐私政策')).onClick(() => window.open('https://privacy.mi.com/XiaomiMiMoPlatform/zh_CN/')));
+      const credentialSource = normalizeCredentialSource(this.plugin.settings.mimoCredentialSource);
+      new Setting(containerEl).setName(ui.credentialSourceName).setDesc(ui.credentialSourceDesc)
+        .addDropdown(dropdown => dropdown.addOption('obsidian-secret', ui.credentialSourceSecret)
+          .addOption('key-file', ui.credentialSourceFile).setValue(credentialSource).onChange(async value => {
+            this.plugin.settings.mimoCredentialSource = normalizeCredentialSource(value);
+            await this.plugin.saveSettings();
+            this.display();
+          }));
+      if (credentialSource === 'obsidian-secret') {
+        if (hasObsidianSecretStorageUi(this.app)) {
+          new Setting(containerEl).setName(label('MiMo API secret', 'MiMo API 秘密'))
+            .setDesc(label('Use a regular MiMo API key, not a Token Plan key. Only the secret name is saved in data.json.',
+              '使用普通 MiMo API Key，不是 Token Plan 密钥。data.json 只保存秘密名称，不保存密钥。'))
+            .addComponent(element => new SecretComponent(this.app, element)
+              .setValue(this.plugin.settings.mimoSecretName || '').onChange(async value => {
+                this.plugin.settings.mimoSecretName = String(value || '').trim();
+                await this.plugin.saveSettings();
+              }));
+        } else {
+          new Setting(containerEl).setName(ui.secretStorageUnavailableName).setDesc(ui.secretStorageUnavailableDesc);
+        }
+      } else {
+        new Setting(containerEl).setName(label('MiMo API key file', 'MiMo API 密钥文件'))
+          .setDesc(label('Absolute path to a one-line MiMo API key file outside the vault. Do not paste the key here.',
+            '填写库外单行 MiMo API 密钥文件的绝对路径，不要在这里粘贴密钥。'))
+          .addText(text => text.setValue(this.plugin.settings.mimoKeyPath || '').onChange(async value => {
+            this.plugin.settings.mimoKeyPath = value.trim();
+            await this.plugin.saveSettings();
+          }));
+      }
+      new Setting(containerEl).setName(label('MiMo voice', 'MiMo 音色'))
+        .setDesc(label('Eight official voices. English accents are not specified by Xiaomi. Default: Bai Hua (Chinese male).',
+          '8 种官方音色。官方未明确区分英语音色的英式或美式口音。默认白桦（中文男声）。'))
+        .addDropdown(dropdown => {
+          for (const [id, en, cn] of MIMO_VOICES) dropdown.addOption(id, `${id} - ${label(en, cn)}`);
+          dropdown.setValue(this.plugin.settings.mimoVoice || MIMO_DEFAULTS.mimoVoice).onChange(async value => {
+            this.plugin.settings.mimoVoice = value;
+            await this.plugin.saveSettings();
+          });
+        });
+    }
 
     if (selectedSpeechEngine === 'local-cosyvoice') {
       new Setting(containerEl)
