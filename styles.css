@@ -176,6 +176,7 @@
 }
 
 .note-reader-cosyvoice-action {
+  height: auto;
   align-items: center;
   background: var(--interactive-normal);
   border: 1px solid var(--background-modifier-border);
@@ -213,9 +214,13 @@
 
 .note-reader-cosyvoice-action-label {
   min-width: 0;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.35;
 }
 
 .note-reader-cosyvoice-details {

@@ -1,6 +1,10 @@
 const MIMO_ENDPOINT = 'https://api.xiaomimimo.com/v1/chat/completions';
+const { parseWaveBuffer } = require('./audio-export');
+// Conservative client-side mitigation, not a provider-advertised limit.
+const MIMO_MAX_CHUNK_CHARS = 200;
 const MIMO_DEFAULTS = {
   mimoConsent: false,
+  mimoChunkLimit: 200,
   mimoCredentialSource: 'obsidian-secret',
   mimoSecretName: '',
   mimoKeyPath: '',
@@ -18,6 +22,7 @@ const MIMO_VOICES = [
 ];
 
 function normalizeMimoSettings(settings) {
+  settings.mimoChunkLimit = Math.max(50, Math.min(2000, Math.floor(Number(settings.mimoChunkLimit) || MIMO_MAX_CHUNK_CHARS)));
   settings.mimoConsent = settings.mimoConsent === true;
   settings.mimoCredentialSource = settings.mimoCredentialSource === 'key-file' ? 'key-file' : 'obsidian-secret';
   settings.mimoSecretName = String(settings.mimoSecretName || '').trim();
@@ -44,12 +49,23 @@ function buildMimoRequestBody(text, settings) {
 function decodeMimoAudio(bytes) {
   // Never expose response text: upstream errors can echo notes or credentials.
   let data;
+  let choice;
   try {
     const response = JSON.parse(bytes.toString('utf8'));
-    data = response.choices?.[0]?.message?.audio?.data;
+    choice = response.choices?.[0];
+    data = choice?.message?.audio?.data;
     if (response.error) throw new Error();
   } catch {
     throw new Error('MiMo TTS returned an invalid audio response.');
+  }
+  if (choice?.finish_reason !== 'stop') {
+    const reason = choice?.finish_reason;
+    const detail = reason === 'length'
+      ? 'Generation reached its length limit; the audio may omit the end of this segment.'
+      : reason === 'content_filter'
+        ? 'The provider blocked this segment with its content filter.'
+        : 'The provider did not confirm normal completion.';
+    throw new Error(`MiMo TTS: ${detail} Reading stopped without advancing. Select this segment and retry with shorter chunks. / 本段未确认完整生成，已停止，未跳到下一段；请缩短分段后重试。`);
   }
   if (typeof data !== 'string' || !data.length || data.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(data)) {
     throw new Error('MiMo TTS returned missing or invalid base64 audio.');
@@ -58,7 +74,13 @@ function decodeMimoAudio(bytes) {
   if (audio.length < 44 || audio.toString('ascii', 0, 4) !== 'RIFF' || audio.toString('ascii', 8, 12) !== 'WAVE') {
     throw new Error('MiMo TTS returned invalid WAV audio.');
   }
+  try {
+    if (audio.readUInt32LE(4) + 8 !== audio.length) throw new Error();
+    parseWaveBuffer(audio);
+  } catch {
+    throw new Error('MiMo TTS returned truncated or invalid WAV data. Reading stopped without advancing. / 音频不完整，已停止，未跳到下一段。');
+  }
   return audio;
 }
 
-module.exports = { MIMO_ENDPOINT, MIMO_DEFAULTS, MIMO_VOICES, normalizeMimoSettings, buildMimoRequestBody, decodeMimoAudio };
+module.exports = { MIMO_ENDPOINT, MIMO_DEFAULTS, MIMO_VOICES, MIMO_MAX_CHUNK_CHARS, normalizeMimoSettings, buildMimoRequestBody, decodeMimoAudio };

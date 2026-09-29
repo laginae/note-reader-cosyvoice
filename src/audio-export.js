@@ -140,6 +140,30 @@ async function writeBufferAt(fileHandle, buffer, position) {
   return position + buffer.length;
 }
 
+function trimWaveBoundary(parsed, index, count) {
+  const data = Buffer.concat(parsed.dataChunks);
+  // Only inspect near-digital silence in standard 16-bit PCM, across all channels.
+  if (parsed.audioFormat !== 1 || parsed.bitsPerSample !== 16
+    || parsed.blockAlign !== parsed.channels * 2 || count < 2) return data;
+  const frames = data.length / parsed.blockAlign;
+  const silent = (frame) => {
+    for (let channel = 0; channel < parsed.channels; channel += 1) {
+      if (Math.abs(data.readInt16LE(frame * parsed.blockAlign + channel * 2)) > 1) return false;
+    }
+    return true;
+  };
+  let first = 0;
+  while (first < frames && silent(first)) first += 1;
+  if (first === frames) return data;
+  let last = frames;
+  while (last > first && silent(last - 1)) last -= 1;
+  const threshold = Math.ceil(parsed.sampleRate * 0.6);
+  const keep = Math.ceil(parsed.sampleRate * 0.15);
+  const start = index > 0 && first > threshold ? first - keep : 0;
+  const end = index < count - 1 && frames - last > threshold ? last + keep : frames;
+  return data.subarray(start * parsed.blockAlign, end * parsed.blockAlign);
+}
+
 async function mergeWaveFiles(inputPaths, outputPath, options = {}) {
   const paths = Array.isArray(inputPaths) ? inputPaths.filter(Boolean) : [];
   if (!paths.length) {
@@ -152,7 +176,7 @@ async function mergeWaveFiles(inputPaths, outputPath, options = {}) {
   let formatChunk = null;
   let totalDataBytes = 0;
 
-  for (const inputPath of paths) {
+  for (const [index, inputPath] of paths.entries()) {
     const parsed = parseWaveBuffer(await fs.promises.readFile(inputPath));
     const signature = getWaveFormatSignature(parsed);
     if (expectedSignature && signature !== expectedSignature) {
@@ -160,7 +184,7 @@ async function mergeWaveFiles(inputPaths, outputPath, options = {}) {
     }
     expectedSignature = signature;
     formatChunk = parsed.formatChunk;
-    totalDataBytes += parsed.dataBytes;
+    totalDataBytes += trimWaveBoundary(parsed, index, paths.length).length;
     if (totalDataBytes > maxBytes) {
       throw new Error(`The exported audio exceeds the ${Math.floor(maxBytes / (1024 * 1024))} MB safety limit.`);
     }
@@ -175,11 +199,9 @@ async function mergeWaveFiles(inputPaths, outputPath, options = {}) {
     await fs.promises.mkdir(path.dirname(outputPath), { recursive: true });
     handle = await fs.promises.open(outputPath, 'w', 0o600);
     let outputOffset = await writeBufferAt(handle, header, 0);
-    for (const inputPath of paths) {
+    for (const [index, inputPath] of paths.entries()) {
       const parsed = parseWaveBuffer(await fs.promises.readFile(inputPath));
-      for (const chunk of parsed.dataChunks) {
-        outputOffset = await writeBufferAt(handle, chunk, outputOffset);
-      }
+      outputOffset = await writeBufferAt(handle, trimWaveBoundary(parsed, index, paths.length), outputOffset);
     }
   } catch (error) {
     if (handle) {

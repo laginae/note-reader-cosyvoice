@@ -301,68 +301,37 @@ var require_pdf_layout2 = __commonJS({
   }
 });
 
-// src/mimo-tts.js
-var require_mimo_tts = __commonJS({
-  "src/mimo-tts.js"(exports2, module2) {
-    var MIMO_ENDPOINT2 = "https://api.xiaomimimo.com/v1/chat/completions";
-    var MIMO_DEFAULTS2 = {
-      mimoConsent: false,
-      mimoCredentialSource: "obsidian-secret",
-      mimoSecretName: "",
-      mimoKeyPath: "",
-      mimoVoice: "\u767D\u6866"
-    };
-    var MIMO_VOICES2 = [
-      ["Dean", "English male", "\u82F1\u6587\u7537\u58F0"],
-      ["Milo", "English male", "\u82F1\u6587\u7537\u58F0"],
-      ["Mia", "English female", "\u82F1\u6587\u5973\u58F0"],
-      ["Chloe", "English female", "\u82F1\u6587\u5973\u58F0"],
-      ["\u82CF\u6253", "Chinese male", "\u4E2D\u6587\u7537\u58F0"],
-      ["\u767D\u6866", "Chinese male", "\u4E2D\u6587\u7537\u58F0"],
-      ["\u51B0\u7CD6", "Chinese female", "\u4E2D\u6587\u5973\u58F0"],
-      ["\u8309\u8389", "Chinese female", "\u4E2D\u6587\u5973\u58F0"]
-    ];
-    function normalizeMimoSettings2(settings) {
-      settings.mimoConsent = settings.mimoConsent === true;
-      settings.mimoCredentialSource = settings.mimoCredentialSource === "key-file" ? "key-file" : "obsidian-secret";
-      settings.mimoSecretName = String(settings.mimoSecretName || "").trim();
-      settings.mimoKeyPath = String(settings.mimoKeyPath || "").trim();
-      settings.mimoVoice = MIMO_VOICES2.some(([id]) => id === settings.mimoVoice) ? settings.mimoVoice : MIMO_DEFAULTS2.mimoVoice;
+// src/playback-estimate.js
+var require_playback_estimate = __commonJS({
+  "src/playback-estimate.js"(exports2, module2) {
+    function estimateTextSeconds(text, speed = 1) {
+      const value = String(text || "");
+      const han = (value.match(/\p{Script=Han}/gu) || []).length;
+      const words = (value.replace(/\p{Script=Han}/gu, " ").match(/[\p{L}\p{N}]+/gu) || []).length;
+      return (han / 4 + words / 2.5) / (Number(speed) > 0 ? Number(speed) : 1);
     }
-    function buildMimoRequestBody2(text, settings) {
-      const normalized = { ...settings };
-      normalizeMimoSettings2(normalized);
-      const speed = Number(settings.speed);
-      const rate = Number.isFinite(speed) ? Math.min(2, Math.max(0.5, speed)) : 1;
-      return JSON.stringify({
-        model: "mimo-v2.5-tts",
-        messages: [
-          { role: "user", content: `Read the supplied text faithfully in a calm, neutral academic narration style at ${rate} times normal speaking speed. Do not summarize or add words.` },
-          { role: "assistant", content: String(text) }
-        ],
-        audio: { format: "wav", voice: normalized.mimoVoice },
-        stream: false
+    function estimatePlayback2(session, index, time, speed = 1, playbackSpeed = 1) {
+      if (!Array.isArray(session?.chunks) || !session.chunks.length || session.kind === "audio-export") return null;
+      const durations = session.chunks.map((text, i) => {
+        const measured = session.audioDurations?.[i];
+        return Number.isFinite(measured) && measured > 0 ? measured : estimateTextSeconds(text, session.synthesisSpeeds?.[i] || speed);
       });
+      index = Math.max(0, Math.min(durations.length - 1, Math.floor(Number(index) || 0)));
+      const rate = Number.isFinite(playbackSpeed) && playbackSpeed > 0 ? playbackSpeed : 1;
+      return {
+        total: durations.reduce((a, b) => a + b, 0) / rate,
+        remaining: (Math.max(0, durations[index] - Math.max(0, Number(time) || 0)) + durations.slice(index + 1).reduce((a, b) => a + b, 0)) / rate,
+        partial: session.kind === "pdf-progressive" && !session.productionComplete
+      };
     }
-    function decodeMimoAudio2(bytes) {
-      let data;
-      try {
-        const response = JSON.parse(bytes.toString("utf8"));
-        data = response.choices?.[0]?.message?.audio?.data;
-        if (response.error) throw new Error();
-      } catch {
-        throw new Error("MiMo TTS returned an invalid audio response.");
-      }
-      if (typeof data !== "string" || !data.length || data.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(data)) {
-        throw new Error("MiMo TTS returned missing or invalid base64 audio.");
-      }
-      const audio = Buffer.from(data, "base64");
-      if (audio.length < 44 || audio.toString("ascii", 0, 4) !== "RIFF" || audio.toString("ascii", 8, 12) !== "WAVE") {
-        throw new Error("MiMo TTS returned invalid WAV audio.");
-      }
-      return audio;
+    function formatDuration2(seconds) {
+      const n = Math.max(0, Math.ceil(Number(seconds) || 0));
+      const hours = Math.floor(n / 3600);
+      const minutes = Math.floor(n % 3600 / 60);
+      const tail = String(n % 60).padStart(2, "0");
+      return hours ? `${hours}:${String(minutes).padStart(2, "0")}:${tail}` : `${minutes}:${tail}`;
     }
-    module2.exports = { MIMO_ENDPOINT: MIMO_ENDPOINT2, MIMO_DEFAULTS: MIMO_DEFAULTS2, MIMO_VOICES: MIMO_VOICES2, normalizeMimoSettings: normalizeMimoSettings2, buildMimoRequestBody: buildMimoRequestBody2, decodeMimoAudio: decodeMimoAudio2 };
+    module2.exports = { estimateTextSeconds, estimatePlayback: estimatePlayback2, formatDuration: formatDuration2 };
   }
 });
 
@@ -484,6 +453,27 @@ var require_audio_export = __commonJS({
       }
       return position + buffer.length;
     }
+    function trimWaveBoundary(parsed, index, count) {
+      const data = Buffer.concat(parsed.dataChunks);
+      if (parsed.audioFormat !== 1 || parsed.bitsPerSample !== 16 || parsed.blockAlign !== parsed.channels * 2 || count < 2) return data;
+      const frames = data.length / parsed.blockAlign;
+      const silent = (frame) => {
+        for (let channel = 0; channel < parsed.channels; channel += 1) {
+          if (Math.abs(data.readInt16LE(frame * parsed.blockAlign + channel * 2)) > 1) return false;
+        }
+        return true;
+      };
+      let first = 0;
+      while (first < frames && silent(first)) first += 1;
+      if (first === frames) return data;
+      let last = frames;
+      while (last > first && silent(last - 1)) last -= 1;
+      const threshold = Math.ceil(parsed.sampleRate * 0.6);
+      const keep = Math.ceil(parsed.sampleRate * 0.15);
+      const start = index > 0 && first > threshold ? first - keep : 0;
+      const end = index < count - 1 && frames - last > threshold ? last + keep : frames;
+      return data.subarray(start * parsed.blockAlign, end * parsed.blockAlign);
+    }
     async function mergeWaveFiles(inputPaths, outputPath, options = {}) {
       const paths = Array.isArray(inputPaths) ? inputPaths.filter(Boolean) : [];
       if (!paths.length) {
@@ -493,7 +483,7 @@ var require_audio_export = __commonJS({
       let expectedSignature = "";
       let formatChunk = null;
       let totalDataBytes = 0;
-      for (const inputPath of paths) {
+      for (const [index, inputPath] of paths.entries()) {
         const parsed = parseWaveBuffer(await fs2.promises.readFile(inputPath));
         const signature = getWaveFormatSignature(parsed);
         if (expectedSignature && signature !== expectedSignature) {
@@ -501,7 +491,7 @@ var require_audio_export = __commonJS({
         }
         expectedSignature = signature;
         formatChunk = parsed.formatChunk;
-        totalDataBytes += parsed.dataBytes;
+        totalDataBytes += trimWaveBoundary(parsed, index, paths.length).length;
         if (totalDataBytes > maxBytes) {
           throw new Error(`The exported audio exceeds the ${Math.floor(maxBytes / (1024 * 1024))} MB safety limit.`);
         }
@@ -515,11 +505,9 @@ var require_audio_export = __commonJS({
         await fs2.promises.mkdir(path2.dirname(outputPath), { recursive: true });
         handle = await fs2.promises.open(outputPath, "w", 384);
         let outputOffset = await writeBufferAt(handle, header, 0);
-        for (const inputPath of paths) {
+        for (const [index, inputPath] of paths.entries()) {
           const parsed = parseWaveBuffer(await fs2.promises.readFile(inputPath));
-          for (const chunk of parsed.dataChunks) {
-            outputOffset = await writeBufferAt(handle, chunk, outputOffset);
-          }
+          outputOffset = await writeBufferAt(handle, trimWaveBoundary(parsed, index, paths.length), outputOffset);
         }
       } catch (error) {
         if (handle) {
@@ -755,6 +743,88 @@ var require_audio_export = __commonJS({
       parseWaveBuffer,
       sanitizeExportBaseName
     };
+  }
+});
+
+// src/mimo-tts.js
+var require_mimo_tts = __commonJS({
+  "src/mimo-tts.js"(exports2, module2) {
+    var MIMO_ENDPOINT2 = "https://api.xiaomimimo.com/v1/chat/completions";
+    var { parseWaveBuffer } = require_audio_export();
+    var MIMO_MAX_CHUNK_CHARS2 = 200;
+    var MIMO_DEFAULTS2 = {
+      mimoConsent: false,
+      mimoChunkLimit: 200,
+      mimoCredentialSource: "obsidian-secret",
+      mimoSecretName: "",
+      mimoKeyPath: "",
+      mimoVoice: "\u767D\u6866"
+    };
+    var MIMO_VOICES2 = [
+      ["Dean", "English male", "\u82F1\u6587\u7537\u58F0"],
+      ["Milo", "English male", "\u82F1\u6587\u7537\u58F0"],
+      ["Mia", "English female", "\u82F1\u6587\u5973\u58F0"],
+      ["Chloe", "English female", "\u82F1\u6587\u5973\u58F0"],
+      ["\u82CF\u6253", "Chinese male", "\u4E2D\u6587\u7537\u58F0"],
+      ["\u767D\u6866", "Chinese male", "\u4E2D\u6587\u7537\u58F0"],
+      ["\u51B0\u7CD6", "Chinese female", "\u4E2D\u6587\u5973\u58F0"],
+      ["\u8309\u8389", "Chinese female", "\u4E2D\u6587\u5973\u58F0"]
+    ];
+    function normalizeMimoSettings2(settings) {
+      settings.mimoChunkLimit = Math.max(50, Math.min(2e3, Math.floor(Number(settings.mimoChunkLimit) || MIMO_MAX_CHUNK_CHARS2)));
+      settings.mimoConsent = settings.mimoConsent === true;
+      settings.mimoCredentialSource = settings.mimoCredentialSource === "key-file" ? "key-file" : "obsidian-secret";
+      settings.mimoSecretName = String(settings.mimoSecretName || "").trim();
+      settings.mimoKeyPath = String(settings.mimoKeyPath || "").trim();
+      settings.mimoVoice = MIMO_VOICES2.some(([id]) => id === settings.mimoVoice) ? settings.mimoVoice : MIMO_DEFAULTS2.mimoVoice;
+    }
+    function buildMimoRequestBody2(text, settings) {
+      const normalized = { ...settings };
+      normalizeMimoSettings2(normalized);
+      const speed = Number(settings.speed);
+      const rate = Number.isFinite(speed) ? Math.min(2, Math.max(0.5, speed)) : 1;
+      return JSON.stringify({
+        model: "mimo-v2.5-tts",
+        messages: [
+          { role: "user", content: `Read the supplied text faithfully in a calm, neutral academic narration style at ${rate} times normal speaking speed. Do not summarize or add words.` },
+          { role: "assistant", content: String(text) }
+        ],
+        audio: { format: "wav", voice: normalized.mimoVoice },
+        stream: false
+      });
+    }
+    function decodeMimoAudio2(bytes) {
+      let data;
+      let choice;
+      try {
+        const response = JSON.parse(bytes.toString("utf8"));
+        choice = response.choices?.[0];
+        data = choice?.message?.audio?.data;
+        if (response.error) throw new Error();
+      } catch {
+        throw new Error("MiMo TTS returned an invalid audio response.");
+      }
+      if (choice?.finish_reason !== "stop") {
+        const reason = choice?.finish_reason;
+        const detail = reason === "length" ? "Generation reached its length limit; the audio may omit the end of this segment." : reason === "content_filter" ? "The provider blocked this segment with its content filter." : "The provider did not confirm normal completion.";
+        throw new Error(`MiMo TTS: ${detail} Reading stopped without advancing. Select this segment and retry with shorter chunks. / \u672C\u6BB5\u672A\u786E\u8BA4\u5B8C\u6574\u751F\u6210\uFF0C\u5DF2\u505C\u6B62\uFF0C\u672A\u8DF3\u5230\u4E0B\u4E00\u6BB5\uFF1B\u8BF7\u7F29\u77ED\u5206\u6BB5\u540E\u91CD\u8BD5\u3002`);
+      }
+      if (typeof data !== "string" || !data.length || data.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(data)) {
+        throw new Error("MiMo TTS returned missing or invalid base64 audio.");
+      }
+      const audio = Buffer.from(data, "base64");
+      if (audio.length < 44 || audio.toString("ascii", 0, 4) !== "RIFF" || audio.toString("ascii", 8, 12) !== "WAVE") {
+        throw new Error("MiMo TTS returned invalid WAV audio.");
+      }
+      try {
+        if (audio.readUInt32LE(4) + 8 !== audio.length) throw new Error();
+        parseWaveBuffer(audio);
+      } catch {
+        throw new Error("MiMo TTS returned truncated or invalid WAV data. Reading stopped without advancing. / \u97F3\u9891\u4E0D\u5B8C\u6574\uFF0C\u5DF2\u505C\u6B62\uFF0C\u672A\u8DF3\u5230\u4E0B\u4E00\u6BB5\u3002");
+      }
+      return audio;
+    }
+    module2.exports = { MIMO_ENDPOINT: MIMO_ENDPOINT2, MIMO_DEFAULTS: MIMO_DEFAULTS2, MIMO_VOICES: MIMO_VOICES2, MIMO_MAX_CHUNK_CHARS: MIMO_MAX_CHUNK_CHARS2, normalizeMimoSettings: normalizeMimoSettings2, buildMimoRequestBody: buildMimoRequestBody2, decodeMimoAudio: decodeMimoAudio2 };
   }
 });
 
@@ -1101,7 +1171,8 @@ var path = require("path");
 var { spawn } = require("child_process");
 var { pathToFileURL } = require("url");
 var { extractPdfTextLayout, extractTextFromPdfItems } = require_pdf_layout2();
-var { MIMO_ENDPOINT, MIMO_DEFAULTS, MIMO_VOICES, normalizeMimoSettings, buildMimoRequestBody, decodeMimoAudio } = require_mimo_tts();
+var { estimatePlayback, formatDuration } = require_playback_estimate();
+var { MIMO_ENDPOINT, MIMO_DEFAULTS, MIMO_VOICES, MIMO_MAX_CHUNK_CHARS, normalizeMimoSettings, buildMimoRequestBody, decodeMimoAudio } = require_mimo_tts();
 var {
   MAX_EXPORTED_AUDIO_BYTES,
   bufferToArrayBuffer,
@@ -1281,7 +1352,7 @@ var OPENROUTER_TTS_PRESETS = [
 var SETTINGS_UI_TEXT = {
   english: {
     settingsLanguageName: "Settings language",
-    settingsLanguageDesc: "Choose the language used on this plugin settings page.",
+    settingsLanguageDesc: "Choose the language for settings and reader controls.",
     settingsLanguageEnglish: "English",
     settingsLanguageChinese: "\u4E2D\u6587",
     speechEngineName: "Speech engine",
@@ -1346,8 +1417,8 @@ var SETTINGS_UI_TEXT = {
     openRouterVoiceDesc: "Voice ID supported by the selected model. Voice catalogs differ between models.",
     openRouterPrivacyName: "OpenRouter privacy routing",
     openRouterPrivacyDesc: "Always enforced: provider.zdr is true and provider data collection is denied. The plugin never falls back to a non-ZDR endpoint. Keep OpenRouter account-level input/output logging and data sharing disabled for private content.",
-    speedName: "Speed",
-    speedDesc: "Speech speed passed to the selected speech engine.",
+    speedName: "Synthesis speed",
+    speedDesc: "Synthesis speed for new segments only; playing and already prepared audio remain unchanged. MiMo treats speed as an instruction, not an exact rate.",
     chunkLimitsName: "Local chunk limits",
     chunkLimitsDesc: "Comma-separated character limits used by Local CosyVoice. Earlier chunks are shorter so playback starts sooner.",
     onlineChunkLimitsName: "Online chunk limits",
@@ -1397,7 +1468,7 @@ var SETTINGS_UI_TEXT = {
   },
   chinese: {
     settingsLanguageName: "\u8BBE\u7F6E\u754C\u9762\u8BED\u8A00",
-    settingsLanguageDesc: "\u9009\u62E9\u672C\u63D2\u4EF6\u8BBE\u7F6E\u9875\u9762\u4F7F\u7528\u7684\u8BED\u8A00\u3002",
+    settingsLanguageDesc: "\u9009\u62E9\u63D2\u4EF6\u8BBE\u7F6E\u548C\u6717\u8BFB\u63A7\u5236\u9762\u677F\u4F7F\u7528\u7684\u8BED\u8A00\u3002",
     settingsLanguageEnglish: "English",
     settingsLanguageChinese: "\u4E2D\u6587",
     speechEngineName: "\u8BED\u97F3\u5F15\u64CE",
@@ -1462,8 +1533,8 @@ var SETTINGS_UI_TEXT = {
     openRouterVoiceDesc: "\u6240\u9009\u6A21\u578B\u652F\u6301\u7684\u97F3\u8272 ID\u3002\u4E0D\u540C\u6A21\u578B\u7684\u97F3\u8272\u76EE\u5F55\u5E76\u4E0D\u76F8\u540C\u3002",
     openRouterPrivacyName: "OpenRouter \u9690\u79C1\u8DEF\u7531",
     openRouterPrivacyDesc: "\u59CB\u7EC8\u5F3A\u5236\u6267\u884C\uFF1Aprovider.zdr \u4E3A true\uFF0C\u5E76\u62D2\u7EDD\u4F9B\u5E94\u5546\u6536\u96C6\u6570\u636E\u3002\u63D2\u4EF6\u4E0D\u4F1A\u964D\u7EA7\u5230\u975E ZDR \u7AEF\u70B9\u3002\u6717\u8BFB\u79C1\u5BC6\u5185\u5BB9\u65F6\uFF0C\u8FD8\u5E94\u5173\u95ED OpenRouter \u8D26\u6237\u7EA7\u8F93\u5165\u8F93\u51FA\u65E5\u5FD7\u548C\u6570\u636E\u5171\u4EAB\u3002",
-    speedName: "\u8BED\u901F",
-    speedDesc: "\u4F20\u9012\u7ED9\u5F53\u524D\u8BED\u97F3\u5F15\u64CE\u7684\u6717\u8BFB\u901F\u5EA6\u3002",
+    speedName: "\u5408\u6210\u8BED\u901F",
+    speedDesc: "\u4EC5\u5BF9\u65B0\u5408\u6210\u7684\u5206\u6BB5\u751F\u6548\uFF0C\u6B63\u5728\u64AD\u653E\u53CA\u5DF2\u9884\u5408\u6210\u7684\u97F3\u9891\u4E0D\u53D8\u3002MiMo \u5C06\u901F\u5EA6\u4F5C\u4E3A\u6307\u4EE4\u7406\u89E3\uFF0C\u5E76\u975E\u7CBE\u786E\u500D\u901F\u3002",
     chunkLimitsName: "\u672C\u5730\u5206\u6BB5\u957F\u5EA6",
     chunkLimitsDesc: "\u672C\u5730 CosyVoice \u4F7F\u7528\u7684\u5B57\u7B26\u6570\u4E0A\u9650\uFF0C\u4EE5\u82F1\u6587\u9017\u53F7\u5206\u9694\u3002\u524D\u51E0\u4E2A\u5206\u6BB5\u8F83\u77ED\uFF0C\u53EF\u66F4\u5FEB\u5F00\u59CB\u64AD\u653E\u3002",
     onlineChunkLimitsName: "\u5728\u7EBF\u5206\u6BB5\u957F\u5EA6",
@@ -2144,6 +2215,9 @@ function escapeRegExp(text) {
 function resolveDefaultScriptPath() {
   return "";
 }
+function normalizeVolume(value) {
+  return typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : 1;
+}
 function normalizeSpeed(value) {
   const speed = Number(value);
   if (!Number.isFinite(speed)) {
@@ -2191,7 +2265,9 @@ function normalizeOnlinePrefetchChunks(value) {
 }
 function getChunkLimitsForSpeechEngine(settings, speechEngine = normalizeSpeechEngine(settings && settings.speechEngine)) {
   if (isOnlineSpeechEngine(speechEngine)) {
-    return parseChunkLimits(settings && settings.onlineChunkLimits, DEFAULT_ONLINE_CHUNK_LIMITS);
+    const limits = parseChunkLimits(settings && settings.onlineChunkLimits, DEFAULT_ONLINE_CHUNK_LIMITS);
+    const mimoLimit = Math.max(50, Math.min(2e3, Math.floor(Number(settings && settings.mimoChunkLimit) || MIMO_MAX_CHUNK_CHARS)));
+    return speechEngine === "mimo-tts" ? limits.map((limit) => Math.min(limit, mimoLimit)) : limits;
   }
   return parseChunkLimits(settings && settings.chunkLimits, DEFAULT_CHUNK_LIMITS);
 }
@@ -2458,6 +2534,8 @@ function selectKnownSettings(defaults, candidate) {
 function createDefaultSettings() {
   return {
     ...MIMO_DEFAULTS,
+    playbackVolume: 1,
+    playbackSpeed: 1,
     audioExportFolder: normalizeAudioExportFolder(DEFAULT_SETTINGS.audioExportFolder),
     audioExportLocation: normalizeAudioExportLocation(DEFAULT_SETTINGS.audioExportLocation),
     azureSpeechCloud: normalizeAzureSpeechCloud(DEFAULT_SETTINGS.azureSpeechCloud),
@@ -3314,6 +3392,8 @@ var CosyVoiceReaderPlugin = class extends Plugin {
     const hadAzureCredentialSource = Object.prototype.hasOwnProperty.call(source, "azureSpeechCredentialSource");
     const hadOpenRouterCredentialSource = Object.prototype.hasOwnProperty.call(source, "openRouterCredentialSource");
     this.settings = selectKnownSettings(defaults, source);
+    this.settings.playbackVolume = normalizeVolume(this.settings.playbackVolume);
+    this.settings.playbackSpeed = normalizeSpeed(this.settings.playbackSpeed);
     normalizeMimoSettings(this.settings);
     this.settings.audioExportFolder = normalizeAudioExportFolder(this.settings.audioExportFolder);
     this.settings.audioExportLocation = normalizeAudioExportLocation(this.settings.audioExportLocation);
@@ -3353,6 +3433,8 @@ var CosyVoiceReaderPlugin = class extends Plugin {
   }
   async saveSettings() {
     this.settings = selectKnownSettings(createDefaultSettings(), this.settings);
+    this.settings.playbackSpeed = normalizeSpeed(this.settings.playbackSpeed);
+    this.settings.playbackVolume = normalizeVolume(this.settings.playbackVolume);
     normalizeMimoSettings(this.settings);
     this.settings.audioExportFolder = normalizeAudioExportFolder(this.settings.audioExportFolder);
     this.settings.audioExportLocation = normalizeAudioExportLocation(this.settings.audioExportLocation);
@@ -3389,7 +3471,13 @@ var CosyVoiceReaderPlugin = class extends Plugin {
   }
   async resetSettingsToDefaults() {
     this.settings = createDefaultSettings();
+    if (this.currentAudio) {
+      this.currentAudio.volume = this.settings.playbackVolume;
+      this.currentAudio.playbackRate = this.settings.playbackSpeed;
+      this.currentAudio.defaultPlaybackRate = this.settings.playbackSpeed;
+    }
     await this.saveSettings();
+    this.renderReaderViews();
   }
   async setSpeechSpeed(speed) {
     if (!this.settings) {
@@ -3399,6 +3487,23 @@ var CosyVoiceReaderPlugin = class extends Plugin {
     await this.saveSettings();
     this.renderReaderViews();
     return this.settings.speed;
+  }
+  async setPlaybackSpeed(value) {
+    if (!this.settings) this.settings = createDefaultSettings();
+    this.settings.playbackSpeed = normalizeSpeed(value);
+    if (this.currentAudio) {
+      this.currentAudio.preservesPitch = true;
+      this.currentAudio.defaultPlaybackRate = this.settings.playbackSpeed;
+      this.currentAudio.playbackRate = this.settings.playbackSpeed;
+    }
+    this.renderReaderViews();
+    await this.saveSettings();
+  }
+  setPlaybackVolume(value) {
+    if (!this.settings) this.settings = createDefaultSettings();
+    this.settings.playbackVolume = normalizeVolume(value);
+    if (this.currentAudio) this.currentAudio.volume = this.settings.playbackVolume;
+    return this.settings.playbackVolume;
   }
   async ensureCacheDir() {
     const adapter = this.app.vault.adapter;
@@ -5037,6 +5142,8 @@ ${embed}
       throw new Error("Reading stopped.");
     }
     session.speechStarted = true;
+    session.synthesisSpeeds = session.synthesisSpeeds || {};
+    session.synthesisSpeeds[index] = normalizeSpeed(this.settings.speed);
     const speechEngine = normalizeSpeechEngine(session.speechEngine || this.settings.speechEngine);
     const engineLabel = session.engineLabel || getSpeechEngineLabel(this.settings);
     const outputExtension = ["local-cosyvoice", "mimo-tts"].includes(speechEngine) ? "wav" : "mp3";
@@ -5539,8 +5646,30 @@ ${embed}
       };
       try {
         audio = new Audio();
+        audio.volume = normalizeVolume(this.settings.playbackVolume);
+        audio.preservesPitch = true;
+        audio.defaultPlaybackRate = normalizeSpeed(this.settings.playbackSpeed);
+        audio.playbackRate = normalizeSpeed(this.settings.playbackSpeed);
         audio.noteReaderReleaseSource = source.release;
         audio.preload = "auto";
+        const recordDuration = () => {
+          if (this.isActive(session) && Number.isFinite(audio.duration) && audio.duration > 0) {
+            session.audioDurations = session.audioDurations || {};
+            session.audioDurations[index] = audio.duration;
+          }
+        };
+        const applyPlaybackSpeed = () => {
+          if (settled || !this.isActive(session)) return;
+          audio.defaultPlaybackRate = normalizeSpeed(this.settings.playbackSpeed);
+          audio.playbackRate = audio.defaultPlaybackRate;
+          audio.preservesPitch = true;
+        };
+        audio.onloadedmetadata = () => {
+          applyPlaybackSpeed();
+          recordDuration();
+        };
+        audio.onplaying = applyPlaybackSpeed;
+        audio.ondurationchange = recordDuration;
         this.currentAudio = audio;
         const playbackTotal = getPlaybackTotal();
         this.updateStatus(`${session.engineLabel || getSpeechEngineLabel(this.settings)} play ${index + 1}/${playbackTotal}`, {
@@ -5563,6 +5692,7 @@ ${embed}
         });
         let lastProgressUpdate = 0;
         audio.ontimeupdate = () => {
+          recordDuration();
           const now = Date.now();
           if (now - lastProgressUpdate < 250) {
             return;
@@ -5592,6 +5722,7 @@ ${embed}
           finish(reject, new Error(`Unable to play ${prepared.outputPath}${describeMediaError(audio.error)}`));
         };
         audio.src = source.url;
+        applyPlaybackSpeed();
         Promise.resolve(audio.play()).catch((error) => {
           finish(reject, error);
         });
@@ -5649,6 +5780,14 @@ ${embed}
     return true;
   }
   seekToProgress(progress) {
+    const session = this.activeSession;
+    if (session && session.kind === "audio-export") return false;
+    const total = session && Array.isArray(session.chunks) ? session.chunks.length : 0;
+    if (this.isActive(session) && total > 0) {
+      const target = Math.min(total - 1, Math.floor(clampProgress(progress) * total));
+      const current = Math.max(0, (this.readerState.currentChunk || 1) - 1);
+      if (target !== current) return this.jumpToAdjacentChunk(target - current);
+    }
     const audio = this.currentAudio;
     if (!audio || !Number.isFinite(audio.duration) || audio.duration <= 0) {
       return false;
@@ -5896,6 +6035,35 @@ ${embed}
   }
 };
 var CosyVoiceReaderView = class extends ItemView {
+  translate(text) {
+    if (this.plugin.settings?.settingsLanguage !== "chinese") return text;
+    return {
+      "Voice Reader": "\u8BED\u97F3\u6717\u8BFB",
+      "Voice reader controls": "\u6717\u8BFB\u63A7\u5236\u9762\u677F",
+      "Previous chunk": "\u4E0A\u4E00\u6BB5",
+      "Next chunk": "\u4E0B\u4E00\u6BB5",
+      "Reading progress": "\u6717\u8BFB\u8FDB\u5EA6",
+      "Read selection": "\u6717\u8BFB\u9009\u4E2D\u6587\u5B57",
+      "Read from selection": "\u4ECE\u9009\u4E2D\u4F4D\u7F6E\u6717\u8BFB",
+      "Read file": "\u6717\u8BFB\u5168\u6587",
+      "Export audio": "\u5BFC\u51FA\u97F3\u9891",
+      "Export & insert audio": "\u5BFC\u51FA\u5E76\u63D2\u5165\u97F3\u9891",
+      "Retry merge only": "\u4EC5\u91CD\u8BD5\u62FC\u63A5",
+      "Resume file": "\u4ECE\u4E0A\u6B21\u4F4D\u7F6E\u7EED\u8BFB",
+      "Resume": "\u7EE7\u7EED",
+      "Pause": "\u6682\u505C",
+      "Stop": "\u505C\u6B62",
+      "Resume reading (or press Space)": "\u7EE7\u7EED\u6717\u8BFB\uFF08\u4E5F\u53EF\u6309\u7A7A\u683C\u952E\uFF09",
+      "Pause reading (or press Space)": "\u6682\u505C\u6717\u8BFB\uFF08\u4E5F\u53EF\u6309\u7A7A\u683C\u952E\uFF09",
+      "Export all, selected, or remaining audio from the current note or PDF": "\u5BFC\u51FA\u5F53\u524D\u7B14\u8BB0\u6216 PDF \u7684\u5168\u90E8\u3001\u9009\u4E2D\u90E8\u5206\u6216\u9009\u4E2D\u4F4D\u7F6E\u4EE5\u540E\u7684\u97F3\u9891",
+      "Export audio and insert it into the current Markdown note": "\u5BFC\u51FA\u97F3\u9891\u5E76\u63D2\u5165\u5F53\u524D Markdown \u7B14\u8BB0",
+      "Audio can be inserted into Markdown notes, not PDF files": "\u97F3\u9891\u53EA\u80FD\u63D2\u5165 Markdown \u7B14\u8BB0\uFF0C\u4E0D\u80FD\u63D2\u5165 PDF",
+      "Reuse the kept synthesized segments without making any TTS API requests": "\u590D\u7528\u4FDD\u7559\u7684\u5206\u6BB5\u97F3\u9891\uFF0C\u4E0D\u518D\u8C03\u7528\u8BED\u97F3 API",
+      "Phase": "\u9636\u6BB5",
+      "Source": "\u6765\u6E90",
+      "Text": "\u6587\u672C"
+    }[text] || text;
+  }
   constructor(leaf, plugin) {
     super(leaf);
     this.plugin = plugin;
@@ -5905,7 +6073,7 @@ var CosyVoiceReaderView = class extends ItemView {
     return VIEW_TYPE;
   }
   getDisplayText() {
-    return "Voice Reader";
+    return this.translate("Voice Reader");
   }
   getIcon() {
     return "volume-2";
@@ -5917,41 +6085,51 @@ var CosyVoiceReaderView = class extends ItemView {
     this.plugin.unregisterReaderView(this);
   }
   render() {
+    if (this.volumeInteracting) return;
     const root = this.contentEl || this.containerEl.children[1] || this.containerEl;
     const state = this.plugin.readerState || createReaderState();
     root.empty();
     root.addClass("note-reader-cosyvoice-view");
     root.setAttribute("tabindex", "0");
-    root.setAttribute("aria-label", "Voice reader controls");
+    root.setAttribute("aria-label", this.translate("Voice reader controls"));
     root.addEventListener("keydown", this.handlePanelKeydown);
     const header = root.createDiv({ cls: "note-reader-cosyvoice-panel-header" });
-    header.createEl("h3", { text: "Voice Reader" });
+    header.createEl("h3", { text: this.translate("Voice Reader") });
     header.createDiv({ cls: `note-reader-cosyvoice-state is-${state.status}`, text: state.label });
     const progressWrap = root.createDiv({ cls: "note-reader-cosyvoice-progress-wrap" });
     const progressControls = progressWrap.createDiv({ cls: "note-reader-cosyvoice-progress-controls" });
     this.createIconButton(progressControls, "skip-back", "Previous chunk", () => {
       this.plugin.jumpToAdjacentChunk(-1);
     }, !state.canPreviousChunk, { triggerOnPointerDown: true });
+    const canNavigateProgress = state.canSeek || state.canNextChunk || state.canPreviousChunk;
     const progressTrack = progressControls.createDiv({
-      cls: `note-reader-cosyvoice-progress-track${state.canSeek ? " is-seekable" : ""}`
+      cls: `note-reader-cosyvoice-progress-track${canNavigateProgress ? " is-seekable" : ""}`
     });
     const progressFill = progressTrack.createDiv({ cls: "note-reader-cosyvoice-progress-fill" });
     progressFill.style.width = `${Math.round(state.progress * 100)}%`;
     const progressInput = progressTrack.createEl("input", {
       cls: "note-reader-cosyvoice-progress-input",
       attr: {
-        "aria-label": "Reading progress",
+        "aria-label": this.translate("Reading progress"),
         max: "1000",
         min: "0",
         step: "1",
-        title: state.canSeek ? "Drag to seek within the current audio chunk" : "Progress is seekable while audio is playing",
+        title: "Click to jump among available chunks; within the current chunk, seek by time. Other chunks start at the beginning and may require synthesis.",
         type: "range",
         value: String(Math.round(state.progress * 1e3))
       }
     });
-    progressInput.disabled = !state.canSeek;
+    progressInput.disabled = !canNavigateProgress;
+    progressInput.addEventListener("pointerdown", (event) => {
+      if (!canNavigateProgress || event.button !== 0) return;
+      const bounds = progressInput.getBoundingClientRect();
+      if (!bounds.width) return;
+      event.preventDefault();
+      event.stopPropagation();
+      this.plugin.seekToProgress(clampProgress((event.clientX - bounds.left) / bounds.width));
+    });
     progressInput.addEventListener("input", () => {
-      if (!state.canSeek) {
+      if (!canNavigateProgress) {
         return;
       }
       const requestedProgress = Number(progressInput.value) / 1e3;
@@ -5963,7 +6141,36 @@ var CosyVoiceReaderView = class extends ItemView {
     const meta = progressWrap.createDiv({ cls: "note-reader-cosyvoice-meta" });
     meta.createSpan({ text: formatProgressLabel(state) });
     meta.createSpan({ text: `${Math.round(state.progress * 100)}%` });
+    const estimate = estimatePlayback(
+      this.plugin.activeSession,
+      Math.max(0, (state.currentChunk || 1) - 1),
+      this.plugin.currentAudio?.currentTime || 0,
+      this.plugin.settings.speed,
+      normalizeSpeed(this.plugin.settings.playbackSpeed)
+    );
+    if (estimate) {
+      const zh = this.plugin.settings.settingsLanguage === "chinese";
+      const timing = progressWrap.createDiv({ cls: "note-reader-cosyvoice-meta" });
+      timing.style.flexWrap = "wrap";
+      timing.style.gap = "4px 12px";
+      timing.createSpan({ text: `${zh ? "\u9884\u8BA1\u603B\u65F6\u957F" : "Estimated total"} ${formatDuration(estimate.total)}` });
+      timing.createSpan({ text: `${zh ? "\u9884\u8BA1\u5269\u4F59" : "Estimated remaining"} ${formatDuration(estimate.remaining)}` });
+      if (estimate.partial) progressWrap.createDiv({
+        cls: "note-reader-cosyvoice-meta",
+        text: zh ? "\u4EC5\u8BA1\u5DF2\u89E3\u6790\u9875\u9762\uFF0C\u968F\u89E3\u6790\u66F4\u65B0" : "Parsed pages only; updates as parsing continues"
+      });
+      timing.title = zh ? "\u672A\u5408\u6210\u90E8\u5206\u6309\u6587\u672C\u4F30\u7B97\uFF1B\u4E0D\u542B\u7F51\u7EDC\u7B49\u5F85\u548C\u6682\u505C\u65F6\u95F4\u3002" : "Text estimate for unsynthesized chunks; excludes network waits and pauses.";
+    }
     this.createSpeedPanel(root);
+    this.createVolumePanel(root);
+    const seekControls = root.createDiv({ cls: "note-reader-cosyvoice-actions" });
+    const zhControls = this.plugin.settings?.settingsLanguage === "chinese";
+    this.createActionButton(seekControls, "rotate-ccw", zhControls ? "\u540E\u9000 5 \u79D2" : "Back 5s", () => {
+      this.plugin.seekCurrentAudioBySeconds(-KEYBOARD_SEEK_SECONDS);
+    }, !state.canSeek, { triggerOnPointerDown: true });
+    this.createActionButton(seekControls, "rotate-cw", zhControls ? "\u524D\u8FDB 5 \u79D2" : "Forward 5s", () => {
+      this.plugin.seekCurrentAudioBySeconds(KEYBOARD_SEEK_SECONDS);
+    }, !state.canSeek, { triggerOnPointerDown: true });
     const actions = root.createDiv({ cls: "note-reader-cosyvoice-actions" });
     const canExportFile = typeof this.plugin.canExportCurrentFile !== "function" || this.plugin.canExportCurrentFile();
     const canInsertExport = typeof this.plugin.canInsertAudioExportIntoCurrentNote !== "function" || this.plugin.canInsertAudioExportIntoCurrentNote();
@@ -5999,8 +6206,8 @@ var CosyVoiceReaderView = class extends ItemView {
     }
     const canResumeFile = typeof this.plugin.canResumeCurrentFile === "function" && this.plugin.canResumeCurrentFile();
     this.createActionButton(actions, "history", "Resume file", () => {
-      void this.plugin.resumeCurrentFile();
-    }, !canResumeFile);
+      this.runPluginAction("Resume file", () => this.plugin.resumeCurrentFile());
+    }, !canResumeFile, { triggerOnPointerDown: true });
     this.createActionButton(
       actions,
       state.isPaused ? "play" : "pause",
@@ -6019,46 +6226,93 @@ var CosyVoiceReaderView = class extends ItemView {
       "square",
       "Stop",
       () => {
-        void this.plugin.stopReading();
+        this.runPluginAction("Stop", () => this.plugin.stopReading());
       },
-      !state.canStop
+      !state.canStop,
+      { triggerOnPointerDown: true }
     );
     const details = root.createDiv({ cls: "note-reader-cosyvoice-details" });
-    details.createDiv({ cls: "note-reader-cosyvoice-detail-label", text: "Phase" });
+    details.createDiv({ cls: "note-reader-cosyvoice-detail-label", text: this.translate("Phase") });
     details.createDiv({ cls: "note-reader-cosyvoice-detail-value", text: state.phase });
-    details.createDiv({ cls: "note-reader-cosyvoice-detail-label", text: "Source" });
+    details.createDiv({ cls: "note-reader-cosyvoice-detail-label", text: this.translate("Source") });
     details.createDiv({ cls: "note-reader-cosyvoice-detail-value", text: state.source || "-" });
     if (state.error) {
       root.createDiv({ cls: "note-reader-cosyvoice-error", text: state.error });
     }
     const preview = root.createDiv({ cls: "note-reader-cosyvoice-preview" });
-    preview.createDiv({ cls: "note-reader-cosyvoice-detail-label", text: "Text" });
+    preview.createDiv({ cls: "note-reader-cosyvoice-detail-label", text: this.translate("Text") });
     preview.createDiv({
       cls: "note-reader-cosyvoice-preview-text",
       text: state.currentText || "-"
     });
   }
-  createSpeedPanel(parent) {
-    const currentSpeed = normalizeSpeed(this.plugin.settings && this.plugin.settings.speed);
+  createVolumePanel(parent) {
+    const zh = this.plugin.settings?.settingsLanguage === "chinese";
     const panel = parent.createDiv({ cls: "note-reader-cosyvoice-speed-panel" });
     const header = panel.createDiv({ cls: "note-reader-cosyvoice-speed-header" });
-    header.createSpan({ cls: "note-reader-cosyvoice-detail-label", text: "Speed" });
+    header.createSpan({ text: zh ? "\u97F3\u91CF" : "Volume" });
+    const volume = normalizeVolume(this.plugin.settings?.playbackVolume);
+    const label = header.createSpan({ text: `${Math.round(volume * 100)}%` });
+    const slider = panel.createEl("input", { attr: {
+      type: "range",
+      min: "0",
+      max: "100",
+      step: "1",
+      value: String(Math.round(volume * 100)),
+      "aria-label": zh ? "\u64AD\u653E\u97F3\u91CF" : "Playback volume"
+    } });
+    slider.style.width = "100%";
+    slider.addEventListener("pointerdown", (event) => {
+      if (Number.isFinite(event.button) && event.button !== 0) return;
+      this.volumeInteracting = true;
+      try {
+        slider.setPointerCapture(event.pointerId);
+      } catch (_) {
+        this.volumeInteracting = false;
+      }
+    });
+    const release = () => {
+      this.volumeInteracting = false;
+    };
+    slider.addEventListener("lostpointercapture", release);
+    slider.addEventListener("pointerup", release);
+    slider.addEventListener("pointercancel", release);
+    slider.addEventListener("blur", release);
+    slider.addEventListener("keydown", () => {
+      this.volumeInteracting = true;
+    });
+    slider.addEventListener("keyup", release);
+    slider.addEventListener("input", () => {
+      const next = this.plugin.setPlaybackVolume(Number(slider.value) / 100);
+      label.textContent = `${Math.round(next * 100)}%`;
+    });
+    slider.addEventListener("change", () => {
+      this.runPluginAction("Save playback volume", () => this.plugin.saveSettings());
+    });
+  }
+  createSpeedPanel(parent) {
+    const currentSpeed = normalizeSpeed(this.plugin.settings && this.plugin.settings.playbackSpeed);
+    const panel = parent.createDiv({ cls: "note-reader-cosyvoice-speed-panel" });
+    const header = panel.createDiv({ cls: "note-reader-cosyvoice-speed-header" });
+    header.createSpan({ cls: "note-reader-cosyvoice-detail-label", text: this.plugin.settings?.settingsLanguage === "chinese" ? "\u64AD\u653E\u500D\u901F" : "Playback speed" });
+    header.title = this.plugin.settings?.settingsLanguage === "chinese" ? "\u7ACB\u5373\u8C03\u8282\u64AD\u653E\u500D\u901F\uFF0C\u4E0D\u91CD\u65B0\u5408\u6210\u97F3\u9891\uFF0C\u4E0D\u6539\u53D8\u5BFC\u51FA\u6587\u4EF6\u3002" : "Immediate playback speed; no resynthesis or changes to exported files.";
     header.createSpan({ cls: "note-reader-cosyvoice-speed-current", text: formatSpeedLabel(currentSpeed) });
     const options = panel.createDiv({ cls: "note-reader-cosyvoice-speed-options" });
     for (const speed of getSpeedPresets()) {
       const isActive = Math.abs(currentSpeed - speed) < 1e-3;
+      const speedTitle = this.plugin.settings?.settingsLanguage === "chinese" ? `\u64AD\u653E\u500D\u901F\u8BBE\u4E3A ${formatSpeedLabel(speed)}` : `Set playback speed to ${formatSpeedLabel(speed)}`;
       const button = options.createEl("button", {
         cls: `note-reader-cosyvoice-speed-option${isActive ? " is-active" : ""}`,
         text: formatSpeedLabel(speed),
         attr: {
-          "aria-label": `Set speech speed to ${formatSpeedLabel(speed)}`,
+          "aria-label": speedTitle,
           "aria-pressed": String(isActive),
-          title: `Set speech speed to ${formatSpeedLabel(speed)}`
+          title: speedTitle
         }
       });
-      button.addEventListener("click", () => {
-        void this.plugin.setSpeechSpeed(speed);
-      });
+      this.wireButtonAction(button, () => {
+        this.runPluginAction("Set playback speed", () => this.plugin.setPlaybackSpeed(speed));
+      }, { triggerOnPointerDown: true });
     }
   }
   handlePanelKeydown(event) {
@@ -6082,6 +6336,7 @@ var CosyVoiceReaderView = class extends ItemView {
     }
   }
   createIconButton(parent, icon, label, onClick, disabled = false, options = {}) {
+    label = this.translate(label);
     const button = parent.createEl("button", {
       cls: "note-reader-cosyvoice-icon-button",
       attr: {
@@ -6097,11 +6352,12 @@ var CosyVoiceReaderView = class extends ItemView {
     return button;
   }
   createActionButton(parent, icon, label, onClick, disabled = false, options = {}) {
+    label = this.translate(label);
     const button = parent.createEl("button", {
       cls: "note-reader-cosyvoice-action",
       attr: {
         "aria-label": label,
-        title: options.title || label
+        title: this.translate(options.title || label)
       }
     });
     button.disabled = disabled;
@@ -6127,6 +6383,7 @@ var CosyVoiceReaderView = class extends ItemView {
       });
     }
     button.addEventListener("click", (event) => {
+      if (button.disabled) return;
       if (pointerHandled) {
         pointerHandled = false;
         event.preventDefault();
@@ -6154,6 +6411,7 @@ var CosyVoiceReaderSettingTab = class extends PluginSettingTab {
       dropdown.addOption("english", ui.settingsLanguageEnglish).addOption("chinese", ui.settingsLanguageChinese).setValue(settingsLanguage).onChange(async (value) => {
         this.plugin.settings.settingsLanguage = normalizeSettingsLanguage(value);
         await this.plugin.saveSettings();
+        this.plugin.renderReaderViews();
         this.display();
       });
     });
@@ -6178,6 +6436,18 @@ var CosyVoiceReaderSettingTab = class extends PluginSettingTab {
         "mimo-v2.5-tts with built-in voices. Listed as temporarily free on 2026-09-27; limits and pricing may change. Speed is a natural-language instruction, not an exact synthesis rate.",
         "\u4F7F\u7528 mimo-v2.5-tts \u5B98\u65B9\u9884\u7F6E\u97F3\u8272\u30022026-09-27 \u5B98\u65B9\u5217\u4E3A\u9650\u65F6\u514D\u8D39\uFF0C\u989D\u5EA6\u53CA\u4EF7\u683C\u53EF\u80FD\u53D8\u5316\u3002\u5408\u6210\u8BED\u901F\u901A\u8FC7\u81EA\u7136\u8BED\u8A00\u6307\u4EE4\u63A7\u5236\uFF0C\u4E0D\u4FDD\u8BC1\u7CBE\u786E\u500D\u7387\u3002"
       )).addButton((button) => button.setButtonText(label("Pricing", "\u5B98\u65B9\u4EF7\u683C")).onClick(() => window.open("https://mimo.mi.com/docs/zh-CN/price/pay-as-you-go"))).addButton((button) => button.setButtonText(label("Privacy", "\u9690\u79C1\u653F\u7B56")).onClick(() => window.open("https://privacy.mi.com/XiaomiMiMoPlatform/zh_CN/")));
+      new Setting(containerEl).setName(label("MiMo completeness protection", "MiMo \u5B8C\u6574\u6027\u4FDD\u62A4")).setDesc(label(
+        "Abnormal completion stops reading without automatic resynthesis. Normal completion does not prove every word was spoken.",
+        "\u5F02\u5E38\u7ED3\u675F\u4F1A\u505C\u6B62\u6717\u8BFB\uFF0C\u4E0D\u81EA\u52A8\u91CD\u65B0\u5408\u6210\u3002\u6B63\u5E38\u7ED3\u675F\u6807\u8BB0\u4ECD\u4E0D\u80FD\u8BC1\u660E\u6BCF\u4E2A\u5B57\u90FD\u5DF2\u8BFB\u51FA\u3002"
+      ));
+      new Setting(containerEl).setName(label("MiMo chunk character cap", "MiMo \u6BCF\u6BB5\u5B57\u7B26\u4E0A\u9650")).setDesc(label(
+        "Client precaution, not an API limit. Default 200; adjustable 50-2000. Effective size is the smaller of this cap and online chunk limits. Smaller chunks increase request count.",
+        "\u5BA2\u6237\u7AEF\u4FDD\u5B88\u503C\uFF0C\u4E0D\u662F\u63A5\u53E3\u4E0A\u9650\u3002\u9ED8\u8BA4 200\uFF0C\u53EF\u8C03 50\u20132000\uFF1B\u4E0E\u5728\u7EBF\u5206\u6BB5\u8BBE\u7F6E\u53D6\u8F83\u5C0F\u503C\u3002\u8F83\u5C0F\u7684\u5206\u6BB5\u4F1A\u589E\u52A0\u8BF7\u6C42\u6B21\u6570\u3002"
+      )).addText((text) => text.setValue(String(this.plugin.settings.mimoChunkLimit || 200)).onChange(async (value) => {
+        if (!/^\d+$/.test(value) || Number(value) < 50 || Number(value) > 2e3) return;
+        this.plugin.settings.mimoChunkLimit = Number(value);
+        await this.plugin.saveSettings();
+      }));
       const credentialSource = normalizeCredentialSource(this.plugin.settings.mimoCredentialSource);
       new Setting(containerEl).setName(ui.credentialSourceName).setDesc(ui.credentialSourceDesc).addDropdown((dropdown) => dropdown.addOption("obsidian-secret", ui.credentialSourceSecret).addOption("key-file", ui.credentialSourceFile).setValue(credentialSource).onChange(async (value) => {
         this.plugin.settings.mimoCredentialSource = normalizeCredentialSource(value);

@@ -40,6 +40,50 @@ function createPcmWave(samples, options = {}) {
   return output;
 }
 
+test('WAV joins shorten only long silent boundaries without touching speech or internal pauses', async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'note-reader-trim-test-'));
+  try {
+    const silence = Array(1000).fill(0);
+    const speech = [2, 10, -20, 100, -2];
+    const a = path.join(directory, 'a.wav');
+    const b = path.join(directory, 'b.wav');
+    const out = path.join(directory, 'out.wav');
+    const first = [...silence, ...speech, ...silence, ...speech, ...silence];
+    const second = [...silence, ...speech, ...silence];
+    fs.writeFileSync(a, createPcmWave(first, { sampleRate: 1000 }));
+    fs.writeFileSync(b, createPcmWave(second, { sampleRate: 1000 }));
+    const result = await mergeWaveFiles([a, b], out);
+    const expected = [...first.slice(0, -850), ...second.slice(850)];
+    assert.deepEqual(Buffer.concat(parseWaveBuffer(fs.readFileSync(out)).dataChunks),
+      createPcmWave(expected).subarray(44));
+    assert.equal(result.bytes, fs.statSync(out).size);
+    await mergeWaveFiles([a], out);
+    assert.deepEqual(Buffer.concat(parseWaveBuffer(fs.readFileSync(out)).dataChunks),
+      createPcmWave(first).subarray(44));
+    fs.writeFileSync(a, createPcmWave(silence, { sampleRate: 1000 }));
+    fs.writeFileSync(b, createPcmWave(silence, { sampleRate: 1000 }));
+    await mergeWaveFiles([a, b], out);
+    assert.equal(parseWaveBuffer(fs.readFileSync(out)).dataBytes, 4000);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('WAV boundary detection preserves short pauses and speech in either stereo channel', async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'note-reader-stereo-test-'));
+  try {
+    const a = path.join(directory, 'a.wav');
+    const out = path.join(directory, 'out.wav');
+    const samples = [...Array(400).fill(0), ...Array.from({ length: 2000 }, (_, i) => i % 2 ? 2 : 0), ...Array(400).fill(0)];
+    fs.writeFileSync(a, createPcmWave(samples, { channels: 2, sampleRate: 1000 }));
+    await mergeWaveFiles([a, a], out);
+    assert.deepEqual(Buffer.concat(parseWaveBuffer(fs.readFileSync(out)).dataChunks),
+      createPcmWave([...samples, ...samples], { channels: 2 }).subarray(44));
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 function createMp3Frame(fill = 0x11) {
   const frameLength = Math.floor((144 * 128000) / 44100);
   const frame = Buffer.alloc(frameLength, fill);

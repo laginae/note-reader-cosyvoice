@@ -6,6 +6,8 @@ Note and PDF Voice Reader 是一个隐私优先的桌面端 Obsidian 语音朗�
 
 ### 小米 MiMo TTS 快速开始
 
+MiMo 默认每段最多 200 字符，可在设置中调整（客户端保守措施，并非官方接口上限），更短的用户设置仍保留，可能增加请求次数。生成异常结束或 WAV 文件不完整时会停止，不再自动跳段或重新合成。正常结束标记并不能证明逐字完整；MiMo 当前未提供可供核对的音频转写结果。
+
 1. 在 [MiMo 控制台](https://platform.xiaomimimo.com/)创建普通 API Key，不是 Token Plan 密钥。
 2. 在插件设置中选择 **Xiaomi MiMo TTS**，使用 Obsidian SecretStorage 保存密钥；旧版 Obsidian 可使用库外单行密钥文件。
 3. 阅读隐私说明，开启 **允许 MiMo 在线处理**。提供 8 种官方音色，默认 **白桦（中文男声）**；官方未明确区分这些英语音色的英式或美式口音。

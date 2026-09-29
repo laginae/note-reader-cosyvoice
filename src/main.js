@@ -7,7 +7,8 @@ const path = require('path');
 const { spawn } = require('child_process');
 const { pathToFileURL } = require('url');
 const { extractPdfTextLayout, extractTextFromPdfItems } = require('./pdf-layout');
-const { MIMO_ENDPOINT, MIMO_DEFAULTS, MIMO_VOICES, normalizeMimoSettings, buildMimoRequestBody, decodeMimoAudio } = require('./mimo-tts');
+const { estimatePlayback, formatDuration } = require('./playback-estimate');
+const { MIMO_ENDPOINT, MIMO_DEFAULTS, MIMO_VOICES, MIMO_MAX_CHUNK_CHARS, normalizeMimoSettings, buildMimoRequestBody, decodeMimoAudio } = require('./mimo-tts');
 const {
   MAX_EXPORTED_AUDIO_BYTES,
   bufferToArrayBuffer,
@@ -192,7 +193,7 @@ const OPENROUTER_TTS_PRESETS = [
 const SETTINGS_UI_TEXT = {
   english: {
     settingsLanguageName: 'Settings language',
-    settingsLanguageDesc: 'Choose the language used on this plugin settings page.',
+    settingsLanguageDesc: 'Choose the language for settings and reader controls.',
     settingsLanguageEnglish: 'English',
     settingsLanguageChinese: '中文',
     speechEngineName: 'Speech engine',
@@ -257,8 +258,8 @@ const SETTINGS_UI_TEXT = {
     openRouterVoiceDesc: 'Voice ID supported by the selected model. Voice catalogs differ between models.',
     openRouterPrivacyName: 'OpenRouter privacy routing',
     openRouterPrivacyDesc: 'Always enforced: provider.zdr is true and provider data collection is denied. The plugin never falls back to a non-ZDR endpoint. Keep OpenRouter account-level input/output logging and data sharing disabled for private content.',
-    speedName: 'Speed',
-    speedDesc: 'Speech speed passed to the selected speech engine.',
+    speedName: 'Synthesis speed',
+    speedDesc: 'Synthesis speed for new segments only; playing and already prepared audio remain unchanged. MiMo treats speed as an instruction, not an exact rate.',
     chunkLimitsName: 'Local chunk limits',
     chunkLimitsDesc: 'Comma-separated character limits used by Local CosyVoice. Earlier chunks are shorter so playback starts sooner.',
     onlineChunkLimitsName: 'Online chunk limits',
@@ -308,7 +309,7 @@ const SETTINGS_UI_TEXT = {
   },
   chinese: {
     settingsLanguageName: '设置界面语言',
-    settingsLanguageDesc: '选择本插件设置页面使用的语言。',
+    settingsLanguageDesc: '选择插件设置和朗读控制面板使用的语言。',
     settingsLanguageEnglish: 'English',
     settingsLanguageChinese: '中文',
     speechEngineName: '语音引擎',
@@ -373,8 +374,8 @@ const SETTINGS_UI_TEXT = {
     openRouterVoiceDesc: '所选模型支持的音色 ID。不同模型的音色目录并不相同。',
     openRouterPrivacyName: 'OpenRouter 隐私路由',
     openRouterPrivacyDesc: '始终强制执行：provider.zdr 为 true，并拒绝供应商收集数据。插件不会降级到非 ZDR 端点。朗读私密内容时，还应关闭 OpenRouter 账户级输入输出日志和数据共享。',
-    speedName: '语速',
-    speedDesc: '传递给当前语音引擎的朗读速度。',
+    speedName: '合成语速',
+    speedDesc: '仅对新合成的分段生效，正在播放及已预合成的音频不变。MiMo 将速度作为指令理解，并非精确倍速。',
     chunkLimitsName: '本地分段长度',
     chunkLimitsDesc: '本地 CosyVoice 使用的字符数上限，以英文逗号分隔。前几个分段较短，可更快开始播放。',
     onlineChunkLimitsName: '在线分段长度',
@@ -1204,6 +1205,11 @@ function resolveDefaultScriptPath() {
   return '';
 }
 
+function normalizeVolume(value) {
+  return typeof value === 'number' && Number.isFinite(value)
+    ? Math.max(0, Math.min(1, value)) : 1;
+}
+
 function normalizeSpeed(value) {
   const speed = Number(value);
 
@@ -1266,7 +1272,9 @@ function normalizeOnlinePrefetchChunks(value) {
 
 function getChunkLimitsForSpeechEngine(settings, speechEngine = normalizeSpeechEngine(settings && settings.speechEngine)) {
   if (isOnlineSpeechEngine(speechEngine)) {
-    return parseChunkLimits(settings && settings.onlineChunkLimits, DEFAULT_ONLINE_CHUNK_LIMITS);
+    const limits = parseChunkLimits(settings && settings.onlineChunkLimits, DEFAULT_ONLINE_CHUNK_LIMITS);
+    const mimoLimit = Math.max(50, Math.min(2000, Math.floor(Number(settings && settings.mimoChunkLimit) || MIMO_MAX_CHUNK_CHARS)));
+    return speechEngine === 'mimo-tts' ? limits.map(limit => Math.min(limit, mimoLimit)) : limits;
   }
   return parseChunkLimits(settings && settings.chunkLimits, DEFAULT_CHUNK_LIMITS);
 }
@@ -1592,6 +1600,8 @@ function selectKnownSettings(defaults, candidate) {
 function createDefaultSettings() {
   return {
     ...MIMO_DEFAULTS,
+    playbackVolume: 1,
+    playbackSpeed: 1,
     audioExportFolder: normalizeAudioExportFolder(DEFAULT_SETTINGS.audioExportFolder),
     audioExportLocation: normalizeAudioExportLocation(DEFAULT_SETTINGS.audioExportLocation),
     azureSpeechCloud: normalizeAzureSpeechCloud(DEFAULT_SETTINGS.azureSpeechCloud),
@@ -2615,6 +2625,8 @@ class CosyVoiceReaderPlugin extends Plugin {
     const hadAzureCredentialSource = Object.prototype.hasOwnProperty.call(source, 'azureSpeechCredentialSource');
     const hadOpenRouterCredentialSource = Object.prototype.hasOwnProperty.call(source, 'openRouterCredentialSource');
     this.settings = selectKnownSettings(defaults, source);
+    this.settings.playbackVolume = normalizeVolume(this.settings.playbackVolume);
+    this.settings.playbackSpeed = normalizeSpeed(this.settings.playbackSpeed);
     normalizeMimoSettings(this.settings);
     this.settings.audioExportFolder = normalizeAudioExportFolder(this.settings.audioExportFolder);
     this.settings.audioExportLocation = normalizeAudioExportLocation(this.settings.audioExportLocation);
@@ -2659,6 +2671,8 @@ class CosyVoiceReaderPlugin extends Plugin {
 
   async saveSettings() {
     this.settings = selectKnownSettings(createDefaultSettings(), this.settings);
+    this.settings.playbackSpeed = normalizeSpeed(this.settings.playbackSpeed);
+    this.settings.playbackVolume = normalizeVolume(this.settings.playbackVolume);
     normalizeMimoSettings(this.settings);
     this.settings.audioExportFolder = normalizeAudioExportFolder(this.settings.audioExportFolder);
     this.settings.audioExportLocation = normalizeAudioExportLocation(this.settings.audioExportLocation);
@@ -2696,7 +2710,13 @@ class CosyVoiceReaderPlugin extends Plugin {
 
   async resetSettingsToDefaults() {
     this.settings = createDefaultSettings();
+    if (this.currentAudio) {
+      this.currentAudio.volume = this.settings.playbackVolume;
+      this.currentAudio.playbackRate = this.settings.playbackSpeed;
+      this.currentAudio.defaultPlaybackRate = this.settings.playbackSpeed;
+    }
     await this.saveSettings();
+    this.renderReaderViews();
   }
 
   async setSpeechSpeed(speed) {
@@ -2708,6 +2728,25 @@ class CosyVoiceReaderPlugin extends Plugin {
     await this.saveSettings();
     this.renderReaderViews();
     return this.settings.speed;
+  }
+
+  async setPlaybackSpeed(value) {
+    if (!this.settings) this.settings = createDefaultSettings();
+    this.settings.playbackSpeed = normalizeSpeed(value);
+    if (this.currentAudio) {
+      this.currentAudio.preservesPitch = true;
+      this.currentAudio.defaultPlaybackRate = this.settings.playbackSpeed;
+      this.currentAudio.playbackRate = this.settings.playbackSpeed;
+    }
+    this.renderReaderViews();
+    await this.saveSettings();
+  }
+
+  setPlaybackVolume(value) {
+    if (!this.settings) this.settings = createDefaultSettings();
+    this.settings.playbackVolume = normalizeVolume(value);
+    if (this.currentAudio) this.currentAudio.volume = this.settings.playbackVolume;
+    return this.settings.playbackVolume;
   }
 
   async ensureCacheDir() {
@@ -4630,6 +4669,8 @@ class CosyVoiceReaderPlugin extends Plugin {
     }
 
     session.speechStarted = true;
+    session.synthesisSpeeds = session.synthesisSpeeds || {};
+    session.synthesisSpeeds[index] = normalizeSpeed(this.settings.speed);
     const speechEngine = normalizeSpeechEngine(session.speechEngine || this.settings.speechEngine);
     const engineLabel = session.engineLabel || getSpeechEngineLabel(this.settings);
     const outputExtension = ['local-cosyvoice', 'mimo-tts'].includes(speechEngine) ? 'wav' : 'mp3';
@@ -5201,8 +5242,30 @@ class CosyVoiceReaderPlugin extends Plugin {
 
       try {
         audio = new Audio();
+        audio.volume = normalizeVolume(this.settings.playbackVolume);
+        audio.preservesPitch = true;
+        audio.defaultPlaybackRate = normalizeSpeed(this.settings.playbackSpeed);
+        audio.playbackRate = normalizeSpeed(this.settings.playbackSpeed);
         audio.noteReaderReleaseSource = source.release;
         audio.preload = 'auto';
+        const recordDuration = () => {
+          if (this.isActive(session) && Number.isFinite(audio.duration) && audio.duration > 0) {
+            session.audioDurations = session.audioDurations || {};
+            session.audioDurations[index] = audio.duration;
+          }
+        };
+        const applyPlaybackSpeed = () => {
+          if (settled || !this.isActive(session)) return;
+          audio.defaultPlaybackRate = normalizeSpeed(this.settings.playbackSpeed);
+          audio.playbackRate = audio.defaultPlaybackRate;
+          audio.preservesPitch = true;
+        };
+        audio.onloadedmetadata = () => {
+          applyPlaybackSpeed();
+          recordDuration();
+        };
+        audio.onplaying = applyPlaybackSpeed;
+        audio.ondurationchange = recordDuration;
         this.currentAudio = audio;
         const playbackTotal = getPlaybackTotal();
         this.updateStatus(`${session.engineLabel || getSpeechEngineLabel(this.settings)} play ${index + 1}/${playbackTotal}`, {
@@ -5226,6 +5289,7 @@ class CosyVoiceReaderPlugin extends Plugin {
 
         let lastProgressUpdate = 0;
         audio.ontimeupdate = () => {
+          recordDuration();
           const now = Date.now();
           if (now - lastProgressUpdate < 250) {
             return;
@@ -5258,6 +5322,8 @@ class CosyVoiceReaderPlugin extends Plugin {
         };
 
         audio.src = source.url;
+        // Loading a new source can reset playbackRate to defaultPlaybackRate.
+        applyPlaybackSpeed();
         Promise.resolve(audio.play()).catch((error) => {
           finish(reject, error);
         });
@@ -5331,6 +5397,14 @@ class CosyVoiceReaderPlugin extends Plugin {
   }
 
   seekToProgress(progress) {
+    const session = this.activeSession;
+    if (session && session.kind === 'audio-export') return false;
+    const total = session && Array.isArray(session.chunks) ? session.chunks.length : 0;
+    if (this.isActive(session) && total > 0) {
+      const target = Math.min(total - 1, Math.floor(clampProgress(progress) * total));
+      const current = Math.max(0, (this.readerState.currentChunk || 1) - 1);
+      if (target !== current) return this.jumpToAdjacentChunk(target - current);
+    }
     const audio = this.currentAudio;
     if (!audio || !Number.isFinite(audio.duration) || audio.duration <= 0) {
       return false;
@@ -5622,6 +5696,25 @@ class CosyVoiceReaderPlugin extends Plugin {
 };
 
 class CosyVoiceReaderView extends ItemView {
+  translate(text) {
+    if (this.plugin.settings?.settingsLanguage !== 'chinese') return text;
+    return {
+      'Voice Reader': '语音朗读', 'Voice reader controls': '朗读控制面板',
+      'Previous chunk': '上一段', 'Next chunk': '下一段', 'Reading progress': '朗读进度',
+      'Read selection': '朗读选中文字', 'Read from selection': '从选中位置朗读',
+      'Read file': '朗读全文', 'Export audio': '导出音频',
+      'Export & insert audio': '导出并插入音频', 'Retry merge only': '仅重试拼接',
+      'Resume file': '从上次位置续读', 'Resume': '继续', 'Pause': '暂停', 'Stop': '停止',
+      'Resume reading (or press Space)': '继续朗读（也可按空格键）',
+      'Pause reading (or press Space)': '暂停朗读（也可按空格键）',
+      'Export all, selected, or remaining audio from the current note or PDF': '导出当前笔记或 PDF 的全部、选中部分或选中位置以后的音频',
+      'Export audio and insert it into the current Markdown note': '导出音频并插入当前 Markdown 笔记',
+      'Audio can be inserted into Markdown notes, not PDF files': '音频只能插入 Markdown 笔记，不能插入 PDF',
+      'Reuse the kept synthesized segments without making any TTS API requests': '复用保留的分段音频，不再调用语音 API',
+      'Phase': '阶段', 'Source': '来源', 'Text': '文本',
+    }[text] || text;
+  }
+
   constructor(leaf, plugin) {
     super(leaf);
     this.plugin = plugin;
@@ -5633,7 +5726,7 @@ class CosyVoiceReaderView extends ItemView {
   }
 
   getDisplayText() {
-    return 'Voice Reader';
+    return this.translate('Voice Reader');
   }
 
   getIcon() {
@@ -5649,17 +5742,18 @@ class CosyVoiceReaderView extends ItemView {
   }
 
   render() {
+    if (this.volumeInteracting) return;
     const root = this.contentEl || this.containerEl.children[1] || this.containerEl;
     const state = this.plugin.readerState || createReaderState();
 
     root.empty();
     root.addClass('note-reader-cosyvoice-view');
     root.setAttribute('tabindex', '0');
-    root.setAttribute('aria-label', 'Voice reader controls');
+    root.setAttribute('aria-label', this.translate('Voice reader controls'));
     root.addEventListener('keydown', this.handlePanelKeydown);
 
     const header = root.createDiv({ cls: 'note-reader-cosyvoice-panel-header' });
-    header.createEl('h3', { text: 'Voice Reader' });
+    header.createEl('h3', { text: this.translate('Voice Reader') });
     header.createDiv({ cls: `note-reader-cosyvoice-state is-${state.status}`, text: state.label });
 
     const progressWrap = root.createDiv({ cls: 'note-reader-cosyvoice-progress-wrap' });
@@ -5667,26 +5761,35 @@ class CosyVoiceReaderView extends ItemView {
     this.createIconButton(progressControls, 'skip-back', 'Previous chunk', () => {
       this.plugin.jumpToAdjacentChunk(-1);
     }, !state.canPreviousChunk, { triggerOnPointerDown: true });
+    const canNavigateProgress = state.canSeek || state.canNextChunk || state.canPreviousChunk;
     const progressTrack = progressControls.createDiv({
-      cls: `note-reader-cosyvoice-progress-track${state.canSeek ? ' is-seekable' : ''}`,
+      cls: `note-reader-cosyvoice-progress-track${canNavigateProgress ? ' is-seekable' : ''}`,
     });
     const progressFill = progressTrack.createDiv({ cls: 'note-reader-cosyvoice-progress-fill' });
     progressFill.style.width = `${Math.round(state.progress * 100)}%`;
     const progressInput = progressTrack.createEl('input', {
       cls: 'note-reader-cosyvoice-progress-input',
       attr: {
-        'aria-label': 'Reading progress',
+        'aria-label': this.translate('Reading progress'),
         max: '1000',
         min: '0',
         step: '1',
-        title: state.canSeek ? 'Drag to seek within the current audio chunk' : 'Progress is seekable while audio is playing',
+        title: 'Click to jump among available chunks; within the current chunk, seek by time. Other chunks start at the beginning and may require synthesis.',
         type: 'range',
         value: String(Math.round(state.progress * 1000)),
       },
     });
-    progressInput.disabled = !state.canSeek;
+    progressInput.disabled = !canNavigateProgress;
+    progressInput.addEventListener('pointerdown', (event) => {
+      if (!canNavigateProgress || event.button !== 0) return;
+      const bounds = progressInput.getBoundingClientRect();
+      if (!bounds.width) return;
+      event.preventDefault();
+      event.stopPropagation();
+      this.plugin.seekToProgress(clampProgress((event.clientX - bounds.left) / bounds.width));
+    });
     progressInput.addEventListener('input', () => {
-      if (!state.canSeek) {
+      if (!canNavigateProgress) {
         return;
       }
       const requestedProgress = Number(progressInput.value) / 1000;
@@ -5700,7 +5803,34 @@ class CosyVoiceReaderView extends ItemView {
     meta.createSpan({ text: formatProgressLabel(state) });
     meta.createSpan({ text: `${Math.round(state.progress * 100)}%` });
 
+    const estimate = estimatePlayback(this.plugin.activeSession,
+      Math.max(0, (state.currentChunk || 1) - 1),
+      this.plugin.currentAudio?.currentTime || 0, this.plugin.settings.speed,
+      normalizeSpeed(this.plugin.settings.playbackSpeed));
+    if (estimate) {
+      const zh = this.plugin.settings.settingsLanguage === 'chinese';
+      const timing = progressWrap.createDiv({ cls: 'note-reader-cosyvoice-meta' });
+      timing.style.flexWrap = 'wrap';
+      timing.style.gap = '4px 12px';
+      timing.createSpan({ text: `${zh ? '预计总时长' : 'Estimated total'} ${formatDuration(estimate.total)}` });
+      timing.createSpan({ text: `${zh ? '预计剩余' : 'Estimated remaining'} ${formatDuration(estimate.remaining)}` });
+      if (estimate.partial) progressWrap.createDiv({
+        cls: 'note-reader-cosyvoice-meta',
+        text: zh ? '仅计已解析页面，随解析更新' : 'Parsed pages only; updates as parsing continues',
+      });
+      timing.title = zh ? '未合成部分按文本估算；不含网络等待和暂停时间。' : 'Text estimate for unsynthesized chunks; excludes network waits and pauses.';
+    }
+
     this.createSpeedPanel(root);
+    this.createVolumePanel(root);
+    const seekControls = root.createDiv({ cls: 'note-reader-cosyvoice-actions' });
+    const zhControls = this.plugin.settings?.settingsLanguage === 'chinese';
+    this.createActionButton(seekControls, 'rotate-ccw', zhControls ? '后退 5 秒' : 'Back 5s', () => {
+      this.plugin.seekCurrentAudioBySeconds(-KEYBOARD_SEEK_SECONDS);
+    }, !state.canSeek, { triggerOnPointerDown: true });
+    this.createActionButton(seekControls, 'rotate-cw', zhControls ? '前进 5 秒' : 'Forward 5s', () => {
+      this.plugin.seekCurrentAudioBySeconds(KEYBOARD_SEEK_SECONDS);
+    }, !state.canSeek, { triggerOnPointerDown: true });
 
     const actions = root.createDiv({ cls: 'note-reader-cosyvoice-actions' });
     const canExportFile = typeof this.plugin.canExportCurrentFile !== 'function'
@@ -5743,8 +5873,8 @@ class CosyVoiceReaderView extends ItemView {
     const canResumeFile = typeof this.plugin.canResumeCurrentFile === 'function'
       && this.plugin.canResumeCurrentFile();
     this.createActionButton(actions, 'history', 'Resume file', () => {
-      void this.plugin.resumeCurrentFile();
-    }, !canResumeFile);
+      this.runPluginAction('Resume file', () => this.plugin.resumeCurrentFile());
+    }, !canResumeFile, { triggerOnPointerDown: true });
     this.createActionButton(
       actions,
       state.isPaused ? 'play' : 'pause',
@@ -5765,15 +5895,16 @@ class CosyVoiceReaderView extends ItemView {
       'square',
       'Stop',
       () => {
-        void this.plugin.stopReading();
+        this.runPluginAction('Stop', () => this.plugin.stopReading());
       },
-      !state.canStop
+      !state.canStop,
+      { triggerOnPointerDown: true }
     );
 
     const details = root.createDiv({ cls: 'note-reader-cosyvoice-details' });
-    details.createDiv({ cls: 'note-reader-cosyvoice-detail-label', text: 'Phase' });
+    details.createDiv({ cls: 'note-reader-cosyvoice-detail-label', text: this.translate('Phase') });
     details.createDiv({ cls: 'note-reader-cosyvoice-detail-value', text: state.phase });
-    details.createDiv({ cls: 'note-reader-cosyvoice-detail-label', text: 'Source' });
+    details.createDiv({ cls: 'note-reader-cosyvoice-detail-label', text: this.translate('Source') });
     details.createDiv({ cls: 'note-reader-cosyvoice-detail-value', text: state.source || '-' });
 
     if (state.error) {
@@ -5781,35 +5912,73 @@ class CosyVoiceReaderView extends ItemView {
     }
 
     const preview = root.createDiv({ cls: 'note-reader-cosyvoice-preview' });
-    preview.createDiv({ cls: 'note-reader-cosyvoice-detail-label', text: 'Text' });
+    preview.createDiv({ cls: 'note-reader-cosyvoice-detail-label', text: this.translate('Text') });
     preview.createDiv({
       cls: 'note-reader-cosyvoice-preview-text',
       text: state.currentText || '-',
     });
   }
 
-  createSpeedPanel(parent) {
-    const currentSpeed = normalizeSpeed(this.plugin.settings && this.plugin.settings.speed);
+  createVolumePanel(parent) {
+    const zh = this.plugin.settings?.settingsLanguage === 'chinese';
     const panel = parent.createDiv({ cls: 'note-reader-cosyvoice-speed-panel' });
     const header = panel.createDiv({ cls: 'note-reader-cosyvoice-speed-header' });
-    header.createSpan({ cls: 'note-reader-cosyvoice-detail-label', text: 'Speed' });
+    header.createSpan({ text: zh ? '\u97f3\u91cf' : 'Volume' });
+    const volume = normalizeVolume(this.plugin.settings?.playbackVolume);
+    const label = header.createSpan({ text: `${Math.round(volume * 100)}%` });
+    const slider = panel.createEl('input', { attr: {
+      type: 'range', min: '0', max: '100', step: '1', value: String(Math.round(volume * 100)),
+      'aria-label': zh ? '\u64ad\u653e\u97f3\u91cf' : 'Playback volume',
+    } });
+    slider.style.width = '100%';
+    slider.addEventListener('pointerdown', (event) => {
+      if (Number.isFinite(event.button) && event.button !== 0) return;
+      this.volumeInteracting = true;
+      try { slider.setPointerCapture(event.pointerId); } catch (_) { this.volumeInteracting = false; }
+    });
+    const release = () => { this.volumeInteracting = false; };
+    slider.addEventListener('lostpointercapture', release);
+    slider.addEventListener('pointerup', release);
+    slider.addEventListener('pointercancel', release);
+    slider.addEventListener('blur', release);
+    slider.addEventListener('keydown', () => { this.volumeInteracting = true; });
+    slider.addEventListener('keyup', release);
+    slider.addEventListener('input', () => {
+      const next = this.plugin.setPlaybackVolume(Number(slider.value) / 100);
+      label.textContent = `${Math.round(next * 100)}%`;
+    });
+    slider.addEventListener('change', () => {
+      this.runPluginAction('Save playback volume', () => this.plugin.saveSettings());
+    });
+  }
+
+  createSpeedPanel(parent) {
+    const currentSpeed = normalizeSpeed(this.plugin.settings && this.plugin.settings.playbackSpeed);
+    const panel = parent.createDiv({ cls: 'note-reader-cosyvoice-speed-panel' });
+    const header = panel.createDiv({ cls: 'note-reader-cosyvoice-speed-header' });
+    header.createSpan({ cls: 'note-reader-cosyvoice-detail-label', text: this.plugin.settings?.settingsLanguage === 'chinese' ? '播放倍速' : 'Playback speed' });
+    header.title = this.plugin.settings?.settingsLanguage === 'chinese'
+      ? '立即调节播放倍速，不重新合成音频，不改变导出文件。'
+      : 'Immediate playback speed; no resynthesis or changes to exported files.';
     header.createSpan({ cls: 'note-reader-cosyvoice-speed-current', text: formatSpeedLabel(currentSpeed) });
 
     const options = panel.createDiv({ cls: 'note-reader-cosyvoice-speed-options' });
     for (const speed of getSpeedPresets()) {
       const isActive = Math.abs(currentSpeed - speed) < 0.001;
+      const speedTitle = this.plugin.settings?.settingsLanguage === 'chinese'
+        ? `播放倍速设为 ${formatSpeedLabel(speed)}` : `Set playback speed to ${formatSpeedLabel(speed)}`;
       const button = options.createEl('button', {
         cls: `note-reader-cosyvoice-speed-option${isActive ? ' is-active' : ''}`,
         text: formatSpeedLabel(speed),
         attr: {
-          'aria-label': `Set speech speed to ${formatSpeedLabel(speed)}`,
+          'aria-label': speedTitle,
           'aria-pressed': String(isActive),
-          title: `Set speech speed to ${formatSpeedLabel(speed)}`,
+          title: speedTitle,
         },
       });
-      button.addEventListener('click', () => {
-        void this.plugin.setSpeechSpeed(speed);
-      });
+      this.wireButtonAction(button, () => {
+        this.runPluginAction('Set playback speed', () => this.plugin.setPlaybackSpeed(speed));
+      }, { triggerOnPointerDown: true });
     }
   }
 
@@ -5837,6 +6006,7 @@ class CosyVoiceReaderView extends ItemView {
   }
 
   createIconButton(parent, icon, label, onClick, disabled = false, options = {}) {
+    label = this.translate(label);
     const button = parent.createEl('button', {
       cls: 'note-reader-cosyvoice-icon-button',
       attr: {
@@ -5855,11 +6025,12 @@ class CosyVoiceReaderView extends ItemView {
   }
 
   createActionButton(parent, icon, label, onClick, disabled = false, options = {}) {
+    label = this.translate(label);
     const button = parent.createEl('button', {
       cls: 'note-reader-cosyvoice-action',
       attr: {
         'aria-label': label,
-        title: options.title || label,
+        title: this.translate(options.title || label),
       },
     });
     button.disabled = disabled;
@@ -5890,6 +6061,7 @@ class CosyVoiceReaderView extends ItemView {
     }
 
     button.addEventListener('click', (event) => {
+      if (button.disabled) return;
       if (pointerHandled) {
         pointerHandled = false;
         event.preventDefault();
@@ -5929,6 +6101,7 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
           .onChange(async (value) => {
             this.plugin.settings.settingsLanguage = normalizeSettingsLanguage(value);
             await this.plugin.saveSettings();
+            this.plugin.renderReaderViews();
             this.display();
           });
       });
@@ -5969,6 +6142,17 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
           '使用 mimo-v2.5-tts 官方预置音色。2026-09-27 官方列为限时免费，额度及价格可能变化。合成语速通过自然语言指令控制，不保证精确倍率。'))
         .addButton(button => button.setButtonText(label('Pricing', '官方价格')).onClick(() => window.open('https://mimo.mi.com/docs/zh-CN/price/pay-as-you-go')))
         .addButton(button => button.setButtonText(label('Privacy', '隐私政策')).onClick(() => window.open('https://privacy.mi.com/XiaomiMiMoPlatform/zh_CN/')));
+      new Setting(containerEl).setName(label('MiMo completeness protection', 'MiMo 完整性保护'))
+        .setDesc(label('Abnormal completion stops reading without automatic resynthesis. Normal completion does not prove every word was spoken.',
+          '异常结束会停止朗读，不自动重新合成。正常结束标记仍不能证明每个字都已读出。'));
+      new Setting(containerEl).setName(label('MiMo chunk character cap', 'MiMo 每段字符上限'))
+        .setDesc(label('Client precaution, not an API limit. Default 200; adjustable 50-2000. Effective size is the smaller of this cap and online chunk limits. Smaller chunks increase request count.',
+          '客户端保守值，不是接口上限。默认 200，可调 50–2000；与在线分段设置取较小值。较小的分段会增加请求次数。'))
+        .addText(text => text.setValue(String(this.plugin.settings.mimoChunkLimit || 200)).onChange(async value => {
+          if (!/^\d+$/.test(value) || Number(value) < 50 || Number(value) > 2000) return;
+          this.plugin.settings.mimoChunkLimit = Number(value);
+          await this.plugin.saveSettings();
+        }));
       const credentialSource = normalizeCredentialSource(this.plugin.settings.mimoCredentialSource);
       new Setting(containerEl).setName(ui.credentialSourceName).setDesc(ui.credentialSourceDesc)
         .addDropdown(dropdown => dropdown.addOption('obsidian-secret', ui.credentialSourceSecret)

@@ -199,7 +199,7 @@ const testVaultPath = path.resolve('test-vault');
 const testAudioPath = path.join(testVaultPath, '.obsidian', 'plugins', 'note-reader-cosyvoice', 'cache', 'a.wav');
 assert.strictEqual(manifest.id, 'note-reader-cosyvoice');
 assert.strictEqual(manifest.name, 'Note and PDF Voice Reader');
-assert.strictEqual(manifest.version, '0.4.5');
+assert.strictEqual(manifest.version, '0.4.6');
 assert.ok(!/\bObsidian\b/.test(manifest.description));
 assert.ok(!code.includes('Note Reader CosyVoice'));
 assert.ok(!code.includes('CosyVoice Reader'));
@@ -276,7 +276,10 @@ assert.deepStrictEqual(moduleObject.exports.__test.createReaderState(), {
   totalChunks: 0,
 });
 assert.deepStrictEqual(moduleObject.exports.__test.createDefaultSettings(), {
+  playbackVolume: 1,
+  playbackSpeed: 1,
   mimoConsent: false,
+  mimoChunkLimit: 200,
   mimoCredentialSource: 'obsidian-secret',
   mimoSecretName: '',
   mimoKeyPath: '',
@@ -1005,7 +1008,33 @@ readerView.contentEl = root;
 readerView.containerEl = { children: [null, root] };
 readerView.render();
 
+const backFive = findElementByAriaLabel(root, 'Back 5s');
+const forwardFive = findElementByAriaLabel(root, 'Forward 5s');
+assert.ok(backFive);
+assert.ok(forwardFive);
+const previousSeekCount = seekBySecondsCalls.length;
+backFive.dispatchEvent(createPointerEvent());
+forwardFive.dispatchEvent(createPointerEvent());
+forwardFive.dispatchEvent(createPointerEvent());
+assert.deepStrictEqual(seekBySecondsCalls.slice(previousSeekCount), [-5, 5, 5]);
+seekBySecondsCalls.length = previousSeekCount;
+
 assert.strictEqual(root.attributes.tabindex, '0');
+const bilingualRoot = new FakeElement();
+const bilingualView = new moduleObject.exports.__test.CosyVoiceReaderView(null, {
+  ...readerView.plugin,
+  settings: { ...readerView.plugin.settings, settingsLanguage: 'chinese' },
+});
+bilingualView.contentEl = bilingualRoot;
+bilingualView.render();
+for (const name of ['朗读全文', '朗读选中文字', '从选中位置朗读', '导出音频', '导出并插入音频', '停止', '上一段', '下一段']) {
+  assert.ok(findElementByAriaLabel(bilingualRoot, name), name);
+}
+assert.ok(findElementByAriaLabel(bilingualRoot, '暂停').attributes.title.includes('空格'));
+bilingualView.plugin.settings.settingsLanguage = 'english';
+bilingualView.render();
+assert.ok(findElementByAriaLabel(bilingualRoot, 'Read file'));
+assert.ok(!findElementByAriaLabel(bilingualRoot, '朗读全文'));
 const readFileButton = findElementByAriaLabel(root, 'Read file');
 assert.ok(readFileButton);
 assert.strictEqual(readFileButton.disabled, false);
@@ -2082,11 +2111,34 @@ assert.deepStrictEqual(chunkNavigationCalls, [-1, 1]);
 
   await plugin.setSpeechSpeed(1.25);
 
+  plugin.currentAudio = { volume: 1 };
+  const originalSynthesisSpeed = plugin.settings.speed;
+  await plugin.setPlaybackSpeed(1.5);
+  assert.strictEqual(plugin.currentAudio.playbackRate, 1.5);
+  assert.strictEqual(plugin.currentAudio.preservesPitch, true);
+  assert.strictEqual(savedSettings.playbackSpeed, 1.5);
+  assert.strictEqual(plugin.settings.speed, originalSynthesisSpeed);
+  renderCount = 1;
+  assert.strictEqual(plugin.setPlaybackVolume(0.35), 0.35);
+  assert.strictEqual(plugin.currentAudio.volume, 0.35);
+  await plugin.saveSettings();
+  assert.strictEqual(savedSettings.playbackVolume, 0.35);
+  assert.strictEqual(plugin.setPlaybackVolume(0), 0);
+  assert.strictEqual(plugin.currentAudio.volume, 0);
+  assert.strictEqual(plugin.setPlaybackVolume(-1), 0);
+  assert.strictEqual(plugin.setPlaybackVolume(2), 1);
+  assert.strictEqual(plugin.setPlaybackVolume(NaN), 1);
+  plugin.currentAudio = null;
+
   assert.strictEqual(plugin.settings.speed, 1.25);
   assert.strictEqual(savedSettings.speed, 1.25);
   assert.strictEqual(renderCount, 1);
 
+  plugin.currentAudio = { volume: 0.2, playbackRate: 2 };
   await plugin.resetSettingsToDefaults();
+  assert.strictEqual(plugin.currentAudio.volume, 1);
+  assert.strictEqual(plugin.currentAudio.playbackRate, 1);
+  plugin.currentAudio = null;
 
   assert.deepStrictEqual(plugin.settings, moduleObject.exports.__test.createDefaultSettings());
   assert.deepStrictEqual(savedSettings, moduleObject.exports.__test.createDefaultSettings());
@@ -2101,6 +2153,7 @@ assert.deepStrictEqual(chunkNavigationCalls, [-1, 1]);
   try {
     let releasedSuccessSource = 0;
     let successfulAudioUrl = '';
+    const playedRates = [];
     class SuccessfulAudio {
       constructor() {
         this.currentTime = 0;
@@ -2111,9 +2164,13 @@ assert.deepStrictEqual(chunkNavigationCalls, [-1, 1]);
 
       set src(url) {
         successfulAudioUrl = url;
+        this.playbackRate = this.defaultPlaybackRate || 1;
       }
 
       play() {
+        if (this.onloadedmetadata) this.onloadedmetadata();
+        if (this.onplaying) this.onplaying();
+        playedRates.push(this.playbackRate);
         Promise.resolve().then(() => this.onended());
         return Promise.resolve();
       }
@@ -2129,6 +2186,7 @@ assert.deepStrictEqual(chunkNavigationCalls, [-1, 1]);
     playbackPlugin.settings = {
       ...moduleObject.exports.__test.createDefaultSettings(),
       speechEngine: 'openrouter-tts',
+      playbackSpeed: 1.5,
     };
     playbackPlugin.createPlayableAudioSource = async () => ({
       url: 'blob:openrouter-success',
@@ -2152,6 +2210,11 @@ assert.deepStrictEqual(chunkNavigationCalls, [-1, 1]);
     assert.strictEqual(releasedSuccessSource, 1);
     assert.strictEqual(playbackPlugin.currentAudio, null);
     assert.strictEqual(playbackPlugin.readerState.progress, 1);
+    await playbackPlugin.playPreparedAudio({ outputPath: 'next.mp3' }, playbackSession, 1, 2);
+    assert.deepStrictEqual(playedRates, [1.5, 1.5]);
+    playbackPlugin.settings.playbackSpeed = 1.25;
+    await playbackPlugin.playPreparedAudio({ outputPath: 'third.mp3' }, playbackSession, 2, 3);
+    assert.deepStrictEqual(playedRates, [1.5, 1.5, 1.25]);
 
     let releasedFailedSource = 0;
     class UnsupportedAudio extends SuccessfulAudio {
@@ -2579,9 +2642,20 @@ assert.deepStrictEqual(chunkNavigationCalls, [-1, 1]);
   mimoWav.write('RIFF');
   mimoWav.writeUInt32LE(38, 4);
   mimoWav.write('WAVE', 8);
+  mimoWav.write('fmt ', 12);
+  mimoWav.writeUInt32LE(16, 16);
+  mimoWav.writeUInt16LE(1, 20);
+  mimoWav.writeUInt16LE(1, 22);
+  mimoWav.writeUInt32LE(24000, 24);
+  mimoWav.writeUInt32LE(48000, 28);
+  mimoWav.writeUInt16LE(2, 32);
+  mimoWav.writeUInt16LE(16, 34);
+  mimoWav.write('data', 36);
+  mimoWav.writeUInt32LE(2, 40);
   openRouterPlugin.settings.mimoConsent = true;
   openRouterPlugin.settings.mimoSecretName = 'openrouter-api-key';
   openRouterPlugin.settings.mimoVoice = 'Dean';
+  let mimoFinishReason = 'stop';
   try {
     https.request = (endpoint, options, callback) => {
       assert.strictEqual(String(endpoint), 'https://api.xiaomimimo.com/v1/chat/completions');
@@ -2599,7 +2673,7 @@ assert.deepStrictEqual(chunkNavigationCalls, [-1, 1]);
           response.statusCode = 200;
           response.headers = { 'content-type': 'application/json; charset=utf-8' };
           callback(response);
-          response.emit('data', Buffer.from(JSON.stringify({ choices: [{ message: { audio: { data: mimoWav.toString('base64') } } }] })));
+          response.emit('data', Buffer.from(JSON.stringify({ choices: [{ finish_reason: mimoFinishReason, message: { audio: { data: mimoWav.toString('base64') } } }] })));
           response.emit('end');
         });
       };
@@ -2607,6 +2681,11 @@ assert.deepStrictEqual(chunkNavigationCalls, [-1, 1]);
     };
     await openRouterPlugin.runMimoTts(openRouterInputPath, mimoOutputPath, openRouterSession);
     assert.deepStrictEqual(fs.readFileSync(mimoOutputPath), mimoWav);
+    assert.strictEqual(openRouterPlugin.currentRequests.size, 0);
+    mimoFinishReason = 'length';
+    const truncatedPath = path.join(prepareTempDir, 'mimo-truncated.wav');
+    await assert.rejects(() => openRouterPlugin.runMimoTts(openRouterInputPath, truncatedPath, openRouterSession), /length limit/);
+    assert.strictEqual(fs.existsSync(truncatedPath), false);
     assert.strictEqual(openRouterPlugin.currentRequests.size, 0);
     openRouterPlugin.settings.mimoConsent = false;
     await assert.rejects(() => openRouterPlugin.runMimoTts(openRouterInputPath, mimoOutputPath, openRouterSession), /consent is required/);

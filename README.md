@@ -6,6 +6,8 @@ A privacy-first Obsidian desktop voice reader for Markdown notes and text-based 
 
 ### Xiaomi MiMo TTS Quickstart
 
+MiMo defaults to a configurable 200-character chunk cap (a conservative client setting, not an official API limit). Shorter configured limits are preserved. This can increase request count. Non-normal completion reasons and malformed/truncated WAV files stop reading without advancing or automatically resynthesizing. A normal completion signal is not proof of word-for-word fidelity; MiMo currently returns no audio transcript for verification.
+
 1. Create a regular API key in the [MiMo console](https://platform.xiaomimimo.com/), not a Token Plan key.
 2. Select **Xiaomi MiMo TTS** in the plugin settings. Store the key with Obsidian SecretStorage, or use a one-line key file outside the vault on older Obsidian versions.
 3. Read the privacy notice and enable **Allow MiMo online processing**. Select one of eight official voices; the default is **Bai Hua / 白桦 (Chinese male)**. Xiaomi does not specify US/UK accents for these presets.
