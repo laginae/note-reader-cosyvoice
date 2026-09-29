@@ -199,7 +199,11 @@ const testVaultPath = path.resolve('test-vault');
 const testAudioPath = path.join(testVaultPath, '.obsidian', 'plugins', 'note-reader-cosyvoice', 'cache', 'a.wav');
 assert.strictEqual(manifest.id, 'note-reader-cosyvoice');
 assert.strictEqual(manifest.name, 'Note and PDF Voice Reader');
-assert.strictEqual(manifest.version, '0.4.6');
+assert.strictEqual(manifest.version, '0.4.7');
+assert.strictEqual(
+  moduleObject.exports.__test.sanitizeTextForSpeech('第一段的结尾。\n\n## 第二节标题\n\n下一节的正文。'),
+  '第一段的结尾。\n第二节标题\n下一节的正文。'
+);
 assert.ok(!/\bObsidian\b/.test(manifest.description));
 assert.ok(!code.includes('Note Reader CosyVoice'));
 assert.ok(!code.includes('CosyVoice Reader'));
@@ -1035,6 +1039,31 @@ bilingualView.plugin.settings.settingsLanguage = 'english';
 bilingualView.render();
 assert.ok(findElementByAriaLabel(bilingualRoot, 'Read file'));
 assert.ok(!findElementByAriaLabel(bilingualRoot, '朗读全文'));
+const segmentAudio = { duration: 40, currentTime: 10, paused: true };
+const segmentSeeks = [];
+bilingualView.plugin.currentAudio = segmentAudio;
+bilingualView.plugin.readerState = { ...readerView.plugin.readerState, canSeek: true };
+bilingualView.plugin.seekCurrentAudioToTime = (time) => { segmentSeeks.push(time); return true; };
+bilingualView.render();
+let segmentSlider = findElementByAriaLabel(bilingualRoot, 'Current segment progress');
+assert.strictEqual(segmentSlider.disabled, false);
+segmentSlider.value = '750';
+segmentSlider.dispatchEvent({ type: 'input' });
+assert.deepStrictEqual(segmentSeeks, []);
+segmentSlider.dispatchEvent({ type: 'keydown' });
+bilingualView.render();
+assert.strictEqual(findElementByAriaLabel(bilingualRoot, 'Current segment progress'), segmentSlider);
+segmentSlider.dispatchEvent({ type: 'change' });
+assert.deepStrictEqual(segmentSeeks, [30]);
+assert.strictEqual(segmentAudio.paused, true);
+segmentSlider = findElementByAriaLabel(bilingualRoot, 'Current segment progress');
+bilingualView.plugin.currentAudio = { duration: 20, currentTime: 0 };
+segmentSlider.value = '500';
+segmentSlider.dispatchEvent({ type: 'change' });
+assert.deepStrictEqual(segmentSeeks, [30]);
+bilingualView.plugin.currentAudio = null;
+bilingualView.render();
+assert.strictEqual(findElementByAriaLabel(bilingualRoot, 'Current segment progress').disabled, true);
 const readFileButton = findElementByAriaLabel(root, 'Read file');
 assert.ok(readFileButton);
 assert.strictEqual(readFileButton.disabled, false);
@@ -2215,6 +2244,51 @@ assert.deepStrictEqual(chunkNavigationCalls, [-1, 1]);
     playbackPlugin.settings.playbackSpeed = 1.25;
     await playbackPlugin.playPreparedAudio({ outputPath: 'third.mp3' }, playbackSession, 2, 3);
     assert.deepStrictEqual(playedRates, [1.5, 1.5, 1.25]);
+
+    const seekStarts = [];
+    class SeekAudio extends SuccessfulAudio {
+      constructor() { super(); this.paused = true; }
+      set src(value) { this.duration = [10, 2, 20][Number(value)]; }
+      load() { Promise.resolve().then(() => this.onloadedmetadata()); }
+      pause() { this.paused = true; }
+      play() {
+        this.paused = false;
+        seekStarts.push(this.currentTime);
+        Promise.resolve().then(() => this.onended());
+        return Promise.resolve();
+      }
+    }
+    global.Audio = SeekAudio;
+    const originalSourceFactory = playbackPlugin.createPlayableAudioSource;
+    playbackPlugin.createPlayableAudioSource = async (prepared) => ({ url: String(prepared.index), release() {} });
+    playbackSession.chunks = ['one', 'two', 'three'];
+    playbackPlugin.readerState.currentChunk = 1;
+    playbackPlugin.currentAudio = { duration: 10, currentTime: 8, paused: false, pause() {} };
+    assert.strictEqual(playbackPlugin.seekCurrentAudioBySeconds(5), true);
+    assert.deepStrictEqual(playbackSession.seekTarget, { index: 1, time: 3, fromEnd: false });
+    assert.strictEqual(playbackPlugin.seekCurrentAudioBySeconds(5), true);
+    await playbackPlugin.playPreparedAudio({ index: 1 }, playbackSession, 1, 3);
+    assert.deepStrictEqual(playbackSession.seekTarget, { index: 2, time: 6, fromEnd: false });
+    await playbackPlugin.playPreparedAudio({ index: 2 }, playbackSession, 2, 3);
+    assert.strictEqual(playbackSession.seekTarget, null);
+    assert.deepStrictEqual(seekStarts, [6]);
+
+    playbackPlugin.readerState.currentChunk = 3;
+    playbackPlugin.currentAudio = { duration: 20, currentTime: 2, paused: true, pause() {} };
+    assert.strictEqual(playbackPlugin.seekCurrentAudioBySeconds(-5), true);
+    await playbackPlugin.playPreparedAudio({ index: 1 }, playbackSession, 1, 3);
+    assert.deepStrictEqual(playbackSession.seekTarget, { index: 0, time: -1, fromEnd: true });
+    const pausedSeek = playbackPlugin.playPreparedAudio({ index: 0 }, playbackSession, 0, 3);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.strictEqual(playbackPlugin.currentAudio.currentTime, 9);
+    assert.strictEqual(playbackPlugin.currentAudio.paused, true);
+    assert.deepStrictEqual(seekStarts, [6]);
+    await playbackPlugin.pauseOrResume();
+    await pausedSeek;
+    assert.deepStrictEqual(seekStarts, [6, 9]);
+    playbackSession.seekTarget = null;
+    playbackSession.requestedChunkIndex = null;
+    playbackPlugin.createPlayableAudioSource = originalSourceFactory;
 
     let releasedFailedSource = 0;
     class UnsupportedAudio extends SuccessfulAudio {

@@ -2129,8 +2129,8 @@ function sanitizeTextForSpeech(text, options = {}) {
   value = value.replace(/[*_~]/g, "");
   value = value.replace(/\|/g, " ");
   value = value.replace(/[ \t]+/g, " ");
-  value = value.replace(/\s+([，。、；：！？,.])/g, "$1");
-  value = value.replace(/([，。、；：！？])\s+/g, "$1");
+  value = value.replace(/[ \t]+([，。、；：！？,.])/g, "$1");
+  value = value.replace(/([，。、；：！？])[ \t]+/g, "$1");
   return value.split("\n").map((line) => line.trim()).filter(Boolean).join("\n").trim();
 }
 function sanitizeLatexForSpeech(text, options = {}) {
@@ -5076,7 +5076,7 @@ ${embed}
           session.requestedChunkIndex = null;
           continue;
         }
-        session.prepareAvailableChunks();
+        if (!session.seekTarget) session.prepareAvailableChunks();
         session.requestedChunkIndex = null;
         await this.playPreparedAudio(prepared, session, index, session.totalChunks);
         session.lastCompletedChunkIndex = index;
@@ -5616,7 +5616,7 @@ ${embed}
     if (!this.isActive(session)) {
       return;
     }
-    await this.waitWhilePaused(session);
+    if (!session.seekTarget) await this.waitWhilePaused(session);
     if (!this.isActive(session)) {
       return;
     }
@@ -5628,6 +5628,7 @@ ${embed}
     await new Promise((resolve, reject) => {
       let audio;
       let settled = false;
+      let seekMetadataTimer = null;
       const getPlaybackTotal = () => Math.max(
         1,
         Math.floor(Number(session.totalChunks) || 0),
@@ -5638,6 +5639,7 @@ ${embed}
           return;
         }
         settled = true;
+        if (seekMetadataTimer) clearTimeout(seekMetadataTimer);
         if (this.currentAudio === audio) {
           this.currentAudio = null;
         }
@@ -5665,8 +5667,47 @@ ${embed}
           audio.preservesPitch = true;
         };
         audio.onloadedmetadata = () => {
+          if (seekMetadataTimer) clearTimeout(seekMetadataTimer);
           applyPlaybackSpeed();
           recordDuration();
+          if (settled || !this.isActive(session) || !session.seekTarget) return;
+          const target = session.seekTarget;
+          if (target.index !== index) {
+            session.requestedChunkIndex = target.index;
+            finish(resolve);
+            return;
+          }
+          const duration = audio.duration;
+          if (!Number.isFinite(duration) || duration <= 0) {
+            finish(reject, new Error("Cannot seek across segments: audio duration is unavailable."));
+            return;
+          }
+          if (target.fromEnd) {
+            target.time += duration;
+            target.fromEnd = false;
+          }
+          if (target.time < 0 && index > 0) {
+            target.index -= 1;
+            target.fromEnd = true;
+          } else if (target.time >= duration && index + 1 < session.chunks.length) {
+            target.time -= duration;
+            target.index += 1;
+          } else {
+            audio.currentTime = Math.max(0, Math.min(duration, target.time));
+            session.seekTarget = null;
+            if (!this.pauseRequested) session.prepareAvailableChunks?.();
+            this.updateStatus(this.pauseRequested ? "CosyVoice paused" : "CosyVoice playing", {
+              canSeek: true,
+              isPaused: Boolean(this.pauseRequested),
+              phase: this.pauseRequested ? "paused" : "playing",
+              status: this.pauseRequested ? "paused" : "running",
+              progress: (index + audio.currentTime / duration) / getPlaybackTotal()
+            });
+            if (!this.pauseRequested) Promise.resolve(audio.play()).catch((error) => finish(reject, error));
+            return;
+          }
+          session.requestedChunkIndex = target.index;
+          finish(resolve);
         };
         audio.onplaying = applyPlaybackSpeed;
         audio.ondurationchange = recordDuration;
@@ -5692,6 +5733,7 @@ ${embed}
         });
         let lastProgressUpdate = 0;
         audio.ontimeupdate = () => {
+          if (settled || !this.isActive(session)) return;
           recordDuration();
           const now = Date.now();
           if (now - lastProgressUpdate < 250) {
@@ -5707,6 +5749,7 @@ ${embed}
           });
         };
         audio.onended = () => {
+          if (settled) return;
           const currentTotal = getPlaybackTotal();
           this.setReaderState({
             canPause: false,
@@ -5721,11 +5764,20 @@ ${embed}
         audio.onerror = () => {
           finish(reject, new Error(`Unable to play ${prepared.outputPath}${describeMediaError(audio.error)}`));
         };
+        if (session.seekTarget) {
+          seekMetadataTimer = setTimeout(() => {
+            finish(reject, new Error("Timed out loading audio duration for cross-segment seeking."));
+          }, 15e3);
+        }
         audio.src = source.url;
         applyPlaybackSpeed();
-        Promise.resolve(audio.play()).catch((error) => {
-          finish(reject, error);
-        });
+        if (session.seekTarget) {
+          audio.load();
+        } else {
+          Promise.resolve(audio.play()).catch((error) => {
+            finish(reject, error);
+          });
+        }
       } catch (error) {
         if (audio) {
           finish(reject, error);
@@ -5806,10 +5858,37 @@ ${embed}
   seekCurrentAudioBySeconds(deltaSeconds) {
     const audio = this.currentAudio;
     const delta = Number(deltaSeconds);
-    if (!audio || !Number.isFinite(delta)) {
+    const session = this.activeSession;
+    if (!Number.isFinite(delta) || session?.kind === "audio-export") {
       return false;
     }
+    if (this.isActive(session) && session.seekTarget) {
+      session.seekTarget.time += delta;
+      return true;
+    }
+    if (!audio) return false;
     const currentTime = Number.isFinite(audio.currentTime) ? audio.currentTime : 0;
+    const time = currentTime + delta;
+    const duration = audio.duration;
+    if (this.isActive(session) && Array.isArray(session.chunks) && Number.isFinite(duration) && duration > 0 && (time < 0 || time >= duration)) {
+      const index = Math.max(0, (this.readerState.currentChunk || 1) - 1);
+      if (time < 0 && index > 0 || time >= duration && index + 1 < session.chunks.length) {
+        session.seekTarget = time < 0 ? { index: index - 1, time, fromEnd: true } : { index: index + 1, time: time - duration, fromEnd: false };
+        session.requestedChunkIndex = session.seekTarget.index;
+        this.pauseRequested = Boolean(this.pauseRequested || audio.paused);
+        audio.pause();
+        if (typeof audio.onended === "function") audio.onended();
+        this.updateStatus(this.settings.settingsLanguage === "chinese" ? "\u6B63\u5728\u8DE8\u6BB5\u5B9A\u4F4D" : "Seeking across segments", {
+          canSeek: true,
+          canPause: true,
+          canStop: true,
+          isPaused: this.pauseRequested,
+          phase: "queued",
+          status: this.pauseRequested ? "paused" : "running"
+        });
+        return true;
+      }
+    }
     return this.seekCurrentAudioToTime(currentTime + delta);
   }
   seekCurrentAudioToTime(seekTime) {
@@ -5848,6 +5927,7 @@ ${embed}
       return false;
     }
     session.requestedChunkIndex = targetIndex;
+    session.seekTarget = null;
     this.pauseRequested = false;
     const audio = this.currentAudio;
     if (audio && typeof audio.pause === "function") {
@@ -5871,7 +5951,7 @@ ${embed}
     return true;
   }
   async pauseOrResume() {
-    const audio = this.currentAudio;
+    const audio = this.activeSession?.seekTarget ? null : this.currentAudio;
     if (this.activeSession && this.activeSession.kind === "audio-export") {
       new Notice("CosyVoice: audio export can be stopped but not paused.", 6e3);
       return;
@@ -6061,7 +6141,11 @@ var CosyVoiceReaderView = class extends ItemView {
       "Reuse the kept synthesized segments without making any TTS API requests": "\u590D\u7528\u4FDD\u7559\u7684\u5206\u6BB5\u97F3\u9891\uFF0C\u4E0D\u518D\u8C03\u7528\u8BED\u97F3 API",
       "Phase": "\u9636\u6BB5",
       "Source": "\u6765\u6E90",
-      "Text": "\u6587\u672C"
+      "Text": "\u6587\u672C",
+      "Overall progress": "\u5168\u6587\u8FDB\u5EA6",
+      "Current segment": "\u5F53\u524D\u6BB5",
+      "Current segment progress": "\u5F53\u524D\u6BB5\u64AD\u653E\u8FDB\u5EA6",
+      "Waiting for audio": "\u7B49\u5F85\u97F3\u9891"
     }[text] || text;
   }
   constructor(leaf, plugin) {
@@ -6086,6 +6170,8 @@ var CosyVoiceReaderView = class extends ItemView {
   }
   render() {
     if (this.volumeInteracting) return;
+    if (this.chunkSeekEditing && this.chunkSeekAudio === this.plugin.currentAudio && this.plugin.readerState?.canSeek) return;
+    this.chunkSeekEditing = false;
     const root = this.contentEl || this.containerEl.children[1] || this.containerEl;
     const state = this.plugin.readerState || createReaderState();
     root.empty();
@@ -6097,6 +6183,7 @@ var CosyVoiceReaderView = class extends ItemView {
     header.createEl("h3", { text: this.translate("Voice Reader") });
     header.createDiv({ cls: `note-reader-cosyvoice-state is-${state.status}`, text: state.label });
     const progressWrap = root.createDiv({ cls: "note-reader-cosyvoice-progress-wrap" });
+    progressWrap.createDiv({ cls: "note-reader-cosyvoice-section-label", text: this.translate("Overall progress") });
     const progressControls = progressWrap.createDiv({ cls: "note-reader-cosyvoice-progress-controls" });
     this.createIconButton(progressControls, "skip-back", "Previous chunk", () => {
       this.plugin.jumpToAdjacentChunk(-1);
@@ -6114,7 +6201,7 @@ var CosyVoiceReaderView = class extends ItemView {
         max: "1000",
         min: "0",
         step: "1",
-        title: "Click to jump among available chunks; within the current chunk, seek by time. Other chunks start at the beginning and may require synthesis.",
+        title: this.plugin.settings?.settingsLanguage === "chinese" ? "\u8DF3\u8F6C\u5230\u6307\u5B9A\u5206\u6BB5\u7684\u5F00\u5934\uFF1B\u672A\u5408\u6210\u7684\u5206\u6BB5\u9700\u8981\u7B49\u5F85\u5408\u6210\u3002" : "Jump to the start of a segment; unprepared segments require synthesis.",
         type: "range",
         value: String(Math.round(state.progress * 1e3))
       }
@@ -6126,14 +6213,14 @@ var CosyVoiceReaderView = class extends ItemView {
       if (!bounds.width) return;
       event.preventDefault();
       event.stopPropagation();
-      this.plugin.seekToProgress(clampProgress((event.clientX - bounds.left) / bounds.width));
+      this.seekToSegment(clampProgress((event.clientX - bounds.left) / bounds.width));
     });
     progressInput.addEventListener("input", () => {
       if (!canNavigateProgress) {
         return;
       }
       const requestedProgress = Number(progressInput.value) / 1e3;
-      this.plugin.seekToProgress(requestedProgress);
+      this.seekToSegment(requestedProgress);
     });
     this.createIconButton(progressControls, "skip-forward", "Next chunk", () => {
       this.plugin.jumpToAdjacentChunk(1);
@@ -6161,16 +6248,18 @@ var CosyVoiceReaderView = class extends ItemView {
       });
       timing.title = zh ? "\u672A\u5408\u6210\u90E8\u5206\u6309\u6587\u672C\u4F30\u7B97\uFF1B\u4E0D\u542B\u7F51\u7EDC\u7B49\u5F85\u548C\u6682\u505C\u65F6\u95F4\u3002" : "Text estimate for unsynthesized chunks; excludes network waits and pauses.";
     }
-    this.createSpeedPanel(root);
-    this.createVolumePanel(root);
+    this.createChunkSeekPanel(root, state);
     const seekControls = root.createDiv({ cls: "note-reader-cosyvoice-actions" });
     const zhControls = this.plugin.settings?.settingsLanguage === "chinese";
     this.createActionButton(seekControls, "rotate-ccw", zhControls ? "\u540E\u9000 5 \u79D2" : "Back 5s", () => {
       this.plugin.seekCurrentAudioBySeconds(-KEYBOARD_SEEK_SECONDS);
-    }, !state.canSeek, { triggerOnPointerDown: true });
+    }, !state.canSeek && !this.plugin.activeSession?.seekTarget, { triggerOnPointerDown: true });
     this.createActionButton(seekControls, "rotate-cw", zhControls ? "\u524D\u8FDB 5 \u79D2" : "Forward 5s", () => {
       this.plugin.seekCurrentAudioBySeconds(KEYBOARD_SEEK_SECONDS);
-    }, !state.canSeek, { triggerOnPointerDown: true });
+    }, !state.canSeek && !this.plugin.activeSession?.seekTarget, { triggerOnPointerDown: true });
+    const playbackOptions = root.createDiv({ cls: "note-reader-cosyvoice-playback-options" });
+    this.createSpeedPanel(playbackOptions);
+    this.createVolumePanel(playbackOptions);
     const actions = root.createDiv({ cls: "note-reader-cosyvoice-actions" });
     const canExportFile = typeof this.plugin.canExportCurrentFile !== "function" || this.plugin.canExportCurrentFile();
     const canInsertExport = typeof this.plugin.canInsertAudioExportIntoCurrentNote !== "function" || this.plugin.canInsertAudioExportIntoCurrentNote();
@@ -6209,7 +6298,7 @@ var CosyVoiceReaderView = class extends ItemView {
       this.runPluginAction("Resume file", () => this.plugin.resumeCurrentFile());
     }, !canResumeFile, { triggerOnPointerDown: true });
     this.createActionButton(
-      actions,
+      seekControls,
       state.isPaused ? "play" : "pause",
       state.isPaused ? "Resume" : "Pause",
       () => {
@@ -6222,7 +6311,7 @@ var CosyVoiceReaderView = class extends ItemView {
       }
     );
     this.createActionButton(
-      actions,
+      seekControls,
       "square",
       "Stop",
       () => {
@@ -6244,6 +6333,72 @@ var CosyVoiceReaderView = class extends ItemView {
     preview.createDiv({
       cls: "note-reader-cosyvoice-preview-text",
       text: state.currentText || "-"
+    });
+  }
+  seekToSegment(progress) {
+    const state = this.plugin.readerState;
+    const count = this.plugin.activeSession?.chunks?.length || state.totalChunks;
+    if (!count) return;
+    const target = Math.min(count - 1, Math.floor(clampProgress(progress) * count));
+    const current = Math.max(0, (state.currentChunk || 1) - 1);
+    if (target !== current) this.plugin.jumpToAdjacentChunk(target - current);
+    else this.plugin.seekCurrentAudioToTime(0);
+  }
+  createChunkSeekPanel(parent, state) {
+    const audio = this.plugin.currentAudio;
+    const duration = audio && Number.isFinite(audio.duration) ? audio.duration : 0;
+    const enabled = Boolean(state.canSeek && duration > 0 && !this.plugin.activeSession?.seekTarget);
+    const panel = parent.createDiv({ cls: "note-reader-cosyvoice-chunk-seek" });
+    const header = panel.createDiv({ cls: "note-reader-cosyvoice-meta" });
+    header.createSpan({ text: `${this.translate("Current segment")} ${state.currentChunk || 0} / ${state.totalChunks || 0}` });
+    const current = enabled ? Math.max(0, Math.min(duration, audio.currentTime || 0)) : 0;
+    const timeLabel = header.createSpan({ text: enabled ? `${formatDuration(current)} / ${formatDuration(duration)}` : this.translate("Waiting for audio") });
+    const slider = panel.createEl("input", { attr: {
+      type: "range",
+      min: "0",
+      max: "1000",
+      step: "1",
+      value: String(enabled ? Math.round(current / duration * 1e3) : 0),
+      "aria-label": this.translate("Current segment progress")
+    } });
+    slider.disabled = !enabled;
+    const begin = () => {
+      if (!enabled) return;
+      this.chunkSeekEditing = true;
+      this.chunkSeekAudio = audio;
+    };
+    const finish = () => {
+      this.chunkSeekEditing = false;
+    };
+    slider.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0 || !enabled) return;
+      begin();
+      try {
+        slider.setPointerCapture(event.pointerId);
+      } catch (_) {
+        finish();
+      }
+    });
+    slider.addEventListener("keydown", begin);
+    slider.addEventListener("blur", () => {
+      finish();
+      this.render();
+    });
+    slider.addEventListener("pointercancel", () => {
+      finish();
+      this.render();
+    });
+    slider.addEventListener("lostpointercapture", finish);
+    slider.addEventListener("pointerup", finish);
+    slider.addEventListener("input", () => {
+      timeLabel.textContent = `${formatDuration(Number(slider.value) / 1e3 * duration)} / ${formatDuration(duration)}`;
+    });
+    slider.addEventListener("change", () => {
+      if (enabled && audio === this.plugin.currentAudio && this.plugin.readerState.canSeek && !this.plugin.activeSession?.seekTarget) {
+        this.plugin.seekCurrentAudioToTime(Number(slider.value) / 1e3 * duration);
+      }
+      finish();
+      this.render();
     });
   }
   createVolumePanel(parent) {
