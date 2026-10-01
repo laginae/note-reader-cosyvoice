@@ -261,9 +261,9 @@ const SETTINGS_UI_TEXT = {
     speedName: 'Synthesis speed',
     speedDesc: 'Synthesis speed for new segments only; playing and already prepared audio remain unchanged. MiMo treats speed as an instruction, not an exact rate.',
     chunkLimitsName: 'Local chunk limits',
-    chunkLimitsDesc: 'Comma-separated character limits used by Local CosyVoice. Earlier chunks are shorter so playback starts sooner.',
+    chunkLimitsDesc: 'Character limits for Local CosyVoice. Reading starts with complete opening sentences accumulated until at least 40 non-whitespace characters, then uses these limits. The opening segment still respects the first limit.',
     onlineChunkLimitsName: 'Online chunk limits',
-    onlineChunkLimitsDesc: 'Used by Edge, Azure, OpenRouter, and MiMo for notes and PDFs. The default 200,400,800 balances startup latency, continuity, and request count.',
+    onlineChunkLimitsDesc: 'Used by Edge, Azure, OpenRouter, and MiMo for notes and PDFs. Accumulate complete opening sentences until at least 40 non-whitespace characters, then use these limits (default 200,400,800). This can add one request; the opening segment respects the first limit.',
     onlinePrefetchName: 'Online synthesis prefetch',
     onlinePrefetchDesc: 'How many future chunks an online engine may synthesize early. The default 1 improves continuity while limiting unused work to at most one chunk; choose 0 for strict on-demand synthesis.',
     onlinePrefetchNone: '0 - synthesize only when needed',
@@ -377,9 +377,9 @@ const SETTINGS_UI_TEXT = {
     speedName: '合成语速',
     speedDesc: '仅对新合成的分段生效，正在播放及已预合成的音频不变。MiMo 将速度作为指令理解，并非精确倍速。',
     chunkLimitsName: '本地分段长度',
-    chunkLimitsDesc: '本地 CosyVoice 使用的字符数上限，以英文逗号分隔。前几个分段较短，可更快开始播放。',
+    chunkLimitsDesc: '本地 CosyVoice 的字符数上限，以英文逗号分隔。启动段逐句累加，达到 40 字后停止（不计空白），不限定句数。后续按这些上限分段，启动段仍遵守第一个上限。',
     onlineChunkLimitsName: '在线分段长度',
-    onlineChunkLimitsDesc: 'Edge、Azure、OpenRouter 和 MiMo 朗读笔记或 PDF 时使用。默认 200,400,800，用于平衡启动速度、连贯性和请求次数。',
+    onlineChunkLimitsDesc: 'Edge、Azure、OpenRouter 和 MiMo 朗读笔记或 PDF 时使用。启动段逐句累加，达到 40 字后停止（不计空白），不限定句数。后续按这些上限分段（默认 200,400,800）。可能增加一次请求，启动段仍遵守第一个上限。',
     onlinePrefetchName: '在线合成预取',
     onlinePrefetchDesc: '允许在线引擎提前合成的后续分段数量。默认 1 可改善衔接，并把可能未使用的提前合成限制为最多一段；选择 0 可严格按需合成。',
     onlinePrefetchNone: '0 - 需要时才合成',
@@ -3859,7 +3859,7 @@ class CosyVoiceReaderPlugin extends Plugin {
       if (!configuration) {
         return;
       }
-      const chunks = splitTextForSpeechChunks(fullText, configuration.chunkLimits);
+      const chunks = splitTextForSpeechChunks(fullText, configuration.chunkLimits, { openingSentences: true });
       const fallbackIndex = Math.min(Math.max(0, position.chunkIndex), Math.max(0, chunks.length - 1));
       resumeSlice = { matched: false, text: chunks.slice(fallbackIndex).join('\n\n') };
       new Notice('CosyVoice: the saved text anchor changed. Resuming from the nearest saved chunk.', 8000);
@@ -4221,7 +4221,7 @@ class CosyVoiceReaderPlugin extends Plugin {
   }
 
   async producePdfSpeechChunks(file, session, selectionContext, chunkLimits) {
-    const chunker = createIncrementalSpeechChunker(chunkLimits, { detailed: true });
+    const chunker = createIncrementalSpeechChunker(chunkLimits, { detailed: true, openingSentences: true });
     let readableTextLength = 0;
     let selectionFallbackNotified = false;
 
@@ -4495,7 +4495,7 @@ class CosyVoiceReaderPlugin extends Plugin {
     await this.stopReading({ silent: true });
     this.pauseRequested = false;
 
-    const chunks = splitTextForSpeechChunks(text, configuration.chunkLimits);
+    const chunks = splitTextForSpeechChunks(text, configuration.chunkLimits, { openingSentences: true });
     const session = this.createSpeechSession(chunks, sourceLabel, configuration, {
       file: options.file,
       sourceKind: options.sourceKind || '',

@@ -1090,7 +1090,83 @@ var require_semantic_chunker = __commonJS({
 var require_semantic_chunker2 = __commonJS({
   "src/semantic-chunker.js"(exports2, module2) {
     "use strict";
-    module2.exports = require_semantic_chunker();
+    var core = require_semantic_chunker();
+    var sentenceSegmenter = typeof Intl.Segmenter === "function" ? new Intl.Segmenter(void 0, { granularity: "sentence" }) : null;
+    function openingChunkCut(text, limit, flush) {
+      let sentenceEnd = 0;
+      if (sentenceSegmenter) {
+        for (const segment of sentenceSegmenter.segment(text)) {
+          const sentence = segment.segment.trimEnd();
+          if (!sentence.trim()) continue;
+          const abbreviation = /(?:\b(?:Mr|Mrs|Ms|Dr|Prof|Sr|Jr|St|vs|etc|Fig|Figs|Eq|Eqs|Sec|Vol|No|e\.g|i\.e)|\b[A-Z](?:\.[A-Z])*)\.$/i.test(sentence);
+          if (abbreviation) continue;
+          if (segment.index + segment.segment.length < text.length || /[。！？!?.]["'\u2019\u201d\u3009-\u3011\u3015\uff09]*$/.test(sentence)) {
+            if (Array.from(text.slice(0, segment.index + sentence.length).replace(/\s/g, "")).length >= 40) {
+              sentenceEnd = segment.index + sentence.length;
+              break;
+            }
+          }
+        }
+      } else {
+        const boundaries = text.matchAll(/[。！？!?]["'\u2019\u201d]*|\.(?!\d)(?=\s|$)/g);
+        for (const boundary of boundaries) {
+          if (Array.from(text.slice(0, boundary.index + boundary[0].length).replace(/\s/g, "")).length >= 40) {
+            sentenceEnd = boundary.index + boundary[0].length;
+            break;
+          }
+        }
+      }
+      const cut = sentenceEnd;
+      if (cut > 0 && cut <= limit) return cut;
+      if (text.length > limit) return core.chooseChunkCut(text, limit);
+      return flush ? text.length : 0;
+    }
+    function splitTextForSpeechChunks2(text, maxLengths, options = {}) {
+      if (!options.openingSentences) return core.splitTextForSpeechChunks(text, maxLengths);
+      const normalized = core.normalizeChunkText(text);
+      if (!normalized) return [];
+      const limits = core.parseChunkLimits(maxLengths);
+      const cut = openingChunkCut(normalized, limits[0], true);
+      const first = normalized.slice(0, cut).trim();
+      const remainder = normalized.slice(cut).trim();
+      return [first, ...core.splitTextForSpeechChunks(remainder, limits)].filter(Boolean);
+    }
+    function createIncrementalSpeechChunker2(maxLengths, options = {}) {
+      if (!options.openingSentences) return core.createIncrementalSpeechChunker(maxLengths, options);
+      const limits = core.parseChunkLimits(maxLengths);
+      const remainder = core.createIncrementalSpeechChunker(limits, options);
+      let openingPages = [];
+      let openingDone = false;
+      const takeOpening = (flush) => {
+        const joined = openingPages.map((page) => page.text).join("\n\n");
+        if (!joined) return [];
+        const cut = openingChunkCut(joined, limits[0], flush);
+        if (!cut) return [];
+        const first = joined.slice(0, cut).trim();
+        const output = [options.detailed ? { text: first, metadata: openingPages[0].metadata } : first];
+        let offset = 0;
+        for (const page of openingPages) {
+          const tail = page.text.slice(Math.max(0, cut - offset));
+          if (tail.trim()) output.push(...remainder.push(tail, page.metadata));
+          offset += page.text.length + 2;
+        }
+        openingPages = [];
+        openingDone = true;
+        return output;
+      };
+      return {
+        push(text, metadata = null) {
+          if (openingDone) return remainder.push(text, metadata);
+          const normalized = core.normalizeChunkText(text);
+          if (normalized) openingPages.push({ text: normalized, metadata });
+          return takeOpening(false);
+        },
+        finish() {
+          return [...openingDone ? [] : takeOpening(true), ...remainder.finish()];
+        }
+      };
+    }
+    module2.exports = { ...core, createIncrementalSpeechChunker: createIncrementalSpeechChunker2, splitTextForSpeechChunks: splitTextForSpeechChunks2 };
   }
 });
 
@@ -1420,9 +1496,9 @@ var SETTINGS_UI_TEXT = {
     speedName: "Synthesis speed",
     speedDesc: "Synthesis speed for new segments only; playing and already prepared audio remain unchanged. MiMo treats speed as an instruction, not an exact rate.",
     chunkLimitsName: "Local chunk limits",
-    chunkLimitsDesc: "Comma-separated character limits used by Local CosyVoice. Earlier chunks are shorter so playback starts sooner.",
+    chunkLimitsDesc: "Character limits for Local CosyVoice. Reading starts with complete opening sentences accumulated until at least 40 non-whitespace characters, then uses these limits. The opening segment still respects the first limit.",
     onlineChunkLimitsName: "Online chunk limits",
-    onlineChunkLimitsDesc: "Used by Edge, Azure, OpenRouter, and MiMo for notes and PDFs. The default 200,400,800 balances startup latency, continuity, and request count.",
+    onlineChunkLimitsDesc: "Used by Edge, Azure, OpenRouter, and MiMo for notes and PDFs. Accumulate complete opening sentences until at least 40 non-whitespace characters, then use these limits (default 200,400,800). This can add one request; the opening segment respects the first limit.",
     onlinePrefetchName: "Online synthesis prefetch",
     onlinePrefetchDesc: "How many future chunks an online engine may synthesize early. The default 1 improves continuity while limiting unused work to at most one chunk; choose 0 for strict on-demand synthesis.",
     onlinePrefetchNone: "0 - synthesize only when needed",
@@ -1536,9 +1612,9 @@ var SETTINGS_UI_TEXT = {
     speedName: "\u5408\u6210\u8BED\u901F",
     speedDesc: "\u4EC5\u5BF9\u65B0\u5408\u6210\u7684\u5206\u6BB5\u751F\u6548\uFF0C\u6B63\u5728\u64AD\u653E\u53CA\u5DF2\u9884\u5408\u6210\u7684\u97F3\u9891\u4E0D\u53D8\u3002MiMo \u5C06\u901F\u5EA6\u4F5C\u4E3A\u6307\u4EE4\u7406\u89E3\uFF0C\u5E76\u975E\u7CBE\u786E\u500D\u901F\u3002",
     chunkLimitsName: "\u672C\u5730\u5206\u6BB5\u957F\u5EA6",
-    chunkLimitsDesc: "\u672C\u5730 CosyVoice \u4F7F\u7528\u7684\u5B57\u7B26\u6570\u4E0A\u9650\uFF0C\u4EE5\u82F1\u6587\u9017\u53F7\u5206\u9694\u3002\u524D\u51E0\u4E2A\u5206\u6BB5\u8F83\u77ED\uFF0C\u53EF\u66F4\u5FEB\u5F00\u59CB\u64AD\u653E\u3002",
+    chunkLimitsDesc: "\u672C\u5730 CosyVoice \u7684\u5B57\u7B26\u6570\u4E0A\u9650\uFF0C\u4EE5\u82F1\u6587\u9017\u53F7\u5206\u9694\u3002\u542F\u52A8\u6BB5\u9010\u53E5\u7D2F\u52A0\uFF0C\u8FBE\u5230 40 \u5B57\u540E\u505C\u6B62\uFF08\u4E0D\u8BA1\u7A7A\u767D\uFF09\uFF0C\u4E0D\u9650\u5B9A\u53E5\u6570\u3002\u540E\u7EED\u6309\u8FD9\u4E9B\u4E0A\u9650\u5206\u6BB5\uFF0C\u542F\u52A8\u6BB5\u4ECD\u9075\u5B88\u7B2C\u4E00\u4E2A\u4E0A\u9650\u3002",
     onlineChunkLimitsName: "\u5728\u7EBF\u5206\u6BB5\u957F\u5EA6",
-    onlineChunkLimitsDesc: "Edge\u3001Azure\u3001OpenRouter \u548C MiMo \u6717\u8BFB\u7B14\u8BB0\u6216 PDF \u65F6\u4F7F\u7528\u3002\u9ED8\u8BA4 200,400,800\uFF0C\u7528\u4E8E\u5E73\u8861\u542F\u52A8\u901F\u5EA6\u3001\u8FDE\u8D2F\u6027\u548C\u8BF7\u6C42\u6B21\u6570\u3002",
+    onlineChunkLimitsDesc: "Edge\u3001Azure\u3001OpenRouter \u548C MiMo \u6717\u8BFB\u7B14\u8BB0\u6216 PDF \u65F6\u4F7F\u7528\u3002\u542F\u52A8\u6BB5\u9010\u53E5\u7D2F\u52A0\uFF0C\u8FBE\u5230 40 \u5B57\u540E\u505C\u6B62\uFF08\u4E0D\u8BA1\u7A7A\u767D\uFF09\uFF0C\u4E0D\u9650\u5B9A\u53E5\u6570\u3002\u540E\u7EED\u6309\u8FD9\u4E9B\u4E0A\u9650\u5206\u6BB5\uFF08\u9ED8\u8BA4 200,400,800\uFF09\u3002\u53EF\u80FD\u589E\u52A0\u4E00\u6B21\u8BF7\u6C42\uFF0C\u542F\u52A8\u6BB5\u4ECD\u9075\u5B88\u7B2C\u4E00\u4E2A\u4E0A\u9650\u3002",
     onlinePrefetchName: "\u5728\u7EBF\u5408\u6210\u9884\u53D6",
     onlinePrefetchDesc: "\u5141\u8BB8\u5728\u7EBF\u5F15\u64CE\u63D0\u524D\u5408\u6210\u7684\u540E\u7EED\u5206\u6BB5\u6570\u91CF\u3002\u9ED8\u8BA4 1 \u53EF\u6539\u5584\u8854\u63A5\uFF0C\u5E76\u628A\u53EF\u80FD\u672A\u4F7F\u7528\u7684\u63D0\u524D\u5408\u6210\u9650\u5236\u4E3A\u6700\u591A\u4E00\u6BB5\uFF1B\u9009\u62E9 0 \u53EF\u4E25\u683C\u6309\u9700\u5408\u6210\u3002",
     onlinePrefetchNone: "0 - \u9700\u8981\u65F6\u624D\u5408\u6210",
@@ -4465,7 +4541,7 @@ ${embed}
       if (!configuration) {
         return;
       }
-      const chunks = splitTextForSpeechChunks(fullText, configuration.chunkLimits);
+      const chunks = splitTextForSpeechChunks(fullText, configuration.chunkLimits, { openingSentences: true });
       const fallbackIndex = Math.min(Math.max(0, position.chunkIndex), Math.max(0, chunks.length - 1));
       resumeSlice = { matched: false, text: chunks.slice(fallbackIndex).join("\n\n") };
       new Notice("CosyVoice: the saved text anchor changed. Resuming from the nearest saved chunk.", 8e3);
@@ -4760,7 +4836,7 @@ ${embed}
     await this.runSpeechSession(session);
   }
   async producePdfSpeechChunks(file, session, selectionContext, chunkLimits) {
-    const chunker = createIncrementalSpeechChunker(chunkLimits, { detailed: true });
+    const chunker = createIncrementalSpeechChunker(chunkLimits, { detailed: true, openingSentences: true });
     let readableTextLength = 0;
     let selectionFallbackNotified = false;
     await this.extractPdfText(file, session, {
@@ -4986,7 +5062,7 @@ ${embed}
     }
     await this.stopReading({ silent: true });
     this.pauseRequested = false;
-    const chunks = splitTextForSpeechChunks(text, configuration.chunkLimits);
+    const chunks = splitTextForSpeechChunks(text, configuration.chunkLimits, { openingSentences: true });
     const session = this.createSpeechSession(chunks, sourceLabel, configuration, {
       file: options.file,
       sourceKind: options.sourceKind || ""
