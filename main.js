@@ -1306,7 +1306,7 @@ var RUNTIME_LOG_MAX_BYTES = 1024 * 1024;
 var PDF_MAX_BYTES = 200 * 1024 * 1024;
 var PDF_MAX_PAGES = 2e3;
 var PDF_MAX_TEXT_CHARS = 5e6;
-var OWNED_CACHE_FILE_PATTERN = /^\d{10,}-\d+-(?:\d+|export)\.(?:txt|wav|mp3)$/i;
+var OWNED_CACHE_FILE_PATTERN = /^\d{10,}-\d+-(?:\d+(?:-\d+)?|export)\.(?:txt|wav|mp3)$/i;
 var MICROSOFT_VOICE_PRESETS = [
   ["zh-CN-XiaoxiaoNeural", "Mandarin Chinese - Xiaoxiao (female, warm)", "\u4E2D\u6587\u666E\u901A\u8BDD - \u5C0F\u6653\uFF08\u5973\u58F0\uFF0C\u6E29\u6696\uFF09"],
   ["zh-CN-XiaoyiNeural", "Mandarin Chinese - Xiaoyi (female, lively)", "\u4E2D\u6587\u666E\u901A\u8BDD - \u5C0F\u827A\uFF08\u5973\u58F0\uFF0C\u6D3B\u6CFC\uFF09"],

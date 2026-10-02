@@ -199,7 +199,7 @@ const testVaultPath = path.resolve('test-vault');
 const testAudioPath = path.join(testVaultPath, '.obsidian', 'plugins', 'note-reader-cosyvoice', 'cache', 'a.wav');
 assert.strictEqual(manifest.id, 'note-reader-cosyvoice');
 assert.strictEqual(manifest.name, 'Note and PDF Voice Reader');
-assert.strictEqual(manifest.version, '0.4.9');
+assert.strictEqual(manifest.version, '0.4.10');
 assert.strictEqual(
   moduleObject.exports.__test.sanitizeTextForSpeech('第一段的结尾。\n\n## 第二节标题\n\n下一节的正文。'),
   '第一段的结尾。\n第二节标题\n下一节的正文。'
@@ -675,6 +675,9 @@ assert.ok(moduleObject.exports.__test.getEdgeTtsVoicePresets().some(([id]) => id
 assert.ok(moduleObject.exports.__test.getEdgeTtsVoicePresets().some(([id]) => id === 'en-US-GuyNeural'));
 assert.ok(moduleObject.exports.__test.getEdgeTtsVoicePresets().some(([id]) => id === 'en-GB-RyanNeural'));
 assert.strictEqual(moduleObject.exports.__test.isOwnedCacheFileName('1750000000000-7-1.txt'), true);
+assert.strictEqual(moduleObject.exports.__test.isOwnedCacheFileName('1750000000000-7-0-2.wav'), true);
+assert.strictEqual(moduleObject.exports.__test.isOwnedCacheFileName('1750000000000-7-0-0.txt'), true);
+assert.strictEqual(moduleObject.exports.__test.isOwnedCacheFileName('1750000000000-7-not-mine.wav'), false);
 assert.strictEqual(moduleObject.exports.__test.isOwnedCacheFileName('1750000000000-7-export.mp3'), true);
 assert.strictEqual(moduleObject.exports.__test.isOwnedCacheFileName('diagnostic.log'), true);
 assert.strictEqual(moduleObject.exports.__test.isOwnedCacheFileName('keep-me.txt'), false);

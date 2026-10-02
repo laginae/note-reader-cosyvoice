@@ -79,7 +79,7 @@ const RUNTIME_LOG_MAX_BYTES = 1024 * 1024;
 const PDF_MAX_BYTES = 200 * 1024 * 1024;
 const PDF_MAX_PAGES = 2000;
 const PDF_MAX_TEXT_CHARS = 5_000_000;
-const OWNED_CACHE_FILE_PATTERN = /^\d{10,}-\d+-(?:\d+|export)\.(?:txt|wav|mp3)$/i;
+const OWNED_CACHE_FILE_PATTERN = /^\d{10,}-\d+-(?:\d+(?:-\d+)?|export)\.(?:txt|wav|mp3)$/i;
 const MICROSOFT_VOICE_PRESETS = [
   ['zh-CN-XiaoxiaoNeural', 'Mandarin Chinese - Xiaoxiao (female, warm)', '中文普通话 - 小晓（女声，温暖）'],
   ['zh-CN-XiaoyiNeural', 'Mandarin Chinese - Xiaoyi (female, lively)', '中文普通话 - 小艺（女声，活泼）'],
