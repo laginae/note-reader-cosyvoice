@@ -8,6 +8,7 @@ const { spawn } = require('child_process');
 const { pathToFileURL } = require('url');
 const { extractPdfTextLayout, extractTextFromPdfItems } = require('./pdf-layout');
 const { estimatePlayback, formatDuration } = require('./playback-estimate');
+const { getSpeechParts, adjacentSpeechPart, getSpeechPartTiming } = require('./speech-parts');
 const { MIMO_ENDPOINT, MIMO_DEFAULTS, MIMO_VOICES, MIMO_MAX_CHUNK_CHARS, normalizeMimoSettings, buildMimoRequestBody, decodeMimoAudio } = require('./mimo-tts');
 const {
   MAX_EXPORTED_AUDIO_BYTES,
@@ -261,11 +262,11 @@ const SETTINGS_UI_TEXT = {
     speedName: 'Synthesis speed',
     speedDesc: 'Synthesis speed for new segments only; playing and already prepared audio remain unchanged. MiMo treats speed as an instruction, not an exact rate.',
     chunkLimitsName: 'Local chunk limits',
-    chunkLimitsDesc: 'Character limits for Local CosyVoice. Reading starts with complete opening sentences accumulated until at least 40 non-whitespace characters, then uses these limits. The opening segment still respects the first limit.',
+    chunkLimitsDesc: 'Character limits for Local CosyVoice. The first segment plays in up to three audio parts: complete sentences reaching 20 characters, then 40 more, then the remainder (excluding whitespace). It remains one segment in the progress bar.',
     onlineChunkLimitsName: 'Online chunk limits',
-    onlineChunkLimitsDesc: 'Used by Edge, Azure, OpenRouter, and MiMo for notes and PDFs. Accumulate complete opening sentences until at least 40 non-whitespace characters, then use these limits (default 200,400,800). This can add one request; the opening segment respects the first limit.',
+    onlineChunkLimitsDesc: 'Used by Edge, Azure, OpenRouter, and MiMo for notes and PDFs (default 200,400,800). The first segment plays in up to three audio parts: sentences reaching 20 characters, then 40 more, then the remainder. It remains one visible segment; this can add up to two requests. Prefetch counts audio parts.',
     onlinePrefetchName: 'Online synthesis prefetch',
-    onlinePrefetchDesc: 'How many future chunks an online engine may synthesize early. The default 1 improves continuity while limiting unused work to at most one chunk; choose 0 for strict on-demand synthesis.',
+    onlinePrefetchDesc: 'How many future audio parts an online engine may synthesize early, including the smaller parts inside the first segment. Default 1; choose 0 for strict on-demand synthesis.',
     onlinePrefetchNone: '0 - synthesize only when needed',
     onlinePrefetchOne: '1 - prefetch one chunk',
     audioExportLocationName: 'Audio export save location',
@@ -377,11 +378,11 @@ const SETTINGS_UI_TEXT = {
     speedName: '合成语速',
     speedDesc: '仅对新合成的分段生效，正在播放及已预合成的音频不变。MiMo 将速度作为指令理解，并非精确倍速。',
     chunkLimitsName: '本地分段长度',
-    chunkLimitsDesc: '本地 CosyVoice 的字符数上限，以英文逗号分隔。启动段逐句累加，达到 40 字后停止（不计空白），不限定句数。后续按这些上限分段，启动段仍遵守第一个上限。',
+    chunkLimitsDesc: '本地 CosyVoice 的字符数上限，以英文逗号分隔。第一段内部按整句累加至 20 字，再从剩余内容累加至 40 字，最后合成余文（不计空白），最多三段音频；进度条仍显示为同一段。',
     onlineChunkLimitsName: '在线分段长度',
-    onlineChunkLimitsDesc: 'Edge、Azure、OpenRouter 和 MiMo 朗读笔记或 PDF 时使用。启动段逐句累加，达到 40 字后停止（不计空白），不限定句数。后续按这些上限分段（默认 200,400,800）。可能增加一次请求，启动段仍遵守第一个上限。',
+    onlineChunkLimitsDesc: 'Edge、Azure、OpenRouter 和 MiMo 朗读笔记或 PDF 时使用（默认 200,400,800）。第一段内部按整句累加至 20 字，再累加新的 40 字，最后合成余文（不计空白），界面仍显示同一段。最多增加两次请求，预合成数量按小音频计算。',
     onlinePrefetchName: '在线合成预取',
-    onlinePrefetchDesc: '允许在线引擎提前合成的后续分段数量。默认 1 可改善衔接，并把可能未使用的提前合成限制为最多一段；选择 0 可严格按需合成。',
+    onlinePrefetchDesc: '允许在线引擎提前合成的后续音频数量，第一段内部的小音频也各算一次。默认 1；选择 0 可严格按需合成。',
     onlinePrefetchNone: '0 - 需要时才合成',
     onlinePrefetchOne: '1 - 提前合成一段',
     audioExportLocationName: '音频导出保存位置',
@@ -3859,7 +3860,7 @@ class CosyVoiceReaderPlugin extends Plugin {
       if (!configuration) {
         return;
       }
-      const chunks = splitTextForSpeechChunks(fullText, configuration.chunkLimits, { openingSentences: true });
+      const chunks = splitTextForSpeechChunks(fullText, configuration.chunkLimits);
       const fallbackIndex = Math.min(Math.max(0, position.chunkIndex), Math.max(0, chunks.length - 1));
       resumeSlice = { matched: false, text: chunks.slice(fallbackIndex).join('\n\n') };
       new Notice('CosyVoice: the saved text anchor changed. Resuming from the nearest saved chunk.', 8000);
@@ -4221,7 +4222,7 @@ class CosyVoiceReaderPlugin extends Plugin {
   }
 
   async producePdfSpeechChunks(file, session, selectionContext, chunkLimits) {
-    const chunker = createIncrementalSpeechChunker(chunkLimits, { detailed: true, openingSentences: true });
+    const chunker = createIncrementalSpeechChunker(chunkLimits, { detailed: true });
     let readableTextLength = 0;
     let selectionFallbackNotified = false;
 
@@ -4495,7 +4496,7 @@ class CosyVoiceReaderPlugin extends Plugin {
     await this.stopReading({ silent: true });
     this.pauseRequested = false;
 
-    const chunks = splitTextForSpeechChunks(text, configuration.chunkLimits, { openingSentences: true });
+    const chunks = splitTextForSpeechChunks(text, configuration.chunkLimits);
     const session = this.createSpeechSession(chunks, sourceLabel, configuration, {
       file: options.file,
       sourceKind: options.sourceKind || '',
@@ -4531,33 +4532,37 @@ class CosyVoiceReaderPlugin extends Plugin {
 
   async runSpeechSession(session) {
     const preparedChunks = new Map();
-    const getPreparedChunk = (index) => {
-      if (!preparedChunks.has(index)) {
-        const preparing = this.queuePrepareChunk(session.chunks[index], index, session);
+    const getPreparedChunk = (index, part = 0) => {
+      const key = `${index}:${part}`;
+      if (!preparedChunks.has(key)) {
+        const preparing = this.queuePrepareChunk(getSpeechParts(session, index)[part], index, session, part);
         preparing.catch(() => {});
-        preparedChunks.set(index, preparing);
+        preparedChunks.set(key, preparing);
       }
 
-      return preparedChunks.get(index);
+      return preparedChunks.get(key);
     };
     session.prepareAvailableChunks = () => {
-      if (!this.isActive(session) || !Number.isInteger(session.prefetchBaseIndex)) {
+      if (!this.isActive(session) || session.seekTarget || this.pauseRequested || !Number.isInteger(session.prefetchBaseIndex)) {
         return;
       }
+      let cursor = { index: session.prefetchBaseIndex, part: session.currentPartIndex || 0 };
       for (let offset = 1; offset <= session.prefetchChunks; offset += 1) {
-        const prefetchIndex = session.prefetchBaseIndex + offset;
-        if (prefetchIndex < session.chunks.length) {
-          getPreparedChunk(prefetchIndex);
-        }
+        cursor = adjacentSpeechPart(session, cursor.index, cursor.part, 1);
+        if (!cursor) break;
+        getPreparedChunk(cursor.index, cursor.part);
       }
     };
 
     try {
       let index = 0;
+      let part = 0;
       while (this.isActive(session)) {
         if (Number.isInteger(session.requestedChunkIndex) && session.chunks.length) {
           index = Math.max(0, Math.min(session.chunks.length - 1, session.requestedChunkIndex));
+          part = session.requestedPartIndex || 0;
           session.requestedChunkIndex = null;
+          session.requestedPartIndex = null;
         }
         session.prefetchBaseIndex = index;
 
@@ -4587,28 +4592,30 @@ class CosyVoiceReaderPlugin extends Plugin {
         }
 
         session.currentChunkIndex = index;
-        const prepared = await getPreparedChunk(index);
+        session.currentPartIndex = part;
+        if (session.lastCompletedChunkIndex === index) session.lastCompletedChunkIndex = null;
+        const prepared = await getPreparedChunk(index, part);
         if (!this.isActive(session)) {
           break;
         }
 
-        if (Number.isInteger(session.requestedChunkIndex) && session.requestedChunkIndex !== index) {
-          index = Math.max(0, Math.min(session.chunks.length - 1, session.requestedChunkIndex));
-          session.requestedChunkIndex = null;
+        if (Number.isInteger(session.requestedChunkIndex)) {
           continue;
         }
 
         if (!session.seekTarget) session.prepareAvailableChunks();
 
         session.requestedChunkIndex = null;
-        await this.playPreparedAudio(prepared, session, index, session.totalChunks);
-        session.lastCompletedChunkIndex = index;
+        await this.playPreparedAudio(prepared, session, index, session.totalChunks, part);
 
         if (Number.isInteger(session.requestedChunkIndex)) {
-          index = Math.max(0, Math.min(session.chunks.length - 1, session.requestedChunkIndex));
-          session.requestedChunkIndex = null;
+          continue;
+        } else if (part + 1 < getSpeechParts(session, index).length) {
+          part += 1;
         } else {
+          session.lastCompletedChunkIndex = index;
           index += 1;
+          part = 0;
         }
       }
 
@@ -4664,7 +4671,7 @@ class CosyVoiceReaderPlugin extends Plugin {
     }
   }
 
-  async prepareChunk(chunkText, index, session) {
+  async prepareChunk(chunkText, index, session, part = 0) {
     if (!this.isActive(session)) {
       throw new Error('Reading stopped.');
     }
@@ -4675,7 +4682,7 @@ class CosyVoiceReaderPlugin extends Plugin {
     const speechEngine = normalizeSpeechEngine(session.speechEngine || this.settings.speechEngine);
     const engineLabel = session.engineLabel || getSpeechEngineLabel(this.settings);
     const outputExtension = ['local-cosyvoice', 'mimo-tts'].includes(speechEngine) ? 'wav' : 'mp3';
-    const basename = `${Date.now()}-${session.id}-${index}`;
+    const basename = `${Date.now()}-${session.id}-${index}-${part}`;
     const inputPath = path.join(this.cacheDir, `${basename}.txt`);
     const outputPath = path.join(this.cacheDir, `${basename}.${outputExtension}`);
 
@@ -4684,9 +4691,8 @@ class CosyVoiceReaderPlugin extends Plugin {
 
     const isAudioExport = session.kind === 'audio-export';
     const isBackgroundPrefetch = Boolean(
-      this.currentAudio
-      && Number.isInteger(session.currentChunkIndex)
-      && index !== session.currentChunkIndex
+      !isAudioExport && Number.isInteger(session.currentChunkIndex)
+      && (index !== session.currentChunkIndex || part !== (session.currentPartIndex || 0))
     );
     if (!isBackgroundPrefetch) {
       this.updateStatus(`${engineLabel} synth ${index + 1}/${session.totalChunks || 0}`, {
@@ -4697,10 +4703,10 @@ class CosyVoiceReaderPlugin extends Plugin {
         canSeek: false,
         canStop: true,
         currentChunk: index + 1,
-        currentText: previewText(chunkText),
+        currentText: previewText(session.chunks?.[index] || chunkText),
         isPaused: false,
         phase: 'synthesizing',
-        progress: session.totalChunks ? index / session.totalChunks : 0,
+        progress: session.totalChunks ? (index + this.getSegmentTiming(session, index, part, 0).fraction) / session.totalChunks : 0,
         status: 'running',
         totalChunks: session.totalChunks || 0,
       });
@@ -4738,8 +4744,8 @@ class CosyVoiceReaderPlugin extends Plugin {
     };
   }
 
-  queuePrepareChunk(chunkText, index, session) {
-    const promise = this.prepareChunk(chunkText, index, session);
+  queuePrepareChunk(chunkText, index, session, part = 0) {
+    const promise = this.prepareChunk(chunkText, index, session, part);
     promise.catch(() => {});
     return promise;
   }
@@ -5205,13 +5211,22 @@ class CosyVoiceReaderPlugin extends Plugin {
     release();
   }
 
-  async playPreparedAudio(prepared, session, index, total) {
+  getSegmentTiming(session = this.activeSession, index = Math.max(0, (this.readerState.currentChunk || 1) - 1),
+    part = session?.currentPartIndex || 0, time = this.currentAudio?.currentTime || 0) {
+    const timing = session?.chunks?.[index] !== undefined
+      ? getSpeechPartTiming(session, index, part, time, normalizeSpeed(this.settings.speed))
+      : { duration: Number(this.currentAudio?.duration) || 0, current: time, offset: 0 };
+    return { ...timing, fraction: timing.duration > 0 ? Math.min(1, timing.current / timing.duration) : 0 };
+  }
+
+  async playPreparedAudio(prepared, session, index, total, part = 0) {
     if (!this.isActive(session)) {
       return;
     }
 
     if (!session.seekTarget) await this.waitWhilePaused(session);
-    if (!this.isActive(session)) {
+    if (!this.isActive(session) || (Number.isInteger(session.requestedChunkIndex)
+      && (session.requestedChunkIndex !== index || (session.requestedPartIndex || 0) !== part))) {
       return;
     }
 
@@ -5254,7 +5269,10 @@ class CosyVoiceReaderPlugin extends Plugin {
         const recordDuration = () => {
           if (this.isActive(session) && Number.isFinite(audio.duration) && audio.duration > 0) {
             session.audioDurations = session.audioDurations || {};
-            session.audioDurations[index] = audio.duration;
+            session.partDurations ||= {};
+            session.partDurations[`${index}:${part}`] = audio.duration;
+            session.audioDurations[index] = getSpeechParts(session, index).length > 1
+              ? this.getSegmentTiming(session, index, part, audio.currentTime).duration : audio.duration;
           }
         };
         const applyPlaybackSpeed = () => {
@@ -5269,8 +5287,9 @@ class CosyVoiceReaderPlugin extends Plugin {
           recordDuration();
           if (settled || !this.isActive(session) || !session.seekTarget) return;
           const target = session.seekTarget;
-          if (target.index !== index) {
+          if (target.index !== index || (target.part || 0) !== part) {
             session.requestedChunkIndex = target.index;
+            session.requestedPartIndex = target.part || 0;
             finish(resolve);
             return;
           }
@@ -5283,12 +5302,14 @@ class CosyVoiceReaderPlugin extends Plugin {
             target.time += duration;
             target.fromEnd = false;
           }
-          if (target.time < 0 && index > 0) {
-            target.index -= 1;
+          const previous = adjacentSpeechPart(session, index, part, -1);
+          const next = adjacentSpeechPart(session, index, part, 1);
+          if (target.time < 0 && previous) {
+            Object.assign(target, previous);
             target.fromEnd = true;
-          } else if (target.time >= duration && index + 1 < session.chunks.length) {
+          } else if (target.time >= duration && next) {
             target.time -= duration;
-            target.index += 1;
+            Object.assign(target, next);
           } else {
             audio.currentTime = Math.max(0, Math.min(duration, target.time));
             session.seekTarget = null;
@@ -5297,12 +5318,13 @@ class CosyVoiceReaderPlugin extends Plugin {
               canSeek: true, isPaused: Boolean(this.pauseRequested),
               phase: this.pauseRequested ? 'paused' : 'playing',
               status: this.pauseRequested ? 'paused' : 'running',
-              progress: (index + audio.currentTime / duration) / getPlaybackTotal(),
+              progress: (index + this.getSegmentTiming(session, index, part, audio.currentTime).fraction) / getPlaybackTotal(),
             });
             if (!this.pauseRequested) Promise.resolve(audio.play()).catch((error) => finish(reject, error));
             return;
           }
           session.requestedChunkIndex = target.index;
+          session.requestedPartIndex = target.part || 0;
           finish(resolve);
         };
         audio.onplaying = applyPlaybackSpeed;
@@ -5319,7 +5341,7 @@ class CosyVoiceReaderPlugin extends Plugin {
           currentText: previewText(Array.isArray(session.chunks) ? session.chunks[index] : ''),
           isPaused: false,
           phase: 'playing',
-          progress: index / playbackTotal,
+          progress: (index + this.getSegmentTiming(session, index, part, 0).fraction) / playbackTotal,
           status: 'running',
           totalChunks: playbackTotal,
         });
@@ -5338,7 +5360,7 @@ class CosyVoiceReaderPlugin extends Plugin {
           }
           lastProgressUpdate = now;
           const duration = Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : 0;
-          const chunkProgress = duration ? audio.currentTime / duration : 0;
+          const chunkProgress = duration ? this.getSegmentTiming(session, index, part, audio.currentTime).fraction : 0;
           const currentTotal = getPlaybackTotal();
           this.setReaderState({
             progress: (index + chunkProgress) / currentTotal,
@@ -5354,7 +5376,7 @@ class CosyVoiceReaderPlugin extends Plugin {
             ...getChunkNavigationState(index + 1, currentTotal),
             canSeek: false,
             isPaused: false,
-            progress: (index + 1) / currentTotal,
+            progress: (index + this.getSegmentTiming(session, index, part, audio.duration || 0).fraction) / currentTotal,
             totalChunks: currentTotal,
           });
           finish(resolve);
@@ -5466,14 +5488,14 @@ class CosyVoiceReaderPlugin extends Plugin {
       progress,
       currentChunk: this.readerState.currentChunk,
       totalChunks: this.readerState.totalChunks,
-      duration: audio.duration,
+      duration: this.getSegmentTiming().duration,
     });
 
     if (seekTime === null) {
       return false;
     }
 
-    return this.seekCurrentAudioToTime(seekTime);
+    return this.seekCurrentSegmentToTime(seekTime);
   }
 
   seekCurrentAudioBySeconds(deltaSeconds) {
@@ -5495,11 +5517,13 @@ class CosyVoiceReaderPlugin extends Plugin {
     if (this.isActive(session) && Array.isArray(session.chunks)
       && Number.isFinite(duration) && duration > 0 && (time < 0 || time >= duration)) {
       const index = Math.max(0, (this.readerState.currentChunk || 1) - 1);
-      if ((time < 0 && index > 0) || (time >= duration && index + 1 < session.chunks.length)) {
+      const adjacent = adjacentSpeechPart(session, index, session.currentPartIndex || 0, time < 0 ? -1 : 1);
+      if (adjacent) {
         session.seekTarget = time < 0
-          ? { index: index - 1, time, fromEnd: true }
-          : { index: index + 1, time: time - duration, fromEnd: false };
+          ? { ...adjacent, time, fromEnd: true }
+          : { ...adjacent, time: time - duration, fromEnd: false };
         session.requestedChunkIndex = session.seekTarget.index;
+        session.requestedPartIndex = session.seekTarget.part;
         this.pauseRequested = Boolean(this.pauseRequested || audio.paused);
         audio.pause();
         if (typeof audio.onended === 'function') audio.onended();
@@ -5534,10 +5558,33 @@ class CosyVoiceReaderPlugin extends Plugin {
     }
 
     const chunkIndex = Math.max(0, (this.readerState.currentChunk || 1) - 1);
-    const chunkProgress = duration ? audio.currentTime / duration : 0;
+    const chunkProgress = duration ? this.getSegmentTiming().fraction : 0;
     this.setReaderState({
       progress: this.readerState.totalChunks ? (chunkIndex + chunkProgress) / this.readerState.totalChunks : 0,
     });
+    return true;
+  }
+
+  seekCurrentSegmentToTime(time) {
+    const session = this.activeSession;
+    const audio = this.currentAudio;
+    if (!audio || !Number.isFinite(time) || session?.seekTarget) return false;
+    const index = Math.max(0, (this.readerState.currentChunk || 1) - 1);
+    if (!this.isActive(session) || getSpeechParts(session, index).length <= 1) return this.seekCurrentAudioToTime(time);
+    const timing = this.getSegmentTiming();
+    let localTime = Math.max(0, Math.min(timing.duration, time));
+    let part = 0;
+    while (part + 1 < timing.durations.length && localTime >= timing.durations[part]) {
+      localTime -= timing.durations[part++];
+    }
+    if (part === (session.currentPartIndex || 0)) return this.seekCurrentAudioToTime(localTime);
+    session.seekTarget = { index, part, time: localTime, fromEnd: false };
+    session.requestedChunkIndex = index;
+    session.requestedPartIndex = part;
+    this.pauseRequested = Boolean(this.pauseRequested || audio.paused);
+    audio.pause();
+    audio.onended?.();
+    this.setReaderState({ canSeek: false, canPause: true, isPaused: this.pauseRequested });
     return true;
   }
 
@@ -5558,6 +5605,7 @@ class CosyVoiceReaderPlugin extends Plugin {
     }
 
     session.requestedChunkIndex = targetIndex;
+    session.requestedPartIndex = 0;
     session.seekTarget = null;
     this.pauseRequested = false;
 
@@ -5892,7 +5940,7 @@ class CosyVoiceReaderView extends ItemView {
 
     const estimate = estimatePlayback(this.plugin.activeSession,
       Math.max(0, (state.currentChunk || 1) - 1),
-      this.plugin.currentAudio?.currentTime || 0, this.plugin.settings.speed,
+      this.plugin.getSegmentTiming().current, this.plugin.settings.speed,
       normalizeSpeed(this.plugin.settings.playbackSpeed));
     if (estimate) {
       const zh = this.plugin.settings.settingsLanguage === 'chinese';
@@ -6016,22 +6064,23 @@ class CosyVoiceReaderView extends ItemView {
     const target = Math.min(count - 1, Math.floor(clampProgress(progress) * count));
     const current = Math.max(0, (state.currentChunk || 1) - 1);
     if (target !== current) this.plugin.jumpToAdjacentChunk(target - current);
-    else this.plugin.seekCurrentAudioToTime(0);
+    else this.plugin.seekCurrentSegmentToTime(0);
   }
 
   createChunkSeekPanel(parent, state) {
     const audio = this.plugin.currentAudio;
-    const duration = audio && Number.isFinite(audio.duration) ? audio.duration : 0;
+    const timing = this.plugin.getSegmentTiming();
+    const duration = timing.duration;
     const enabled = Boolean(state.canSeek && duration > 0 && !this.plugin.activeSession?.seekTarget);
     const panel = parent.createDiv({ cls: 'note-reader-cosyvoice-chunk-seek' });
     const header = panel.createDiv({ cls: 'note-reader-cosyvoice-meta' });
     header.createSpan({ text: `${this.translate('Current segment')} ${state.currentChunk || 0} / ${state.totalChunks || 0}` });
-    const current = enabled ? Math.max(0, Math.min(duration, audio.currentTime || 0)) : 0;
+    const current = timing.current;
     const timeLabel = header.createSpan({ text: enabled
       ? `${formatDuration(current)} / ${formatDuration(duration)}` : this.translate('Waiting for audio') });
     const slider = panel.createEl('input', { attr: {
       type: 'range', min: '0', max: '1000', step: '1',
-      value: String(enabled ? Math.round(current / duration * 1000) : 0),
+      value: String(duration > 0 ? Math.round(current / duration * 1000) : 0),
       'aria-label': this.translate('Current segment progress'),
     } });
     slider.disabled = !enabled;
@@ -6057,7 +6106,7 @@ class CosyVoiceReaderView extends ItemView {
     slider.addEventListener('change', () => {
       if (enabled && audio === this.plugin.currentAudio && this.plugin.readerState.canSeek
         && !this.plugin.activeSession?.seekTarget) {
-        this.plugin.seekCurrentAudioToTime(Number(slider.value) / 1000 * duration);
+        this.plugin.seekCurrentSegmentToTime(Number(slider.value) / 1000 * duration);
       }
       finish();
       this.render();

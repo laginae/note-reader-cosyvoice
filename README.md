@@ -100,6 +100,7 @@ First install and enable the plugin, then open `Settings -> Community plugins ->
 - Lets you switch the complete plugin settings page between English and Chinese.
 - Requires a separate opt-in before each online engine can receive text.
 - Uses separate local and online chunk limits. Online notes and PDFs default to `200,400,800`, with at most one future chunk synthesized early by default.
+- For quicker startup, the first logical segment is synthesized in up to three audio parts: complete sentences reaching 20 non-whitespace characters, then 40 more, then the remaining text. All parts share one segment number and progress timeline. The default prefetch prepares only the next audio part. This can add up to two requests; actual latency depends on the provider. Audio export uses normal chunking.
 - Uses Obsidian SecretStorage for Azure and OpenRouter API keys by default on Obsidian 1.11.4 or later, with an external key-file compatibility option.
 - Provides common Chinese and English voice presets, model-specific OpenRouter voice menus, and custom voice ID fields.
 - Cleans Markdown before synthesis and converts Markdown tables into speech-friendly column and row descriptions while skipping empty cells.

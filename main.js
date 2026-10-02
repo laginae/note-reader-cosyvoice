@@ -335,6 +335,241 @@ var require_playback_estimate = __commonJS({
   }
 });
 
+// ../note-reader-core/src/semantic-chunker.js
+var require_semantic_chunker = __commonJS({
+  "../note-reader-core/src/semantic-chunker.js"(exports2, module2) {
+    "use strict";
+    var DEFAULT_CHUNK_LIMITS2 = [40, 80, 120, 160, 280, 320];
+    function parseChunkLimits2(value, fallback = DEFAULT_CHUNK_LIMITS2) {
+      const list = Array.isArray(value) ? value : String(value || "").split(",").map((item) => item.trim());
+      const limits = list.map((item) => Math.floor(Number(item))).filter((item) => Number.isFinite(item) && item > 0);
+      const fallbackLimits = Array.isArray(fallback) ? fallback.filter((item) => Number.isFinite(item) && item > 0) : [];
+      return limits.length ? limits : fallbackLimits.length ? fallbackLimits.slice() : DEFAULT_CHUNK_LIMITS2.slice();
+    }
+    function normalizeChunkText(text) {
+      return String(text || "").replace(/\r\n?/g, "\n").replace(/[ \t]+/g, " ").replace(/ *\n */g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+    }
+    function findLastBoundary(search, pattern, limit) {
+      let match;
+      let best = -1;
+      pattern.lastIndex = 0;
+      while ((match = pattern.exec(search)) !== null) {
+        const end = match.index + match[0].length;
+        if (end > 0 && end <= limit) {
+          best = end;
+        }
+        if (match[0].length === 0) {
+          pattern.lastIndex += 1;
+        }
+      }
+      return best;
+    }
+    function chooseChunkCut(text, limit) {
+      const safeLimit = Math.max(1, Math.floor(Number(limit) || 1));
+      const search = String(text || "").slice(0, safeLimit + 1);
+      const minUsefulCut = Math.max(1, Math.floor(safeLimit * 0.35));
+      const boundaries = [
+        /\n{2,}/g,
+        /\n/g,
+        /[。！？!?](?:["'\u2019\u201d\u3009-\u3011\u3015\uff09])?\s*/g,
+        /\.(?!\d)(?:["'\u2019\u201d])?\s+/g,
+        /[，,；;：:]\s*/g,
+        /\s+/g
+      ];
+      for (const pattern of boundaries) {
+        const cut = findLastBoundary(search, pattern, safeLimit);
+        if (cut >= minUsefulCut) {
+          return cut;
+        }
+      }
+      return safeLimit;
+    }
+    function splitTextForSpeechChunks2(text, maxLengths = DEFAULT_CHUNK_LIMITS2) {
+      const limits = parseChunkLimits2(maxLengths);
+      let remaining = normalizeChunkText(text);
+      const chunks = [];
+      while (remaining) {
+        const limit = limits[Math.min(chunks.length, limits.length - 1)];
+        if (remaining.length <= limit) {
+          chunks.push(remaining);
+          break;
+        }
+        const cut = chooseChunkCut(remaining, limit);
+        const chunk = remaining.slice(0, cut).trim();
+        remaining = remaining.slice(cut).trim();
+        if (chunk) {
+          chunks.push(chunk);
+        }
+      }
+      return chunks;
+    }
+    function createIncrementalSpeechChunker2(maxLengths = DEFAULT_CHUNK_LIMITS2, options = {}) {
+      const limits = parseChunkLimits2(maxLengths);
+      const detailed = options && options.detailed === true;
+      let buffer = "";
+      let chunkCount = 0;
+      let spans = [];
+      const appendSpan = (length, metadata) => {
+        if (length <= 0) {
+          return;
+        }
+        const previous = spans[spans.length - 1];
+        if (previous && previous.metadata === metadata) {
+          previous.length += length;
+        } else {
+          spans.push({ length, metadata });
+        }
+      };
+      const consumeSpans = (count) => {
+        let remaining = count;
+        while (remaining > 0 && spans.length) {
+          if (remaining >= spans[0].length) {
+            remaining -= spans[0].length;
+            spans.shift();
+          } else {
+            spans[0].length -= remaining;
+            remaining = 0;
+          }
+        }
+      };
+      const consumeBuffer = (count) => {
+        let next = buffer.slice(count);
+        const leadingWhitespace = /^\s*/.exec(next)[0].length;
+        consumeSpans(count + leadingWhitespace);
+        buffer = next.slice(leadingWhitespace);
+      };
+      const firstMetadata = () => {
+        const span = spans.find((entry) => entry.metadata !== null && typeof entry.metadata !== "undefined");
+        return span ? span.metadata : null;
+      };
+      const formatChunk = (text) => detailed ? { metadata: firstMetadata(), text } : text;
+      const takeReadyChunks = (flush) => {
+        const chunks = [];
+        while (buffer) {
+          const limit = limits[Math.min(chunkCount, limits.length - 1)];
+          if (buffer.length <= limit) {
+            if (flush) {
+              const chunk2 = buffer.trim();
+              if (chunk2) {
+                chunks.push(formatChunk(chunk2));
+                chunkCount += 1;
+              }
+              buffer = "";
+              spans = [];
+            }
+            break;
+          }
+          const cut = chooseChunkCut(buffer, limit);
+          const chunk = buffer.slice(0, cut).trim();
+          if (chunk) {
+            chunks.push(formatChunk(chunk));
+            chunkCount += 1;
+          }
+          consumeBuffer(cut);
+        }
+        return chunks;
+      };
+      return {
+        push(text, metadata = null) {
+          const normalized = normalizeChunkText(text);
+          if (normalized) {
+            if (buffer) {
+              buffer += "\n\n";
+              appendSpan(2, null);
+            }
+            buffer += normalized;
+            appendSpan(normalized.length, metadata);
+          }
+          return takeReadyChunks(false);
+        },
+        finish() {
+          return takeReadyChunks(true);
+        }
+      };
+    }
+    module2.exports = {
+      DEFAULT_CHUNK_LIMITS: DEFAULT_CHUNK_LIMITS2,
+      chooseChunkCut,
+      createIncrementalSpeechChunker: createIncrementalSpeechChunker2,
+      normalizeChunkText,
+      parseChunkLimits: parseChunkLimits2,
+      splitTextForSpeechChunks: splitTextForSpeechChunks2
+    };
+  }
+});
+
+// src/semantic-chunker.js
+var require_semantic_chunker2 = __commonJS({
+  "src/semantic-chunker.js"(exports2, module2) {
+    "use strict";
+    var core = require_semantic_chunker();
+    var sentenceSegmenter = typeof Intl.Segmenter === "function" ? new Intl.Segmenter(void 0, { granularity: "sentence" }) : null;
+    function openingSentenceCut(text, threshold) {
+      const segments = sentenceSegmenter ? sentenceSegmenter.segment(text) : Array.from(text.matchAll(/.*?(?:[。！？!?]|\.(?!\d)(?=\s|$)|$)/g), (match) => ({ index: match.index, segment: match[0] }));
+      for (const segment of segments) {
+        const sentence = segment.segment.trimEnd();
+        if (!sentence.trim()) continue;
+        if (/(?:\b(?:Mr|Mrs|Ms|Dr|Prof|Sr|Jr|St|vs|etc|Fig|Figs|Eq|Eqs|Sec|Vol|No|e\.g|i\.e)|\b[A-Z](?:\.[A-Z])*)\.$/i.test(sentence)) continue;
+        const end = segment.index + sentence.length;
+        if (/[。！？!?.]["'\u2019\u201d\u3009-\u3011\u3015\uff09]*$/.test(sentence) && Array.from(text.slice(0, end).replace(/\s/g, "")).length >= threshold) return end;
+      }
+      return text.length;
+    }
+    function splitOpeningAudioParts(text) {
+      let remaining = core.normalizeChunkText(text);
+      const parts = [];
+      for (const threshold of [20, 40]) {
+        if (!remaining) break;
+        const cut = openingSentenceCut(remaining, threshold);
+        parts.push(remaining.slice(0, cut).trim());
+        remaining = remaining.slice(cut).trim();
+      }
+      if (remaining) parts.push(remaining);
+      return parts;
+    }
+    module2.exports = { ...core, splitOpeningAudioParts };
+  }
+});
+
+// src/speech-parts.js
+var require_speech_parts = __commonJS({
+  "src/speech-parts.js"(exports2, module2) {
+    "use strict";
+    var { splitOpeningAudioParts } = require_semantic_chunker2();
+    var { estimateTextSeconds } = require_playback_estimate();
+    function getSpeechParts2(session, index) {
+      const text = session?.chunks?.[index];
+      if (typeof text !== "string") return [];
+      session.audioParts || (session.audioParts = {});
+      if (!session.audioParts[index]) {
+        session.audioParts[index] = index === 0 && session.kind !== "audio-export" ? splitOpeningAudioParts(text) : [text];
+      }
+      return session.audioParts[index];
+    }
+    function adjacentSpeechPart2(session, index, part, delta) {
+      const parts = getSpeechParts2(session, index);
+      if (delta > 0) {
+        if (part + 1 < parts.length) return { index, part: part + 1 };
+        if (index + 1 < session.chunks.length) return { index: index + 1, part: 0 };
+      } else {
+        if (part > 0) return { index, part: part - 1 };
+        if (index > 0) return { index: index - 1, part: getSpeechParts2(session, index - 1).length - 1 };
+      }
+      return null;
+    }
+    function getSpeechPartTiming2(session, index, part = 0, time = 0, speed = 1) {
+      const durations = getSpeechParts2(session, index).map((text, p) => {
+        const measured = session.partDurations?.[`${index}:${p}`];
+        return measured > 0 ? measured : Math.max(0.1, estimateTextSeconds(text, session.synthesisSpeeds?.[index] || speed));
+      });
+      const offset = durations.slice(0, part).reduce((sum, value) => sum + value, 0);
+      const duration = durations.reduce((sum, value) => sum + value, 0);
+      return { durations, offset, duration, current: Math.min(duration, offset + Math.max(0, time)) };
+    }
+    module2.exports = { getSpeechParts: getSpeechParts2, adjacentSpeechPart: adjacentSpeechPart2, getSpeechPartTiming: getSpeechPartTiming2 };
+  }
+});
+
 // src/audio-export.js
 var require_audio_export = __commonJS({
   "src/audio-export.js"(exports2, module2) {
@@ -923,253 +1158,6 @@ var require_reading_position2 = __commonJS({
   }
 });
 
-// ../note-reader-core/src/semantic-chunker.js
-var require_semantic_chunker = __commonJS({
-  "../note-reader-core/src/semantic-chunker.js"(exports2, module2) {
-    "use strict";
-    var DEFAULT_CHUNK_LIMITS2 = [40, 80, 120, 160, 280, 320];
-    function parseChunkLimits2(value, fallback = DEFAULT_CHUNK_LIMITS2) {
-      const list = Array.isArray(value) ? value : String(value || "").split(",").map((item) => item.trim());
-      const limits = list.map((item) => Math.floor(Number(item))).filter((item) => Number.isFinite(item) && item > 0);
-      const fallbackLimits = Array.isArray(fallback) ? fallback.filter((item) => Number.isFinite(item) && item > 0) : [];
-      return limits.length ? limits : fallbackLimits.length ? fallbackLimits.slice() : DEFAULT_CHUNK_LIMITS2.slice();
-    }
-    function normalizeChunkText(text) {
-      return String(text || "").replace(/\r\n?/g, "\n").replace(/[ \t]+/g, " ").replace(/ *\n */g, "\n").replace(/\n{3,}/g, "\n\n").trim();
-    }
-    function findLastBoundary(search, pattern, limit) {
-      let match;
-      let best = -1;
-      pattern.lastIndex = 0;
-      while ((match = pattern.exec(search)) !== null) {
-        const end = match.index + match[0].length;
-        if (end > 0 && end <= limit) {
-          best = end;
-        }
-        if (match[0].length === 0) {
-          pattern.lastIndex += 1;
-        }
-      }
-      return best;
-    }
-    function chooseChunkCut(text, limit) {
-      const safeLimit = Math.max(1, Math.floor(Number(limit) || 1));
-      const search = String(text || "").slice(0, safeLimit + 1);
-      const minUsefulCut = Math.max(1, Math.floor(safeLimit * 0.35));
-      const boundaries = [
-        /\n{2,}/g,
-        /\n/g,
-        /[。！？!?](?:["'\u2019\u201d\u3009-\u3011\u3015\uff09])?\s*/g,
-        /\.(?!\d)(?:["'\u2019\u201d])?\s+/g,
-        /[，,；;：:]\s*/g,
-        /\s+/g
-      ];
-      for (const pattern of boundaries) {
-        const cut = findLastBoundary(search, pattern, safeLimit);
-        if (cut >= minUsefulCut) {
-          return cut;
-        }
-      }
-      return safeLimit;
-    }
-    function splitTextForSpeechChunks2(text, maxLengths = DEFAULT_CHUNK_LIMITS2) {
-      const limits = parseChunkLimits2(maxLengths);
-      let remaining = normalizeChunkText(text);
-      const chunks = [];
-      while (remaining) {
-        const limit = limits[Math.min(chunks.length, limits.length - 1)];
-        if (remaining.length <= limit) {
-          chunks.push(remaining);
-          break;
-        }
-        const cut = chooseChunkCut(remaining, limit);
-        const chunk = remaining.slice(0, cut).trim();
-        remaining = remaining.slice(cut).trim();
-        if (chunk) {
-          chunks.push(chunk);
-        }
-      }
-      return chunks;
-    }
-    function createIncrementalSpeechChunker2(maxLengths = DEFAULT_CHUNK_LIMITS2, options = {}) {
-      const limits = parseChunkLimits2(maxLengths);
-      const detailed = options && options.detailed === true;
-      let buffer = "";
-      let chunkCount = 0;
-      let spans = [];
-      const appendSpan = (length, metadata) => {
-        if (length <= 0) {
-          return;
-        }
-        const previous = spans[spans.length - 1];
-        if (previous && previous.metadata === metadata) {
-          previous.length += length;
-        } else {
-          spans.push({ length, metadata });
-        }
-      };
-      const consumeSpans = (count) => {
-        let remaining = count;
-        while (remaining > 0 && spans.length) {
-          if (remaining >= spans[0].length) {
-            remaining -= spans[0].length;
-            spans.shift();
-          } else {
-            spans[0].length -= remaining;
-            remaining = 0;
-          }
-        }
-      };
-      const consumeBuffer = (count) => {
-        let next = buffer.slice(count);
-        const leadingWhitespace = /^\s*/.exec(next)[0].length;
-        consumeSpans(count + leadingWhitespace);
-        buffer = next.slice(leadingWhitespace);
-      };
-      const firstMetadata = () => {
-        const span = spans.find((entry) => entry.metadata !== null && typeof entry.metadata !== "undefined");
-        return span ? span.metadata : null;
-      };
-      const formatChunk = (text) => detailed ? { metadata: firstMetadata(), text } : text;
-      const takeReadyChunks = (flush) => {
-        const chunks = [];
-        while (buffer) {
-          const limit = limits[Math.min(chunkCount, limits.length - 1)];
-          if (buffer.length <= limit) {
-            if (flush) {
-              const chunk2 = buffer.trim();
-              if (chunk2) {
-                chunks.push(formatChunk(chunk2));
-                chunkCount += 1;
-              }
-              buffer = "";
-              spans = [];
-            }
-            break;
-          }
-          const cut = chooseChunkCut(buffer, limit);
-          const chunk = buffer.slice(0, cut).trim();
-          if (chunk) {
-            chunks.push(formatChunk(chunk));
-            chunkCount += 1;
-          }
-          consumeBuffer(cut);
-        }
-        return chunks;
-      };
-      return {
-        push(text, metadata = null) {
-          const normalized = normalizeChunkText(text);
-          if (normalized) {
-            if (buffer) {
-              buffer += "\n\n";
-              appendSpan(2, null);
-            }
-            buffer += normalized;
-            appendSpan(normalized.length, metadata);
-          }
-          return takeReadyChunks(false);
-        },
-        finish() {
-          return takeReadyChunks(true);
-        }
-      };
-    }
-    module2.exports = {
-      DEFAULT_CHUNK_LIMITS: DEFAULT_CHUNK_LIMITS2,
-      chooseChunkCut,
-      createIncrementalSpeechChunker: createIncrementalSpeechChunker2,
-      normalizeChunkText,
-      parseChunkLimits: parseChunkLimits2,
-      splitTextForSpeechChunks: splitTextForSpeechChunks2
-    };
-  }
-});
-
-// src/semantic-chunker.js
-var require_semantic_chunker2 = __commonJS({
-  "src/semantic-chunker.js"(exports2, module2) {
-    "use strict";
-    var core = require_semantic_chunker();
-    var sentenceSegmenter = typeof Intl.Segmenter === "function" ? new Intl.Segmenter(void 0, { granularity: "sentence" }) : null;
-    function openingChunkCut(text, limit, flush) {
-      let sentenceEnd = 0;
-      if (sentenceSegmenter) {
-        for (const segment of sentenceSegmenter.segment(text)) {
-          const sentence = segment.segment.trimEnd();
-          if (!sentence.trim()) continue;
-          const abbreviation = /(?:\b(?:Mr|Mrs|Ms|Dr|Prof|Sr|Jr|St|vs|etc|Fig|Figs|Eq|Eqs|Sec|Vol|No|e\.g|i\.e)|\b[A-Z](?:\.[A-Z])*)\.$/i.test(sentence);
-          if (abbreviation) continue;
-          if (segment.index + segment.segment.length < text.length || /[。！？!?.]["'\u2019\u201d\u3009-\u3011\u3015\uff09]*$/.test(sentence)) {
-            if (Array.from(text.slice(0, segment.index + sentence.length).replace(/\s/g, "")).length >= 40) {
-              sentenceEnd = segment.index + sentence.length;
-              break;
-            }
-          }
-        }
-      } else {
-        const boundaries = text.matchAll(/[。！？!?]["'\u2019\u201d]*|\.(?!\d)(?=\s|$)/g);
-        for (const boundary of boundaries) {
-          if (Array.from(text.slice(0, boundary.index + boundary[0].length).replace(/\s/g, "")).length >= 40) {
-            sentenceEnd = boundary.index + boundary[0].length;
-            break;
-          }
-        }
-      }
-      const cut = sentenceEnd;
-      if (cut > 0 && cut <= limit) return cut;
-      if (text.length > limit) return core.chooseChunkCut(text, limit);
-      return flush ? text.length : 0;
-    }
-    function splitTextForSpeechChunks2(text, maxLengths, options = {}) {
-      if (!options.openingSentences) return core.splitTextForSpeechChunks(text, maxLengths);
-      const normalized = core.normalizeChunkText(text);
-      if (!normalized) return [];
-      const limits = core.parseChunkLimits(maxLengths);
-      const cut = openingChunkCut(normalized, limits[0], true);
-      const first = normalized.slice(0, cut).trim();
-      const remainder = normalized.slice(cut).trim();
-      return [first, ...core.splitTextForSpeechChunks(remainder, limits)].filter(Boolean);
-    }
-    function createIncrementalSpeechChunker2(maxLengths, options = {}) {
-      if (!options.openingSentences) return core.createIncrementalSpeechChunker(maxLengths, options);
-      const limits = core.parseChunkLimits(maxLengths);
-      const remainder = core.createIncrementalSpeechChunker(limits, options);
-      let openingPages = [];
-      let openingDone = false;
-      const takeOpening = (flush) => {
-        const joined = openingPages.map((page) => page.text).join("\n\n");
-        if (!joined) return [];
-        const cut = openingChunkCut(joined, limits[0], flush);
-        if (!cut) return [];
-        const first = joined.slice(0, cut).trim();
-        const output = [options.detailed ? { text: first, metadata: openingPages[0].metadata } : first];
-        let offset = 0;
-        for (const page of openingPages) {
-          const tail = page.text.slice(Math.max(0, cut - offset));
-          if (tail.trim()) output.push(...remainder.push(tail, page.metadata));
-          offset += page.text.length + 2;
-        }
-        openingPages = [];
-        openingDone = true;
-        return output;
-      };
-      return {
-        push(text, metadata = null) {
-          if (openingDone) return remainder.push(text, metadata);
-          const normalized = core.normalizeChunkText(text);
-          if (normalized) openingPages.push({ text: normalized, metadata });
-          return takeOpening(false);
-        },
-        finish() {
-          return [...openingDone ? [] : takeOpening(true), ...remainder.finish()];
-        }
-      };
-    }
-    module2.exports = { ...core, createIncrementalSpeechChunker: createIncrementalSpeechChunker2, splitTextForSpeechChunks: splitTextForSpeechChunks2 };
-  }
-});
-
 // ../note-reader-core/src/task-state.js
 var require_task_state = __commonJS({
   "../note-reader-core/src/task-state.js"(exports2, module2) {
@@ -1248,6 +1236,7 @@ var { spawn } = require("child_process");
 var { pathToFileURL } = require("url");
 var { extractPdfTextLayout, extractTextFromPdfItems } = require_pdf_layout2();
 var { estimatePlayback, formatDuration } = require_playback_estimate();
+var { getSpeechParts, adjacentSpeechPart, getSpeechPartTiming } = require_speech_parts();
 var { MIMO_ENDPOINT, MIMO_DEFAULTS, MIMO_VOICES, MIMO_MAX_CHUNK_CHARS, normalizeMimoSettings, buildMimoRequestBody, decodeMimoAudio } = require_mimo_tts();
 var {
   MAX_EXPORTED_AUDIO_BYTES,
@@ -1496,11 +1485,11 @@ var SETTINGS_UI_TEXT = {
     speedName: "Synthesis speed",
     speedDesc: "Synthesis speed for new segments only; playing and already prepared audio remain unchanged. MiMo treats speed as an instruction, not an exact rate.",
     chunkLimitsName: "Local chunk limits",
-    chunkLimitsDesc: "Character limits for Local CosyVoice. Reading starts with complete opening sentences accumulated until at least 40 non-whitespace characters, then uses these limits. The opening segment still respects the first limit.",
+    chunkLimitsDesc: "Character limits for Local CosyVoice. The first segment plays in up to three audio parts: complete sentences reaching 20 characters, then 40 more, then the remainder (excluding whitespace). It remains one segment in the progress bar.",
     onlineChunkLimitsName: "Online chunk limits",
-    onlineChunkLimitsDesc: "Used by Edge, Azure, OpenRouter, and MiMo for notes and PDFs. Accumulate complete opening sentences until at least 40 non-whitespace characters, then use these limits (default 200,400,800). This can add one request; the opening segment respects the first limit.",
+    onlineChunkLimitsDesc: "Used by Edge, Azure, OpenRouter, and MiMo for notes and PDFs (default 200,400,800). The first segment plays in up to three audio parts: sentences reaching 20 characters, then 40 more, then the remainder. It remains one visible segment; this can add up to two requests. Prefetch counts audio parts.",
     onlinePrefetchName: "Online synthesis prefetch",
-    onlinePrefetchDesc: "How many future chunks an online engine may synthesize early. The default 1 improves continuity while limiting unused work to at most one chunk; choose 0 for strict on-demand synthesis.",
+    onlinePrefetchDesc: "How many future audio parts an online engine may synthesize early, including the smaller parts inside the first segment. Default 1; choose 0 for strict on-demand synthesis.",
     onlinePrefetchNone: "0 - synthesize only when needed",
     onlinePrefetchOne: "1 - prefetch one chunk",
     audioExportLocationName: "Audio export save location",
@@ -1612,11 +1601,11 @@ var SETTINGS_UI_TEXT = {
     speedName: "\u5408\u6210\u8BED\u901F",
     speedDesc: "\u4EC5\u5BF9\u65B0\u5408\u6210\u7684\u5206\u6BB5\u751F\u6548\uFF0C\u6B63\u5728\u64AD\u653E\u53CA\u5DF2\u9884\u5408\u6210\u7684\u97F3\u9891\u4E0D\u53D8\u3002MiMo \u5C06\u901F\u5EA6\u4F5C\u4E3A\u6307\u4EE4\u7406\u89E3\uFF0C\u5E76\u975E\u7CBE\u786E\u500D\u901F\u3002",
     chunkLimitsName: "\u672C\u5730\u5206\u6BB5\u957F\u5EA6",
-    chunkLimitsDesc: "\u672C\u5730 CosyVoice \u7684\u5B57\u7B26\u6570\u4E0A\u9650\uFF0C\u4EE5\u82F1\u6587\u9017\u53F7\u5206\u9694\u3002\u542F\u52A8\u6BB5\u9010\u53E5\u7D2F\u52A0\uFF0C\u8FBE\u5230 40 \u5B57\u540E\u505C\u6B62\uFF08\u4E0D\u8BA1\u7A7A\u767D\uFF09\uFF0C\u4E0D\u9650\u5B9A\u53E5\u6570\u3002\u540E\u7EED\u6309\u8FD9\u4E9B\u4E0A\u9650\u5206\u6BB5\uFF0C\u542F\u52A8\u6BB5\u4ECD\u9075\u5B88\u7B2C\u4E00\u4E2A\u4E0A\u9650\u3002",
+    chunkLimitsDesc: "\u672C\u5730 CosyVoice \u7684\u5B57\u7B26\u6570\u4E0A\u9650\uFF0C\u4EE5\u82F1\u6587\u9017\u53F7\u5206\u9694\u3002\u7B2C\u4E00\u6BB5\u5185\u90E8\u6309\u6574\u53E5\u7D2F\u52A0\u81F3 20 \u5B57\uFF0C\u518D\u4ECE\u5269\u4F59\u5185\u5BB9\u7D2F\u52A0\u81F3 40 \u5B57\uFF0C\u6700\u540E\u5408\u6210\u4F59\u6587\uFF08\u4E0D\u8BA1\u7A7A\u767D\uFF09\uFF0C\u6700\u591A\u4E09\u6BB5\u97F3\u9891\uFF1B\u8FDB\u5EA6\u6761\u4ECD\u663E\u793A\u4E3A\u540C\u4E00\u6BB5\u3002",
     onlineChunkLimitsName: "\u5728\u7EBF\u5206\u6BB5\u957F\u5EA6",
-    onlineChunkLimitsDesc: "Edge\u3001Azure\u3001OpenRouter \u548C MiMo \u6717\u8BFB\u7B14\u8BB0\u6216 PDF \u65F6\u4F7F\u7528\u3002\u542F\u52A8\u6BB5\u9010\u53E5\u7D2F\u52A0\uFF0C\u8FBE\u5230 40 \u5B57\u540E\u505C\u6B62\uFF08\u4E0D\u8BA1\u7A7A\u767D\uFF09\uFF0C\u4E0D\u9650\u5B9A\u53E5\u6570\u3002\u540E\u7EED\u6309\u8FD9\u4E9B\u4E0A\u9650\u5206\u6BB5\uFF08\u9ED8\u8BA4 200,400,800\uFF09\u3002\u53EF\u80FD\u589E\u52A0\u4E00\u6B21\u8BF7\u6C42\uFF0C\u542F\u52A8\u6BB5\u4ECD\u9075\u5B88\u7B2C\u4E00\u4E2A\u4E0A\u9650\u3002",
+    onlineChunkLimitsDesc: "Edge\u3001Azure\u3001OpenRouter \u548C MiMo \u6717\u8BFB\u7B14\u8BB0\u6216 PDF \u65F6\u4F7F\u7528\uFF08\u9ED8\u8BA4 200,400,800\uFF09\u3002\u7B2C\u4E00\u6BB5\u5185\u90E8\u6309\u6574\u53E5\u7D2F\u52A0\u81F3 20 \u5B57\uFF0C\u518D\u7D2F\u52A0\u65B0\u7684 40 \u5B57\uFF0C\u6700\u540E\u5408\u6210\u4F59\u6587\uFF08\u4E0D\u8BA1\u7A7A\u767D\uFF09\uFF0C\u754C\u9762\u4ECD\u663E\u793A\u540C\u4E00\u6BB5\u3002\u6700\u591A\u589E\u52A0\u4E24\u6B21\u8BF7\u6C42\uFF0C\u9884\u5408\u6210\u6570\u91CF\u6309\u5C0F\u97F3\u9891\u8BA1\u7B97\u3002",
     onlinePrefetchName: "\u5728\u7EBF\u5408\u6210\u9884\u53D6",
-    onlinePrefetchDesc: "\u5141\u8BB8\u5728\u7EBF\u5F15\u64CE\u63D0\u524D\u5408\u6210\u7684\u540E\u7EED\u5206\u6BB5\u6570\u91CF\u3002\u9ED8\u8BA4 1 \u53EF\u6539\u5584\u8854\u63A5\uFF0C\u5E76\u628A\u53EF\u80FD\u672A\u4F7F\u7528\u7684\u63D0\u524D\u5408\u6210\u9650\u5236\u4E3A\u6700\u591A\u4E00\u6BB5\uFF1B\u9009\u62E9 0 \u53EF\u4E25\u683C\u6309\u9700\u5408\u6210\u3002",
+    onlinePrefetchDesc: "\u5141\u8BB8\u5728\u7EBF\u5F15\u64CE\u63D0\u524D\u5408\u6210\u7684\u540E\u7EED\u97F3\u9891\u6570\u91CF\uFF0C\u7B2C\u4E00\u6BB5\u5185\u90E8\u7684\u5C0F\u97F3\u9891\u4E5F\u5404\u7B97\u4E00\u6B21\u3002\u9ED8\u8BA4 1\uFF1B\u9009\u62E9 0 \u53EF\u4E25\u683C\u6309\u9700\u5408\u6210\u3002",
     onlinePrefetchNone: "0 - \u9700\u8981\u65F6\u624D\u5408\u6210",
     onlinePrefetchOne: "1 - \u63D0\u524D\u5408\u6210\u4E00\u6BB5",
     audioExportLocationName: "\u97F3\u9891\u5BFC\u51FA\u4FDD\u5B58\u4F4D\u7F6E",
@@ -4541,7 +4530,7 @@ ${embed}
       if (!configuration) {
         return;
       }
-      const chunks = splitTextForSpeechChunks(fullText, configuration.chunkLimits, { openingSentences: true });
+      const chunks = splitTextForSpeechChunks(fullText, configuration.chunkLimits);
       const fallbackIndex = Math.min(Math.max(0, position.chunkIndex), Math.max(0, chunks.length - 1));
       resumeSlice = { matched: false, text: chunks.slice(fallbackIndex).join("\n\n") };
       new Notice("CosyVoice: the saved text anchor changed. Resuming from the nearest saved chunk.", 8e3);
@@ -4836,7 +4825,7 @@ ${embed}
     await this.runSpeechSession(session);
   }
   async producePdfSpeechChunks(file, session, selectionContext, chunkLimits) {
-    const chunker = createIncrementalSpeechChunker(chunkLimits, { detailed: true, openingSentences: true });
+    const chunker = createIncrementalSpeechChunker(chunkLimits, { detailed: true });
     let readableTextLength = 0;
     let selectionFallbackNotified = false;
     await this.extractPdfText(file, session, {
@@ -5062,7 +5051,7 @@ ${embed}
     }
     await this.stopReading({ silent: true });
     this.pauseRequested = false;
-    const chunks = splitTextForSpeechChunks(text, configuration.chunkLimits, { openingSentences: true });
+    const chunks = splitTextForSpeechChunks(text, configuration.chunkLimits);
     const session = this.createSpeechSession(chunks, sourceLabel, configuration, {
       file: options.file,
       sourceKind: options.sourceKind || ""
@@ -5095,32 +5084,36 @@ ${embed}
   }
   async runSpeechSession(session) {
     const preparedChunks = /* @__PURE__ */ new Map();
-    const getPreparedChunk = (index) => {
-      if (!preparedChunks.has(index)) {
-        const preparing = this.queuePrepareChunk(session.chunks[index], index, session);
+    const getPreparedChunk = (index, part = 0) => {
+      const key = `${index}:${part}`;
+      if (!preparedChunks.has(key)) {
+        const preparing = this.queuePrepareChunk(getSpeechParts(session, index)[part], index, session, part);
         preparing.catch(() => {
         });
-        preparedChunks.set(index, preparing);
+        preparedChunks.set(key, preparing);
       }
-      return preparedChunks.get(index);
+      return preparedChunks.get(key);
     };
     session.prepareAvailableChunks = () => {
-      if (!this.isActive(session) || !Number.isInteger(session.prefetchBaseIndex)) {
+      if (!this.isActive(session) || session.seekTarget || this.pauseRequested || !Number.isInteger(session.prefetchBaseIndex)) {
         return;
       }
+      let cursor = { index: session.prefetchBaseIndex, part: session.currentPartIndex || 0 };
       for (let offset = 1; offset <= session.prefetchChunks; offset += 1) {
-        const prefetchIndex = session.prefetchBaseIndex + offset;
-        if (prefetchIndex < session.chunks.length) {
-          getPreparedChunk(prefetchIndex);
-        }
+        cursor = adjacentSpeechPart(session, cursor.index, cursor.part, 1);
+        if (!cursor) break;
+        getPreparedChunk(cursor.index, cursor.part);
       }
     };
     try {
       let index = 0;
+      let part = 0;
       while (this.isActive(session)) {
         if (Number.isInteger(session.requestedChunkIndex) && session.chunks.length) {
           index = Math.max(0, Math.min(session.chunks.length - 1, session.requestedChunkIndex));
+          part = session.requestedPartIndex || 0;
           session.requestedChunkIndex = null;
+          session.requestedPartIndex = null;
         }
         session.prefetchBaseIndex = index;
         if (session.kind === "pdf-progressive" && index >= session.chunks.length && !session.productionComplete) {
@@ -5143,24 +5136,26 @@ ${embed}
           break;
         }
         session.currentChunkIndex = index;
-        const prepared = await getPreparedChunk(index);
+        session.currentPartIndex = part;
+        if (session.lastCompletedChunkIndex === index) session.lastCompletedChunkIndex = null;
+        const prepared = await getPreparedChunk(index, part);
         if (!this.isActive(session)) {
           break;
         }
-        if (Number.isInteger(session.requestedChunkIndex) && session.requestedChunkIndex !== index) {
-          index = Math.max(0, Math.min(session.chunks.length - 1, session.requestedChunkIndex));
-          session.requestedChunkIndex = null;
+        if (Number.isInteger(session.requestedChunkIndex)) {
           continue;
         }
         if (!session.seekTarget) session.prepareAvailableChunks();
         session.requestedChunkIndex = null;
-        await this.playPreparedAudio(prepared, session, index, session.totalChunks);
-        session.lastCompletedChunkIndex = index;
+        await this.playPreparedAudio(prepared, session, index, session.totalChunks, part);
         if (Number.isInteger(session.requestedChunkIndex)) {
-          index = Math.max(0, Math.min(session.chunks.length - 1, session.requestedChunkIndex));
-          session.requestedChunkIndex = null;
+          continue;
+        } else if (part + 1 < getSpeechParts(session, index).length) {
+          part += 1;
         } else {
+          session.lastCompletedChunkIndex = index;
           index += 1;
+          part = 0;
         }
       }
       if (this.isActive(session)) {
@@ -5213,7 +5208,7 @@ ${embed}
       }
     }
   }
-  async prepareChunk(chunkText, index, session) {
+  async prepareChunk(chunkText, index, session, part = 0) {
     if (!this.isActive(session)) {
       throw new Error("Reading stopped.");
     }
@@ -5223,14 +5218,14 @@ ${embed}
     const speechEngine = normalizeSpeechEngine(session.speechEngine || this.settings.speechEngine);
     const engineLabel = session.engineLabel || getSpeechEngineLabel(this.settings);
     const outputExtension = ["local-cosyvoice", "mimo-tts"].includes(speechEngine) ? "wav" : "mp3";
-    const basename = `${Date.now()}-${session.id}-${index}`;
+    const basename = `${Date.now()}-${session.id}-${index}-${part}`;
     const inputPath = path.join(this.cacheDir, `${basename}.txt`);
     const outputPath = path.join(this.cacheDir, `${basename}.${outputExtension}`);
     session.files.push(inputPath, outputPath);
     await fs.promises.writeFile(inputPath, chunkText, { encoding: "utf8", mode: 384 });
     const isAudioExport = session.kind === "audio-export";
     const isBackgroundPrefetch = Boolean(
-      this.currentAudio && Number.isInteger(session.currentChunkIndex) && index !== session.currentChunkIndex
+      !isAudioExport && Number.isInteger(session.currentChunkIndex) && (index !== session.currentChunkIndex || part !== (session.currentPartIndex || 0))
     );
     if (!isBackgroundPrefetch) {
       this.updateStatus(`${engineLabel} synth ${index + 1}/${session.totalChunks || 0}`, {
@@ -5239,10 +5234,10 @@ ${embed}
         canSeek: false,
         canStop: true,
         currentChunk: index + 1,
-        currentText: previewText(chunkText),
+        currentText: previewText(session.chunks?.[index] || chunkText),
         isPaused: false,
         phase: "synthesizing",
-        progress: session.totalChunks ? index / session.totalChunks : 0,
+        progress: session.totalChunks ? (index + this.getSegmentTiming(session, index, part, 0).fraction) / session.totalChunks : 0,
         status: "running",
         totalChunks: session.totalChunks || 0
       });
@@ -5275,8 +5270,8 @@ ${embed}
       url
     };
   }
-  queuePrepareChunk(chunkText, index, session) {
-    const promise = this.prepareChunk(chunkText, index, session);
+  queuePrepareChunk(chunkText, index, session, part = 0) {
+    const promise = this.prepareChunk(chunkText, index, session, part);
     promise.catch(() => {
     });
     return promise;
@@ -5688,12 +5683,16 @@ ${embed}
     audio.noteReaderReleaseSource = null;
     release();
   }
-  async playPreparedAudio(prepared, session, index, total) {
+  getSegmentTiming(session = this.activeSession, index = Math.max(0, (this.readerState.currentChunk || 1) - 1), part = session?.currentPartIndex || 0, time = this.currentAudio?.currentTime || 0) {
+    const timing = session?.chunks?.[index] !== void 0 ? getSpeechPartTiming(session, index, part, time, normalizeSpeed(this.settings.speed)) : { duration: Number(this.currentAudio?.duration) || 0, current: time, offset: 0 };
+    return { ...timing, fraction: timing.duration > 0 ? Math.min(1, timing.current / timing.duration) : 0 };
+  }
+  async playPreparedAudio(prepared, session, index, total, part = 0) {
     if (!this.isActive(session)) {
       return;
     }
     if (!session.seekTarget) await this.waitWhilePaused(session);
-    if (!this.isActive(session)) {
+    if (!this.isActive(session) || Number.isInteger(session.requestedChunkIndex) && (session.requestedChunkIndex !== index || (session.requestedPartIndex || 0) !== part)) {
       return;
     }
     const source = await this.createPlayableAudioSource(prepared);
@@ -5733,7 +5732,9 @@ ${embed}
         const recordDuration = () => {
           if (this.isActive(session) && Number.isFinite(audio.duration) && audio.duration > 0) {
             session.audioDurations = session.audioDurations || {};
-            session.audioDurations[index] = audio.duration;
+            session.partDurations || (session.partDurations = {});
+            session.partDurations[`${index}:${part}`] = audio.duration;
+            session.audioDurations[index] = getSpeechParts(session, index).length > 1 ? this.getSegmentTiming(session, index, part, audio.currentTime).duration : audio.duration;
           }
         };
         const applyPlaybackSpeed = () => {
@@ -5748,8 +5749,9 @@ ${embed}
           recordDuration();
           if (settled || !this.isActive(session) || !session.seekTarget) return;
           const target = session.seekTarget;
-          if (target.index !== index) {
+          if (target.index !== index || (target.part || 0) !== part) {
             session.requestedChunkIndex = target.index;
+            session.requestedPartIndex = target.part || 0;
             finish(resolve);
             return;
           }
@@ -5762,12 +5764,14 @@ ${embed}
             target.time += duration;
             target.fromEnd = false;
           }
-          if (target.time < 0 && index > 0) {
-            target.index -= 1;
+          const previous = adjacentSpeechPart(session, index, part, -1);
+          const next = adjacentSpeechPart(session, index, part, 1);
+          if (target.time < 0 && previous) {
+            Object.assign(target, previous);
             target.fromEnd = true;
-          } else if (target.time >= duration && index + 1 < session.chunks.length) {
+          } else if (target.time >= duration && next) {
             target.time -= duration;
-            target.index += 1;
+            Object.assign(target, next);
           } else {
             audio.currentTime = Math.max(0, Math.min(duration, target.time));
             session.seekTarget = null;
@@ -5777,12 +5781,13 @@ ${embed}
               isPaused: Boolean(this.pauseRequested),
               phase: this.pauseRequested ? "paused" : "playing",
               status: this.pauseRequested ? "paused" : "running",
-              progress: (index + audio.currentTime / duration) / getPlaybackTotal()
+              progress: (index + this.getSegmentTiming(session, index, part, audio.currentTime).fraction) / getPlaybackTotal()
             });
             if (!this.pauseRequested) Promise.resolve(audio.play()).catch((error) => finish(reject, error));
             return;
           }
           session.requestedChunkIndex = target.index;
+          session.requestedPartIndex = target.part || 0;
           finish(resolve);
         };
         audio.onplaying = applyPlaybackSpeed;
@@ -5799,7 +5804,7 @@ ${embed}
           currentText: previewText(Array.isArray(session.chunks) ? session.chunks[index] : ""),
           isPaused: false,
           phase: "playing",
-          progress: index / playbackTotal,
+          progress: (index + this.getSegmentTiming(session, index, part, 0).fraction) / playbackTotal,
           status: "running",
           totalChunks: playbackTotal
         });
@@ -5817,7 +5822,7 @@ ${embed}
           }
           lastProgressUpdate = now;
           const duration = Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : 0;
-          const chunkProgress = duration ? audio.currentTime / duration : 0;
+          const chunkProgress = duration ? this.getSegmentTiming(session, index, part, audio.currentTime).fraction : 0;
           const currentTotal = getPlaybackTotal();
           this.setReaderState({
             progress: (index + chunkProgress) / currentTotal,
@@ -5832,7 +5837,7 @@ ${embed}
             ...getChunkNavigationState(index + 1, currentTotal),
             canSeek: false,
             isPaused: false,
-            progress: (index + 1) / currentTotal,
+            progress: (index + this.getSegmentTiming(session, index, part, audio.duration || 0).fraction) / currentTotal,
             totalChunks: currentTotal
           });
           finish(resolve);
@@ -5924,12 +5929,12 @@ ${embed}
       progress,
       currentChunk: this.readerState.currentChunk,
       totalChunks: this.readerState.totalChunks,
-      duration: audio.duration
+      duration: this.getSegmentTiming().duration
     });
     if (seekTime === null) {
       return false;
     }
-    return this.seekCurrentAudioToTime(seekTime);
+    return this.seekCurrentSegmentToTime(seekTime);
   }
   seekCurrentAudioBySeconds(deltaSeconds) {
     const audio = this.currentAudio;
@@ -5948,9 +5953,11 @@ ${embed}
     const duration = audio.duration;
     if (this.isActive(session) && Array.isArray(session.chunks) && Number.isFinite(duration) && duration > 0 && (time < 0 || time >= duration)) {
       const index = Math.max(0, (this.readerState.currentChunk || 1) - 1);
-      if (time < 0 && index > 0 || time >= duration && index + 1 < session.chunks.length) {
-        session.seekTarget = time < 0 ? { index: index - 1, time, fromEnd: true } : { index: index + 1, time: time - duration, fromEnd: false };
+      const adjacent = adjacentSpeechPart(session, index, session.currentPartIndex || 0, time < 0 ? -1 : 1);
+      if (adjacent) {
+        session.seekTarget = time < 0 ? { ...adjacent, time, fromEnd: true } : { ...adjacent, time: time - duration, fromEnd: false };
         session.requestedChunkIndex = session.seekTarget.index;
+        session.requestedPartIndex = session.seekTarget.part;
         this.pauseRequested = Boolean(this.pauseRequested || audio.paused);
         audio.pause();
         if (typeof audio.onended === "function") audio.onended();
@@ -5983,10 +5990,32 @@ ${embed}
       return true;
     }
     const chunkIndex = Math.max(0, (this.readerState.currentChunk || 1) - 1);
-    const chunkProgress = duration ? audio.currentTime / duration : 0;
+    const chunkProgress = duration ? this.getSegmentTiming().fraction : 0;
     this.setReaderState({
       progress: this.readerState.totalChunks ? (chunkIndex + chunkProgress) / this.readerState.totalChunks : 0
     });
+    return true;
+  }
+  seekCurrentSegmentToTime(time) {
+    const session = this.activeSession;
+    const audio = this.currentAudio;
+    if (!audio || !Number.isFinite(time) || session?.seekTarget) return false;
+    const index = Math.max(0, (this.readerState.currentChunk || 1) - 1);
+    if (!this.isActive(session) || getSpeechParts(session, index).length <= 1) return this.seekCurrentAudioToTime(time);
+    const timing = this.getSegmentTiming();
+    let localTime = Math.max(0, Math.min(timing.duration, time));
+    let part = 0;
+    while (part + 1 < timing.durations.length && localTime >= timing.durations[part]) {
+      localTime -= timing.durations[part++];
+    }
+    if (part === (session.currentPartIndex || 0)) return this.seekCurrentAudioToTime(localTime);
+    session.seekTarget = { index, part, time: localTime, fromEnd: false };
+    session.requestedChunkIndex = index;
+    session.requestedPartIndex = part;
+    this.pauseRequested = Boolean(this.pauseRequested || audio.paused);
+    audio.pause();
+    audio.onended?.();
+    this.setReaderState({ canSeek: false, canPause: true, isPaused: this.pauseRequested });
     return true;
   }
   jumpToAdjacentChunk(deltaChunks) {
@@ -6003,6 +6032,7 @@ ${embed}
       return false;
     }
     session.requestedChunkIndex = targetIndex;
+    session.requestedPartIndex = 0;
     session.seekTarget = null;
     this.pauseRequested = false;
     const audio = this.currentAudio;
@@ -6307,7 +6337,7 @@ var CosyVoiceReaderView = class extends ItemView {
     const estimate = estimatePlayback(
       this.plugin.activeSession,
       Math.max(0, (state.currentChunk || 1) - 1),
-      this.plugin.currentAudio?.currentTime || 0,
+      this.plugin.getSegmentTiming().current,
       this.plugin.settings.speed,
       normalizeSpeed(this.plugin.settings.playbackSpeed)
     );
@@ -6418,23 +6448,24 @@ var CosyVoiceReaderView = class extends ItemView {
     const target = Math.min(count - 1, Math.floor(clampProgress(progress) * count));
     const current = Math.max(0, (state.currentChunk || 1) - 1);
     if (target !== current) this.plugin.jumpToAdjacentChunk(target - current);
-    else this.plugin.seekCurrentAudioToTime(0);
+    else this.plugin.seekCurrentSegmentToTime(0);
   }
   createChunkSeekPanel(parent, state) {
     const audio = this.plugin.currentAudio;
-    const duration = audio && Number.isFinite(audio.duration) ? audio.duration : 0;
+    const timing = this.plugin.getSegmentTiming();
+    const duration = timing.duration;
     const enabled = Boolean(state.canSeek && duration > 0 && !this.plugin.activeSession?.seekTarget);
     const panel = parent.createDiv({ cls: "note-reader-cosyvoice-chunk-seek" });
     const header = panel.createDiv({ cls: "note-reader-cosyvoice-meta" });
     header.createSpan({ text: `${this.translate("Current segment")} ${state.currentChunk || 0} / ${state.totalChunks || 0}` });
-    const current = enabled ? Math.max(0, Math.min(duration, audio.currentTime || 0)) : 0;
+    const current = timing.current;
     const timeLabel = header.createSpan({ text: enabled ? `${formatDuration(current)} / ${formatDuration(duration)}` : this.translate("Waiting for audio") });
     const slider = panel.createEl("input", { attr: {
       type: "range",
       min: "0",
       max: "1000",
       step: "1",
-      value: String(enabled ? Math.round(current / duration * 1e3) : 0),
+      value: String(duration > 0 ? Math.round(current / duration * 1e3) : 0),
       "aria-label": this.translate("Current segment progress")
     } });
     slider.disabled = !enabled;
@@ -6471,7 +6502,7 @@ var CosyVoiceReaderView = class extends ItemView {
     });
     slider.addEventListener("change", () => {
       if (enabled && audio === this.plugin.currentAudio && this.plugin.readerState.canSeek && !this.plugin.activeSession?.seekTarget) {
-        this.plugin.seekCurrentAudioToTime(Number(slider.value) / 1e3 * duration);
+        this.plugin.seekCurrentSegmentToTime(Number(slider.value) / 1e3 * duration);
       }
       finish();
       this.render();

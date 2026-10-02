@@ -199,7 +199,7 @@ const testVaultPath = path.resolve('test-vault');
 const testAudioPath = path.join(testVaultPath, '.obsidian', 'plugins', 'note-reader-cosyvoice', 'cache', 'a.wav');
 assert.strictEqual(manifest.id, 'note-reader-cosyvoice');
 assert.strictEqual(manifest.name, 'Note and PDF Voice Reader');
-assert.strictEqual(manifest.version, '0.4.8');
+assert.strictEqual(manifest.version, '0.4.9');
 assert.strictEqual(
   moduleObject.exports.__test.sanitizeTextForSpeech('第一段的结尾。\n\n## 第二节标题\n\n下一节的正文。'),
   '第一段的结尾。\n第二节标题\n下一节的正文。'
@@ -982,6 +982,7 @@ const readerView = new moduleObject.exports.__test.CosyVoiceReaderView({}, {
     totalChunks: 4,
   }),
   settings: moduleObject.exports.__test.createDefaultSettings(),
+  getSegmentTiming: PluginClass.prototype.getSegmentTiming,
   handleReaderKeydown(event, options) {
     return PluginClass.prototype.handleReaderKeydown.call(this, event, options);
   },
@@ -1043,7 +1044,7 @@ const segmentAudio = { duration: 40, currentTime: 10, paused: true };
 const segmentSeeks = [];
 bilingualView.plugin.currentAudio = segmentAudio;
 bilingualView.plugin.readerState = { ...readerView.plugin.readerState, canSeek: true };
-bilingualView.plugin.seekCurrentAudioToTime = (time) => { segmentSeeks.push(time); return true; };
+bilingualView.plugin.seekCurrentSegmentToTime = (time) => { segmentSeeks.push(time); return true; };
 bilingualView.render();
 let segmentSlider = findElementByAriaLabel(bilingualRoot, 'Current segment progress');
 assert.strictEqual(segmentSlider.disabled, false);
@@ -1738,8 +1739,7 @@ assert.deepStrictEqual(chunkNavigationCalls, [-1, 1]);
     progressivePdfSession.chunks,
     moduleObject.exports.__test.splitTextForSpeechChunks(
       `${'A'.repeat(210)}\n\n${'B'.repeat(500)}`,
-      [200, 400, 800],
-      { openingSentences: true }
+      [200, 400, 800]
     )
   );
   mockPdfJsLib = null;
@@ -1824,6 +1824,32 @@ assert.deepStrictEqual(chunkNavigationCalls, [-1, 1]);
   prefetchPlugin.activeSession = prefetchSession;
   await prefetchPlugin.runSpeechSession(prefetchSession);
   assert.deepStrictEqual(prefetchEvents, ['prepare:0', 'prepare:1', 'play:0', 'play:1']);
+
+  // Internal startup audio preserves two logical chunks and only prepares one future part.
+  const openingText = '字'.repeat(19) + '。' + '文'.repeat(39) + '。' + '余'.repeat(39) + '。';
+  for (const stopEarly of [false, true]) {
+    const partEvents = [];
+    prefetchPlugin.queuePrepareChunk = (text, index, session, part) => {
+      partEvents.push(`prepare:${index}:${part}`);
+      return Promise.resolve({ text });
+    };
+    prefetchPlugin.playPreparedAudio = async (_prepared, session, index, total, part) => {
+      assert.equal(total, 2);
+      assert.equal(session.chunks[0], openingText);
+      if (index === 0) assert.notEqual(session.lastCompletedChunkIndex, 0);
+      if (index === 1) assert.equal(session.lastCompletedChunkIndex, 0);
+      partEvents.push(`play:${index}:${part}`);
+      if (stopEarly) session.stopped = true;
+    };
+    const partsSession = prefetchPlugin.createSpeechSession([openingText, 'next'], 'note', {
+      engineLabel: 'OpenRouter TTS', speechEngine: 'openrouter-tts', prefetchChunks: 1,
+    });
+    prefetchPlugin.activeSession = partsSession;
+    await prefetchPlugin.runSpeechSession(partsSession);
+    assert.deepStrictEqual(partEvents, stopEarly
+      ? ['prepare:0:0', 'prepare:0:1', 'play:0:0']
+      : ['prepare:0:0', 'prepare:0:1', 'play:0:0', 'prepare:0:2', 'play:0:1', 'prepare:1:0', 'play:0:2', 'play:1:0']);
+  }
 
   const arrivingPrefetchPlugin = Object.create(PluginClass.prototype);
   arrivingPrefetchPlugin.sequence = 77;
@@ -2266,10 +2292,10 @@ assert.deepStrictEqual(chunkNavigationCalls, [-1, 1]);
     playbackPlugin.readerState.currentChunk = 1;
     playbackPlugin.currentAudio = { duration: 10, currentTime: 8, paused: false, pause() {} };
     assert.strictEqual(playbackPlugin.seekCurrentAudioBySeconds(5), true);
-    assert.deepStrictEqual(playbackSession.seekTarget, { index: 1, time: 3, fromEnd: false });
+    assert.deepStrictEqual(playbackSession.seekTarget, { index: 1, part: 0, time: 3, fromEnd: false });
     assert.strictEqual(playbackPlugin.seekCurrentAudioBySeconds(5), true);
     await playbackPlugin.playPreparedAudio({ index: 1 }, playbackSession, 1, 3);
-    assert.deepStrictEqual(playbackSession.seekTarget, { index: 2, time: 6, fromEnd: false });
+    assert.deepStrictEqual(playbackSession.seekTarget, { index: 2, part: 0, time: 6, fromEnd: false });
     await playbackPlugin.playPreparedAudio({ index: 2 }, playbackSession, 2, 3);
     assert.strictEqual(playbackSession.seekTarget, null);
     assert.deepStrictEqual(seekStarts, [6]);
@@ -2278,7 +2304,7 @@ assert.deepStrictEqual(chunkNavigationCalls, [-1, 1]);
     playbackPlugin.currentAudio = { duration: 20, currentTime: 2, paused: true, pause() {} };
     assert.strictEqual(playbackPlugin.seekCurrentAudioBySeconds(-5), true);
     await playbackPlugin.playPreparedAudio({ index: 1 }, playbackSession, 1, 3);
-    assert.deepStrictEqual(playbackSession.seekTarget, { index: 0, time: -1, fromEnd: true });
+    assert.deepStrictEqual(playbackSession.seekTarget, { index: 0, part: 0, time: -1, fromEnd: true });
     const pausedSeek = playbackPlugin.playPreparedAudio({ index: 0 }, playbackSession, 0, 3);
     await new Promise((resolve) => setImmediate(resolve));
     assert.strictEqual(playbackPlugin.currentAudio.currentTime, 9);
@@ -2290,6 +2316,83 @@ assert.deepStrictEqual(chunkNavigationCalls, [-1, 1]);
     playbackSession.seekTarget = null;
     playbackSession.requestedChunkIndex = null;
     playbackPlugin.createPlayableAudioSource = originalSourceFactory;
+
+    class ControlledPartAudio extends SuccessfulAudio {
+      constructor() { super(); this.paused = true; }
+      set src(value) {
+        const [index, part] = value.split(':').map(Number);
+        this.duration = index === 0 ? [5, 8, 12][part] : 9;
+      }
+      load() { Promise.resolve().then(() => this.onloadedmetadata?.()); }
+      play() {
+        this.paused = false;
+        if (!this.loaded) { this.loaded = true; this.load(); }
+        this.onplaying?.();
+        return Promise.resolve();
+      }
+      pause() { this.paused = true; }
+    }
+    global.Audio = ControlledPartAudio;
+    const multipartPlugin = Object.create(PluginClass.prototype);
+    multipartPlugin.sequence = 90;
+    multipartPlugin.settings = { ...playbackPlugin.settings, cleanupCache: false, rememberReadingPosition: false };
+    multipartPlugin.readerState = moduleObject.exports.__test.createReaderState();
+    multipartPlugin.setReaderState = (patch) => Object.assign(multipartPlugin.readerState, patch);
+    multipartPlugin.updateStatus = (_label, patch) => multipartPlugin.setReaderState(patch);
+    multipartPlugin.writeRuntimeLog = async () => {};
+    multipartPlugin.createPlayableAudioSource = async ({ index, part }) => ({ url: `${index}:${part}`, release() {} });
+    const multipartPrepared = [];
+    multipartPlugin.queuePrepareChunk = async (_text, index, _session, part) => {
+      multipartPrepared.push(`${index}:${part}`);
+      return { index, part };
+    };
+    const multipartSession = multipartPlugin.createSpeechSession([openingText, 'next'], 'note', {
+      engineLabel: 'OpenRouter TTS', speechEngine: 'openrouter-tts', prefetchChunks: 1,
+    });
+    multipartPlugin.activeSession = multipartSession;
+    const multipartRun = multipartPlugin.runSpeechSession(multipartSession);
+    const waitPart = async (index, part) => {
+      for (let attempt = 0; attempt < 100; attempt++) {
+        await new Promise(resolve => setImmediate(resolve));
+        if (multipartPlugin.currentAudio && multipartSession.currentChunkIndex === index
+          && multipartSession.currentPartIndex === part && !multipartSession.seekTarget) return;
+      }
+      assert.fail(`Audio part ${index}:${part} did not become ready`);
+    };
+    await waitPart(0, 0);
+    assert.equal(multipartPlugin.readerState.totalChunks, 2);
+    multipartPlugin.currentAudio.currentTime = 5;
+    multipartPlugin.currentAudio.onended();
+    await waitPart(0, 1);
+    assert.equal(multipartPlugin.readerState.currentChunk, 1);
+    assert.ok(multipartPlugin.readerState.progress > 0);
+    assert.equal(multipartSession.lastCompletedChunkIndex, null);
+    await multipartPlugin.pauseOrResume();
+    multipartPlugin.currentAudio.currentTime = 6;
+    assert.equal(multipartPlugin.seekCurrentAudioBySeconds(5), true);
+    await waitPart(0, 2);
+    assert.equal(multipartPlugin.currentAudio.currentTime, 3);
+    assert.equal(multipartPlugin.currentAudio.paused, true);
+    assert.equal(multipartPlugin.currentAudio.playbackRate, 1.25);
+    assert.equal(multipartPlugin.getSegmentTiming().duration, 25);
+    assert.equal(multipartPlugin.seekCurrentSegmentToTime(2), true);
+    await waitPart(0, 0);
+    assert.equal(multipartPlugin.currentAudio.currentTime, 2);
+    assert.equal(multipartPlugin.seekCurrentAudioBySeconds(5), true);
+    assert.equal(multipartPlugin.seekCurrentAudioBySeconds(5), true);
+    await waitPart(0, 1);
+    assert.equal(multipartPlugin.currentAudio.currentTime, 7);
+    assert.equal(multipartPlugin.currentAudio.paused, true);
+    assert.equal(multipartPlugin.jumpToAdjacentChunk(1), true);
+    await waitPart(1, 0);
+    assert.equal(multipartPlugin.readerState.currentChunk, 2);
+    assert.equal(multipartSession.lastCompletedChunkIndex, null);
+    multipartPlugin.currentAudio.currentTime = 9;
+    multipartPlugin.currentAudio.onended();
+    await multipartRun;
+    assert.equal(new Set(multipartPrepared).size, multipartPrepared.length);
+    assert.equal(multipartPlugin.readerState.status, 'complete');
+    global.Audio = SeekAudio;
 
     let releasedFailedSource = 0;
     class UnsupportedAudio extends SuccessfulAudio {
