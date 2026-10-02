@@ -300,7 +300,9 @@ OpenRouter 提供与 OpenAI Audio Speech 兼容的专用 TTS 接口，输入文�
 4. 选择内置的 ZDR 兼容模型及其音色，或填写自定义模型 ID 与音色 ID。
 5. 确认 OpenRouter 账户中的输入输出日志和输入输出数据共享保持关闭。
 
-整体默认模型为 `fish-audio/s2.1-pro`，默认使用沉稳的英式英语男声，适合长文和学术朗读。Fish 提供六个精选预设，覆盖中文、美式英语和英式英语的男女声。切换到其他内置模型时，插件会在发布方明确标注性别的前提下优先使用英语男声：Microsoft MAI 默认使用美式英语男声 `Ethan`；Gemini 因 Google 未公开固定性别或英美口音标签，改用信息型 `Charon`，但不把它标为已确认男声。不同模型的音色 ID 不能混用。
+整体默认模型为 `fish-audio/s2.1-pro`，默认使用沉稳的英式英语男声，适合长文和学术朗读。Fish 提供六个精选预设，覆盖中文、美式英语和英式英语的男女声。切换到其他内置模型时，插件会在发布方明确标注性别的前提下优先使用英语男声：MAI-Voice-2.1 Flash 默认使用英式英语男声 `Harry`，旧版 MAI 默认使用美式英语男声 `Ethan`；Gemini 因 Google 未公开固定性别或英美口音标签，改用信息型 `Charon`，但不把它标为已确认男声。不同模型的音色 ID 不能混用。
+
+- `microsoft/mai-voice-2.1-flash`：默认使用英式英语男声 `en-GB-Harry:MAI-Voice-2.1-Flash`。提供 10 个 OpenRouter 已列出的精选音色，覆盖中文、英式英语和美式英语的男女声。OpenRouter 列出 23 种语言、97 个音色，价格为每百万字符 `$15`；该模型在 2026-10-02 的 speech + ZDR 目录中有出现。参见[模型页面](https://openrouter.ai/microsoft/mai-voice-2.1-flash)。
 
 - `microsoft/mai-voice-2-flash`：默认使用微软官方发布的美式英语男声 `en-US-Ethan:MAI-Voice-2-Flash`；除 OpenRouter 当前公开的 4 个 ID 外，还加入微软官方发布的美式英语和普通话音色作为兼容预设。
 - `microsoft/mai-voice-2`：默认使用微软官方发布的美式英语男声 `en-US-Ethan:MAI-Voice-2`；其他美式英语男声及普通话 ShortName 也作为兼容预设提供，因为 OpenRouter 可能接受其元数据没有列出的音色。
@@ -313,6 +315,8 @@ Fish 音色预设使用 32 位 Fish Audio 公开音色参考 ID；Kokoro 则使�
 OpenRouter 当前列出的 Fish S2.1 Pro 价格为 `$15/百万 UTF-8 字节`，MAI-Voice-2 Flash 为 `$15/百万字符`，MAI-Voice-2 为 `$22/百万字符`。英文 ASCII 文本大致每字符 1 字节，因此 Fish 英文价格接近 MAI Flash；一个纯中文汉字通常占 3 个 UTF-8 字节，百万汉字粗略约 `$45`。Kokoro 是低价选择：当前 OpenRouter 页面显示不同供应商费率，最低约 `$0.62/百万字符`，另一个供应商约 `$4/百万字符`。插件强制 ZDR 路由，实际选中的符合 ZDR 端点可能采用不同费率；价格会随服务端点变化。请查看 [Fish S2.1 Pro](https://openrouter.ai/fish-audio/s2.1-pro)、[Kokoro 82M](https://openrouter.ai/hexgrad/kokoro-82m)、[MAI-Voice-2 Flash](https://openrouter.ai/microsoft/mai-voice-2-flash) 和 [MAI-Voice-2](https://openrouter.ai/microsoft/mai-voice-2) 的最新价格。
 
 设置页会根据当前模型显示特点，并只展示该模型对应的音色预设。模型、音色和 ZDR 端点会随时间变化。Fish 和 Kokoro 在 2026-09-23 的 OpenRouter `speech + ZDR` 模型筛选结果中均有出现；这表示当时各自至少有一个公开标记为 ZDR 的端点，并不意味着所有供应商端点采用相同保留政策，也不保证以后始终可用。OpenRouter 文档说明 `zdr=true` 仅返回具有 ZDR 端点的模型，插件也会在每次合成请求中强制这一限制。参见实时 [`speech + ZDR` 模型接口](https://openrouter.ai/api/v1/models?output_modalities=speech&zdr=true)和[OpenRouter API 文档](https://openrouter.ai/docs/api/api-reference/models/get-models)。Fish 预设对应 [Fish Audio 公开音色库](https://fish.audio/discovery/)；微软官方 [MAI 音色目录](https://learn.microsoft.com/zh-cn/azure/ai-services/speech-service/mai-voices)用于核对 MAI ShortName。Gemini 风格名称来自 [Google Gemini TTS 官方音色表](https://ai.google.dev/gemini-api/docs/speech-generation?hl=zh-cn)。自定义模型仍可填写，但如果没有符合条件的 ZDR 端点，插件会报错，而不会取消隐私约束后继续发送。
+
+设置中增加了**查询自定义音色 ID**，可打开当前模型的模型页面和对应音色目录。选择**自定义音色**后，把可用 ID 填入 **OpenRouter TTS 音色**。MAI 必须包含完整模型后缀，例如 `en-GB-Harry:MAI-Voice-2.1-Flash`；Fish 使用公开音色参考 ID。供应商完整目录中的部分音色可能尚未由对应 OpenRouter 端点开放。
 
 ## 模型存储空间、其他语音模型与分段设置
 

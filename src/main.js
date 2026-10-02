@@ -95,20 +95,28 @@ const MICROSOFT_VOICE_PRESETS = [
 ];
 const OPENROUTER_TTS_MODELS = [
   [
+    'microsoft/mai-voice-2.1-flash',
+    'en-GB-Harry:MAI-Voice-2.1-Flash',
+    'Microsoft MAI-Voice-2.1 Flash - low latency, UK English male default',
+    'Microsoft MAI-Voice-2.1 Flash - 低延迟、默认英式英语男声',
+    'A low-latency Microsoft model with 23 languages and 97 OpenRouter-listed voices. Defaults to UK English male Harry. Curated presets cover Mandarin, UK English and US English, with male and female choices. Currently $15 per million characters; every request still requires ZDR.',
+    '微软低延迟语音模型，支持 23 种语言，OpenRouter 列出 97 个音色。默认使用英式英语男声 Harry；精选音色覆盖中文、英式和美式英语的男女声。当前每百万字符 $15；每次请求仍强制 ZDR。',
+  ],
+  [
     'microsoft/mai-voice-2-flash',
     'en-US-Ethan:MAI-Voice-2-Flash',
     'Microsoft MAI-Voice-2 Flash - low latency, US English male default',
     'Microsoft MAI-Voice-2 Flash - 低延迟、默认美式英语男声',
-    'A low-latency Microsoft model for responsive playback. Ethan is the US English male default from Microsoft\'s MAI catalog. It and the additional Microsoft-published voices are compatibility presets because OpenRouter does not list them all. Microsoft currently publishes no UK English MAI voice.',
-    '微软低延迟语音模型，适合快速开始播放。默认使用微软 MAI 官方目录中的美式英语男声 Ethan；Ethan 及其他微软官方音色属于兼容预设，因为 OpenRouter 未完整列出。微软当前没有发布英式英语 MAI 音色。',
+    'A low-latency Microsoft model for responsive playback. Ethan is the US English male default from Microsoft\'s MAI catalog. It and the additional Microsoft-published voices are compatibility presets because OpenRouter does not list them all. For UK English presets, select MAI-Voice-2.1 Flash.',
+    '微软低延迟语音模型，适合快速开始播放。默认使用微软 MAI 官方目录中的美式英语男声 Ethan；Ethan 及其他微软官方音色属于兼容预设，因为 OpenRouter 未完整列出。需要英式英语预设时，可选择 MAI-Voice-2.1 Flash。',
   ],
   [
     'microsoft/mai-voice-2',
     'en-US-Ethan:MAI-Voice-2',
     'Microsoft MAI-Voice-2 - expressive, US English male default',
     'Microsoft MAI-Voice-2 - 表现力强、默认美式英语男声',
-    'An expressive Microsoft model for natural long-form narration. Ethan is the US English male default. The plugin also offers other Microsoft-published English and Mandarin ShortNames as compatibility presets even when OpenRouter metadata omits them. Microsoft currently publishes no UK English MAI voice.',
-    '微软表现力语音模型，适合自然长文叙述。默认使用美式英语男声 Ethan；插件还提供 OpenRouter 元数据未列出、但由微软官方发布的其他英文和普通话 ShortName 作为兼容预设。微软当前没有发布英式英语 MAI 音色。',
+    'An expressive Microsoft model for natural long-form narration. Ethan is the US English male default. The plugin also offers other Microsoft-published English and Mandarin ShortNames as compatibility presets even when OpenRouter metadata omits them. For UK English presets, select MAI-Voice-2.1 Flash.',
+    '微软表现力语音模型，适合自然长文叙述。默认使用美式英语男声 Ethan；插件还提供 OpenRouter 元数据未列出、但由微软官方发布的其他英文和普通话 ShortName 作为兼容预设。需要英式英语预设时，可选择 MAI-Voice-2.1 Flash。',
   ],
   [
     'google/gemini-3.1-flash-tts-preview',
@@ -140,6 +148,17 @@ const OPENROUTER_TTS_MODELS = [
 // Fish voice IDs point to public Fish Audio voices powered by S2.1 Pro.
 // MAI compatibility IDs follow Microsoft's official MAI voice catalog on 2026-08-27.
 const OPENROUTER_TTS_PRESETS = [
+  // IDs verified in OpenRouter's speech + ZDR catalog on 2026-10-02.
+  ['microsoft/mai-voice-2.1-flash', 'en-GB-Harry:MAI-Voice-2.1-Flash', 'Harry (UK English male, default)', 'Harry（英式英语男声，默认）'],
+  ['microsoft/mai-voice-2.1-flash', 'en-GB-Emily:MAI-Voice-2.1-Flash', 'Emily (UK English female)', 'Emily（英式英语女声）'],
+  ['microsoft/mai-voice-2.1-flash', 'en-US-Ethan:MAI-Voice-2.1-Flash', 'Ethan (US English male)', 'Ethan（美式英语男声）'],
+  ['microsoft/mai-voice-2.1-flash', 'en-US-Grant:MAI-Voice-2.1-Flash', 'Grant (US English male)', 'Grant（美式英语男声）'],
+  ['microsoft/mai-voice-2.1-flash', 'en-US-Harper:MAI-Voice-2.1-Flash', 'Harper (US English female)', 'Harper（美式英语女声）'],
+  ['microsoft/mai-voice-2.1-flash', 'en-US-Olivia:MAI-Voice-2.1-Flash', 'Olivia (US English female)', 'Olivia（美式英语女声）'],
+  ['microsoft/mai-voice-2.1-flash', 'zh-CN-Bo:MAI-Voice-2.1-Flash', 'Bo (Mandarin male)', 'Bo（中文普通话男声）'],
+  ['microsoft/mai-voice-2.1-flash', 'zh-CN-Wei:MAI-Voice-2.1-Flash', 'Wei (Mandarin male)', 'Wei（中文普通话男声）'],
+  ['microsoft/mai-voice-2.1-flash', 'zh-CN-Lan:MAI-Voice-2.1-Flash', 'Lan (Mandarin female)', 'Lan（中文普通话女声）'],
+  ['microsoft/mai-voice-2.1-flash', 'zh-CN-Mei:MAI-Voice-2.1-Flash', 'Mei (Mandarin female)', 'Mei（中文普通话女声）'],
   ['microsoft/mai-voice-2-flash', 'en-US-Ethan:MAI-Voice-2-Flash', 'Ethan (US English male; not listed in OpenRouter metadata)', 'Ethan（美式英语男声；OpenRouter 元数据未列出）'],
   ['microsoft/mai-voice-2-flash', 'en-US-Olivia:MAI-Voice-2-Flash', 'Olivia (US English female; Microsoft compatibility preset)', 'Olivia（美式英语女声；微软兼容预设）'],
   ['microsoft/mai-voice-2-flash', 'zh-CN-Bo:MAI-Voice-2-Flash', 'Bo (Mandarin male; not listed in OpenRouter metadata)', 'Bo（中文普通话男声；OpenRouter 元数据未列出）'],
@@ -257,6 +276,11 @@ const SETTINGS_UI_TEXT = {
     openRouterVoicesDesc: 'Model-specific presets are listed. MAI-Voice-2 also includes Microsoft-published Mandarin IDs that OpenRouter may accept even when its supported_voices metadata omits them; availability can vary by endpoint.',
     openRouterVoiceName: 'OpenRouter TTS voice',
     openRouterVoiceDesc: 'Voice ID supported by the selected model. Voice catalogs differ between models.',
+    openRouterVoiceHelpName: 'Find a custom voice ID',
+    openRouterVoiceHelpDesc: 'Open the model page and voice catalog to find an ID, then select Custom voice and paste it into OpenRouter TTS voice. MAI requires the full model suffix, for example en-GB-Harry:MAI-Voice-2.1-Flash. Confirm the ID is accepted by the selected OpenRouter model; catalogs can include voices not exposed by its endpoint.',
+    openRouterModelPageButton: 'Model page',
+    openRouterVoiceCatalogButton: 'Voice catalog',
+    openRouterVoiceHelpTooltip: 'Open the official reference for the currently selected model',
     openRouterPrivacyName: 'OpenRouter privacy routing',
     openRouterPrivacyDesc: 'Always enforced: provider.zdr is true and provider data collection is denied. The plugin never falls back to a non-ZDR endpoint. Keep OpenRouter account-level input/output logging and data sharing disabled for private content.',
     speedName: 'Synthesis speed',
@@ -373,6 +397,11 @@ const SETTINGS_UI_TEXT = {
     openRouterVoicesDesc: '这里只列出与所选模型对应的预设。MAI-Voice-2 还加入了微软官方发布、但 OpenRouter supported_voices 元数据可能遗漏的普通话音色；实际可用性可能随端点变化。',
     openRouterVoiceName: 'OpenRouter TTS 音色',
     openRouterVoiceDesc: '所选模型支持的音色 ID。不同模型的音色目录并不相同。',
+    openRouterVoiceHelpName: '查询自定义音色 ID',
+    openRouterVoiceHelpDesc: '打开模型页面和音色目录查询 ID，选择“自定义音色”后填入“OpenRouter TTS 音色”。MAI 必须包含完整模型后缀，例如 en-GB-Harry:MAI-Voice-2.1-Flash。请确认该 ID 可用于所选 OpenRouter 模型；官方目录中的部分音色可能尚未由对应端点开放。',
+    openRouterModelPageButton: '模型页面',
+    openRouterVoiceCatalogButton: '音色目录',
+    openRouterVoiceHelpTooltip: '打开当前所选模型的官方查询资料',
     openRouterPrivacyName: 'OpenRouter 隐私路由',
     openRouterPrivacyDesc: '始终强制执行：provider.zdr 为 true，并拒绝供应商收集数据。插件不会降级到非 ZDR 端点。朗读私密内容时，还应关闭 OpenRouter 账户级输入输出日志和数据共享。',
     speedName: '合成语速',
@@ -1254,6 +1283,23 @@ function openGitHubIssues() {
 
 function openAzureTtsPrivacyDocs() {
   return openExternalUrl(AZURE_TTS_PRIVACY_URL);
+}
+
+function getOpenRouterVoiceHelpLinks(modelId, language = 'english') {
+  const model = normalizeOpenRouterModel(modelId);
+  const modelPage = `https://openrouter.ai/${model.split('/').map(encodeURIComponent).join('/')}`;
+  let voiceCatalog = 'https://openrouter.ai/api/v1/models?output_modalities=speech';
+  if (model.startsWith('microsoft/mai-voice-')) {
+    const locale = normalizeSettingsLanguage(language) === 'chinese' ? 'zh-cn' : 'en-us';
+    voiceCatalog = `https://learn.microsoft.com/${locale}/azure/ai-services/speech-service/mai-voices`;
+  } else if (model.startsWith('google/gemini-')) {
+    voiceCatalog = 'https://ai.google.dev/gemini-api/docs/speech-generation#voice-options';
+  } else if (model.startsWith('fish-audio/')) {
+    voiceCatalog = 'https://fish.audio/discovery/';
+  } else if (model === 'hexgrad/kokoro-82m') {
+    voiceCatalog = modelPage;
+  }
+  return { modelPage, voiceCatalog };
 }
 
 function normalizeSpeechEngine(value) {
@@ -6738,6 +6784,26 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
         });
 
       new Setting(containerEl)
+        .setName(ui.openRouterVoiceHelpName)
+        .setDesc(ui.openRouterVoiceHelpDesc)
+        .addButton((button) => {
+          button.setButtonText(ui.openRouterModelPageButton)
+            .setTooltip(ui.openRouterVoiceHelpTooltip)
+            .onClick(() => {
+              const url = getOpenRouterVoiceHelpLinks(this.plugin.settings.openRouterModel, settingsLanguage).modelPage;
+              if (!openExternalUrl(url)) new Notice(url, 8000);
+            });
+        })
+        .addButton((button) => {
+          button.setButtonText(ui.openRouterVoiceCatalogButton)
+            .setTooltip(ui.openRouterVoiceHelpTooltip)
+            .onClick(() => {
+              const url = getOpenRouterVoiceHelpLinks(this.plugin.settings.openRouterModel, settingsLanguage).voiceCatalog;
+              if (!openExternalUrl(url)) new Notice(url, 8000);
+            });
+        });
+
+      new Setting(containerEl)
         .setName(ui.openRouterPrivacyName)
         .setDesc(ui.openRouterPrivacyDesc);
     }
@@ -6976,6 +7042,7 @@ module.exports = {
     getOpenRouterTtsModels,
     getOpenRouterTtsPresets,
     getOpenRouterTtsVoicePresets,
+    getOpenRouterVoiceHelpLinks,
     getChunkLimitsForSpeechEngine,
     getPdfPageNumberFromNode,
     getPdfSelectionContext,

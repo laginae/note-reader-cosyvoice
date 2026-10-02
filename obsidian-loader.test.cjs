@@ -199,7 +199,7 @@ const testVaultPath = path.resolve('test-vault');
 const testAudioPath = path.join(testVaultPath, '.obsidian', 'plugins', 'note-reader-cosyvoice', 'cache', 'a.wav');
 assert.strictEqual(manifest.id, 'note-reader-cosyvoice');
 assert.strictEqual(manifest.name, 'Note and PDF Voice Reader');
-assert.strictEqual(manifest.version, '0.4.10');
+assert.strictEqual(manifest.version, '0.4.11');
 assert.strictEqual(
   moduleObject.exports.__test.sanitizeTextForSpeech('第一段的结尾。\n\n## 第二节标题\n\n下一节的正文。'),
   '第一段的结尾。\n第二节标题\n下一节的正文。'
@@ -541,6 +541,7 @@ assert.strictEqual(moduleObject.exports.__test.parseRetryAfterMs('120'), 10000);
 assert.strictEqual(moduleObject.exports.__test.parseRetryAfterMs('invalid'), null);
 const openRouterModelIds = moduleObject.exports.__test.getOpenRouterTtsModels().map(([model]) => model);
 assert.deepStrictEqual(openRouterModelIds, [
+  'microsoft/mai-voice-2.1-flash',
   'microsoft/mai-voice-2-flash',
   'microsoft/mai-voice-2',
   'google/gemini-3.1-flash-tts-preview',
@@ -617,13 +618,40 @@ assert.ok(moduleObject.exports.__test.getOpenRouterTtsModels('chinese').find(
   ([model, , , info]) => model === 'microsoft/mai-voice-2-flash'
     && info.includes('低延迟')
     && info.includes('Ethan')
-    && info.includes('没有发布英式英语')
+    && info.includes('MAI-Voice-2.1 Flash')
 ));
 assert.ok(moduleObject.exports.__test.getOpenRouterTtsModels('chinese').find(
   ([model, , , info]) => model === 'microsoft/mai-voice-2'
     && info.includes('美式英语男声 Ethan')
     && info.includes('兼容预设')
 ));
+assert.strictEqual(
+  moduleObject.exports.__test.getDefaultOpenRouterVoiceForModel('microsoft/mai-voice-2.1-flash'),
+  'en-GB-Harry:MAI-Voice-2.1-Flash'
+);
+const mai21Presets = openRouterVoicesByModel.get('microsoft/mai-voice-2.1-flash');
+assert.strictEqual(mai21Presets.length, 10);
+assert.ok(mai21Presets.every(([, voice]) => voice.endsWith(':MAI-Voice-2.1-Flash')));
+for (const locale of ['zh-CN', 'en-GB', 'en-US']) {
+  for (const gender of ['male', 'female']) {
+    assert.ok(mai21Presets.some(([, voice, label]) => voice.startsWith(locale)
+      && new RegExp(`\\b${gender}\\b`).test(label)), `${locale} needs a ${gender} voice`);
+  }
+}
+const mai21Body = JSON.parse(moduleObject.exports.__test.buildOpenRouterTtsRequestBody('Public test sentence.', {
+  openRouterModel: 'microsoft/mai-voice-2.1-flash',
+  openRouterVoice: 'en-US-Sage:MAI-Voice-2.1-Flash',
+}));
+assert.strictEqual(mai21Body.model, 'microsoft/mai-voice-2.1-flash');
+assert.strictEqual(mai21Body.voice, 'en-US-Sage:MAI-Voice-2.1-Flash');
+assert.strictEqual(mai21Body.response_format, 'mp3');
+assert.strictEqual(mai21Body.provider.zdr, true);
+assert.strictEqual(mai21Body.provider.data_collection, 'deny');
+const mai21Help = moduleObject.exports.__test.getOpenRouterVoiceHelpLinks('microsoft/mai-voice-2.1-flash', 'chinese');
+assert.strictEqual(mai21Help.modelPage, 'https://openrouter.ai/microsoft/mai-voice-2.1-flash');
+assert.ok(mai21Help.voiceCatalog.includes('learn.microsoft.com/zh-cn/'));
+assert.strictEqual(moduleObject.exports.__test.getOpenRouterVoiceHelpLinks('fish-audio/s2.1-pro').voiceCatalog,
+  'https://fish.audio/discovery/');
 assert.strictEqual(
   moduleObject.exports.__test.getDefaultOpenRouterVoiceForModel('microsoft/mai-voice-2'),
   'en-US-Ethan:MAI-Voice-2'

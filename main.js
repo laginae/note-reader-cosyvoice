@@ -1322,20 +1322,28 @@ var MICROSOFT_VOICE_PRESETS = [
 ];
 var OPENROUTER_TTS_MODELS = [
   [
+    "microsoft/mai-voice-2.1-flash",
+    "en-GB-Harry:MAI-Voice-2.1-Flash",
+    "Microsoft MAI-Voice-2.1 Flash - low latency, UK English male default",
+    "Microsoft MAI-Voice-2.1 Flash - \u4F4E\u5EF6\u8FDF\u3001\u9ED8\u8BA4\u82F1\u5F0F\u82F1\u8BED\u7537\u58F0",
+    "A low-latency Microsoft model with 23 languages and 97 OpenRouter-listed voices. Defaults to UK English male Harry. Curated presets cover Mandarin, UK English and US English, with male and female choices. Currently $15 per million characters; every request still requires ZDR.",
+    "\u5FAE\u8F6F\u4F4E\u5EF6\u8FDF\u8BED\u97F3\u6A21\u578B\uFF0C\u652F\u6301 23 \u79CD\u8BED\u8A00\uFF0COpenRouter \u5217\u51FA 97 \u4E2A\u97F3\u8272\u3002\u9ED8\u8BA4\u4F7F\u7528\u82F1\u5F0F\u82F1\u8BED\u7537\u58F0 Harry\uFF1B\u7CBE\u9009\u97F3\u8272\u8986\u76D6\u4E2D\u6587\u3001\u82F1\u5F0F\u548C\u7F8E\u5F0F\u82F1\u8BED\u7684\u7537\u5973\u58F0\u3002\u5F53\u524D\u6BCF\u767E\u4E07\u5B57\u7B26 $15\uFF1B\u6BCF\u6B21\u8BF7\u6C42\u4ECD\u5F3A\u5236 ZDR\u3002"
+  ],
+  [
     "microsoft/mai-voice-2-flash",
     "en-US-Ethan:MAI-Voice-2-Flash",
     "Microsoft MAI-Voice-2 Flash - low latency, US English male default",
     "Microsoft MAI-Voice-2 Flash - \u4F4E\u5EF6\u8FDF\u3001\u9ED8\u8BA4\u7F8E\u5F0F\u82F1\u8BED\u7537\u58F0",
-    "A low-latency Microsoft model for responsive playback. Ethan is the US English male default from Microsoft's MAI catalog. It and the additional Microsoft-published voices are compatibility presets because OpenRouter does not list them all. Microsoft currently publishes no UK English MAI voice.",
-    "\u5FAE\u8F6F\u4F4E\u5EF6\u8FDF\u8BED\u97F3\u6A21\u578B\uFF0C\u9002\u5408\u5FEB\u901F\u5F00\u59CB\u64AD\u653E\u3002\u9ED8\u8BA4\u4F7F\u7528\u5FAE\u8F6F MAI \u5B98\u65B9\u76EE\u5F55\u4E2D\u7684\u7F8E\u5F0F\u82F1\u8BED\u7537\u58F0 Ethan\uFF1BEthan \u53CA\u5176\u4ED6\u5FAE\u8F6F\u5B98\u65B9\u97F3\u8272\u5C5E\u4E8E\u517C\u5BB9\u9884\u8BBE\uFF0C\u56E0\u4E3A OpenRouter \u672A\u5B8C\u6574\u5217\u51FA\u3002\u5FAE\u8F6F\u5F53\u524D\u6CA1\u6709\u53D1\u5E03\u82F1\u5F0F\u82F1\u8BED MAI \u97F3\u8272\u3002"
+    "A low-latency Microsoft model for responsive playback. Ethan is the US English male default from Microsoft's MAI catalog. It and the additional Microsoft-published voices are compatibility presets because OpenRouter does not list them all. For UK English presets, select MAI-Voice-2.1 Flash.",
+    "\u5FAE\u8F6F\u4F4E\u5EF6\u8FDF\u8BED\u97F3\u6A21\u578B\uFF0C\u9002\u5408\u5FEB\u901F\u5F00\u59CB\u64AD\u653E\u3002\u9ED8\u8BA4\u4F7F\u7528\u5FAE\u8F6F MAI \u5B98\u65B9\u76EE\u5F55\u4E2D\u7684\u7F8E\u5F0F\u82F1\u8BED\u7537\u58F0 Ethan\uFF1BEthan \u53CA\u5176\u4ED6\u5FAE\u8F6F\u5B98\u65B9\u97F3\u8272\u5C5E\u4E8E\u517C\u5BB9\u9884\u8BBE\uFF0C\u56E0\u4E3A OpenRouter \u672A\u5B8C\u6574\u5217\u51FA\u3002\u9700\u8981\u82F1\u5F0F\u82F1\u8BED\u9884\u8BBE\u65F6\uFF0C\u53EF\u9009\u62E9 MAI-Voice-2.1 Flash\u3002"
   ],
   [
     "microsoft/mai-voice-2",
     "en-US-Ethan:MAI-Voice-2",
     "Microsoft MAI-Voice-2 - expressive, US English male default",
     "Microsoft MAI-Voice-2 - \u8868\u73B0\u529B\u5F3A\u3001\u9ED8\u8BA4\u7F8E\u5F0F\u82F1\u8BED\u7537\u58F0",
-    "An expressive Microsoft model for natural long-form narration. Ethan is the US English male default. The plugin also offers other Microsoft-published English and Mandarin ShortNames as compatibility presets even when OpenRouter metadata omits them. Microsoft currently publishes no UK English MAI voice.",
-    "\u5FAE\u8F6F\u8868\u73B0\u529B\u8BED\u97F3\u6A21\u578B\uFF0C\u9002\u5408\u81EA\u7136\u957F\u6587\u53D9\u8FF0\u3002\u9ED8\u8BA4\u4F7F\u7528\u7F8E\u5F0F\u82F1\u8BED\u7537\u58F0 Ethan\uFF1B\u63D2\u4EF6\u8FD8\u63D0\u4F9B OpenRouter \u5143\u6570\u636E\u672A\u5217\u51FA\u3001\u4F46\u7531\u5FAE\u8F6F\u5B98\u65B9\u53D1\u5E03\u7684\u5176\u4ED6\u82F1\u6587\u548C\u666E\u901A\u8BDD ShortName \u4F5C\u4E3A\u517C\u5BB9\u9884\u8BBE\u3002\u5FAE\u8F6F\u5F53\u524D\u6CA1\u6709\u53D1\u5E03\u82F1\u5F0F\u82F1\u8BED MAI \u97F3\u8272\u3002"
+    "An expressive Microsoft model for natural long-form narration. Ethan is the US English male default. The plugin also offers other Microsoft-published English and Mandarin ShortNames as compatibility presets even when OpenRouter metadata omits them. For UK English presets, select MAI-Voice-2.1 Flash.",
+    "\u5FAE\u8F6F\u8868\u73B0\u529B\u8BED\u97F3\u6A21\u578B\uFF0C\u9002\u5408\u81EA\u7136\u957F\u6587\u53D9\u8FF0\u3002\u9ED8\u8BA4\u4F7F\u7528\u7F8E\u5F0F\u82F1\u8BED\u7537\u58F0 Ethan\uFF1B\u63D2\u4EF6\u8FD8\u63D0\u4F9B OpenRouter \u5143\u6570\u636E\u672A\u5217\u51FA\u3001\u4F46\u7531\u5FAE\u8F6F\u5B98\u65B9\u53D1\u5E03\u7684\u5176\u4ED6\u82F1\u6587\u548C\u666E\u901A\u8BDD ShortName \u4F5C\u4E3A\u517C\u5BB9\u9884\u8BBE\u3002\u9700\u8981\u82F1\u5F0F\u82F1\u8BED\u9884\u8BBE\u65F6\uFF0C\u53EF\u9009\u62E9 MAI-Voice-2.1 Flash\u3002"
   ],
   [
     "google/gemini-3.1-flash-tts-preview",
@@ -1363,6 +1371,17 @@ var OPENROUTER_TTS_MODELS = [
   ]
 ];
 var OPENROUTER_TTS_PRESETS = [
+  // IDs verified in OpenRouter's speech + ZDR catalog on 2026-10-02.
+  ["microsoft/mai-voice-2.1-flash", "en-GB-Harry:MAI-Voice-2.1-Flash", "Harry (UK English male, default)", "Harry\uFF08\u82F1\u5F0F\u82F1\u8BED\u7537\u58F0\uFF0C\u9ED8\u8BA4\uFF09"],
+  ["microsoft/mai-voice-2.1-flash", "en-GB-Emily:MAI-Voice-2.1-Flash", "Emily (UK English female)", "Emily\uFF08\u82F1\u5F0F\u82F1\u8BED\u5973\u58F0\uFF09"],
+  ["microsoft/mai-voice-2.1-flash", "en-US-Ethan:MAI-Voice-2.1-Flash", "Ethan (US English male)", "Ethan\uFF08\u7F8E\u5F0F\u82F1\u8BED\u7537\u58F0\uFF09"],
+  ["microsoft/mai-voice-2.1-flash", "en-US-Grant:MAI-Voice-2.1-Flash", "Grant (US English male)", "Grant\uFF08\u7F8E\u5F0F\u82F1\u8BED\u7537\u58F0\uFF09"],
+  ["microsoft/mai-voice-2.1-flash", "en-US-Harper:MAI-Voice-2.1-Flash", "Harper (US English female)", "Harper\uFF08\u7F8E\u5F0F\u82F1\u8BED\u5973\u58F0\uFF09"],
+  ["microsoft/mai-voice-2.1-flash", "en-US-Olivia:MAI-Voice-2.1-Flash", "Olivia (US English female)", "Olivia\uFF08\u7F8E\u5F0F\u82F1\u8BED\u5973\u58F0\uFF09"],
+  ["microsoft/mai-voice-2.1-flash", "zh-CN-Bo:MAI-Voice-2.1-Flash", "Bo (Mandarin male)", "Bo\uFF08\u4E2D\u6587\u666E\u901A\u8BDD\u7537\u58F0\uFF09"],
+  ["microsoft/mai-voice-2.1-flash", "zh-CN-Wei:MAI-Voice-2.1-Flash", "Wei (Mandarin male)", "Wei\uFF08\u4E2D\u6587\u666E\u901A\u8BDD\u7537\u58F0\uFF09"],
+  ["microsoft/mai-voice-2.1-flash", "zh-CN-Lan:MAI-Voice-2.1-Flash", "Lan (Mandarin female)", "Lan\uFF08\u4E2D\u6587\u666E\u901A\u8BDD\u5973\u58F0\uFF09"],
+  ["microsoft/mai-voice-2.1-flash", "zh-CN-Mei:MAI-Voice-2.1-Flash", "Mei (Mandarin female)", "Mei\uFF08\u4E2D\u6587\u666E\u901A\u8BDD\u5973\u58F0\uFF09"],
   ["microsoft/mai-voice-2-flash", "en-US-Ethan:MAI-Voice-2-Flash", "Ethan (US English male; not listed in OpenRouter metadata)", "Ethan\uFF08\u7F8E\u5F0F\u82F1\u8BED\u7537\u58F0\uFF1BOpenRouter \u5143\u6570\u636E\u672A\u5217\u51FA\uFF09"],
   ["microsoft/mai-voice-2-flash", "en-US-Olivia:MAI-Voice-2-Flash", "Olivia (US English female; Microsoft compatibility preset)", "Olivia\uFF08\u7F8E\u5F0F\u82F1\u8BED\u5973\u58F0\uFF1B\u5FAE\u8F6F\u517C\u5BB9\u9884\u8BBE\uFF09"],
   ["microsoft/mai-voice-2-flash", "zh-CN-Bo:MAI-Voice-2-Flash", "Bo (Mandarin male; not listed in OpenRouter metadata)", "Bo\uFF08\u4E2D\u6587\u666E\u901A\u8BDD\u7537\u58F0\uFF1BOpenRouter \u5143\u6570\u636E\u672A\u5217\u51FA\uFF09"],
@@ -1480,6 +1499,11 @@ var SETTINGS_UI_TEXT = {
     openRouterVoicesDesc: "Model-specific presets are listed. MAI-Voice-2 also includes Microsoft-published Mandarin IDs that OpenRouter may accept even when its supported_voices metadata omits them; availability can vary by endpoint.",
     openRouterVoiceName: "OpenRouter TTS voice",
     openRouterVoiceDesc: "Voice ID supported by the selected model. Voice catalogs differ between models.",
+    openRouterVoiceHelpName: "Find a custom voice ID",
+    openRouterVoiceHelpDesc: "Open the model page and voice catalog to find an ID, then select Custom voice and paste it into OpenRouter TTS voice. MAI requires the full model suffix, for example en-GB-Harry:MAI-Voice-2.1-Flash. Confirm the ID is accepted by the selected OpenRouter model; catalogs can include voices not exposed by its endpoint.",
+    openRouterModelPageButton: "Model page",
+    openRouterVoiceCatalogButton: "Voice catalog",
+    openRouterVoiceHelpTooltip: "Open the official reference for the currently selected model",
     openRouterPrivacyName: "OpenRouter privacy routing",
     openRouterPrivacyDesc: "Always enforced: provider.zdr is true and provider data collection is denied. The plugin never falls back to a non-ZDR endpoint. Keep OpenRouter account-level input/output logging and data sharing disabled for private content.",
     speedName: "Synthesis speed",
@@ -1596,6 +1620,11 @@ var SETTINGS_UI_TEXT = {
     openRouterVoicesDesc: "\u8FD9\u91CC\u53EA\u5217\u51FA\u4E0E\u6240\u9009\u6A21\u578B\u5BF9\u5E94\u7684\u9884\u8BBE\u3002MAI-Voice-2 \u8FD8\u52A0\u5165\u4E86\u5FAE\u8F6F\u5B98\u65B9\u53D1\u5E03\u3001\u4F46 OpenRouter supported_voices \u5143\u6570\u636E\u53EF\u80FD\u9057\u6F0F\u7684\u666E\u901A\u8BDD\u97F3\u8272\uFF1B\u5B9E\u9645\u53EF\u7528\u6027\u53EF\u80FD\u968F\u7AEF\u70B9\u53D8\u5316\u3002",
     openRouterVoiceName: "OpenRouter TTS \u97F3\u8272",
     openRouterVoiceDesc: "\u6240\u9009\u6A21\u578B\u652F\u6301\u7684\u97F3\u8272 ID\u3002\u4E0D\u540C\u6A21\u578B\u7684\u97F3\u8272\u76EE\u5F55\u5E76\u4E0D\u76F8\u540C\u3002",
+    openRouterVoiceHelpName: "\u67E5\u8BE2\u81EA\u5B9A\u4E49\u97F3\u8272 ID",
+    openRouterVoiceHelpDesc: "\u6253\u5F00\u6A21\u578B\u9875\u9762\u548C\u97F3\u8272\u76EE\u5F55\u67E5\u8BE2 ID\uFF0C\u9009\u62E9\u201C\u81EA\u5B9A\u4E49\u97F3\u8272\u201D\u540E\u586B\u5165\u201COpenRouter TTS \u97F3\u8272\u201D\u3002MAI \u5FC5\u987B\u5305\u542B\u5B8C\u6574\u6A21\u578B\u540E\u7F00\uFF0C\u4F8B\u5982 en-GB-Harry:MAI-Voice-2.1-Flash\u3002\u8BF7\u786E\u8BA4\u8BE5 ID \u53EF\u7528\u4E8E\u6240\u9009 OpenRouter \u6A21\u578B\uFF1B\u5B98\u65B9\u76EE\u5F55\u4E2D\u7684\u90E8\u5206\u97F3\u8272\u53EF\u80FD\u5C1A\u672A\u7531\u5BF9\u5E94\u7AEF\u70B9\u5F00\u653E\u3002",
+    openRouterModelPageButton: "\u6A21\u578B\u9875\u9762",
+    openRouterVoiceCatalogButton: "\u97F3\u8272\u76EE\u5F55",
+    openRouterVoiceHelpTooltip: "\u6253\u5F00\u5F53\u524D\u6240\u9009\u6A21\u578B\u7684\u5B98\u65B9\u67E5\u8BE2\u8D44\u6599",
     openRouterPrivacyName: "OpenRouter \u9690\u79C1\u8DEF\u7531",
     openRouterPrivacyDesc: "\u59CB\u7EC8\u5F3A\u5236\u6267\u884C\uFF1Aprovider.zdr \u4E3A true\uFF0C\u5E76\u62D2\u7EDD\u4F9B\u5E94\u5546\u6536\u96C6\u6570\u636E\u3002\u63D2\u4EF6\u4E0D\u4F1A\u964D\u7EA7\u5230\u975E ZDR \u7AEF\u70B9\u3002\u6717\u8BFB\u79C1\u5BC6\u5185\u5BB9\u65F6\uFF0C\u8FD8\u5E94\u5173\u95ED OpenRouter \u8D26\u6237\u7EA7\u8F93\u5165\u8F93\u51FA\u65E5\u5FD7\u548C\u6570\u636E\u5171\u4EAB\u3002",
     speedName: "\u5408\u6210\u8BED\u901F",
@@ -2316,6 +2345,22 @@ function openGitHubIssues() {
 }
 function openAzureTtsPrivacyDocs() {
   return openExternalUrl(AZURE_TTS_PRIVACY_URL);
+}
+function getOpenRouterVoiceHelpLinks(modelId, language = "english") {
+  const model = normalizeOpenRouterModel(modelId);
+  const modelPage = `https://openrouter.ai/${model.split("/").map(encodeURIComponent).join("/")}`;
+  let voiceCatalog = "https://openrouter.ai/api/v1/models?output_modalities=speech";
+  if (model.startsWith("microsoft/mai-voice-")) {
+    const locale = normalizeSettingsLanguage(language) === "chinese" ? "zh-cn" : "en-us";
+    voiceCatalog = `https://learn.microsoft.com/${locale}/azure/ai-services/speech-service/mai-voices`;
+  } else if (model.startsWith("google/gemini-")) {
+    voiceCatalog = "https://ai.google.dev/gemini-api/docs/speech-generation#voice-options";
+  } else if (model.startsWith("fish-audio/")) {
+    voiceCatalog = "https://fish.audio/discovery/";
+  } else if (model === "hexgrad/kokoro-82m") {
+    voiceCatalog = modelPage;
+  }
+  return { modelPage, voiceCatalog };
 }
 function normalizeSpeechEngine(value) {
   const engine = String(value || DEFAULT_SETTINGS.speechEngine).toLowerCase();
@@ -6945,6 +6990,17 @@ var CosyVoiceReaderSettingTab = class extends PluginSettingTab {
           await this.plugin.saveSettings();
         });
       });
+      new Setting(containerEl).setName(ui.openRouterVoiceHelpName).setDesc(ui.openRouterVoiceHelpDesc).addButton((button) => {
+        button.setButtonText(ui.openRouterModelPageButton).setTooltip(ui.openRouterVoiceHelpTooltip).onClick(() => {
+          const url = getOpenRouterVoiceHelpLinks(this.plugin.settings.openRouterModel, settingsLanguage).modelPage;
+          if (!openExternalUrl(url)) new Notice(url, 8e3);
+        });
+      }).addButton((button) => {
+        button.setButtonText(ui.openRouterVoiceCatalogButton).setTooltip(ui.openRouterVoiceHelpTooltip).onClick(() => {
+          const url = getOpenRouterVoiceHelpLinks(this.plugin.settings.openRouterModel, settingsLanguage).voiceCatalog;
+          if (!openExternalUrl(url)) new Notice(url, 8e3);
+        });
+      });
       new Setting(containerEl).setName(ui.openRouterPrivacyName).setDesc(ui.openRouterPrivacyDesc);
     }
     new Setting(containerEl).setName(ui.speedName).setDesc(ui.speedDesc).addSlider((slider) => {
@@ -7087,6 +7143,7 @@ module.exports = {
     getOpenRouterTtsModels,
     getOpenRouterTtsPresets,
     getOpenRouterTtsVoicePresets,
+    getOpenRouterVoiceHelpLinks,
     getChunkLimitsForSpeechEngine,
     getPdfPageNumberFromNode,
     getPdfSelectionContext,
