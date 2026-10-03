@@ -40,7 +40,7 @@ function nodeInfo(node) {
 }
 
 // The same walk handles parsed source and HTML Reader's rendered DOM, retaining exact range offsets.
-function extractHtmlTreeText(root, range = null) {
+function extractHtmlTreeText(root, range = null, options = {}) {
   const pieces = [];
   let length = 0;
   let count = 0;
@@ -69,7 +69,7 @@ function extractHtmlTreeText(root, range = null) {
     if (++count > MAX_HTML_NODES) throw new Error('HTML contains too many elements.');
     const node = action.node;
     const info = nodeInfo(node);
-    if (info.omit) continue;
+    if (info.omit || (options.omitNode && options.omitNode(node))) continue;
     if (info.text !== undefined) {
       const text = String(info.text || '');
       if (range && range.startContainer === node) start = length + Math.min(text.length, range.startOffset);

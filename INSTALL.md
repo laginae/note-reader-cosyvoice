@@ -153,15 +153,16 @@ Temporary text and audio are stored under the operating system temporary directo
 
 - Select text and click `Read selection` to read only the selected text.
 - Select a start point and click `Read from selection` to read from that selection start to the end of the active note.
-- Click `Read file` to read the active Markdown note or searchable PDF.
+- Click `Read file` to read the active Markdown note, text-based PDF, local HTML, or a loaded HTTP/HTTPS page in the built-in Web viewer (0.5.0).
 - Use `Export audio` with either a Markdown note or text-based PDF, then choose the entire document, selected text only, or from the selection to the end. Settings can place the result in Obsidian's attachment folder, beside the source file, or in a custom vault folder. A mandatory confirmation shows the exact readable character count, planned synthesis segments, scope, and save path before synthesis; bounded retries can increase the actual online attempt count. Local mode exports WAV and online modes export MP3. `Export & insert audio` is available for Markdown notes only; PDF export saves an attachment without modifying the PDF.
 - PDF text is extracted locally and progressively through Obsidian's built-in PDF.js. Playback can start once the first speech chunk is ready while later pages continue parsing. Common two-column pages use coordinate-aware left-column-then-right-column ordering. Scanned or image-only PDFs require OCR first.
 - Use `Resume file` after enabling `Remember reading position` to continue the active note or PDF from its saved anchor.
 - Use `Pause`, `Resume`, and `Stop` from the right-side control panel.
-- Use the right-side `Speed` buttons to select `1x`, `1.25x`, `1.5x`, `2x`, `1.1x`, `1.2x`, `1.3x`, or `1.4x`. The current audio keeps its original speed; later synthesized chunks use the newly saved speed.
+- Use the playback-speed controls to change the current and subsequent audio without resynthesis or extra API requests. Synthesis speed is a separate setting for new requests.
 - When the control panel is focused, Space pauses or resumes reading. Repeated Left Arrow or Right Arrow presses seek backward or forward in 5-second steps.
 - Use the triangle buttons beside the progress bar to jump to the previous or next text chunk.
-- The progress bar shows whole-reading progress. It can be clicked or dragged while the current audio chunk is playing; seeking is clamped to the currently loaded chunk.
+- The main progress bar navigates logical segments. The quieter current-segment slider adjusts playback within that segment. Five-second seeking can cross available segments.
+- Web viewer supports whole-article, selected-text and from-selection reading/export, including its Reader view. Extraction starts only on an explicit action, does not crawl links or read cookies/forms/browser storage, and does not save web reading history. Website browsing still uses the network; online TTS requires its existing consent. Only loaded visible text is included. Web export is attachment-only and the same-folder setting uses the vault root.
 
 ## Troubleshooting
 

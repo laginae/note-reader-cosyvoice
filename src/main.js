@@ -8,6 +8,7 @@ const { spawn } = require('child_process');
 const { pathToFileURL } = require('url');
 const { extractPdfTextLayout, extractTextFromPdfItems } = require('./pdf-layout');
 const { MAX_HTML_BYTES, captureHtmlSelection, extractHtmlText, getHtmlReaderDocument, isHtmlFile } = require('./html-text');
+const { WEB_VIEW_TYPE, captureWebPage, getWebPageUrl, isWebPageView } = require('./web-page');
 const { estimatePlayback, formatDuration } = require('./playback-estimate');
 const { getSpeechParts, adjacentSpeechPart, getSpeechPartTiming } = require('./speech-parts');
 const { MIMO_ENDPOINT, MIMO_DEFAULTS, MIMO_VOICES, MIMO_MAX_CHUNK_CHARS, normalizeMimoSettings, buildMimoRequestBody, decodeMimoAudio } = require('./mimo-tts');
@@ -289,13 +290,13 @@ const SETTINGS_UI_TEXT = {
     chunkLimitsName: 'Local chunk limits',
     chunkLimitsDesc: 'Character limits for Local CosyVoice. The first segment plays in up to three audio parts: complete sentences reaching 20 characters, then 40 more, then the remainder (excluding whitespace). It remains one segment in the progress bar.',
     onlineChunkLimitsName: 'Online chunk limits',
-    onlineChunkLimitsDesc: 'Used by Edge, Azure, OpenRouter, and MiMo for notes, PDFs and HTML (default 200,400,800). The first segment plays in up to three audio parts: sentences reaching 20 characters, then 40 more, then the remainder. It remains one visible segment; this can add up to two requests. Prefetch counts audio parts.',
+    onlineChunkLimitsDesc: 'Used by Edge, Azure, OpenRouter, and MiMo for notes, PDFs, HTML and web pages (default 200,400,800). The first segment plays in up to three audio parts: sentences reaching 20 characters, then 40 more, then the remainder. It remains one visible segment; this can add up to two requests. Prefetch counts audio parts.',
     onlinePrefetchName: 'Online synthesis prefetch',
     onlinePrefetchDesc: 'How many future audio parts an online engine may synthesize early, including the smaller parts inside the first segment. Default 1; choose 0 for strict on-demand synthesis.',
     onlinePrefetchNone: '0 - synthesize only when needed',
     onlinePrefetchOne: '1 - prefetch one chunk',
     audioExportLocationName: 'Audio export save location',
-    audioExportLocationDesc: 'Choose where audio exported from notes, PDFs or HTML is saved. The confirmation dialog shows the selected scope and planned vault path before synthesis starts.',
+    audioExportLocationDesc: 'Choose where exported audio is saved. Confirmation shows the scope and planned vault path. Web pages have no source folder; Same folder as the note saves web audio at the vault root.',
     audioExportLocationAttachment: 'Obsidian attachment folder (default)',
     audioExportLocationNote: 'Same folder as the note',
     audioExportLocationCustom: 'Custom folder in this vault',
@@ -310,7 +311,7 @@ const SETTINGS_UI_TEXT = {
     mathChinese: 'Chinese',
     mathSkip: 'Skip math',
     rememberPositionName: 'Remember reading position',
-    rememberPositionDesc: 'Off by default. When enabled, the plugin stores only the file path, page or chunk number, a short text anchor, and a timestamp. It never stores the note, PDF or HTML body in reading history.',
+    rememberPositionDesc: 'Off by default. Saves bounded resume metadata for local notes, PDFs and HTML only, never their complete body. Web page addresses, content and positions are not saved in history.',
     clearPositionsName: 'Clear saved reading positions',
     clearPositionsDesc: 'Remove all saved resume anchors without changing speech settings or API credentials.',
     clearPositionsButton: 'Clear positions',
@@ -410,13 +411,13 @@ const SETTINGS_UI_TEXT = {
     chunkLimitsName: '本地分段长度',
     chunkLimitsDesc: '本地 CosyVoice 的字符数上限，以英文逗号分隔。第一段内部按整句累加至 20 字，再从剩余内容累加至 40 字，最后合成余文（不计空白），最多三段音频；进度条仍显示为同一段。',
     onlineChunkLimitsName: '在线分段长度',
-    onlineChunkLimitsDesc: 'Edge、Azure、OpenRouter 和 MiMo 朗读笔记、PDF 或 HTML 时使用（默认 200,400,800）。第一段内部按整句累加至 20 字，再累加新的 40 字，最后合成余文（不计空白），界面仍显示同一段。最多增加两次请求，预合成数量按小音频计算。',
+    onlineChunkLimitsDesc: 'Edge、Azure、OpenRouter 和 MiMo 朗读笔记、PDF、HTML 或网页时使用（默认 200,400,800）。第一段内部按整句累加至 20 字，再累加新的 40 字，最后合成余文（不计空白），界面仍显示同一段。最多增加两次请求，预合成数量按小音频计算。',
     onlinePrefetchName: '在线合成预取',
     onlinePrefetchDesc: '允许在线引擎提前合成的后续音频数量，第一段内部的小音频也各算一次。默认 1；选择 0 可严格按需合成。',
     onlinePrefetchNone: '0 - 需要时才合成',
     onlinePrefetchOne: '1 - 提前合成一段',
     audioExportLocationName: '音频导出保存位置',
-    audioExportLocationDesc: '选择从笔记、PDF 或 HTML 导出的音频保存位置。开始合成前，确认窗口会显示所选范围和预计的库内路径。',
+    audioExportLocationDesc: '选择导出音频的保存位置。确认窗口会显示所选范围和预计库内路径。网页没有原文件目录，选择“与原笔记相同的目录”时会保存到库根目录。',
     audioExportLocationAttachment: 'Obsidian 附件目录（默认）',
     audioExportLocationNote: '与原笔记相同的目录',
     audioExportLocationCustom: '本库内的自定义目录',
@@ -431,7 +432,7 @@ const SETTINGS_UI_TEXT = {
     mathChinese: '中文',
     mathSkip: '跳过公式',
     rememberPositionName: '记住朗读位置',
-    rememberPositionDesc: '默认关闭。开启后只保存文件路径、页码或分段序号、短文本锚点和时间，不会把笔记、PDF 或 HTML 正文保存到朗读历史中。',
+    rememberPositionDesc: '默认关闭。只为本地笔记、PDF 和 HTML 保存有限的续读信息，不保存完整正文。网页地址、正文和朗读位置不保存到历史中。',
     clearPositionsName: '清除已保存的朗读位置',
     clearPositionsDesc: '删除全部继续朗读锚点，不改变语音设置或 API 凭据。',
     clearPositionsButton: '清除位置',
@@ -2126,7 +2127,7 @@ function selectMarkdownAudioExportText(documentText, selectionText, selectionSta
 function createAudioExportSummary(options = {}) {
   return {
     chunkCount: Math.max(0, Math.floor(Number(options.chunkCount) || 0)),
-    documentKind: ['pdf', 'html'].includes(options.documentKind) ? options.documentKind : 'markdown',
+    documentKind: ['pdf', 'html', 'web'].includes(options.documentKind) ? options.documentKind : 'markdown',
     engineLabel: String(options.engineLabel || 'Speech engine'),
     fileName: String(options.fileName || options.noteName || 'document'),
     insertAfterExport: options.insertAfterExport === true,
@@ -2160,6 +2161,7 @@ function getAudioExportScopeUiText(languageValue, context = {}) {
   const useChinese = normalizeSettingsLanguage(languageValue) === 'chinese';
   const isPdf = context.documentKind === 'pdf';
   const isHtml = context.documentKind === 'html';
+  const isWeb = context.documentKind === 'web';
   const hasSelection = context.hasSelection === true;
   if (useChinese) {
     return {
@@ -2167,10 +2169,11 @@ function getAudioExportScopeUiText(languageValue, context = {}) {
       continue: '继续',
       description: isPdf
         ? '选择要从当前文本型 PDF 导出的内容范围。下一步会先在本地解析并计算准确分段，再要求确认。'
+        : isWeb ? '选择当前网页的导出范围；只处理已加载的正文。下一步会显示准确字符数、分段数和保存位置并要求确认。'
         : isHtml ? '选择要从当前 HTML 文件导出的正文范围。下一步会在本地提取文字、计算准确分段并要求确认。'
           : '选择要从当前 Markdown 笔记导出的内容范围。下一步会计算准确分段并要求确认。',
       entire: '全部内容',
-      fileLabel: isPdf ? 'PDF' : isHtml ? 'HTML' : '笔记',
+      fileLabel: isPdf ? 'PDF' : isHtml ? 'HTML' : isWeb ? '网页' : '笔记',
       fromSelection: '从选中位置到末尾',
       noSelection: '当前文件没有可用选区。请先选中文字，再使用后两种范围。',
       scopeLabel: '导出范围',
@@ -2184,10 +2187,11 @@ function getAudioExportScopeUiText(languageValue, context = {}) {
     continue: 'Continue',
     description: isPdf
       ? 'Choose what to export from the current text-based PDF. The plugin will parse locally, calculate exact segments, and then ask for confirmation.'
+      : isWeb ? 'Choose what to export from the loaded web page. Review the readable character count, segments and save path before synthesis.'
       : isHtml ? 'Choose what to export from the current HTML file. Readable text is extracted locally before the estimate and confirmation.'
         : 'Choose what to export from the current Markdown note. The plugin will calculate exact segments and then ask for confirmation.',
     entire: 'Entire document',
-    fileLabel: isPdf ? 'PDF' : isHtml ? 'HTML' : 'Note',
+    fileLabel: isPdf ? 'PDF' : isHtml ? 'HTML' : isWeb ? 'Web page' : 'Note',
     fromSelection: 'From selection to end',
     noSelection: 'There is no usable selection in the current file. Select text first to use the other two scopes.',
     scopeLabel: 'Export scope',
@@ -2213,7 +2217,7 @@ function getAudioExportUiText(languageValue, summaryValue) {
         ? '全部分段成功后，音频会保存到下方位置并插入原笔记。'
         : '全部分段成功后，音频会保存到下方位置。',
       engineLabel: '语音引擎',
-      fileLabel: summary.documentKind === 'pdf' ? 'PDF' : summary.documentKind === 'html' ? 'HTML' : '笔记',
+      fileLabel: summary.documentKind === 'pdf' ? 'PDF' : summary.documentKind === 'html' ? 'HTML' : summary.documentKind === 'web' ? '网页' : '笔记',
       locationLabel: '预计保存位置',
       quotaWarning: summary.isOnline
         ? `将发送 ${numberFormatter.format(summary.textLength)} 个字符，计划按 ${numberFormatter.format(summary.chunkCount)} 个分段顺序合成；临时失败可能触发有限重试，因此实际网络尝试次数可能更高。不会为播放连续性额外预合成。实际额度或费用由服务商和模型决定。`
@@ -2235,7 +2239,7 @@ function getAudioExportUiText(languageValue, summaryValue) {
       ? 'After every segment succeeds, the audio will be saved at the location below and embedded in the original note.'
       : 'After every segment succeeds, the audio will be saved at the location below.',
     engineLabel: 'Speech engine',
-    fileLabel: summary.documentKind === 'pdf' ? 'PDF' : summary.documentKind === 'html' ? 'HTML' : 'Note',
+    fileLabel: summary.documentKind === 'pdf' ? 'PDF' : summary.documentKind === 'html' ? 'HTML' : summary.documentKind === 'web' ? 'Web page' : 'Note',
     locationLabel: 'Planned save location',
     quotaWarning: summary.isOnline
       ? `${numberFormatter.format(summary.textLength)} characters will be sent in ${numberFormatter.format(summary.chunkCount)} planned sequential segments. Temporary failures may trigger bounded retries, so the network attempt count can be higher. No playback-continuity chunks are prefetched. Actual quota or cost depends on the provider and model.`
@@ -2407,11 +2411,18 @@ class CosyVoiceReaderPlugin extends Plugin {
     this.currentRequests = new Set();
     this.lastMarkdownView = null;
     this.lastReadableFile = null;
+    this.lastReadableSource = 'file';
+    this.lastWebPageView = null;
+    this.webPageObservers = new Map();
+    this.webPageStates = new WeakMap();
+    this.webReaderRange = null;
+    this.webActionSequence = 0;
     this.lastPdfSelection = null;
     this.lastHtmlSelection = null;
     this.htmlSelectionObservers = new Map();
     this.htmlSelectionTimers = new Set();
     this.register(() => this.clearHtmlSelectionObservers());
+    this.register(() => this.clearWebPageObservers());
     this.pendingAudioMerge = null;
     this.pauseRequested = false;
     this.readerState = createReaderState();
@@ -2434,6 +2445,7 @@ class CosyVoiceReaderPlugin extends Plugin {
     if (isMarkdownFile(initiallyActiveFile) || isPdfFile(initiallyActiveFile) || isHtmlFile(initiallyActiveFile)) {
       this.lastReadableFile = initiallyActiveFile;
     }
+    this.getCurrentWebPageView();
     this.registerEvent(
       this.app.workspace.on('active-leaf-change', () => {
         const view = this.app.workspace.getActiveViewOfType(MarkdownView);
@@ -2445,19 +2457,27 @@ class CosyVoiceReaderPlugin extends Plugin {
           : null;
         if (isMarkdownFile(file) || isPdfFile(file) || isHtmlFile(file)) {
           this.lastReadableFile = file;
+          this.lastReadableSource = 'file';
         }
+        this.getCurrentWebPageView();
         this.observeHtmlSelections();
+        this.observeWebPages();
         this.renderReaderViews();
       })
     );
     if (typeof document !== 'undefined') {
       this.registerDomEvent(document, 'selectionchange', () => {
         this.capturePdfSelection();
+        this.captureWebReaderRange();
       });
     }
     if (typeof window !== 'undefined' && typeof this.registerInterval === 'function') {
-      this.registerInterval(window.setInterval(() => this.observeHtmlSelections(), 750));
+      this.registerInterval(window.setInterval(() => {
+        this.observeHtmlSelections();
+        this.observeWebPages();
+      }, 750));
       this.observeHtmlSelections();
+      this.observeWebPages();
     }
 
     this.addRibbonIcon('volume-2', 'Open voice reader controls', () => {
@@ -2474,7 +2494,7 @@ class CosyVoiceReaderPlugin extends Plugin {
 
     this.addCommand({
       id: 'read-current-note',
-      name: 'Read current note, PDF or HTML aloud',
+      name: 'Read current note, PDF, HTML or web page aloud',
       callback: () => {
         void this.runUserAction('Read file', () => this.readCurrentNote());
       },
@@ -2482,7 +2502,7 @@ class CosyVoiceReaderPlugin extends Plugin {
 
     this.addCommand({
       id: 'export-current-note-audio',
-      name: 'Export audio from current note, PDF or HTML',
+      name: 'Export audio from current note, PDF, HTML or web page',
       checkCallback: (checking) => {
         if (!this.canExportCurrentFile()) {
           return false;
@@ -2667,6 +2687,10 @@ class CosyVoiceReaderPlugin extends Plugin {
   }
 
   async onunload() {
+    this.webActionSequence = (this.webActionSequence || 0) + 1;
+    this.clearWebPageObservers();
+    this.lastWebPageView = null;
+    this.webReaderRange = null;
     this.clearHtmlSelectionObservers();
     for (const timer of this.htmlSelectionTimers || []) clearTimeout(timer);
     if (this.htmlSelectionTimers) this.htmlSelectionTimers.clear();
@@ -3005,6 +3029,133 @@ class CosyVoiceReaderPlugin extends Plugin {
       ? workspace.getLeavesOfType('html-view') || [] : [];
   }
 
+  getWebPageLeaves() {
+    const workspace = this.app && this.app.workspace;
+    return workspace && typeof workspace.getLeavesOfType === 'function'
+      ? workspace.getLeavesOfType(WEB_VIEW_TYPE) || [] : [];
+  }
+
+  getCurrentWebPageView() {
+    const workspace = this.app && this.app.workspace;
+    const active = workspace && workspace.activeLeaf && workspace.activeLeaf.view;
+    if (isWebPageView(active)) {
+      this.lastWebPageView = active;
+      this.lastReadableSource = 'web';
+      return active;
+    }
+    const isPanel = active && typeof active.getViewType === 'function' && active.getViewType() === VIEW_TYPE;
+    if (!isPanel) {
+      const file = workspace && typeof workspace.getActiveFile === 'function' && workspace.getActiveFile();
+      if (file) { this.lastReadableSource = 'file'; return null; }
+      if (active) return null;
+    }
+    return this.lastReadableSource === 'web' && this.getWebPageLeaves().some(leaf => leaf.view === this.lastWebPageView)
+      ? this.lastWebPageView : null;
+  }
+
+  getWebPageState(view) {
+    if (!this.webPageStates) this.webPageStates = new WeakMap();
+    if (!this.webPageStates.has(view)) this.webPageStates.set(view, { revision: 0 });
+    return this.webPageStates.get(view);
+  }
+
+  observeWebPages() {
+    if (!this.webPageObservers) this.webPageObservers = new Map();
+    const current = new Set();
+    for (const { view } of this.getWebPageLeaves()) {
+      const element = view && view.webview;
+      if (!element || typeof element.addEventListener !== 'function') continue;
+      current.add(element);
+      if (this.webPageObservers.has(element)) continue;
+      const invalidate = (event) => {
+        if (event && event.isMainFrame === false) return;
+        this.getWebPageState(view).revision += 1;
+        if (this.webReaderRange && this.webReaderRange.view === view) this.webReaderRange = null;
+      };
+      const events = ['did-start-navigation', 'did-navigate-in-page', 'dom-ready', 'destroyed'];
+      for (const event of events) element.addEventListener(event, invalidate);
+      this.webPageObservers.set(element, () => {
+        for (const event of events) element.removeEventListener(event, invalidate);
+        invalidate();
+      });
+    }
+    for (const [element, dispose] of this.webPageObservers) {
+      if (!current.has(element)) { dispose(); this.webPageObservers.delete(element); }
+    }
+  }
+
+  clearWebPageObservers() {
+    for (const dispose of (this.webPageObservers || new Map()).values()) dispose();
+    if (this.webPageObservers) this.webPageObservers.clear();
+  }
+
+  captureWebReaderRange() {
+    const view = this.getCurrentWebPageView();
+    if (!view || view.mode !== 'reader' || !view.readerView) return;
+    const root = view.readerView;
+    const selection = root.ownerDocument && root.ownerDocument.getSelection();
+    if (!selection || selection.isCollapsed || !selection.rangeCount) return;
+    const range = selection.getRangeAt(0);
+    if (!root.contains(range.startContainer) || !root.contains(range.endContainer)) return;
+    // Retain only an in-memory range, not page text, when focus moves to the control panel.
+    this.webReaderRange = { view, root, range: range.cloneRange(), url: getWebPageUrl(view),
+      revision: this.getWebPageState(view).revision };
+  }
+
+  isWebPageContextCurrent(context) {
+    return this.getCurrentWebPageView() === context.webView
+      && this.getWebPageLeaves().some(leaf => leaf.view === context.webView)
+      && context.webElement === context.webView.webview
+      && context.webMode === context.webView.mode
+      && getWebPageUrl(context.webView) === context.webUrl
+      && this.getWebPageState(context.webView).revision === context.webRevision;
+  }
+
+  async getWebPageContext(view, options = {}) {
+    this.observeWebPages();
+    const context = {
+      documentKind: 'web', webView: view, webUrl: getWebPageUrl(view),
+      webElement: view.webview, webMode: view.mode, webRevision: this.getWebPageState(view).revision,
+      file: { basename: 'web-page' }, fileName: 'Web page', hasSelection: false,
+    };
+    const cached = this.webReaderRange;
+    const range = cached && cached.view === view && cached.root === view.readerView
+      && cached.url === context.webUrl && cached.revision === context.webRevision ? cached.range : null;
+    let snapshot;
+    try { snapshot = await captureWebPage(view, { ...options, range }); }
+    catch (error) {
+      const zh = this.settings.settingsLanguage === 'chinese';
+      const timeout = error && error.message === 'WEB_TIMEOUT';
+      throw new Error(zh
+        ? timeout ? '网页文字提取超时，请等待页面加载完成后重试。' : '无法提取当前网页文字。请在 Obsidian Web viewer 中打开 HTTP/HTTPS 网页，等待加载完成后重试；也可切换阅读视图。'
+        : timeout ? 'Web page extraction timed out. Wait for loading to finish and try again.'
+          : 'Cannot extract this page. Open a loaded HTTP/HTTPS page in Obsidian Web viewer and try again, or switch to Reader view.');
+    }
+    if (!this.isWebPageContextCurrent(context)) throw new Error(this.settings.settingsLanguage === 'chinese'
+      ? '网页已切换或关闭，请重新选择页面。' : 'The web page changed or closed. Select the page again.');
+    return { ...context, fileName: snapshot.title, documentText: snapshot.text,
+      hasSelection: Boolean(snapshot.selectionContext), selectionContext: snapshot.selectionContext };
+  }
+
+  async readCurrentWebPage(view, scope = 'entire') {
+    const action = this.webActionSequence = (this.webActionSequence || 0) + 1;
+    new Notice(this.settings.settingsLanguage === 'chinese' ? '正在提取当前网页文字…' : 'Extracting the current web page…', 3000);
+    const context = await this.getWebPageContext(view, { article: scope === 'entire' });
+    if (action !== this.webActionSequence) return;
+    if (scope !== 'entire' && !context.hasSelection) {
+      new Notice(this.settings.settingsLanguage === 'chinese'
+        ? '请先在当前网页或阅读视图中选中文字。' : 'Select text in the current web page or Reader view first.', 8000);
+      return;
+    }
+    const text = scope === 'entire' ? context.documentText : scope === 'selection'
+      ? context.selectionContext.selectedText : context.selectionContext.text.slice(context.selectionContext.startOffset);
+    await this.activateControlView();
+    if (action !== this.webActionSequence || !this.isWebPageContextCurrent(context)) return;
+    await this.startReading(text, `${context.fileName} (Web: ${getAudioExportScopeLabel(this.settings.settingsLanguage, scope)})`, {
+      plainText: true, sourceKind: 'web',
+    });
+  }
+
   observeHtmlSelections() {
     if (!this.htmlSelectionObservers) this.htmlSelectionObservers = new Map();
     if (!this.htmlSelectionTimers) this.htmlSelectionTimers = new Set();
@@ -3097,6 +3248,7 @@ class CosyVoiceReaderPlugin extends Plugin {
   }
 
   getCurrentReadableFile() {
+    if (this.getCurrentWebPageView()) return null;
     const workspace = this.app && this.app.workspace;
     const activeFile = workspace && typeof workspace.getActiveFile === 'function'
       ? workspace.getActiveFile()
@@ -3104,10 +3256,11 @@ class CosyVoiceReaderPlugin extends Plugin {
     if (activeFile) {
       if (isMarkdownFile(activeFile) || isPdfFile(activeFile) || isHtmlFile(activeFile)) {
         this.lastReadableFile = activeFile;
+        this.lastReadableSource = 'file';
       }
       return activeFile;
     }
-    return this.lastReadableFile || null;
+    return this.lastReadableSource === 'web' ? null : this.lastReadableFile || null;
   }
 
   findMarkdownViewForFile(file) {
@@ -3156,6 +3309,9 @@ class CosyVoiceReaderPlugin extends Plugin {
 
   getCurrentAudioExportContext(options = {}) {
     const notify = options.notify !== false;
+    const webView = this.getCurrentWebPageView();
+    if (webView) return { documentKind: 'web', webView, file: { basename: 'web-page' },
+      fileName: 'Web page', hasSelection: false };
     const file = this.getCurrentReadableFile();
     if (isMarkdownFile(file)) {
       const view = this.findMarkdownViewForFile(file);
@@ -3625,6 +3781,7 @@ class CosyVoiceReaderPlugin extends Plugin {
   }
 
   isAudioExportContextCurrent(context) {
+    if (context.documentKind === 'web') return this.isWebPageContextCurrent(context);
     const currentFile = this.getCurrentReadableFile();
     if (!currentFile || getPdfFileIdentity(currentFile) !== getPdfFileIdentity(context.file)) {
       return false;
@@ -3638,7 +3795,7 @@ class CosyVoiceReaderPlugin extends Plugin {
 
   async extractPdfAudioExportText(context, scope, configuration) {
     await this.activateControlView();
-    await this.stopReading({ silent: true });
+    await this.stopReading({ silent: true, preservePendingActions: true });
     this.pauseRequested = false;
 
     const sourceLabel = `${context.fileName} (PDF export preparation)`;
@@ -3728,6 +3885,18 @@ class CosyVoiceReaderPlugin extends Plugin {
   }
 
   async exportCurrentFileAudio(options = {}) {
+    if (this.audioExportActionRunning) {
+      new Notice(this.settings.settingsLanguage === 'chinese'
+        ? '已有音频导出正在准备或进行，请先完成或取消。' : 'An audio export is already being prepared or running. Finish or cancel it first.', 6000);
+      return null;
+    }
+    this.audioExportActionRunning = true;
+    const actionToken = this.webActionSequence = (this.webActionSequence || 0) + 1;
+    try { return await this.exportCurrentFileAudioOnce({ ...options, actionToken }); }
+    finally { this.audioExportActionRunning = false; }
+  }
+
+  async exportCurrentFileAudioOnce(options = {}) {
     if (this.hasPendingAudioMerge()) {
       new Notice(
         'CosyVoice: a previous export is waiting for "Retry merge only". Retry it first, or use Clear temporary data in settings to discard the kept segments.',
@@ -3735,10 +3904,12 @@ class CosyVoiceReaderPlugin extends Plugin {
       );
       return null;
     }
-    const context = this.getCurrentAudioExportContext({ notify: true });
+    let context = this.getCurrentAudioExportContext({ notify: true });
     if (!context) {
       return null;
     }
+    if (context.documentKind === 'web') context = await this.getWebPageContext(context.webView);
+    if (options.actionToken !== this.webActionSequence) return null;
     if (options.expectedDocumentKind && context.documentKind !== options.expectedDocumentKind) {
       new Notice('CosyVoice: open a Markdown note before using this action.', 8000);
       return null;
@@ -3756,6 +3927,7 @@ class CosyVoiceReaderPlugin extends Plugin {
     if (!scope) {
       return null;
     }
+    if (options.actionToken !== this.webActionSequence) return null;
     if (scope !== 'entire' && !context.hasSelection) {
       new Notice('CosyVoice: select text before using the selected-text export scopes.', 8000);
       return null;
@@ -3775,6 +3947,10 @@ class CosyVoiceReaderPlugin extends Plugin {
         context.selectionStart,
         scope
       ));
+    } else if (context.documentKind === 'web') {
+      text = this.prepareHtmlSpeechText(scope === 'entire' ? context.documentText
+        : scope === 'selection' ? context.selectionContext.selectedText
+          : context.selectionContext.text.slice(context.selectionContext.startOffset));
     } else if (context.documentKind === 'html') {
       const htmlText = scope === 'entire' ? await this.getHtmlFileText(context.file)
         : scope === 'selection' ? context.selectionContext.selectedText
@@ -3808,12 +3984,14 @@ class CosyVoiceReaderPlugin extends Plugin {
     if (!await this.requestAudioExportConfirmation(summary)) {
       return null;
     }
+    if (options.actionToken !== this.webActionSequence) return null;
     if (!this.isAudioExportContextCurrent(context)) {
       new Notice('CosyVoice: the active file changed while export was being prepared. Start again to review a new estimate.', 8000);
       return null;
     }
 
     await this.activateControlView();
+    if (options.actionToken !== this.webActionSequence || !this.isAudioExportContextCurrent(context)) return null;
     await this.stopReading({ silent: true });
     this.pauseRequested = false;
     const sourceLabel = `${context.fileName} (${getAudioExportScopeLabel('english', scope)} audio export)`;
@@ -3961,6 +4139,8 @@ class CosyVoiceReaderPlugin extends Plugin {
   }
 
   async readCurrentNote() {
+    const webView = this.getCurrentWebPageView();
+    if (webView) { await this.readCurrentWebPage(webView); return; }
     const activeFile = this.getCurrentReadableFile();
     if (isHtmlFile(activeFile)) {
       await this.readCurrentHtml(activeFile);
@@ -4194,6 +4374,7 @@ class CosyVoiceReaderPlugin extends Plugin {
     const id = ++this.sequence;
     return {
       chunkWaiters: new Set(),
+      operationWaiters: new Set(),
       chunkPageNumbers: initialChunks.map(() => null),
       chunks: initialChunks,
       currentChunkIndex: null,
@@ -4241,6 +4422,30 @@ class CosyVoiceReaderPlugin extends Plugin {
     session.chunkWaiters.clear();
     for (const wake of waiters) {
       wake();
+    }
+  }
+
+  notifySessionNavigation(session) {
+    this.notifySessionChunkWaiters(session);
+    for (const wake of Array.from(session?.operationWaiters || [])) wake();
+  }
+
+  async waitForSessionOperation(session, operation) {
+    // Navigation interrupts the wait, not the cached synthesis request.
+    session.operationWaiters ||= new Set();
+    let wake;
+    const interrupted = new Promise((resolve) => {
+      wake = () => resolve(null);
+      session.operationWaiters.add(wake);
+    });
+    try {
+      if (!this.isActive(session) || Number.isInteger(session.requestedChunkIndex)) wake();
+      return await Promise.race([interrupted, operation]);
+    } catch (error) {
+      if (!this.isActive(session) || Number.isInteger(session.requestedChunkIndex)) return null;
+      throw error;
+    } finally {
+      session.operationWaiters.delete(wake);
     }
   }
 
@@ -4295,6 +4500,7 @@ class CosyVoiceReaderPlugin extends Plugin {
       && index >= session.chunks.length
       && !session.productionComplete
       && !session.producerError
+      && !Number.isInteger(session.requestedChunkIndex)
     ) {
       await new Promise((resolve) => {
         const wake = () => {
@@ -4589,6 +4795,8 @@ class CosyVoiceReaderPlugin extends Plugin {
   }
 
   async readSelection() {
+    const webView = this.getCurrentWebPageView();
+    if (webView) { await this.readCurrentWebPage(webView, 'selection'); return; }
     const activeFile = this.getCurrentReadableFile();
     if (isHtmlFile(activeFile)) {
       await this.readCurrentHtml(activeFile, 'selection');
@@ -4625,6 +4833,8 @@ class CosyVoiceReaderPlugin extends Plugin {
   }
 
   async readFromSelection() {
+    const webView = this.getCurrentWebPageView();
+    if (webView) { await this.readCurrentWebPage(webView, 'from-selection'); return; }
     const activeFile = this.getCurrentReadableFile();
     if (isHtmlFile(activeFile)) {
       await this.readCurrentHtml(activeFile, 'from-selection');
@@ -4725,7 +4935,8 @@ class CosyVoiceReaderPlugin extends Plugin {
       return preparedChunks.get(key);
     };
     session.prepareAvailableChunks = () => {
-      if (!this.isActive(session) || session.seekTarget || this.pauseRequested || !Number.isInteger(session.prefetchBaseIndex)) {
+      if (!this.isActive(session) || Number.isInteger(session.requestedChunkIndex)
+        || session.seekTarget || this.pauseRequested || !Number.isInteger(session.prefetchBaseIndex)) {
         return;
       }
       let cursor = { index: session.prefetchBaseIndex, part: session.currentPartIndex || 0 };
@@ -4769,6 +4980,9 @@ class CosyVoiceReaderPlugin extends Plugin {
         if (!this.isActive(session)) {
           break;
         }
+        if (Number.isInteger(session.requestedChunkIndex)) {
+          continue;
+        }
         if (chunkText === null) {
           break;
         }
@@ -4776,7 +4990,7 @@ class CosyVoiceReaderPlugin extends Plugin {
         session.currentChunkIndex = index;
         session.currentPartIndex = part;
         if (session.lastCompletedChunkIndex === index) session.lastCompletedChunkIndex = null;
-        const prepared = await getPreparedChunk(index, part);
+        const prepared = await this.waitForSessionOperation(session, getPreparedChunk(index, part));
         if (!this.isActive(session)) {
           break;
         }
@@ -5413,7 +5627,8 @@ class CosyVoiceReaderPlugin extends Plugin {
     }
 
     const source = await this.createPlayableAudioSource(prepared);
-    if (!this.isActive(session)) {
+    if (!this.isActive(session) || (Number.isInteger(session.requestedChunkIndex)
+      && (session.requestedChunkIndex !== index || (session.requestedPartIndex || 0) !== part))) {
       source.release();
       return;
     }
@@ -5706,6 +5921,7 @@ class CosyVoiceReaderPlugin extends Plugin {
           : { ...adjacent, time: time - duration, fromEnd: false };
         session.requestedChunkIndex = session.seekTarget.index;
         session.requestedPartIndex = session.seekTarget.part;
+        this.notifySessionNavigation(session);
         this.pauseRequested = Boolean(this.pauseRequested || audio.paused);
         audio.pause();
         if (typeof audio.onended === 'function') audio.onended();
@@ -5763,6 +5979,7 @@ class CosyVoiceReaderPlugin extends Plugin {
     session.seekTarget = { index, part, time: localTime, fromEnd: false };
     session.requestedChunkIndex = index;
     session.requestedPartIndex = part;
+    this.notifySessionNavigation(session);
     this.pauseRequested = Boolean(this.pauseRequested || audio.paused);
     audio.pause();
     audio.onended?.();
@@ -5790,6 +6007,7 @@ class CosyVoiceReaderPlugin extends Plugin {
     session.requestedPartIndex = 0;
     session.seekTarget = null;
     this.pauseRequested = false;
+    this.notifySessionNavigation(session);
 
     const audio = this.currentAudio;
     if (audio && typeof audio.pause === 'function') {
@@ -5805,6 +6023,7 @@ class CosyVoiceReaderPlugin extends Plugin {
       canSeek: false,
       canStop: true,
       currentChunk: targetIndex + 1,
+      currentText: previewText(session.chunks?.[targetIndex] || ''),
       isPaused: false,
       phase: 'queued',
       progress: total ? targetIndex / total : 0,
@@ -5872,7 +6091,7 @@ class CosyVoiceReaderPlugin extends Plugin {
   async cancelSessionOperations(session) {
     if (session) {
       session.stopped = true;
-      this.notifySessionChunkWaiters(session);
+      this.notifySessionNavigation(session);
     }
 
     if (session && session.pdfLoadingTask && typeof session.pdfLoadingTask.destroy === 'function') {
@@ -5906,6 +6125,7 @@ class CosyVoiceReaderPlugin extends Plugin {
   }
 
   async stopReading(options = {}) {
+    if (!options.preservePendingActions) this.webActionSequence = (this.webActionSequence || 0) + 1;
     const previous = this.activeSession;
     await this.saveSessionReadingPosition(previous);
     this.transitionSessionPhase(previous, 'stopping');
@@ -6016,9 +6236,9 @@ class CosyVoiceReaderView extends ItemView {
       'Resume file': '从上次位置续读', 'Resume': '继续', 'Pause': '暂停', 'Stop': '停止',
       'Resume reading (or press Space)': '继续朗读（也可按空格键）',
       'Pause reading (or press Space)': '暂停朗读（也可按空格键）',
-      'Export all, selected, or remaining audio from the current note, PDF or HTML': '导出当前笔记、PDF 或 HTML 的全部、选中部分或选中位置以后的音频',
+      'Export all, selected, or remaining audio from the current note, PDF, HTML or web page': '导出当前笔记、PDF、HTML 或网页的全部、选中部分或选中位置以后的音频',
       'Export audio and insert it into the current Markdown note': '导出音频并插入当前 Markdown 笔记',
-      'Audio can be inserted into Markdown notes, not PDF or HTML files': '音频只能插入 Markdown 笔记，不能插入 PDF 或 HTML',
+      'Audio can be inserted into Markdown notes, not PDF, HTML or web pages': '音频只能插入 Markdown 笔记，不能插入 PDF、HTML 或网页',
       'Reuse the kept synthesized segments without making any TTS API requests': '复用保留的分段音频，不再调用语音 API',
       'Phase': '阶段', 'Source': '来源', 'Text': '文本',
       'Overall progress': '全文进度', 'Current segment': '当前段',
@@ -6169,7 +6389,7 @@ class CosyVoiceReaderView extends ItemView {
     this.createActionButton(actions, 'download', 'Export audio', () => {
       this.runPluginAction('Export audio', () => this.plugin.exportCurrentFileAudio({ insertAfterExport: false }));
     }, !canExportFile, {
-      title: 'Export all, selected, or remaining audio from the current note, PDF or HTML',
+      title: 'Export all, selected, or remaining audio from the current note, PDF, HTML or web page',
       triggerOnPointerDown: true,
     });
     this.createActionButton(actions, 'paperclip', 'Export & insert audio', () => {
@@ -6177,7 +6397,7 @@ class CosyVoiceReaderView extends ItemView {
     }, !canInsertExport, {
       title: canInsertExport
         ? 'Export audio and insert it into the current Markdown note'
-        : 'Audio can be inserted into Markdown notes, not PDF or HTML files',
+        : 'Audio can be inserted into Markdown notes, not PDF, HTML or web pages',
       triggerOnPointerDown: true,
     });
     const hasPendingAudioMerge = typeof this.plugin.hasPendingAudioMerge === 'function'

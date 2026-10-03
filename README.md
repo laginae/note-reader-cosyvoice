@@ -2,7 +2,7 @@
 
 **Language:** English | [简体中文](README.zh-CN.md)
 
-A privacy-first Obsidian desktop voice reader to **read aloud Markdown notes, text-based PDFs and local HTML files**. Use local CosyVoice by default, or explicitly opt in to Microsoft Edge online voice, Microsoft Azure Speech, OpenRouter TTS, or Xiaomi MiMo TTS.
+A privacy-first Obsidian desktop voice reader to **read aloud Markdown notes, text-based PDFs, local HTML files and Web viewer pages**. Use local CosyVoice by default, or explicitly opt in to Microsoft Edge online voice, Microsoft Azure Speech, OpenRouter TTS, or Xiaomi MiMo TTS.
 
 ### Xiaomi MiMo TTS Quickstart
 
@@ -25,6 +25,7 @@ MiMo defaults to a configurable 200-character chunk cap (a conservative client s
 - **Bounded online prefetch:** Online modes prepare at most one upcoming chunk by default for smoother transitions. Set prefetch to `0` for strict on-demand synthesis.
 - **Flexible PDF selection reading:** Continue reading from a selected position in a PDF, or read only the selected text.
 - **Local HTML reading:** Read `.html` / `.htm` body text, read selected text in HTML Reader, or continue from the selection to the end. Text extraction does not execute scripts or fetch page resources.
+- **Web page reading:** Read a loaded HTTP/HTTPS page in Obsidian's built-in Web viewer, just its selection, or from the selection onward. Browser and Reader views are supported, with confirmed three-scope audio export and no saved web reading history.
 
 Here, a text-based PDF means a PDF with selectable embedded text. Scanned or image-only PDFs need OCR first.
 
@@ -364,7 +365,17 @@ If `Remember reading position` is enabled, use `Resume file` in the control pane
 2. Choose `Read file` to read the extracted body, `Read selection` to read only highlighted text, or `Read from selection` to continue from its start to the end. Selection offsets come from the rendered document, so repeated phrases are not located by a first-match text search. The HTML Reader frame must be accessible; an unavailable selection produces a notice instead of reading a different document.
 3. Playback speed, volume, seeking, first-segment startup parts, and bounded prefetch use the existing controls. `Export audio` supports the same three scopes and mandatory confirmation. No extra converter or executable is needed.
 
-HTML markup is always parsed, independent of `Strip Markdown`; decoded literal comparison signs are preserved. Extraction preserves headings, paragraphs, lists and table-cell text, but does not attempt CSS visual-order reconstruction. The first release covers static local HTML, not MHT/MHTML archives, the Web viewer, nested frames, scanned/image-only pages, or content that requires scripts to generate it. Do not enable scripts or weaken HTML Reader's security settings for this feature. Whole-file extraction is limited to 50 MiB of source and five million readable characters. HTML resume uses a short text anchor; if the anchor disappears after editing, reading restarts from the beginning with a notice.
+HTML markup is always parsed, independent of `Strip Markdown`; decoded literal comparison signs are preserved. Extraction preserves headings, paragraphs, lists and table-cell text, but does not attempt CSS visual-order reconstruction. This path covers static local HTML, not MHT/MHTML archives, nested frames, scanned/image-only pages, or content that requires scripts to generate it. Web viewer support uses the separate path below. Do not enable scripts or weaken HTML Reader's security settings for this feature. Whole-file extraction is limited to 50 MiB of source and five million readable characters. HTML resume uses a short text anchor; if the anchor disappears after editing, reading restarts from the beginning with a notice.
+
+## Web page reading (0.5.0)
+
+1. Enable Obsidian's desktop core [Web viewer](https://obsidian.md/help/plugins/web-viewer) and open an HTTP/HTTPS article in it. Chrome/Edge tabs outside Obsidian are not supported.
+2. Use `Read file` for the loaded article, `Read selection` for highlighted text, or `Read from selection` to continue from the exact DOM selection. Obsidian's Reader view is also supported. For a cluttered page, switch to Reader view before reading.
+3. `Export audio` offers entire article, selected text, and from-selection scopes. Review the character count, planned requests and vault save path before confirming. Web audio is an attachment; `Export & insert audio` remains Markdown-only. A web page has no note folder, so the same-folder setting uses the vault root.
+
+Whole-page extraction uses bundled Mozilla Readability on an inert copy of the loaded visible content, falling back to visible body text when no article is found. Selection offsets use original DOM nodes rather than matching repeated phrases. From-selection reads the remaining readable DOM flow, which may include visible non-article material; Reader view is preferable for complex pages. Scripts, frames, navigation, forms, editable fields and hidden content are excluded from text extraction. The extractor does not request additional pages/resources, read cookies or browser storage, or expose API keys to the page. Normal website browsing still makes network requests and may run the website's scripts; this is not offline browsing or a guarantee that visible page content contains no sensitive information.
+
+Extraction runs only after a reading/export action, not in the background. Online TTS still requires the selected engine's existing explicit consent and sends the extracted text to that service; OpenRouter still enforces ZDR routing. Web URLs, text and resume positions are not saved in reading history. Temporary speech text/audio use the existing cleanup policy; confirmed exports are saved to the chosen vault location. Closing, navigating or reloading a page invalidates its pending selection/export context. A page is bounded to five million readable characters and 200,000 visited nodes; extraction errors stop rather than silently reading a different note. Unloaded/infinite-scroll content, nested frames, shadow DOM, canvas/image-only text and CSS visual reordering are not covered. This desktop adapter uses Web viewer internals verified with Obsidian 1.13.7, not a stable public Web viewer plugin API; older apps keep local reading but may not have the web feature.
 
 ## Development
 
