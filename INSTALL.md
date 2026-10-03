@@ -1,9 +1,9 @@
 # Installation
 
-## Install From ZIP
+## Install From GitHub Release
 
-1. Unzip `note-reader-cosyvoice-0.4.5-install.zip`.
-2. Copy the `note-reader-cosyvoice` folder into your vault:
+1. Download `main.js`, `manifest.json` and `styles.css` from the [latest release](https://github.com/laginae/note-reader-cosyvoice/releases/latest).
+2. Create the following folder in your vault and place those three files inside it:
 
 ```text
 <your-vault>/.obsidian/plugins/note-reader-cosyvoice
@@ -13,6 +13,12 @@
 4. Turn off Restricted mode if required.
 5. Enable `Note and PDF Voice Reader`.
 6. Run `Open voice reader controls` from the command palette, or click the ribbon icon.
+
+## Read Local HTML
+
+Enable [HTML Reader](https://github.com/nuthrash/obsidian-html-plugin), then open a vault-local `.html` or `.htm` file. In Voice Reader, use `Read file`, `Read selection`, or `Read from selection`. Selection actions require an accessible HTML Reader frame and highlighted body text. `Export audio` supports the whole file, selected text, or the remaining text, with confirmation before synthesis. HTML exports save an attachment; direct insertion is limited to Markdown notes.
+
+The reader parses static body text locally without executing scripts or loading resources. HTML Reader's own display/resource behavior is separate. Do not weaken its security settings for reading. MHT/MHTML archives and online Web viewer pages are not supported by this release. See the bilingual README for limits and privacy details.
 
 ## Choose Speech Engine
 

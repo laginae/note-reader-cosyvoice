@@ -1,9 +1,9 @@
 {
   "id": "note-reader-cosyvoice",
   "name": "Note and PDF Voice Reader",
-  "version": "0.4.11",
+  "version": "0.4.12",
   "minAppVersion": "1.5.0",
-  "description": "Privacy-first progressive reading for notes and text PDFs with local CosyVoice, Edge TTS, Azure Speech, OpenRouter TTS, or Xiaomi MiMo TTS.",
+  "description": "Privacy-first read aloud for notes, text PDFs and local HTML files with local CosyVoice, Edge TTS, Azure Speech, OpenRouter TTS, or Xiaomi MiMo TTS.",
   "author": "Note and PDF Voice Reader Contributors",
   "isDesktopOnly": true
 }

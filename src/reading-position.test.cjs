@@ -47,3 +47,13 @@ test('a saved anchor resumes at the matching text after whitespace changes', () 
   assert.equal(sliced.matched, true);
   assert.equal(sliced.text, 'Selected passage continues with the result. Conclusion.');
 });
+
+test('HTML positions survive normalization while invalid updates preserve an existing position', () => {
+  const position = { filePath: 'Articles/study.html', kind: 'html', anchor: 'A saved HTML paragraph.', updatedAt: 100 };
+  const positions = upsertReadingPosition({}, position);
+  assert.equal(normalizeReadingPositions(positions)[position.filePath].kind, 'html');
+  assert.deepEqual(upsertReadingPosition(positions, { ...position, anchor: '' }), positions);
+  assert.deepEqual(normalizeReadingPositions([]), {});
+  assert.deepEqual(removeReadingPosition(positions, position.filePath), {});
+  assert.equal(normalizeReadingPositions({ ' Articles/study.html ': position })[position.filePath].kind, 'html');
+});

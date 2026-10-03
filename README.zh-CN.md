@@ -2,7 +2,7 @@
 
 **语言：** [English](README.md) | 简体中文
 
-Note and PDF Voice Reader 是一个隐私优先的桌面端 Obsidian 语音朗读插件，支持 Markdown 笔记和文本型 PDF。默认使用本地 CosyVoice，也可以由用户明确选择并同意使用 Microsoft Edge 在线语音、Microsoft Azure Speech、OpenRouter TTS 或小米 MiMo TTS。
+Note and PDF Voice Reader 是一个隐私优先的桌面端 Obsidian 语音朗读插件，支持 **Markdown 笔记、文本型 PDF 和本地 HTML 文件**（read aloud）。默认使用本地 CosyVoice，也可以由用户明确选择并同意使用 Microsoft Edge 在线语音、Microsoft Azure Speech、OpenRouter TTS 或小米 MiMo TTS。
 
 ### 小米 MiMo TTS 快速开始
 
@@ -18,12 +18,13 @@ MiMo 默认每段最多 200 字符，可在设置中调整（客户端保守措�
 ## 核心亮点
 
 - **隐私优先：** 默认使用本地 CosyVoice；每种在线引擎都必须单独获得用户明确同意后才能接收文本。
-- **分范围音频导出需再次确认：** Markdown 笔记和文本型 PDF 均可选择导出全部内容、仅选中内容或从选中位置到末尾；开始合成前必须确认准确的可朗读字符数、分段/请求数、范围和预计保存路径。
+- **分范围音频导出需再次确认：** Markdown 笔记、文本型 PDF 和本地 HTML 均可选择导出全部内容、仅选中内容或从选中位置到末尾；开始合成前必须确认准确的可朗读字符数、分段/请求数、范围和预计保存路径。
 - **理解 PDF 版面：** 本地提取会利用文字坐标识别常见双栏论文，按左栏后右栏朗读，并保留通栏标题和章节边界。
 - **渐进式 PDF 快速开始：** Markdown 笔记和文本型 PDF 均在本地解析；普通文本型 PDF 通常几秒内即可产生第一批朗读分段，后续页面会继续解析。
 - **隐私友好的可选续读：** 朗读位置记录默认关闭；开启后只保存有上限的恢复元数据和短文本锚点，不保存完整笔记或 PDF 正文。
 - **有界的在线预合成：** 在线模式默认最多提前合成下一段，以改善分段衔接；需要严格按需合成时可把预合成设为 `0`。
 - **灵活的 PDF 选区朗读：** 可以从 PDF 选中位置继续朗读，也可以只朗读选中文字。
+- **本地 HTML 朗读：** 支持 `.html` / `.htm` 正文、HTML Reader 中的选中文字，以及从选中位置继续朗读。文字提取本身不会执行脚本或加载网页资源。
 
 这里的“文本型 PDF”是指包含可选择嵌入文本的 PDF；扫描版或纯图片 PDF 需要先完成 OCR。
 
@@ -87,11 +88,11 @@ MiMo 默认每段最多 200 字符，可在设置中调整（客户端保守措�
 
 ## 功能
 
-- 朗读当前 Markdown 笔记或文本型 PDF、两种视图中的当前选中文本，或从 Markdown/PDF 的选中位置开始朗读到当前文件结尾。
+- 朗读当前 Markdown 笔记、文本型 PDF 或本地 HTML 文件、相应视图中的选中文字，或从选中位置开始朗读到当前文件结尾。HTML 选区与 HTML Reader 配合使用。
 - 使用 Obsidian 内置 PDF.js 在本地逐页提取 PDF 文本，利用坐标改善常见双栏页面的朗读顺序，边解析边加入朗读队列，并支持从控制面板停止。
 - 分段时优先保留段落、行、句子和分句边界，同时把用户设置的字符数作为不可突破的上限。
-- 可以选择记住并继续当前 Markdown 或 PDF 的朗读位置；该功能默认关闭，并提供单独的清除记录按钮。
-- 可以把 Markdown 笔记或文本型 PDF 的全部内容、选中内容或选中位置之后的内容导出为一个音频文件：本地模式生成 WAV，在线模式生成 MP3；可保存到 Obsidian 附件目录、源文件同目录或指定的库内目录，Markdown 还可在成功后直接嵌入原笔记。
+- 可以选择记住并继续当前 Markdown、PDF 或 HTML 的朗读位置；该功能默认关闭，并提供单独的清除记录按钮。
+- 可以把 Markdown 笔记、文本型 PDF 或本地 HTML 的全部内容、选中内容或选中位置之后的内容导出为一个音频文件：本地 CosyVoice 和 MiMo 生成 WAV，Edge、Azure 和 OpenRouter 生成 MP3；可保存到 Obsidian 附件目录、源文件同目录或指定的库内目录，Markdown 还可在成功后直接嵌入原笔记。
 - 在右侧边栏打开 `Voice Reader` 控制面板。
 - 显示合成、播放状态、整体朗读进度、百分比和当前文本预览。
 - 支持暂停、继续、停止；控制面板获得焦点时可用空格暂停/继续，可连续按左右方向键按 5 秒步进前后跳转；进度条两侧提供上一段/下一段按钮；也支持在当前已加载音频块内点击或拖动进度条。
@@ -99,7 +100,7 @@ MiMo 默认每段最多 200 字符，可在设置中调整（客户端保守措�
 - 设置页可以选择 `Local CosyVoice`、`Microsoft Edge online voice`、`Microsoft Azure Speech` 或 `OpenRouter TTS`。默认是本地 CosyVoice。
 - 设置页顶部可以在英文和中文之间切换，切换后整页设置名称、说明、选项和按钮都会改用所选语言。
 - Edge、Azure 与 OpenRouter 三种在线模式分别设置同意开关，未显式同意时插件不会发送文本。
-- 本地与在线模式使用独立分段设置；在线笔记和 PDF 默认使用 `200,400,800`，并默认最多提前合成一个后续分段。
+- 本地与在线模式使用独立分段设置；在线笔记、PDF 和 HTML 默认使用 `200,400,800`，并默认最多提前合成一个后续小音频。MiMo 仍受其额外分段上限约束。
 - 为缩短启动等待，第一逻辑段内部最多拆成三段音频：按整句累加至 20 字，再从剩余内容累加新的 40 字，最后合成余文（不计空白）。它们共用一个段号和段内进度条，默认仅预合成下一小段。最多增加两次请求，实际等待时间取决于服务商；音频导出仍使用常规分段。
 - 在 Obsidian 1.11.4 及以上版本中，Azure 和 OpenRouter 密钥默认使用 Obsidian SecretStorage，也可切换到库外密钥文件兼容模式。
 - 设置页提供常用中文、粤语、台湾中文和英文音色预设、按 OpenRouter 模型联动的音色目录，也保留自定义 Voice ID。
@@ -122,6 +123,8 @@ MiMo 默认每段最多 200 字符，可在设置中调整（客户端保守措�
 插件默认使用本地语音合成。在 `Local CosyVoice` 模式下，插件本身不会把笔记内容或从 PDF 提取的文本发送到 Microsoft、OpenAI 或其他远程 TTS 服务；但你配置的包装脚本属于同一信任边界，它仍可能按照自身实现发起网络请求。
 
 PDF 提取使用 Obsidian 内置 PDF.js 和 `Vault.readBinary`，此功能不会上传 PDF 文件本身。为支持 PDF 选择位置命令，插件只在内存中临时保留所选页码、页内相对坐标和最多 2,000 个字符的定位文本；这些选区定位信息都不会写入设置或诊断日志。如果选择在线语音引擎并开启对应同意开关，从 PDF 提取出的文本分段会按照与笔记文本相同的规则发送。扫描版或纯图片 PDF 必须先完成 OCR 才能朗读。
+
+HTML 正文通过随插件打包的静态解析库提取，解码字符实体并过滤脚本、样式、嵌入框架、表单、导航、页脚及明确隐藏的元素；文字提取本身不会执行 HTML 或请求资源。HTML Reader 自身显示页面时的安全设置和资源加载属于另一条边界，不由本插件改变。HTML 选区、正文和定位偏移只临时保存在内存中，不写入设置或诊断日志。在线引擎获得授权后，只接收所选范围内的可朗读文字，不上传 HTML 源文件或页面资源地址。开启续读记录后，可以按与笔记相同的规则保存不超过 180 字符的 HTML 短锚点。
 
 `记住朗读位置` 默认关闭。开启后，`data.json` 只保存文件路径、文件时间、PDF 页码或朗读分段序号、更新时间，以及不超过 180 个字符的规范化文本锚点，不保存完整笔记或 PDF 正文。可以用 `清除已保存的朗读位置` 删除全部锚点；关闭该设置会停止后续使用和更新，但不会在未提示的情况下自动删除已有记录。
 
@@ -361,11 +364,11 @@ Edge、Azure 与 OpenRouter 是和本地包装脚本并列的在线语音模式�
 插件提供以下命令：
 
 - `Open voice reader controls`
-- `Read current note or PDF aloud`
-- `Export audio from current note or PDF`
+- `Read current note, PDF or HTML aloud`
+- `Export audio from current note, PDF or HTML`
 - `Export audio from the current note and insert it`
 - `Retry pending audio export merge only`
-- `Resume reading current note or PDF`
+- `Resume reading current note, PDF or HTML`
 - `Read current PDF aloud`
 - `Read current PDF from selection aloud`
 - `Read selection aloud`
@@ -381,7 +384,7 @@ Edge、Azure 与 OpenRouter 是和本地包装脚本并列的在线语音模式�
 
 ## 音频导出
 
-打开 Markdown 笔记或文本型 PDF 后，点击控制面板的 `Export audio`。范围选择框提供“全部内容”“仅选中内容”和“从选中位置到末尾”；后两项要求当前存在文字选区。对于 PDF 全部导出或从选中位置导出，插件会先在本地完成解析和可靠定位。随后确认窗口会显示准确的可朗读字符数、语音引擎、合成分段数、范围和预计保存路径；必须勾选确认框后才会开始合成。
+打开 Markdown 笔记、文本型 PDF 或本地 HTML 后，点击控制面板的 `Export audio`。范围选择框提供“全部内容”“仅选中内容”和“从选中位置到末尾”；后两项要求有可用文字选区。插件会先在本地完成文字解析与定位。随后确认窗口会显示准确的可朗读字符数、语音引擎、合成分段数、范围和预计保存路径；必须勾选确认框后才会开始合成。HTML 和 PDF 只保存音频附件，直接插入结果仅适用于 Markdown 笔记。
 
 本地模式把 PCM WAV 分段合并为一个 WAV；Edge、Azure 和 OpenRouter 把经过校验的 MP3 帧合并为一个 MP3。设置中的“音频导出保存位置”可选择 Obsidian 附件目录（默认）、源文件同目录或本库内自定义目录。全部、选中和继续导出的文件名分别类似 `笔记名 - narration.mp3`、`笔记名 - selection narration.mp3` 和 `笔记名 - continued narration.mp3`，同名时自动添加数字后缀。Markdown 可使用 `Export & insert audio` 在当前光标插入结果，或追加到原笔记；PDF 本身不能插入 Obsidian 嵌入，因此 PDF 导出只保存音频附件。
 
@@ -403,7 +406,15 @@ Edge、Azure 与 OpenRouter 是和本地包装脚本并列的在线语音模式�
 
 PDF 必须包含可选择的内嵌文本。加密、损坏、扫描版或纯图片 PDF 无法直接提取，需要先解锁或执行 OCR。0.4.0 及以上版本会利用文字坐标识别常见双栏页面，在每个垂直区段中按左栏后右栏朗读，并把通栏标题作为边界；非常规版式、旋转文字、侧栏和复杂表格仍可能需要从选中位置开始，或改用文本结构更规范的源 PDF。
 
-开启 `记住朗读位置` 后，可以点击控制面板的 `Resume file`，或执行 `Resume reading current note or PDF`。PDF 会从保存的页码开始重新定位短锚点；Markdown 会匹配同一规范化锚点，笔记发生修改且锚点失效时则回退到最接近的已保存分段。
+开启 `记住朗读位置` 后，可以点击控制面板的 `Resume file`，或执行 `Resume reading current note, PDF or HTML`。PDF 会从保存的页码开始重新定位短锚点；Markdown 会匹配同一规范化锚点，笔记发生修改且锚点失效时则回退到最接近的已保存分段。
+
+## HTML 朗读
+
+1. 启用 [HTML Reader](https://github.com/nuthrash/obsidian-html-plugin)，在其中打开库内 `.html` 或 `.htm` 文件。
+2. 使用“朗读全文”提取并朗读正文、“朗读选中文字”只读选区，或“从选中位置朗读”从选区起点读到文件末尾。定位直接使用渲染文档的选区偏移，不会把重复语句误定位到第一次出现的位置。HTML Reader 框架必须可访问；选区无法取得时会提示，不会转而朗读另一篇笔记。
+3. 沿用播放倍速、音量、跳转、首段分级启动和有界预合成控制。“导出音频”同样提供三种范围及强制确认，无需额外安装转换程序。
+
+HTML 标记始终由解析库处理，不受“移除 Markdown 格式”开关影响；实体解码后的比较符号会保留。提取保留标题、段落、列表和表格单元格文字，但不重建 CSS 视觉顺序。首版只覆盖静态本地 HTML，暂不支持 MHT/MHTML、Web viewer、嵌套框架、扫描/纯图片页面或必须执行脚本才能产生的正文。不要为朗读开启脚本或降低 HTML Reader 安全设置。全文提取限制为 50 MiB 源文件及 500 万可朗读字符。HTML 续读使用短锚点，编辑后锚点失效时会提示并从头开始。
 
 ## 开发与构建
 

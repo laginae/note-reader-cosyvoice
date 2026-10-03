@@ -2,7 +2,7 @@
 
 **Language:** English | [简体中文](README.zh-CN.md)
 
-A privacy-first Obsidian desktop voice reader for Markdown notes and text-based PDFs. Use local CosyVoice by default, or explicitly opt in to Microsoft Edge online voice, Microsoft Azure Speech, OpenRouter TTS, or Xiaomi MiMo TTS.
+A privacy-first Obsidian desktop voice reader to **read aloud Markdown notes, text-based PDFs and local HTML files**. Use local CosyVoice by default, or explicitly opt in to Microsoft Edge online voice, Microsoft Azure Speech, OpenRouter TTS, or Xiaomi MiMo TTS.
 
 ### Xiaomi MiMo TTS Quickstart
 
@@ -18,12 +18,13 @@ MiMo defaults to a configurable 200-character chunk cap (a conservative client s
 ## Highlights
 
 - **Privacy first:** Local CosyVoice is the default. Each online engine requires separate, explicit consent before it can receive text.
-- **Confirmed, scoped audio export:** Export all content, selected text only, or from the selection to the end from either a Markdown note or a text-based PDF. A mandatory confirmation shows the exact readable character count, segment/request count, scope, and planned save path before synthesis.
+- **Confirmed, scoped audio export:** Export all content, selected text only, or from the selection to the end from a Markdown note, text-based PDF or local HTML file. A mandatory confirmation shows the exact readable character count, segment/request count, scope, and planned save path before synthesis.
 - **Layout-aware PDF reading:** Local PDF extraction uses text coordinates to read common two-column papers left column first, while preserving full-width headings and section boundaries.
 - **Progressive PDF start:** Markdown notes and text-based PDFs are parsed locally; ordinary text-based PDFs typically yield their first speech chunk within a few seconds, while later pages continue parsing.
 - **Private, optional resume:** Reading-position history is off by default. When enabled, it stores only bounded resume metadata and a short text anchor, never the complete note or PDF body.
 - **Bounded online prefetch:** Online modes prepare at most one upcoming chunk by default for smoother transitions. Set prefetch to `0` for strict on-demand synthesis.
 - **Flexible PDF selection reading:** Continue reading from a selected position in a PDF, or read only the selected text.
+- **Local HTML reading:** Read `.html` / `.htm` body text, read selected text in HTML Reader, or continue from the selection to the end. Text extraction does not execute scripts or fetch page resources.
 
 Here, a text-based PDF means a PDF with selectable embedded text. Scanned or image-only PDFs need OCR first.
 
@@ -87,11 +88,11 @@ First install and enable the plugin, then open `Settings -> Community plugins ->
 
 ## Features
 
-- Reads the current Markdown note or text-based PDF, selected text in either view, or from a Markdown/PDF selection start to the end of the active file.
+- Reads the current Markdown note, text-based PDF or local HTML file, selected text in the corresponding view, or from the selection to the end of the active file. HTML selections integrate with HTML Reader.
 - Extracts PDF text locally with Obsidian's built-in PDF.js, uses coordinates to improve common two-column reading order, and progressively feeds speech chunks while later pages continue parsing.
 - Uses paragraph-, line-, sentence-, and clause-aware chunk boundaries while keeping configured character limits as hard upper bounds.
-- Can optionally remember and resume the current Markdown or PDF position. The setting is disabled by default and includes a separate clear-history control.
-- Exports all, selected, or remaining content from Markdown notes and text-based PDFs as one WAV file in local mode or one MP3 file in online modes. Save it in Obsidian's attachment folder, beside the source file, or in a custom vault folder; Markdown notes also support exporting and inserting the completed attachment.
+- Can optionally remember and resume the current Markdown, PDF or HTML position. The setting is disabled by default and includes a separate clear-history control.
+- Exports all, selected, or remaining content from Markdown notes, text-based PDFs and local HTML files as one audio file: WAV for local CosyVoice and MiMo, MP3 for Edge, Azure and OpenRouter. Save it in Obsidian's attachment folder, beside the source file, or in a custom vault folder; Markdown notes also support exporting and inserting the completed attachment.
 - Opens a right-side `Voice Reader` control panel.
 - Shows synthesis/playback phase, whole-reading progress, percentage, and text preview.
 - Supports pause, resume, stop, Space to pause or resume in the control panel, repeated Left/Right Arrow 5-second seeking, previous/next chunk buttons, and progress dragging while the current audio chunk is playing.
@@ -99,7 +100,7 @@ First install and enable the plugin, then open `Settings -> Community plugins ->
 - Lets you choose `Local CosyVoice`, `Microsoft Edge online voice`, `Microsoft Azure Speech`, or `OpenRouter TTS` in settings. Local CosyVoice is the default.
 - Lets you switch the complete plugin settings page between English and Chinese.
 - Requires a separate opt-in before each online engine can receive text.
-- Uses separate local and online chunk limits. Online notes and PDFs default to `200,400,800`, with at most one future chunk synthesized early by default.
+- Uses separate local and online chunk limits. Online notes, PDFs and HTML default to `200,400,800`, with at most one future audio part synthesized early by default. MiMo's additional chunk cap still applies.
 - For quicker startup, the first logical segment is synthesized in up to three audio parts: complete sentences reaching 20 non-whitespace characters, then 40 more, then the remaining text. All parts share one segment number and progress timeline. The default prefetch prepares only the next audio part. This can add up to two requests; actual latency depends on the provider. Audio export uses normal chunking.
 - Uses Obsidian SecretStorage for Azure and OpenRouter API keys by default on Obsidian 1.11.4 or later, with an external key-file compatibility option.
 - Provides common Chinese and English voice presets, model-specific OpenRouter voice menus, and custom voice ID fields.
@@ -123,6 +124,8 @@ First install and enable the plugin, then open `Settings -> Community plugins ->
 By default, the plugin uses local TTS. In `Local CosyVoice` mode, the plugin itself does not send note or extracted PDF text to Microsoft, OpenAI, or another remote TTS service. The configured wrapper remains part of your trust boundary and may make its own network requests.
 
 PDF extraction uses Obsidian's bundled PDF.js and `Vault.readBinary`; the PDF file itself is not uploaded by this feature. To support PDF selection commands, the plugin temporarily keeps the selection's page number, relative in-page coordinates, and up to 2,000 characters of locator text in memory only; none of this selection locator is saved to settings or diagnostic logs. When an online speech engine is selected and its consent is enabled, extracted PDF text chunks are transmitted under the same rules as note text. Scanned or image-only PDFs need OCR before the plugin can read them.
+
+HTML body extraction uses a bundled inert HTML parser. It decodes entities and removes scripts, styles, embedded frames, forms, navigation, footers, and explicitly hidden elements, without executing HTML or fetching resources. HTML Reader controls how the page itself is displayed; its own security settings and resource loading are separate from this reader's extraction. Selected HTML text, the extracted body, and range offsets are held transiently in memory and are not written to settings or diagnostic logs. Online engines receive readable text in the chosen scope only after consent; the HTML source file and resource URLs are not uploaded by this feature. Optional resume history can save a short HTML text anchor under the same 180-character limit as notes.
 
 `Remember reading position` is off by default. If you enable it, `data.json` stores the file path, file timestamp, PDF page or speech-chunk index, update time, and a normalized text anchor capped at 180 characters. It does not store the complete note or PDF body. Use `Clear saved reading positions` to remove all saved anchors; disabling the setting stops future use and updates but does not silently delete existing history.
 
@@ -313,11 +316,11 @@ Use `Local chunk limits` to balance local startup latency and synthesis stabilit
 ## Commands
 
 - `Open voice reader controls`
-- `Read current note or PDF aloud`
-- `Export audio from current note or PDF`
+- `Read current note, PDF or HTML aloud`
+- `Export audio from current note, PDF or HTML`
 - `Export audio from the current note and insert it`
 - `Retry pending audio export merge only`
-- `Resume reading current note or PDF`
+- `Resume reading current note, PDF or HTML`
 - `Read current PDF aloud`
 - `Read current PDF from selection aloud`
 - `Read selection aloud`
@@ -331,7 +334,7 @@ Use `Local chunk limits` to balance local startup latency and synthesis stabilit
 
 ## Audio Export
 
-Open a Markdown note or text-based PDF and choose `Export audio`. A scope picker offers `Entire document`, `Selected text only`, and `From selection to end`; the latter two require an active text selection. For an entire PDF or a PDF export from selection, local parsing and reliable position matching run first. The subsequent confirmation reports the exact readable character count, selected engine, synthesis segment count, scope, and planned save path, and its checkbox must be selected before synthesis starts.
+Open a Markdown note, text-based PDF or local HTML file and choose `Export audio`. A scope picker offers `Entire document`, `Selected text only`, and `From selection to end`; the latter two require a usable text selection. Local text extraction and position matching run before confirmation. The subsequent confirmation reports the exact readable character count, selected engine, synthesis segment count, scope, and planned save path, and its checkbox must be selected before synthesis starts. HTML and PDF exports save an attachment; inserting the result directly is available for Markdown notes only.
 
 Local mode combines PCM WAV segments into one WAV file. Edge, Azure, and OpenRouter combine validated MP3 frames into one MP3 file. `Audio export save location` can use Obsidian's attachment folder (the default), the source file's folder, or a custom vault folder. Entire, selected, and remaining exports use filenames such as `Note name - narration.mp3`, `Note name - selection narration.mp3`, and `Note name - continued narration.mp3`, with a numeric suffix when needed. For Markdown, `Export & insert audio` embeds the result at the current cursor or appends it to the original note. PDF export saves an audio attachment only because a PDF cannot be edited to insert an Obsidian embed.
 
@@ -353,7 +356,15 @@ To start at a specific position, select text in the PDF text layer and click `Re
 
 The PDF must contain selectable embedded text. Password-protected, damaged, scanned, or image-only files cannot be extracted; run OCR or unlock the file first. Version 0.4.0 and later use text coordinates to recognize common two-column pages and read each vertical band left column before right column, while treating full-width headings as boundaries. Unusual layouts, rotated text, sidebars, and complex tables can still require a manual selection start or a better-tagged source PDF.
 
-If `Remember reading position` is enabled, use `Resume file` in the control panel or `Resume reading current note or PDF` in the command palette. PDF resume starts on the saved page and locates the short anchor again; Markdown resume locates the same normalized anchor and falls back to the nearest saved chunk if the note changed.
+If `Remember reading position` is enabled, use `Resume file` in the control panel or `Resume reading current note, PDF or HTML` in the command palette. PDF resume starts on the saved page and locates the short anchor again; Markdown resume locates the same normalized anchor and falls back to the nearest saved chunk if the note changed.
+
+## HTML Reading
+
+1. Enable [HTML Reader](https://github.com/nuthrash/obsidian-html-plugin) and open a vault-local `.html` or `.htm` file in it.
+2. Choose `Read file` to read the extracted body, `Read selection` to read only highlighted text, or `Read from selection` to continue from its start to the end. Selection offsets come from the rendered document, so repeated phrases are not located by a first-match text search. The HTML Reader frame must be accessible; an unavailable selection produces a notice instead of reading a different document.
+3. Playback speed, volume, seeking, first-segment startup parts, and bounded prefetch use the existing controls. `Export audio` supports the same three scopes and mandatory confirmation. No extra converter or executable is needed.
+
+HTML markup is always parsed, independent of `Strip Markdown`; decoded literal comparison signs are preserved. Extraction preserves headings, paragraphs, lists and table-cell text, but does not attempt CSS visual-order reconstruction. The first release covers static local HTML, not MHT/MHTML archives, the Web viewer, nested frames, scanned/image-only pages, or content that requires scripts to generate it. Do not enable scripts or weaken HTML Reader's security settings for this feature. Whole-file extraction is limited to 50 MiB of source and five million readable characters. HTML resume uses a short text anchor; if the anchor disappears after editing, reading restarts from the beginning with a notice.
 
 ## Development
 
