@@ -1,0 +1,9 @@
+Privacy-first read aloud for notes, text PDFs, HTML and Obsidian Web viewer pages. Read everything, a selection, or continue from a selected position.
+
+Follow along with adjustable highlighting and an in-place toolbar. Navigate note and HTML headings or PDF bookmarks; infer PDF/HTML outlines locally. Progressive parsing helps playback start sooner.
+
+Start with Xiaomi MiMo for Chinese speech, Edge TTS for many online voices, installed system voices for easy offline use, or OpenRouter for model choice and enforced ZDR routing. MiMo is temporarily free; other costs and quotas vary. Edge needs a helper program. Local CosyVoice and Azure are also available.
+
+Online speech needs consent and sends text to the provider. One upcoming audio part is prefetched by default to reduce unused synthesis. Confirm scope and destination before audio export.
+
+Scans need OCR; complex layouts may affect outlines and highlighting. Desktop only. See the README for setup and privacy details.

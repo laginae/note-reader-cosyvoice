@@ -2,9 +2,108 @@
 
 **Language:** English | [简体中文](README.zh-CN.md)
 
-A privacy-first Obsidian desktop voice reader to **read aloud Markdown notes, text-based PDFs, local HTML files and Web viewer pages**. Use local CosyVoice by default, select installed Windows/macOS system voices, or explicitly opt in to Microsoft Edge online voice, Microsoft Azure Speech, OpenRouter TTS, or Xiaomi MiMo TTS.
+Read aloud your **notes, PDFs, HTML files and web pages** in Obsidian. Listen while following the original document, jump between sections, or export audio for later.
 
-### System Local Speech Quickstart (0.6.0)
+## Why use it?
+
+- **Privacy under your control.** Document text is extracted locally. Online speech requires explicit consent; installed offline system voices and local CosyVoice keep synthesis on your device.
+- **Read from where you are.** Read the whole document, only selected text, or continue from a selected position, including in PDFs.
+- **Follow along without losing the layout.** Optional, adjustable highlighting in Markdown/live preview, text PDFs, local HTML and Web viewer. The toolbar stays with the original content.
+- **Navigate by outline.** Use note headings, PDF bookmarks or locally inferred PDF headings, and HTML headings or coherent section numbering. Read one section or continue from it.
+- **Start listening sooner.** Progressive text extraction and short startup audio parts reduce the wait; later PDF pages can be processed while playback begins.
+- **Avoid unnecessary synthesis.** By default, online playback prepares only one upcoming audio part. Choose zero prefetch for on-demand synthesis. Audio export always asks for confirmation.
+- **Keep an audio copy.** Export all, selected or remaining text; insert the result into a Markdown note. If final merging fails, retry with retained audio instead of synthesizing it again.
+
+Text PDFs must contain selectable text; scanned pages need OCR first. Highlighting and inferred outlines depend on source structure and are not guaranteed for every layout. Sentence-level highlighting requires reliable timing; other engines use segment highlighting.
+
+## Choose a voice service
+
+For a first try, choose based on what matters most to you, rather than installing every engine.
+
+| Your priority | Start with | What you need | Important trade-off |
+| --- | --- | --- | --- |
+| Try Chinese speech without an initial API charge | **Xiaomi MiMo** | A regular MiMo API key | Currently temporarily free; online processing, not confirmed ZDR |
+| Many online voices without a user API key | **Edge TTS** | Install the third-party `edge-tts` helper | Online, no explicit ZDR guarantee for plugin calls |
+| The simplest offline setup | **System local speech** | A compatible installed Windows/macOS voice | No speech API quota; quality depends on installed voices |
+| Compare speech models without a local helper | **OpenRouter TTS** | API key and usable account credit | Paid, model-dependent voices; enforced ZDR routing |
+| Keep text local with a dedicated voice model | **Local CosyVoice** | Local runtime, model and wrapper | More setup and local computing resources |
+| Use an existing Microsoft cloud resource | **Azure Speech** | Speech resource, region and key | Cloud setup and service quota |
+
+MiMo's [official pricing](https://mimo.mi.com/docs/zh-CN/price/pay-as-you-go) lists `mimo-v2.5-tts` as temporarily free, checked **2026-10-04**. Availability, prices and quotas can change. Voice quality is subjective: test a short, non-sensitive passage before choosing.
+
+## Quick start
+
+### Install
+
+On **Obsidian desktop**, install and enable [Note and PDF Voice Reader](https://community.obsidian.md/plugins/note-reader-cosyvoice), then open its settings. Manual installation is covered in [INSTALL.md](INSTALL.md).
+
+The initial engine is local CosyVoice, which needs configuration. **Choose one of the following engines before your first reading.** Online consent applies only to the service you enable.
+
+### 1. Xiaomi MiMo: a convenient first try for Chinese
+
+1. Create a **regular API key** in the [MiMo console](https://platform.xiaomimimo.com/), not a Token Plan key.
+2. Select **Xiaomi MiMo TTS** and store the key using **Obsidian SecretStorage**.
+3. Read the notice and enable **Allow MiMo online processing**.
+4. Keep the default **Bai Hua / 白桦 (Chinese male)** or select another voice, then try a short selection.
+
+MiMo sends text to Xiaomi. Its [privacy policy](https://privacy.mi.com/XiaomiMiMoPlatform/zh_CN/) says supplied text is not used for training without prior consent; this is **not a zero-retention guarantee**.
+
+### 2. Edge TTS: online voices without an API key
+
+1. Install [`edge-tts`](https://github.com/rany2/edge-tts) using `pipx install edge-tts`. If Python/pipx is not installed, follow the [detailed installation guide](#install-and-configure-microsoft-edge-online-voice).
+2. Select **Microsoft Edge online voice**, enable **Allow Edge online processing**, and set **Edge TTS executable** to `edge-tts` or its full executable path.
+3. Choose a voice and test a short selection.
+
+The helper is third-party software, not bundled with the plugin. Speech is online, even though the helper runs locally. **The interface does not explicitly guarantee ZDR for these requests.**
+
+### 3. System speech: no API key, no cloud speech quota
+
+1. Select **System local speech (Windows/macOS)**.
+2. Choose **System default** or a detected installed voice; use **Refresh** after installing more voices.
+3. Preview the voice, then read a selection.
+
+With compatible offline voices, no speech text is sent to a TTS provider. **Windows Narrator Natural / Natural HD downloads are not available through this plugin's system synthesis interface.** Ordinary installed voices are supported; quality varies. See the voice-download and Narrator notes below.
+
+### 4. OpenRouter: model choice with enforced ZDR
+
+1. Create an [OpenRouter API key](https://openrouter.ai/settings/keys), set a spending limit, and ensure the account has usable credit.
+2. Select **OpenRouter TTS**, store the key in **Obsidian SecretStorage**, and enable **Allow OpenRouter online processing**.
+3. Choose a model and one of its compatible voices. Test a short selection before a long reading or export.
+4. Keep account-level logging and data sharing disabled for private content.
+
+The plugin always requests ZDR and denies provider data collection; it does not relax these settings if a route is unavailable. Text still passes through OpenRouter and an eligible provider. Voices and prices differ by model.
+
+### Start reading
+
+Open a note, text PDF, local HTML file or a loaded Web viewer page. Open the reader sidebar or toolbar, choose **whole document**, **selection**, or **from selection**, then start playback. Local HTML selections require HTML Reader.
+
+Use pause/resume, playback speed, volume, segment navigation and seeking without starting a new synthesis just to change playback speed. For exports, review the scope, character count and destination before confirming.
+
+## Interface
+
+![Voice reader controls](docs/images/reader-controls.png)
+
+<details>
+<summary>View the complete settings page</summary>
+
+![Complete plugin settings, with no personal information](docs/images/plugin-settings.png)
+
+</details>
+
+## For stricter privacy or advanced setups
+
+**Prefer no cloud text processing?** Use installed offline system voices for the easiest setup, or configure [local CosyVoice](docs/local-cosyvoice-setup.md) for a dedicated local model. For CosyVoice, install and test the runtime and model, select **Local CosyVoice**, and set **CosyVoice script** to your compatible wrapper. Keep online consent switches off. The configured runtime and wrapper remain part of your trust boundary.
+
+**Already using Azure?** Select **Microsoft Azure Speech**, configure your Speech resource's cloud and region, save its key in SecretStorage, and enable Azure online processing. See [Azure configuration](#configure-microsoft-azure-speech).
+
+Online speech, temporary audio, exported attachments and vault synchronization have different privacy boundaries. No service choice makes every part of the workflow automatically private. The reference below explains these boundaries and advanced controls.
+
+## Detailed reference
+
+<details>
+<summary>Open feature details, privacy notes, engine configuration and development instructions</summary>
+
+### System voice details
 
 1. Select **System local speech (Windows/macOS)** in plugin settings. No API key, model download or extra TTS package is required when a compatible voice is already installed.
 2. Choose **System default (already installed)** or an installed voice from the detected list. Use **Refresh** after installing voices and **Preview** to test a voice without sending note text to a provider. Windows and macOS voice preferences are stored separately.
@@ -55,81 +154,7 @@ MiMo defaults to a configurable 200-character chunk cap (a conservative client s
 3. Read the privacy notice and enable **Allow MiMo online processing**. Select one of eight official voices; the default is **Bai Hua / 白桦 (Chinese male)**. Xiaomi does not specify US/UK accents for these presets.
 4. Read or export a note/PDF using the existing controls. The model is `mimo-v2.5-tts`, producing WAV audio. Online chunking and the one-upcoming-chunk prefetch limit also apply. Synthesis speed is requested through a natural-language instruction, not a guaranteed numerical rate.
 
-[Pricing](https://mimo.mi.com/docs/zh-CN/price/pay-as-you-go) lists this model as **temporarily free** as of 2026-09-27; pricing and quotas may change. The [MiMo privacy policy](https://privacy.mi.com/XiaomiMiMoPlatform/zh_CN/) states that supplied text is not used for training without prior consent, but **zero data retention is not confirmed**. Plugin consent only permits synthesis, not training. MiMo is a separate direct API engine, not an OpenRouter ZDR route. Voice cloning and voice design are not included.
-
-## Highlights
-
-- **Privacy first:** Local CosyVoice is the default. Each online engine requires separate, explicit consent before it can receive text.
-- **Read along in the original document:** Optional current-segment highlighting in Markdown/live preview, text PDFs, local HTML and Web viewer pages. Adjustable color and strength, no document rewriting or extra speech requests. Sentence highlighting requires reliable engine timing; uncertain matches stay unmarked.
-- **Automatic outlines and section reading:** Use PDF bookmarks or locally inferred numbered/font-based headings; recognize HTML headings and coherent section numbering. Navigate, read a section or continue from it. PDFs also support confirmed bookmark saving, cached outlines and a movable outline panel. Scanned PDFs need OCR first.
-- **Confirmed, scoped audio export:** Export all content, selected text only, or from the selection to the end from a Markdown note, text-based PDF or local HTML file. A mandatory confirmation shows the exact readable character count, segment/request count, scope, and planned save path before synthesis.
-- **Layout-aware PDF reading:** Local PDF extraction uses text coordinates to read common two-column papers left column first, while preserving full-width headings and section boundaries.
-- **Progressive PDF start:** Markdown notes and text-based PDFs are parsed locally; ordinary text-based PDFs typically yield their first speech chunk within a few seconds, while later pages continue parsing.
-- **Private, optional resume:** Reading-position history is off by default. When enabled, it stores only bounded resume metadata and a short text anchor, never the complete note or PDF body.
-- **Bounded online prefetch:** Online modes prepare at most one upcoming chunk by default for smoother transitions. Set prefetch to `0` for strict on-demand synthesis.
-- **Flexible PDF selection reading:** Continue reading from a selected position in a PDF, or read only the selected text.
-- **Local HTML reading:** Read `.html` / `.htm` body text, read selected text in HTML Reader, or continue from the selection to the end. Text extraction does not execute scripts or fetch page resources.
-- **Web page reading:** Read a loaded HTTP/HTTPS page in Obsidian's built-in Web viewer, just its selection, or from the selection onward. Browser and Reader views are supported, with confirmed three-scope audio export and no saved web reading history.
-
-Here, a text-based PDF means a PDF with selectable embedded text. Scanned or image-only PDFs need OCR first.
-
-## Screenshots
-
-Current reader control panel, including scoped audio export actions:
-
-![Voice Reader control panel](docs/images/reader-controls.png)
-
-Complete settings page, assembled from sequential views of the same page. Secret values, vault names, note content, local paths, and surrounding Obsidian UI are excluded:
-
-![Note and PDF Voice Reader settings](docs/images/plugin-settings.png)
-
-## Speech engine comparison
-
-Scores are relative to the experience provided by this plugin. More filled stars always mean more favorable: stronger privacy, easier setup, faster first-chunk startup, broader voice choice, less dependence on user-managed paid API quota, or better offline capability. `★★★★★` is the strongest rating and `★☆☆☆☆` is the weakest. They are usage guidance, not security, provider-policy, pricing, or latency guarantees.
-
-| Engine | Privacy | Setup convenience | Startup speed | Voice choice | Quota friendliness | Offline |
-| --- | :---: | :---: | :---: | :---: | :---: | :---: |
-| Local CosyVoice | ★★★★★ | ★★☆☆☆ | ★★★★☆ | ★★★☆☆ | ★★★★★ | ★★★★★ |
-| Microsoft Edge online voice | ★★★☆☆ | ★★★★☆ | ★★★★★ | ★★★★★ | ★★★★★ | ★☆☆☆☆ |
-| Microsoft Azure Speech | ★★★★☆ | ★★★☆☆ | ★★★★★ | ★★★★★ | ★★★★☆ | ★☆☆☆☆ |
-| OpenRouter TTS | ★★★★☆ | ★★★★★ | ★★★★★ | ★★★★★ | ★★★☆☆ | ★☆☆☆☆ |
-
-- **Privacy:** Local CosyVoice keeps readable text on the device. Every online mode sends text to its service provider. Edge receives three stars because [Microsoft states](https://learn.microsoft.com/en-us/microsoft-edge/privacy-whitepaper/) that online Read aloud text and generated audio are encrypted in transit and deleted immediately after conversion. However, this plugin calls the service outside the Edge browser through the third-party `edge-tts` package, which does not expose an explicit ZDR control or guarantee for plugin requests; Edge therefore remains below Azure and OpenRouter. Azure receives four stars because this plugin uses the real-time prebuilt-voice API and [Microsoft states](https://learn.microsoft.com/en-us/azure/foundry/responsible-ai/speech-service/text-to-speech/data-privacy-security) that its input text and output audio are not stored in Microsoft logs; one star is withheld because the text is still processed in Microsoft's cloud. OpenRouter also receives four stars because requests force `provider.zdr = true`, deny provider data collection, and fail instead of relaxing those restrictions when no eligible endpoint exists; it is not equivalent to local processing because text still passes through OpenRouter and an upstream provider, and account-level logging and data sharing should remain disabled for private content.
-- **Setup convenience:** OpenRouter is the shortest setup in this plugin: create an account key, store it in Obsidian SecretStorage, then select a model and voice. It needs no local helper program. Edge needs the separately installed third-party `edge-tts` executable. Azure receives three stars because it also uses direct HTTPS and needs no helper executable, although it still requires an Azure Speech resource, cloud, region, and key. Local CosyVoice requires a local runtime, model, and wrapper.
-- **Quota friendliness:** Local mode receives five stars because it uses local compute rather than a remote API allowance. Edge also receives five stars because this plugin needs no user API key or user-managed paid quota, although that does not promise unlimited use or a service-level guarantee. Azure receives four stars because its current [Free (F0) tier](https://azure.microsoft.com/en-us/pricing/details/speech/) lists 0.5 million neural text-to-speech characters per month; the real-time no-retention policy is a separate privacy property, not a product named "free ZDR quota," and pricing or eligibility can change. OpenRouter receives three stars because TTS is [metered per input character](https://openrouter.ai/docs/guides/overview/multimodal/tts) with model/provider-dependent prices; the plugin enforces ZDR but does not assume a permanent free ZDR TTS allowance.
-- **Speed:** This score measures time to the first playable segment after the engine is already installed and configured; first-time downloads, account provisioning, and setup work belong to setup convenience instead. Progressive chunking gives Local CosyVoice four stars, with one star withheld for hardware-dependent model warm-up. Edge, Azure, and OpenRouter receive five stars for their typical short first-request path, but this is not a claim of identical or guaranteed latency. [OpenRouter says its gateway adds minimal overhead](https://openrouter.ai/docs/guides/best-practices/latency-and-performance), while routing, cache state, the selected model, network conditions, and provider load can still change the result.
-- **Voice choice:** Azure has a broad direct voice catalog. OpenRouter receives the same rating because it exposes several TTS models and their model-specific voice catalogs, not because every model shares Azure voices. Its [TTS documentation](https://openrouter.ai/docs/guides/overview/multimodal/tts) identifies Azure-specific handling for MAI, while other models use their own provider-dependent voices; voice IDs are not interchangeable between models.
-
-In practice, choose Local CosyVoice for sensitive or offline reading, OpenRouter for the shortest direct-API setup plus model choice and enforced ZDR routing, Edge when avoiding a user API key matters more than installing its helper program, and Azure when you already manage a Microsoft Speech resource.
-
-## Quick start
-
-First install and enable the plugin, then open `Settings -> Community plugins -> Note and PDF Voice Reader`. Only enable an online-processing switch after deciding that the selected service may receive the text you ask the plugin to read.
-
-### 1. OpenRouter TTS
-
-1. Create a dedicated key at [OpenRouter API Keys](https://openrouter.ai/settings/keys), set a suitable spending limit, and make sure the account has usable quota.
-2. Set `Speech engine` to `OpenRouter TTS`, then enable `Allow OpenRouter online processing`.
-3. Keep the recommended `Obsidian SecretStorage`, create or select a secret containing the key, and choose a model and compatible voice.
-4. Keep account-level input/output logging and data sharing disabled. The plugin enforces ZDR routing and denies provider data collection on every request, but text still passes through OpenRouter and an eligible upstream provider.
-
-### 2. Microsoft Azure Speech
-
-1. Create an Azure Speech resource and record its cloud, region, and one subscription key.
-2. Set `Speech engine` to `Microsoft Azure Speech`, enable `Allow Azure online processing`, and select the matching Azure cloud and region.
-3. Store the key in `Obsidian SecretStorage`, then choose a voice preset or enter a valid Azure voice ID.
-
-### 3. Microsoft Edge online voice
-
-1. Install the third-party CLI with `pipx install edge-tts`, open a new terminal, and confirm that `edge-tts --help` works.
-2. Set `Speech engine` to `Microsoft Edge online voice`, enable `Allow Edge online processing`, set `Edge TTS executable` to `edge-tts` or its absolute path, and choose a voice.
-3. No user API key is required by this plugin. Text is still sent online, and the `edge-tts` interface used here does not provide an explicit ZDR guarantee for plugin requests.
-
-### 4. Local CosyVoice
-
-1. Install and test a local CosyVoice runtime and model, then prepare a compatible PowerShell wrapper as described in [Local CosyVoice setup](docs/local-cosyvoice-setup.md).
-2. Set `Speech engine` to `Local CosyVoice` and enter the wrapper's absolute path in `CosyVoice script`.
-3. Use `Read selection` for a short test. This mode needs no online-consent switch and the plugin itself keeps readable text on the device, but the configured wrapper remains part of your trust boundary.
+[Pricing](https://mimo.mi.com/docs/zh-CN/price/pay-as-you-go) lists this model as **temporarily free** as of 2026-10-04; pricing and quotas may change. The [MiMo privacy policy](https://privacy.mi.com/XiaomiMiMoPlatform/zh_CN/) states that supplied text is not used for training without prior consent, but **zero data retention is not confirmed**. Plugin consent only permits synthesis, not training. MiMo is a separate direct API engine, not an OpenRouter ZDR route. Voice cloning and voice design are not included.
 
 ## Features
 
@@ -391,7 +416,7 @@ When the `Voice Reader` control panel is focused, Space pauses or resumes readin
 
 The triangle buttons beside the progress bar jump to the previous text chunk or the next text chunk. Already synthesized chunks are reused when possible; otherwise the target chunk is synthesized before playback.
 
-The progress bar shows whole-reading progress across all chunks. While audio is playing, the bar can be clicked or dragged. Seeking is limited to the currently loaded audio chunk; dragging outside that chunk is clamped to the nearest point in the current chunk.
+The overall progress bar navigates between reading segments. The separate current-segment slider seeks within the current segment's available audio. A target that is not yet synthesized may require a wait. Playback speed controls adjust audio playback without resynthesis.
 
 ## PDF Reading
 
@@ -456,3 +481,9 @@ It intentionally excludes `data.json`, legacy `cache`/`last-error.log` files, sy
 ## License
 
 MIT.
+
+</details>
+
+## Feedback
+
+Questions or problems? [Open a GitHub issue](https://github.com/laginae/note-reader-cosyvoice/issues). Please remove note content, API keys and private paths from screenshots and logs.
