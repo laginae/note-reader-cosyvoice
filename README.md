@@ -4,6 +4,12 @@
 
 Read aloud your **notes, PDFs, HTML files and web pages** in Obsidian. Listen while following the original document, jump between sections, or export audio for later.
 
+**One-click reading toolbar:** click the audio icon in the pane header to show or hide playback controls above the original document.
+
+![Click the audio icon to show and hide the reading toolbar](docs/images/reading-toolbar-demo.gif)
+
+English demo with public sample text, rendered from the plugin's interface code; appearance varies by theme.
+
 ## Why use it?
 
 - **Privacy under your control.** Document text is extracted locally. Online speech requires explicit consent; installed offline system voices and local CosyVoice keep synthesis on your device.
@@ -75,17 +81,15 @@ The plugin always requests ZDR and denies provider data collection; it does not 
 
 ### Start reading
 
-Open a note, text PDF, local HTML file or a loaded Web viewer page. Open the reader sidebar or toolbar, choose **whole document**, **selection**, or **from selection**, then start playback. Local HTML selections require HTML Reader.
+Open a note, text PDF, local HTML file or a loaded Web viewer page. Open the reader sidebar or toolbar, choose **whole document**, **selection**, or **from selection**, then start playback.
+
+**For local HTML:** first install and enable [HTML Reader](https://community.obsidian.md/plugins/obsidian-html-plugin) from **Settings -> Community plugins -> Browse**, then open a vault-local `.html` or `.htm` file in it. HTML Reader is required for HTML selections, reading from a selected position, and the original-page toolbar, highlighting and outline navigation. Whole-file text extraction itself does not depend on that renderer. External web pages use Obsidian's built-in **Web viewer**, not HTML Reader.
 
 Use pause/resume, playback speed, volume, segment navigation and seeking without starting a new synthesis just to change playback speed. For exports, review the scope, character count and destination before confirming.
 
 ## Interface
 
 Public demonstration rendered from the current plugin's interface code, with sample text and an empty API-secret selection. Obsidian theme details can vary.
-
-**One-click reading toolbar:** click the audio icon in the pane header to show or hide playback controls above the original document.
-
-![Click the audio icon to show and hide the reading toolbar](docs/images/reading-toolbar-demo.gif)
 
 <details>
 <summary>View the full reader and sidebar screenshot</summary>
@@ -457,7 +461,7 @@ Saving requires confirmation. Choose keep, merge, or replace for existing bookma
 
 ## HTML Reading
 
-1. Enable [HTML Reader](https://github.com/nuthrash/obsidian-html-plugin) and open a vault-local `.html` or `.htm` file in it.
+1. Install **HTML Reader**: **Settings -> Community plugins -> Browse -> search "HTML Reader" -> Install -> Enable**, then open a vault-local `.html` or `.htm` file in it. See [HTML Reader's installation guide](https://github.com/nuthrash/obsidian-html-plugin). This is the supported local HTML view for selections, from-selection reading, toolbar, highlighting and outline navigation; other HTML-viewing plugins are not guaranteed compatible. Whole-file text extraction reads the local file directly.
 2. Choose `Read file` to read the extracted body, `Read selection` to read only highlighted text, or `Read from selection` to continue from its start to the end. Selection offsets come from the rendered document, so repeated phrases are not located by a first-match text search. The HTML Reader frame must be accessible; an unavailable selection produces a notice instead of reading a different document.
 3. Playback speed, volume, seeking, first-segment startup parts, and bounded prefetch use the existing controls. `Export audio` supports the same three scopes and mandatory confirmation. No extra converter or executable is needed.
 
