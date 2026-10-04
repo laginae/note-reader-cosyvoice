@@ -1,7 +1,7 @@
 {
   "id": "note-reader-cosyvoice",
   "name": "Note and PDF Voice Reader",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "minAppVersion": "1.5.0",
   "description": "Privacy-first read aloud for notes, text PDFs, HTML and Web viewer pages with installed Windows/macOS voices, local CosyVoice or opt-in online TTS.",
   "author": "Note and PDF Voice Reader Contributors",

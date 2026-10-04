@@ -18,7 +18,11 @@
 
 Enable [HTML Reader](https://github.com/nuthrash/obsidian-html-plugin), then open a vault-local `.html` or `.htm` file. In Voice Reader, use `Read file`, `Read selection`, or `Read from selection`. Selection actions require an accessible HTML Reader frame and highlighted body text. `Export audio` supports the whole file, selected text, or the remaining text, with confirmation before synthesis. HTML exports save an attachment; direct insertion is limited to Markdown notes.
 
-The reader parses static body text locally without executing scripts or loading resources. HTML Reader's own display/resource behavior is separate. Do not weaken its security settings for reading. MHT/MHTML archives and online Web viewer pages are not supported by this release. See the bilingual README for limits and privacy details.
+The reader parses static body text locally without executing scripts or loading resources. HTML Reader's own display/resource behavior is separate. Do not weaken its security settings for reading. MHT/MHTML archives are not supported. External web pages use Obsidian's built-in Web viewer instead of HTML Reader. See the bilingual README for limits and privacy details.
+
+## Toolbar Shortcuts
+
+With the toolbar or one of its buttons focused, press **Space** to pause/resume and **Left/Right Arrow** to seek backward/forward five seconds. Clicking a playback control or the toolbar background focuses it. Markdown reading mode also accepts these keys in its original reading pane while the toolbar is open; live preview and editing mode do not intercept typing in the note. Inputs, sliders and menus keep their normal keyboard behavior. Hover the corresponding buttons to see shortcut hints.
 
 ## Choose Speech Engine
 

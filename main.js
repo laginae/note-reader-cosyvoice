@@ -8612,15 +8612,31 @@ var require_native_toolbar = __commonJS({
         this.root = view.contentEl.ownerDocument.createElement("div");
         this.root.className = "note-reader-native-toolbar";
         this.root.setAttribute("role", "region");
-        this.root.addEventListener("pointerdown", () => this.captureSelection(), true);
+        this.root.tabIndex = 0;
+        this.root.addEventListener("keydown", (event) => this.handleKeydown(event));
+        this.documentKeydown = (event) => {
+          if (this.view.getMode?.() !== "preview" || this.root.contains(event.target)) return;
+          const doc = this.root.ownerDocument;
+          const inReadingPane = this.view.contentEl.contains(event.target) || event.target === doc.body && this.plugin.app.workspace.activeLeaf?.view === this.view;
+          if (inReadingPane) this.handleKeydown(event, true);
+        };
+        this.root.ownerDocument.addEventListener("keydown", this.documentKeydown);
+        this.root.addEventListener("pointerdown", (event) => {
+          this.captureSelection();
+          if (event.button === 0 && !event.target.closest("button, input, select, textarea, a, [contenteditable]")) {
+            this.root.focus({ preventScroll: true });
+          }
+        }, true);
         view.contentEl.parentElement.insertBefore(this.root, view.contentEl);
         const controls = node(this.root, "div", "note-reader-native-controls");
-        this.play = this.button(controls, "play", ["Read file", "\u6717\u8BFB\u5168\u6587"], () => plugin.activeSession ? plugin.pauseOrResume() : this.read("entire"));
-        this.stop = this.button(controls, "square", ["Stop", "\u505C\u6B62"], () => plugin.stopReading());
-        this.previous = this.button(controls, "skip-back", ["Previous segment", "\u4E0A\u4E00\u6BB5"], () => plugin.jumpToAdjacentChunk(-1));
-        this.back = this.button(controls, "rotate-ccw", ["Back 5 seconds", "\u540E\u9000 5 \u79D2"], () => plugin.seekCurrentAudioBySeconds(-5));
-        this.forward = this.button(controls, "rotate-cw", ["Forward 5 seconds", "\u524D\u8FDB 5 \u79D2"], () => plugin.seekCurrentAudioBySeconds(5));
-        this.next = this.button(controls, "skip-forward", ["Next segment", "\u4E0B\u4E00\u6BB5"], () => plugin.jumpToAdjacentChunk(1));
+        this.play = this.button(controls, "play", ["Read file", "\u6717\u8BFB\u5168\u6587"], () => plugin.activeSession ? plugin.pauseOrResume() : this.read("entire"), true);
+        this.stop = this.button(controls, "square", ["Stop", "\u505C\u6B62"], () => plugin.stopReading(), true);
+        this.previous = this.button(controls, "skip-back", ["Previous segment", "\u4E0A\u4E00\u6BB5"], () => plugin.jumpToAdjacentChunk(-1), true);
+        this.back = this.button(controls, "rotate-ccw", ["Back 5 seconds (Left Arrow)", "\u540E\u9000 5 \u79D2\uFF08\u5DE6\u65B9\u5411\u952E\uFF09"], () => plugin.seekCurrentAudioBySeconds(-5), true);
+        this.forward = this.button(controls, "rotate-cw", ["Forward 5 seconds (Right Arrow)", "\u524D\u8FDB 5 \u79D2\uFF08\u53F3\u65B9\u5411\u952E\uFF09"], () => plugin.seekCurrentAudioBySeconds(5), true);
+        this.next = this.button(controls, "skip-forward", ["Next segment", "\u4E0B\u4E00\u6BB5"], () => plugin.jumpToAdjacentChunk(1), true);
+        this.back.setAttribute("aria-keyshortcuts", "ArrowLeft");
+        this.forward.setAttribute("aria-keyshortcuts", "ArrowRight");
         const progress = node(controls, "div", "note-reader-native-progress");
         this.progress = node(progress, "input");
         this.progress.type = "range";
@@ -8714,7 +8730,11 @@ var require_native_toolbar = __commonJS({
       action(action) {
         return this.plugin.runUserAction("Reading toolbar", action);
       }
-      button(parent, icon, labels, action) {
+      handleKeydown(event, readOnlyBody = false) {
+        if (!readOnlyBody && !this.root.contains(this.root.ownerDocument.activeElement) || this.plugin.activeSession?.kind === "audio-export" || event.isComposing || event.ctrlKey || event.altKey || event.metaKey || event.shiftKey || readOnlyBody && event.target.closest('button, [role="button"]') || event.target.closest('input, select, textarea, a, [contenteditable], [role="textbox"]')) return;
+        this.plugin.handleReaderKeydown(event, { allowPause: true, focusPanel: readOnlyBody ? null : this.root });
+      }
+      button(parent, icon, labels, action, focusToolbar = false) {
         const button = node(parent, "button", "clickable-icon");
         button.type = "button";
         setIcon2(button, icon);
@@ -8726,7 +8746,9 @@ var require_native_toolbar = __commonJS({
           }
         });
         button.addEventListener("click", () => {
-          if (!button.disabled) void this.action(action);
+          if (button.disabled) return;
+          if (focusToolbar) this.root.focus({ preventScroll: true });
+          void this.action(action);
         });
         return button;
       }
@@ -8859,8 +8881,10 @@ var require_native_toolbar = __commonJS({
           setIcon2(this.play, playIcon);
           this.play.dataset.icon = playIcon;
         }
-        const playTitle = session ? state.isPaused ? this.t("Resume", "\u7EE7\u7EED") : this.t("Pause", "\u6682\u505C") : this.t("Read file", "\u6717\u8BFB\u5168\u6587");
+        const playTitle = session ? state.isPaused ? this.t("Resume (Space)", "\u7EE7\u7EED\uFF08\u7A7A\u683C\uFF09") : this.t("Pause (Space)", "\u6682\u505C\uFF08\u7A7A\u683C\uFF09") : this.t("Read file", "\u6717\u8BFB\u5168\u6587");
         this.play.setAttribute("aria-label", playTitle);
+        if (session && !exporting) this.play.setAttribute("aria-keyshortcuts", "Space");
+        else this.play.removeAttribute("aria-keyshortcuts");
         this.play.disabled = Boolean(session && !state.canPause);
         this.stop.disabled = !state.canStop || exporting;
         this.previous.disabled = !state.canPreviousChunk || exporting;
@@ -8904,6 +8928,7 @@ var require_native_toolbar = __commonJS({
         this.status.hidden = !this.status.textContent;
       }
       destroy() {
+        this.root.ownerDocument.removeEventListener("keydown", this.documentKeydown);
         this.root.remove();
         this.selection = null;
         this.outlineText = "";

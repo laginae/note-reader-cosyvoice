@@ -6,6 +6,13 @@ const loaded = { exports: {} };
 new Function('require', 'module', 'exports', fs.readFileSync(`${__dirname}/native-toolbar.js`, 'utf8'))(
   name => name === 'obsidian' ? { setIcon(node, icon) { node.dataset.icon = icon; }, Notice: class {} } : require(name), loaded, loaded.exports);
 const { NativeToolbarManager } = loaded.exports;
+const pluginModule = { exports: {} };
+new Function('require', 'module', 'exports', fs.readFileSync(`${__dirname}/../main.js`, 'utf8'))(
+  name => name === 'obsidian' ? {
+    ...Object.fromEntries(['ItemView', 'MarkdownView', 'Modal', 'Plugin', 'PluginSettingTab', 'Notice', 'Setting'].map(key => [key, class {}])),
+    setIcon() {}, normalizePath: value => value,
+  } : require(name), pluginModule, pluginModule.exports);
+const PluginClass = pluginModule.exports.default;
 
 for (const type of ['html-view', 'webviewer']) test(`${type} toolbar supports all scopes without Markdown lookup`, async () => {
   const dom = new JSDOM('<main><header></header><article>Public content.</article></main>');
@@ -38,20 +45,113 @@ function fixture() {
   const headings = [['Title', 1, '# Title'], ['One', 2, '## One'], ['Child', 3, '### Child'], ['Two', 2, '## Two']].map(([heading, level, marker]) => {
     const from = text.indexOf(marker); return { heading, level, position: { start: { offset: from, line: text.slice(0, from).split('\n').length - 1 }, end: { offset: from + marker.length } } };
   });
-  const view = { file: { path: 'public.md', basename: 'public' }, contentEl, getMode: () => 'preview',
+  let mode = 'preview';
+  const view = { file: { path: 'public.md', basename: 'public' }, contentEl, getMode: () => mode,
     previewMode: { applyScroll: line => locations.push(line) }, editor: { getValue: () => text },
     addAction(_icon, _label, callback) { const action = doc.createElement('button'); doc.querySelector('header').appendChild(action); action.onclick = callback; return action; } };
   const leaf = { view }; view.leaf = leaf;
   const plugin = { settings: { settingsLanguage: 'english', playbackSpeed: 1, playbackVolume: 1 }, readerState: {},
-    app: { workspace: { getLeavesOfType: () => [leaf] }, metadataCache: { getFileCache: () => ({ headings }) } },
+    app: { workspace: { activeLeaf: leaf, getLeavesOfType: () => [leaf] }, metadataCache: { getFileCache: () => ({ headings }) } },
     captureMarkdownReadingSelection: () => null, runUserAction: (_label, action) => action(),
     startReading: async (...args) => requests.push(args), readMarkdownView: async (...args) => requests.push(args),
     stopReading: () => assert.fail('Hiding tools must not stop playback'),
     getSegmentTiming: () => ({ current: 1 }),
   };
   const manager = new NativeToolbarManager(plugin); manager.sync(); manager.toggle(view);
-  return { dom, view, plugin, manager, toolbar: manager.toolbars.get(view), requests, locations, change: value => { text = value; } };
+  return { dom, view, plugin, manager, toolbar: manager.toolbars.get(view), requests, locations,
+    change: value => { text = value; }, setMode: value => { mode = value; } };
 }
+
+function keyboardFixture() {
+  const f = fixture(), calls = [];
+  f.plugin.activeSession = { id: 1, chunks: ['One.', 'Two.'] };
+  f.plugin.readerState = { canPause: true, canSeek: true, isPaused: false };
+  f.plugin.pauseOrResume = async () => { calls.push('pause'); };
+  f.plugin.seekCurrentAudioBySeconds = delta => { calls.push(delta); return true; };
+  f.plugin.handleReaderKeydown = PluginClass.prototype.handleReaderKeydown;
+  f.toolbar.render();
+  return { ...f, calls, key(target, key, options = {}) {
+    const event = new f.dom.window.KeyboardEvent('keydown', { key, code: key === ' ' ? 'Space' : key, bubbles: true, cancelable: true, ...options });
+    target.dispatchEvent(event); return event;
+  } };
+}
+
+test('toolbar focus enables shared pause and repeated five-second seeking; tooltips follow language and playback state', async () => {
+  const f = keyboardFixture(), { toolbar, plugin, calls, key } = f;
+  f.setMode('source');
+  assert.equal(toolbar.root.tabIndex, 0);
+  assert.equal(key(toolbar.root, ' ').defaultPrevented, false);
+  toolbar.root.focus();
+  assert.equal(key(toolbar.root, ' ').defaultPrevented, true);
+  key(toolbar.root, ' ', { repeat: true });
+  key(toolbar.root, 'ArrowLeft'); key(toolbar.root, 'ArrowRight'); key(toolbar.root, 'ArrowRight', { repeat: true });
+  assert.deepEqual(calls, ['pause', -5, 5, 5]);
+  await Promise.resolve();
+  assert.equal(toolbar.play.getAttribute('aria-label'), 'Pause (Space)');
+  assert.equal(toolbar.play.getAttribute('aria-keyshortcuts'), 'Space');
+  assert.equal(toolbar.back.getAttribute('aria-label'), 'Back 5 seconds (Left Arrow)');
+  assert.equal(toolbar.forward.getAttribute('aria-keyshortcuts'), 'ArrowRight');
+  plugin.settings.settingsLanguage = 'chinese'; plugin.readerState.isPaused = true; toolbar.render();
+  assert.equal(toolbar.play.getAttribute('aria-label'), '继续（空格）');
+  assert.equal(toolbar.back.getAttribute('aria-label'), '后退 5 秒（左方向键）');
+  assert.equal(toolbar.forward.getAttribute('aria-label'), '前进 5 秒（右方向键）');
+  for (const button of [toolbar.play, toolbar.back, toolbar.forward]) assert.equal(button.hasAttribute('title'), false);
+  toolbar.next.focus(); key(toolbar.next, 'ArrowLeft');
+  assert.equal(calls.at(-1), -5);
+  plugin.activeSession = null; plugin.readerState = {}; toolbar.render();
+  assert.equal(toolbar.play.getAttribute('aria-keyshortcuts'), null);
+  f.manager.destroy(); f.dom.window.close();
+});
+
+test('source mode leaves typing alone; readonly preview enables body shortcuts only for its own active pane', () => {
+  const f = keyboardFixture(), { toolbar, view, plugin, dom, key, calls } = f;
+  f.setMode('source');
+  const paragraph = view.contentEl.querySelector('p'); paragraph.tabIndex = 0; paragraph.focus();
+  key(paragraph, ' '); key(paragraph, 'ArrowRight');
+  const editor = dom.window.document.createElement('div'); editor.className = 'cm-editor'; editor.setAttribute('contenteditable', 'true');
+  const input = dom.window.document.createElement('span'); editor.appendChild(input); view.contentEl.appendChild(editor);
+  key(input, ' '); key(input, 'ArrowLeft');
+  assert.deepEqual(calls, []);
+  f.setMode('preview');
+  assert.equal(key(paragraph, 'ArrowRight').defaultPrevented, true);
+  paragraph.blur(); key(dom.window.document.body, 'ArrowLeft');
+  plugin.app.workspace.activeLeaf = { view: {} };
+  assert.equal(key(dom.window.document.body, 'ArrowRight').defaultPrevented, false);
+  key(input, ' '); key(input, 'ArrowLeft');
+  const outside = dom.window.document.createElement('button'); dom.window.document.body.appendChild(outside); outside.focus(); key(outside, ' ');
+  const copy = dom.window.document.createElement('button'); view.contentEl.appendChild(copy); copy.focus(); key(copy, ' '); key(copy, 'ArrowRight');
+  assert.deepEqual(calls, [5, -5]);
+  f.manager.destroy(); key(paragraph, 'ArrowRight'); key(toolbar.root, 'ArrowRight');
+  assert.deepEqual(calls, [5, -5]); dom.window.close();
+});
+
+test('sliders, selects, editable fields, composition, modifiers and exports retain their native keyboard behavior', () => {
+  const f = keyboardFixture(), { toolbar, dom, key, calls, plugin } = f;
+  for (const target of [toolbar.progress, toolbar.volume, toolbar.speed, toolbar.scope, toolbar.heading]) {
+    target.focus(); assert.equal(key(target, 'ArrowRight').defaultPrevented, false); key(target, ' ');
+  }
+  const editable = dom.window.document.createElement('div'); editable.setAttribute('contenteditable', 'true'); editable.tabIndex = 0; toolbar.root.appendChild(editable);
+  editable.focus(); key(editable, ' '); key(editable, 'ArrowLeft');
+  toolbar.root.focus();
+  for (const option of ['ctrlKey', 'altKey', 'metaKey', 'shiftKey', 'isComposing']) {
+    key(toolbar.root, ' ', { [option]: true }); key(toolbar.root, 'ArrowRight', { [option]: true });
+  }
+  plugin.activeSession.kind = 'audio-export'; key(toolbar.root, ' '); key(toolbar.root, 'ArrowLeft');
+  assert.deepEqual(calls, []); f.manager.destroy(); dom.window.close();
+});
+
+test('playback button clicks focus the toolbar without losing the captured source selection', () => {
+  const f = keyboardFixture(), { toolbar, view, dom, plugin, calls } = f;
+  f.setMode('source');
+  const range = dom.window.document.createRange(); range.selectNodeContents(view.contentEl.querySelector('p')); dom.window.getSelection().addRange(range);
+  const selection = { selectedText: 'Original text.' }; plugin.captureMarkdownReadingSelection = () => selection;
+  toolbar.forward.dispatchEvent(new dom.window.MouseEvent('pointerdown', { button: 0, bubbles: true, cancelable: true })); toolbar.forward.click();
+  assert.equal(dom.window.document.activeElement, toolbar.root);
+  assert.equal(toolbar.selection, selection);
+  f.key(toolbar.root, 'ArrowRight'); assert.deepEqual(calls, [5, 5]);
+  toolbar.read('from-selection'); assert.equal(f.requests[0][2], selection);
+  f.manager.destroy(); dom.window.close();
+});
 
 test('native toolbar preserves the original note, images, selected DOM and closes without stopping audio', () => {
   const { dom, view, plugin, manager, toolbar } = fixture();

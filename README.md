@@ -87,6 +87,8 @@ Open a note, text PDF, local HTML file or a loaded Web viewer page. Open the rea
 
 Use pause/resume, playback speed, volume, segment navigation and seeking without starting a new synthesis just to change playback speed. For exports, review the scope, character count and destination before confirming.
 
+**Toolbar shortcuts (0.8.1):** **Space** pauses/resumes, and **Left/Right Arrow** seeks backward/forward five seconds, including across audio parts. In live preview and editing mode, these shortcuts work only while the toolbar or its buttons have focus; click a playback control or the toolbar background to focus it. In Markdown reading mode, they also work in the original reading pane while the toolbar is open. Text fields, sliders, menus and modified key combinations keep their normal keyboard behavior. Hover the pause/resume and seek buttons for shortcut hints.
+
 ## Interface
 
 Public demonstration rendered from the current plugin's interface code, with sample text and an empty API-secret selection. Obsidian theme details can vary.

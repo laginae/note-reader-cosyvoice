@@ -20,15 +20,31 @@ class NativeReaderToolbar {
     this.isWeb = view.getViewType?.() === 'webviewer';
     this.root = view.contentEl.ownerDocument.createElement('div');
     this.root.className = 'note-reader-native-toolbar'; this.root.setAttribute('role', 'region');
-    this.root.addEventListener('pointerdown', () => this.captureSelection(), true);
+    this.root.tabIndex = 0;
+    this.root.addEventListener('keydown', event => this.handleKeydown(event));
+    this.documentKeydown = event => {
+      if (this.view.getMode?.() !== 'preview' || this.root.contains(event.target)) return;
+      const doc = this.root.ownerDocument;
+      const inReadingPane = this.view.contentEl.contains(event.target)
+        || (event.target === doc.body && this.plugin.app.workspace.activeLeaf?.view === this.view);
+      if (inReadingPane) this.handleKeydown(event, true);
+    };
+    this.root.ownerDocument.addEventListener('keydown', this.documentKeydown);
+    this.root.addEventListener('pointerdown', event => {
+      this.captureSelection();
+      if (event.button === 0 && !event.target.closest('button, input, select, textarea, a, [contenteditable]')) {
+        this.root.focus({ preventScroll: true });
+      }
+    }, true);
     view.contentEl.parentElement.insertBefore(this.root, view.contentEl);
     const controls = node(this.root, 'div', 'note-reader-native-controls');
-    this.play = this.button(controls, 'play', ['Read file', '朗读全文'], () => plugin.activeSession ? plugin.pauseOrResume() : this.read('entire'));
-    this.stop = this.button(controls, 'square', ['Stop', '停止'], () => plugin.stopReading());
-    this.previous = this.button(controls, 'skip-back', ['Previous segment', '上一段'], () => plugin.jumpToAdjacentChunk(-1));
-    this.back = this.button(controls, 'rotate-ccw', ['Back 5 seconds', '后退 5 秒'], () => plugin.seekCurrentAudioBySeconds(-5));
-    this.forward = this.button(controls, 'rotate-cw', ['Forward 5 seconds', '前进 5 秒'], () => plugin.seekCurrentAudioBySeconds(5));
-    this.next = this.button(controls, 'skip-forward', ['Next segment', '下一段'], () => plugin.jumpToAdjacentChunk(1));
+    this.play = this.button(controls, 'play', ['Read file', '朗读全文'], () => plugin.activeSession ? plugin.pauseOrResume() : this.read('entire'), true);
+    this.stop = this.button(controls, 'square', ['Stop', '停止'], () => plugin.stopReading(), true);
+    this.previous = this.button(controls, 'skip-back', ['Previous segment', '上一段'], () => plugin.jumpToAdjacentChunk(-1), true);
+    this.back = this.button(controls, 'rotate-ccw', ['Back 5 seconds (Left Arrow)', '后退 5 秒（左方向键）'], () => plugin.seekCurrentAudioBySeconds(-5), true);
+    this.forward = this.button(controls, 'rotate-cw', ['Forward 5 seconds (Right Arrow)', '前进 5 秒（右方向键）'], () => plugin.seekCurrentAudioBySeconds(5), true);
+    this.next = this.button(controls, 'skip-forward', ['Next segment', '下一段'], () => plugin.jumpToAdjacentChunk(1), true);
+    this.back.setAttribute('aria-keyshortcuts', 'ArrowLeft'); this.forward.setAttribute('aria-keyshortcuts', 'ArrowRight');
     const progress = node(controls, 'div', 'note-reader-native-progress');
     this.progress = node(progress, 'input'); this.progress.type = 'range'; this.progress.min = '0'; this.progress.max = '1000'; this.progress.step = '1';
     this.progress.addEventListener('pointerdown', () => { this.scrubbing = true; });
@@ -82,13 +98,25 @@ class NativeReaderToolbar {
   }
   t(en, zh) { return this.plugin.settings.settingsLanguage === 'chinese' ? zh : en; }
   action(action) { return this.plugin.runUserAction('Reading toolbar', action); }
-  button(parent, icon, labels, action) {
+  handleKeydown(event, readOnlyBody = false) {
+    if ((!readOnlyBody && !this.root.contains(this.root.ownerDocument.activeElement))
+      || this.plugin.activeSession?.kind === 'audio-export'
+      || event.isComposing || event.ctrlKey || event.altKey || event.metaKey || event.shiftKey
+      || (readOnlyBody && event.target.closest('button, [role="button"]'))
+      || event.target.closest('input, select, textarea, a, [contenteditable], [role="textbox"]')) return;
+    this.plugin.handleReaderKeydown(event, { allowPause: true, focusPanel: readOnlyBody ? null : this.root });
+  }
+  button(parent, icon, labels, action, focusToolbar = false) {
     const button = node(parent, 'button', 'clickable-icon'); button.type = 'button'; setIcon(button, icon);
     this.labels.push([button, ...labels]);
     button.addEventListener('pointerdown', event => {
       if (event.button === 0) { this.captureSelection(); event.preventDefault(); }
     });
-    button.addEventListener('click', () => { if (!button.disabled) void this.action(action); });
+    button.addEventListener('click', () => {
+      if (button.disabled) return;
+      if (focusToolbar) this.root.focus({ preventScroll: true });
+      void this.action(action);
+    });
     return button;
   }
   captureSelection() {
@@ -187,8 +215,10 @@ class NativeReaderToolbar {
     this.root.setAttribute('aria-label', this.t('Reading toolbar', '朗读工具栏'));
     const playIcon = state.isPaused ? 'play' : session ? 'pause' : 'play';
     if (this.play.dataset.icon !== playIcon) { setIcon(this.play, playIcon); this.play.dataset.icon = playIcon; }
-    const playTitle = session ? state.isPaused ? this.t('Resume', '继续') : this.t('Pause', '暂停') : this.t('Read file', '朗读全文');
+    const playTitle = session ? state.isPaused ? this.t('Resume (Space)', '继续（空格）') : this.t('Pause (Space)', '暂停（空格）') : this.t('Read file', '朗读全文');
     this.play.setAttribute('aria-label', playTitle);
+    if (session && !exporting) this.play.setAttribute('aria-keyshortcuts', 'Space');
+    else this.play.removeAttribute('aria-keyshortcuts');
     this.play.disabled = Boolean(session && !state.canPause);
     this.stop.disabled = !state.canStop || exporting;
     this.previous.disabled = !state.canPreviousChunk || exporting;
@@ -225,7 +255,10 @@ class NativeReaderToolbar {
     this.status.textContent = state.error || (session ? [session.sourceLabel, current?.title, `${state.currentChunk || 0} / ${state.totalChunks || 0}`].filter(Boolean).join(' · ') : '');
     this.status.hidden = !this.status.textContent;
   }
-  destroy() { this.root.remove(); this.selection = null; this.outlineText = ''; this.entries = []; }
+  destroy() {
+    this.root.ownerDocument.removeEventListener('keydown', this.documentKeydown);
+    this.root.remove(); this.selection = null; this.outlineText = ''; this.entries = [];
+  }
 }
 
 class NativeToolbarManager {
