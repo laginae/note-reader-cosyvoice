@@ -92,3 +92,17 @@ test('closing a render child or unloading removes all temporary marks', () => {
   controller.dispose(); assert.equal(editor.decorations.length, 0);
   controller.update(); assert.equal(element.classList.contains('note-reader-note-segment'), false);
 });
+
+test('Markdown marks survive repeated playback updates and backward/forward segment changes', () => {
+  const { plugin, controller, element, editor, editorView, selection } = fixture();
+  let index = 1; plugin.getCurrentReadingHighlight = () => ({ index, sentence: null });
+  for (const next of [1, 1, 0, 0, 1, 0, 1, 1]) {
+    index = next; controller.update();
+    assert.equal(element.classList.contains('note-reader-note-segment'), index === 1);
+    assert.equal(editor.decorations[0].from, index === 1 ? 'First paragraph.\n\n'.length : 0);
+    assert.equal(editorView.state.selection, selection);
+  }
+  element.classList.remove('note-reader-note-segment'); controller.update();
+  assert.ok(element.classList.contains('note-reader-note-segment'));
+  controller.dispose();
+});

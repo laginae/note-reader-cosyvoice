@@ -109,3 +109,48 @@ test('PDF marks clear on stop and changed files without altering selection or te
   assert.equal(page.querySelector('.note-reader-pdf-overlay'), null);
   assert.equal(page.textContent, 'First.Second.');
 });
+
+test('PDF text-layer middle replacements and text edits invalidate the current chunk cache', () => {
+  const dom = new JSDOM(''), doc = dom.window.document;
+  const page = pdfPage(doc, 1, [['First.', 40, 100], ['Middle.', 40, 120], ['Last.', 40, 140]]);
+  const view = { contentEl: doc.body, file: { path: 'public.pdf', stat: { mtime: 1 } } };
+  const plugin = { settings: { readingHighlight: 'segment' }, activeSession: { id: 1, sourceKind: 'pdf',
+    filePath: 'public.pdf', fileMtime: 1, chunkPageNumbers: [1], chunks: ['First. Middle. Last.'] },
+    getCurrentReadingHighlight: () => ({ index: 0 }), sanitizeAudioExportText: text => text,
+    app: { workspace: { getLeavesOfType: () => [{ view }] } } };
+  const highlighter = new PdfReadingHighlights(plugin); highlighter.update();
+  const old = page.querySelectorAll('.textLayer span')[1];
+  const replacement = old.cloneNode(true); replacement.className = ''; replacement.getBoundingClientRect = old.getBoundingClientRect;
+  old.replaceWith(replacement); highlighter.update();
+  assert.equal(page.querySelectorAll('.note-reader-pdf-current').length, 3);
+  assert.ok(replacement.classList.contains('note-reader-pdf-current'));
+  replacement.firstChild.nodeValue = 'Changed.'; highlighter.update();
+  assert.equal(page.querySelectorAll('.note-reader-pdf-current').length, 0);
+  replacement.firstChild.nodeValue = 'Middle.'; highlighter.update();
+  assert.equal(page.querySelectorAll('.note-reader-pdf-current').length, 3);
+  const overlay = page.querySelector('.note-reader-pdf-overlay'); overlay.replaceChildren();
+  highlighter.update(); assert.equal(overlay.children.length, 3);
+  highlighter.destroy();
+  assert.equal(highlighter.cached.size, 0);
+  dom.window.close();
+});
+
+test('PDF cross-page marks refresh when later text arrives in the following page', () => {
+  const dom = new JSDOM(''), doc = dom.window.document;
+  const page = pdfPage(doc, 1, [['Earlier text.', 40, 100], ['Page ending.', 40, 120]]);
+  const following = pdfPage(doc, 2, [['Next first.', 40, 100]]);
+  const view = { contentEl: doc.body, file: { path: 'public.pdf', stat: { mtime: 1 } } };
+  const plugin = { settings: { readingHighlight: 'segment' }, activeSession: { id: 1, sourceKind: 'pdf',
+    filePath: 'public.pdf', fileMtime: 1, chunkPageNumbers: [1], chunks: ['Page ending. Next first. Next last.'] },
+    getCurrentReadingHighlight: () => ({ index: 0 }), sanitizeAudioExportText: text => text,
+    app: { workspace: { getLeavesOfType: () => [{ view }] } } };
+  const highlighter = new PdfReadingHighlights(plugin); highlighter.update();
+  assert.equal(page.querySelectorAll('.note-reader-pdf-current').length, 0);
+  const span = doc.createElement('span'); span.textContent = 'Next last.';
+  span.getBoundingClientRect = () => ({ left: 40, top: 120, right: 260, bottom: 132, width: 220, height: 12 });
+  following.querySelector('.textLayer').append(span); highlighter.update();
+  assert.equal(doc.querySelectorAll('.note-reader-pdf-current').length, 3);
+  const cache = highlighter.cached.get(view); highlighter.update();
+  assert.equal(highlighter.cached.get(view), cache);
+  highlighter.destroy(); dom.window.close();
+});

@@ -1,4 +1,5 @@
 'use strict';
+const { extractHtmlTreeText } = require('./html-text');
 const NAME = 'note-reader-speech';
 const states = new WeakMap();
 const compact = text => String(text || '').replace(/[\s\u00ad]/g, '');
@@ -13,6 +14,11 @@ function clearDocumentHighlight(doc) {
   doc.defaultView?.CSS?.highlights?.delete(NAME);
   state?.observer?.disconnect(); state?.style?.remove(); states.delete(doc);
 }
+function isDocumentHighlightCurrent(doc) {
+  const state = states.get(doc);
+  return Boolean(state?.style?.isConnected && doc.defaultView?.CSS?.highlights?.get(NAME) === state.highlight
+    && state.nodes.every(node => node.isConnected));
+}
 function highlightDocument(doc, options = {}, root = doc.body) {
   clearDocumentHighlight(doc);
   const win = doc.defaultView;
@@ -20,21 +26,23 @@ function highlightDocument(doc, options = {}, root = doc.body) {
   if (options.url && doc.location.href !== options.url) return false;
   const needle = compact(options.text);
   if (!needle || needle.length > 20000) return false;
-  const nodes = [], stack = [root]; let text = '', count = 0;
-  while (stack.length) {
-    const node = stack.pop();
-    if (++count > 200000 || text.length > 5000000) return false;
-    if (hidden(node, win)) continue;
-    if (node.nodeType === 3) {
-      const value = compact(node.nodeValue);
-      if (text.length + value.length > 5000000) return false;
-      if (value) { nodes.push({node, start:text.length, end:text.length+value.length}); text += value; }
-    } else for (let i=node.childNodes.length-1;i>=0;i--) stack.push(node.childNodes[i]);
-  }
+  const nodes = []; let text = '';
+  // Use the speech extractor's separators while mapping only real text nodes to ranges.
+  try {
+    extractHtmlTreeText(root, null, {
+      omitNode: node => hidden(node, win),
+      onText(value, node) {
+        const part = compact(value), start = text.length;
+        text += part;
+        if (node && part) nodes.push({ node, start, end: text.length });
+      },
+    });
+  } catch (_) { return false; }
   const start = text.indexOf(needle);
   if (start < 0 || text.indexOf(needle, start+1) >= 0) return false;
   const end = start + needle.length;
   const included = nodes.filter(item=>item.start<end && item.end>start);
+  if (!included.length) return false;
   const offset = (node, target) => {
     let at=0;
     for(let i=0;i<node.nodeValue.length;i++) if (!/[\s\u00ad]/.test(node.nodeValue[i])) {
@@ -54,7 +62,8 @@ function highlightDocument(doc, options = {}, root = doc.body) {
   const style=doc.createElement('style');
   style.textContent=`::highlight(${NAME}) { background-color: color-mix(in srgb, ${color} ${strength}%, transparent); }`;
   (doc.head || doc.documentElement).appendChild(style);
-  win.CSS.highlights.set(NAME,new win.Highlight(...ranges));
+  const highlight = new win.Highlight(...ranges);
+  win.CSS.highlights.set(NAME, highlight);
   // Ignore unrelated controls/ads, but invalidate changes to the marked text.
   const observer = new win.MutationObserver(records => {
     const affected = included.some(({ node }) => !node.isConnected || records.some(record => {
@@ -63,14 +72,18 @@ function highlightDocument(doc, options = {}, root = doc.body) {
       return [...record.removedNodes].some(removed => removed === node || removed.contains?.(node))
         || node.parentElement?.contains(record.target);
     }));
-    if (affected) clearDocumentHighlight(doc);
+    if (affected) {
+      clearDocumentHighlight(doc);
+      // A guest page can rerender without notifying the host; only restore exact, unique text.
+      if (options.restoreOnChange && root.isConnected) highlightDocument(doc, options, root);
+    }
   });
   observer.observe(root,{subtree:true,childList:true,characterData:true,attributes:true,attributeFilter:['hidden','aria-hidden','class','style']});
-  states.set(doc,{style,observer});
+  states.set(doc,{style,observer,highlight,nodes:included.map(item => item.node)});
   if(options.follow) {
     const rect=ranges[0].getBoundingClientRect();
     if(rect.top<0||rect.bottom>win.innerHeight) included[0].node.parentElement.scrollIntoView({block:'center',behavior:'auto'});
   }
   return true;
 }
-module.exports={highlightDocument,clearDocumentHighlight};
+module.exports={highlightDocument,clearDocumentHighlight,isDocumentHighlightCurrent};

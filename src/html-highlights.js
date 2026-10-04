@@ -1,12 +1,15 @@
 'use strict';
 const { getHtmlReaderDocument } = require('./html-text');
-const { highlightDocument, clearDocumentHighlight } = require('./dom-highlights');
+const { highlightDocument, clearDocumentHighlight, isDocumentHighlightCurrent } = require('./dom-highlights');
 const { updateWebHighlight, getWebPageUrl } = require('./web-page');
 class HtmlReadingHighlights {
-  constructor(plugin) { this.plugin=plugin;this.documents=new Set();this.web=null;this.key='';this.chain=Promise.resolve(); }
+  constructor(plugin) { this.plugin=plugin;this.documents=new Set();this.markedDocuments=new Set();this.htmlObservers=new Map();this.web=null;this.key='';this.chain=Promise.resolve(); }
   clear() {
     for(const doc of this.documents)clearDocumentHighlight(doc);
     this.documents.clear();
+    this.markedDocuments.clear();
+    for (const { observer } of this.htmlObservers.values()) observer.disconnect();
+    this.htmlObservers.clear();
     if(this.web){const view=this.web;this.chain=this.chain.catch(()=>{}).then(()=>updateWebHighlight(view,{})).catch(()=>{});}
     this.web=null;this.key='';
   }
@@ -22,21 +25,37 @@ class HtmlReadingHighlights {
       this.clear(); return;
     }
     const key=[s.id,h.index,p.settings.highlightColor,p.settings.highlightStrength,p.settings.webReadingFollow].join(':');
-    if(key===this.key)return;
+    const readerRoot = s.sourceKind === 'web' && s.webContext.webView.mode === 'reader' ? s.webContext.webView.readerView : null;
+    const htmlDocuments = s.sourceKind === 'html' ? [...new Set(p.getHtmlReaderLeaves()
+      .filter(({view}) => view.file?.path === s.filePath && view.file?.stat?.mtime === s.fileMtime)
+      .map(({view}) => getHtmlReaderDocument(view)).filter(Boolean))] : readerRoot?.ownerDocument ? [readerRoot.ownerDocument] : [];
+    const local = s.sourceKind === 'html' || s.webContext?.webView.mode === 'reader';
+    if(key===this.key && (!local || (htmlDocuments.length === this.documents.size
+      && htmlDocuments.every(doc => this.documents.has(doc) && this.htmlObservers.get(doc)?.root === (readerRoot || doc.body)
+        && (!this.markedDocuments.has(doc) || isDocumentHighlightCurrent(doc))))))return;
     this.clear();this.key=key;
     const options={text:s.chunks[h.index],color:p.settings.highlightColor,strength:p.settings.highlightStrength,follow:p.settings.webReadingFollow===true};
-    if(s.sourceKind==='html') {
-      for(const {view} of p.getHtmlReaderLeaves())if(view.file?.path===s.filePath&&view.file?.stat?.mtime===s.fileMtime){
-        const doc=getHtmlReaderDocument(view);if(doc){try { highlightDocument(doc,options);this.documents.add(doc); } catch (_) { clearDocumentHighlight(doc); }}
+    if(local) {
+      for (const doc of htmlDocuments) {
+        const root = readerRoot || doc.body;
+        this.documents.add(doc);
+        try { if (highlightDocument(doc,options,root)) this.markedDocuments.add(doc); } catch (_) { clearDocumentHighlight(doc); }
+        if (root && doc.defaultView?.MutationObserver) {
+          const observer = new doc.defaultView.MutationObserver(() => {
+            if (this.documents.has(doc) && this.key === key) this.key = '';
+          });
+          observer.observe(root, { subtree: true, childList: true, characterData: true, attributes: true,
+            attributeFilter: ['hidden','aria-hidden','class','style'] });
+          this.htmlObservers.set(doc, { observer, root });
+        }
       }
     } else {
       const context=s.webContext,view=context?.webView;
       if(!view||getWebPageUrl(view)!==context.webUrl||p.getWebPageState(view).revision!==context.webRevision)return;
       this.web=view;
-      if (view.mode === 'reader' && view.readerView?.ownerDocument) this.documents.add(view.readerView.ownerDocument);
       this.chain=this.chain.catch(()=>{}).then(()=>{
         if(this.key!==key||p.activeSession!==s)return;
-        return updateWebHighlight(view,{...options,url:context.webUrl});
+        return updateWebHighlight(view,{...options,url:context.webUrl,restoreOnChange:true});
       }).catch(()=>{});
     }
   }

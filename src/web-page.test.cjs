@@ -19,8 +19,21 @@ test('guest highlights preserve selection, reuse one style and clear after a Rea
   assert.equal(await update(view, { text: 'Public reading text.', url: 'https://example.test/' }), true);
   assert.equal(await update(view, { text: 'Public reading text.' }), true);
   assert.equal(dom.window.document.querySelectorAll('style').length, 1);
+  assert.equal(await update(view, { text: 'Public reading text.', url: 'https://example.test/', restoreOnChange: true }), true);
+  dom.window.document.querySelector('p').replaceChildren(dom.window.document.createTextNode('Public reading text.'));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(dom.window.CSS.highlights.has('note-reader-speech'), true);
+  dom.window.history.replaceState({}, '', '/different');
+  dom.window.document.querySelector('p').replaceChildren(dom.window.document.createTextNode('Public reading text.'));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(dom.window.CSS.highlights.has('note-reader-speech'), false);
+  dom.window.history.replaceState({}, '', '/');
+  await update(view, { text: 'Public reading text.', restoreOnChange: true });
   view.mode = 'reader'; await update(view, {});
   assert.equal(dom.window.CSS.highlights.size, 0); assert.equal(dom.window.document.querySelectorAll('style').length, 0);
+  dom.window.document.querySelector('p').textContent = 'Public reading text.';
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(dom.window.CSS.highlights.size, 0);
   dom.window.close();
 });
 

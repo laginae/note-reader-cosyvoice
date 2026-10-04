@@ -17,7 +17,7 @@ later versions are discovered from GitHub releases.
 Create a GitHub release whose tag exactly matches `manifest.json`:
 
 ```text
-0.8.1
+0.8.2
 ```
 
 Attach these files as binary assets:

@@ -46,11 +46,12 @@ function extractHtmlTreeText(root, range = null, options = {}) {
   let count = 0;
   let start = null;
   let end = null;
-  const append = (text) => {
+  const append = (text, node = null) => {
     const value = String(text || '');
     length += value.length;
     if (length > MAX_HTML_TEXT_CHARS) throw new Error('HTML readable text exceeds the size limit.');
     pieces.push(value);
+    options.onText?.(value, node);
   };
   const mark = (node, offset) => {
     if (!range) return;
@@ -74,7 +75,7 @@ function extractHtmlTreeText(root, range = null, options = {}) {
       const text = String(info.text || '');
       if (range && range.startContainer === node) start = length + Math.min(text.length, range.startOffset);
       if (range && range.endContainer === node) end = length + Math.min(text.length, range.endOffset);
-      append(text);
+      append(text, node);
       continue;
     }
     if (BLOCK_TAGS.has(info.tag) || info.tag === 'br') append('\n');

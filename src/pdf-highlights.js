@@ -96,6 +96,11 @@ function mergeHighlightRects(rects) {
 
 class PdfReadingHighlights {
   constructor(plugin) { this.plugin = plugin; this.marked = new Set(); this.cached = new Map(); this.overlays = new Map(); }
+  discardCache(view) {
+    for (const observer of this.cached.get(view)?.observers || []) observer.disconnect();
+    this.cached.delete(view);
+  }
+  clearCache() { for (const view of this.cached.keys()) this.discardCache(view); }
   clear() {
     for (const node of this.marked) node.classList.remove('note-reader-pdf-current');
     this.marked.clear();
@@ -129,7 +134,7 @@ class PdfReadingHighlights {
         page.appendChild(element);
         overlay = { element, signature: null }; this.overlays.set(page, overlay);
       }
-      if (overlay.signature === signature) continue;
+      if (overlay.signature === signature && overlay.element.children.length === rects.length) continue;
       overlay.element.replaceChildren(...rects.map(([left, top, width, height]) => {
         const mark = page.ownerDocument.createElement('div');
         mark.className = 'note-reader-pdf-rectangle';
@@ -142,10 +147,10 @@ class PdfReadingHighlights {
   update() {
     const plugin = this.plugin, session = plugin.activeSession, highlight = plugin.getCurrentReadingHighlight();
     if (session?.sourceKind !== 'pdf' || !highlight || plugin.settings.readingHighlight === 'off') {
-      this.clear(); this.cached.clear(); return;
+      this.clear(); this.clearCache(); return;
     }
     const pageNumber = session.chunkPageNumbers?.[highlight.index];
-    if (!Number.isInteger(pageNumber)) { this.clear(); return; }
+    if (!Number.isInteger(pageNumber)) { this.clear(); this.clearCache(); return; }
     const next = new Set(), live = new Set();
     for (const leaf of plugin.app.workspace.getLeavesOfType('pdf')) {
       const view = leaf.view;
@@ -158,25 +163,39 @@ class PdfReadingHighlights {
       const signature = `${session.id}:${highlight.index}:${plugin.settings.stripMarkdown}:${plugin.settings.mathReadingLanguage}:${page.getBoundingClientRect().width}:${page.getBoundingClientRect().height}`;
       const first = page.querySelector('.textLayer span'), last = page.querySelector('.textLayer')?.lastElementChild;
       const nextFirst = following?.querySelector('.textLayer span');
+      const layers = [page.querySelector('.textLayer'), following?.querySelector('.textLayer')].filter(Boolean);
       let cache = this.cached.get(view);
       if (!cache || cache.signature !== signature || cache.first !== first || cache.last !== last || cache.nextFirst !== nextFirst
+        || cache.dirty || cache.layers.length !== layers.length || cache.layers.some((layer, i) => layer !== layers[i])
+        || cache.observers.some(observer => observer.takeRecords().length > 0)
+        || cache.nodes.some(node => !node.isConnected)
         || (!cache.nodes.length && Date.now() - cache.created > 1000)) {
+        this.discardCache(view);
         const clean = text => plugin.sanitizeAudioExportText(text);
         const currentPage = pdfPageLines(page, clean, session.pdfHighlightPages?.get(pageNumber));
         const nextPage = following ? pdfPageLines(following, clean, session.pdfHighlightPages?.get(pageNumber + 1)) : null;
-        cache = { signature, first, last, nextFirst, created: Date.now(), nodes: currentPage
+        cache = { signature, first, last, nextFirst, layers, observers: [], dirty: false, created: Date.now(), nodes: currentPage
           ? matchPdfChunk(nextPage ? [currentPage, nextPage] : [currentPage], session.chunks[highlight.index]) : [] };
+        // Text-layer updates can replace middle spans without changing either endpoint.
+        for (const layer of layers) {
+          const Observer = layer.ownerDocument.defaultView?.MutationObserver;
+          if (!Observer) continue;
+          const observer = new Observer(() => { cache.dirty = true; });
+          observer.observe(layer, { subtree: true, childList: true, characterData: true,
+            attributes: true, attributeFilter: ['style'] });
+          cache.observers.push(observer);
+        }
         this.cached.set(view, cache);
       }
       for (const node of cache.nodes) if (node.isConnected) next.add(node);
     }
-    for (const view of this.cached.keys()) if (!live.has(view)) this.cached.delete(view);
+    for (const view of this.cached.keys()) if (!live.has(view)) this.discardCache(view);
     for (const node of this.marked) if (!next.has(node)) node.classList.remove('note-reader-pdf-current');
     for (const node of next) node.classList.add('note-reader-pdf-current');
     this.marked = next;
     this.renderOverlays(next);
   }
-  destroy() { this.clear(); this.cached.clear(); }
+  destroy() { this.clear(); this.clearCache(); }
 }
 
 module.exports = { PdfReadingHighlights, pdfPageLines, matchPdfChunk, mergeHighlightRects };
