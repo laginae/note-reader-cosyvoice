@@ -83,9 +83,16 @@ MiMo 会将文字发送给小米。[隐私政策](https://privacy.mi.com/XiaomiM
 
 以下为使用当前插件界面代码和公开示例文字制作的展示图，密钥选择为空；实际外观会随 Obsidian 主题变化。
 
-**原文跟读：** 正文高亮、朗读工具栏和侧边栏控制面板。
+**一键展开朗读工具栏：** 点击内容窗口右上角的朗读图标，即可在原文上方显示播放器；再次点击收起。动图使用英文界面和公开示例。
+
+![点击朗读图标展开与收起工具栏](docs/images/reading-toolbar-demo.gif)
+
+<details>
+<summary>展开完整正文与侧边栏截图</summary>
 
 ![朗读控制面板](docs/images/reader-controls.zh-CN.png)
+
+</details>
 
 **语音配置：** 引擎选择、在线授权与 MiMo 默认音色。
 

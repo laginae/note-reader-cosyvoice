@@ -83,9 +83,16 @@ Use pause/resume, playback speed, volume, segment navigation and seeking without
 
 Public demonstration rendered from the current plugin's interface code, with sample text and an empty API-secret selection. Obsidian theme details can vary.
 
-**Read along:** the original document, reading toolbar and sidebar controls.
+**One-click reading toolbar:** click the audio icon in the pane header to show or hide playback controls above the original document.
+
+![Click the audio icon to show and hide the reading toolbar](docs/images/reading-toolbar-demo.gif)
+
+<details>
+<summary>View the full reader and sidebar screenshot</summary>
 
 ![Voice reader controls](docs/images/reader-controls.png)
+
+</details>
 
 **Voice setup:** engine selection, online consent and the default MiMo voice.
 
