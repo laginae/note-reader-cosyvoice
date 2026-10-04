@@ -14,7 +14,8 @@ English demo with public sample text, rendered from the plugin's interface code;
 
 - **Privacy under your control.** Document text is extracted locally. Online speech requires explicit consent; installed offline system voices and local CosyVoice keep synthesis on your device.
 - **Read from where you are.** Read the whole document, only selected text, or continue from a selected position, including in PDFs.
-- **Follow along without losing the layout.** Optional, adjustable highlighting in Markdown/live preview, text PDFs, local HTML and Web viewer. The toolbar stays with the original content.
+- **Follow along without losing the layout.** Optional, adjustable highlighting in Markdown/live preview, text PDFs, local HTML and Web viewer, with reading-order support for common two-column PDF papers. The toolbar stays with the original content.
+- **Listen to Copilot replies.** Read saved conversations: the latest reply, last two replies, or a question and answer. Preview your selection, or right-click the toolbar chat icon to read the most recently saved conversation's latest answer.
 - **Navigate by outline.** Use note headings, PDF bookmarks or locally inferred PDF headings, and HTML headings or coherent section numbering. Read one section or continue from it.
 - **Start listening sooner.** Progressive text extraction and short startup audio parts reduce the wait; later PDF pages can be processed while playback begins.
 - **Avoid unnecessary synthesis.** By default, online playback prepares only one upcoming audio part. Choose zero prefetch for on-demand synthesis. Audio export always asks for confirmation.
@@ -28,7 +29,7 @@ For a first try, choose based on what matters most to you, rather than installin
 
 | Your priority | Start with | What you need | Important trade-off |
 | --- | --- | --- | --- |
-| Try Chinese speech without an initial API charge | **Xiaomi MiMo** | A regular MiMo API key | Currently temporarily free; online processing, not confirmed ZDR |
+| Try Chinese or English speech without an initial API charge | **Xiaomi MiMo** | A regular MiMo API key | Currently temporarily free; online processing, not confirmed ZDR |
 | Many online voices without a user API key | **Edge TTS** | Install the third-party `edge-tts` helper | Online, no explicit ZDR guarantee for plugin calls |
 | The simplest offline setup | **System local speech** | A compatible installed Windows/macOS voice | No speech API quota; quality depends on installed voices |
 | Compare speech models without a local helper | **OpenRouter TTS** | API key and usable account credit | Paid, model-dependent voices; enforced ZDR routing |
@@ -50,7 +51,7 @@ The initial engine is local CosyVoice, which needs configuration. **Choose one o
 1. Create a **regular API key** in the [MiMo console](https://platform.xiaomimimo.com/), not a Token Plan key.
 2. Select **Xiaomi MiMo TTS** and store the key using **Obsidian SecretStorage**.
 3. Read the notice and enable **Allow MiMo online processing**.
-4. Keep the default **Bai Hua / 白桦 (Chinese male)** or select another voice, then try a short selection.
+4. Keep the default **Bai Hua / 白桦 (male, supports Chinese and English)** or select another voice, then try a short selection.
 
 MiMo sends text to Xiaomi. Its [privacy policy](https://privacy.mi.com/XiaomiMiMoPlatform/zh_CN/) says supplied text is not used for training without prior consent; this is **not a zero-retention guarantee**.
 
@@ -160,6 +161,18 @@ The optional **Focus reading** view remains useful for extracted text and system
 
 Saving bookmarks requires confirmation. Save a copy by default, or enable overwrite with a verified original backup. Existing bookmarks can be kept, merged or replaced. Encrypted or signed PDFs are refused. This writes PDF bookmarks, not a visible table-of-contents page, and does not change the document layout.
 
+### Read Saved Copilot Conversations
+
+Enable **Autosave Chat as Markdown** in Copilot, then use the toolbar's **Read Copilot chat** icon, the sidebar's **More actions**, or the **Read saved Copilot chat** command. Choose a conversation, preview its text, and select the latest reply, last two replies, or latest question and answer. Reading only AI replies is the default; including your questions is optional.
+
+For one-click playback, choose **Read latest reply** in the chat picker or **right-click the toolbar chat icon**. This reads only the latest saved AI answer in the most recently modified saved conversation, not necessarily the chat currently on screen. It never falls back to another conversation when no readable answer exists. Your current speech engine and online-processing consent still apply. Left-click continues to open the picker and preview.
+
+The plugin finds vault folders named `copilot-conversations`; a custom vault-relative folder can be set in the reader settings. An explicitly open conversation note can be preselected. Otherwise you choose the conversation, so a recently modified file is never silently treated as the current chat. The picker reads only the selected file, up to 2 MB, and requires a refreshed preview if it changes.
+
+This integration uses Copilot's saved `user` / `ai` Markdown messages and timestamp footers, checked against Copilot 4.0.13. It excludes saved context metadata, system/tool messages and recognized reasoning/tool envelopes. Unsaved replies are unavailable, and a pending question is not paired with an earlier answer. Pause, speed, volume and navigation use the normal player. Conversation playback does not add a reading-history anchor or inject buttons/highlights into Copilot's chat window.
+
+Browsing and previewing are local and make no speech API calls. Playback uses the selected engine and its existing online-processing consent: online engines receive the selected text. The dialog identifies that destination before playback. The feature can be disabled in settings.
+
 ### Focus Reading, Highlighting and Windows Narrator
 
 Click **Focus reading** in the control panel, or run **Toggle focus reading / Narrator document**. Click again, or use the view's back button, to close it and return to the original attached note without stopping playback. The view loads text locally without TTS requests or API secrets. Markdown uses Obsidian's native renderer and theme fonts, retaining headings, lists, emphasis, formulas and tables, with selectable text. Images and embeds are not automatically loaded; executable code-block processors and raw HTML are disabled in this view. Other formats display extracted text, not their original page layout. Playback reuses the existing queue, including progressively parsed PDF chunks; the view never saves a second document to settings.
@@ -176,7 +189,7 @@ MiMo defaults to a configurable 200-character chunk cap (a conservative client s
 
 1. Create a regular API key in the [MiMo console](https://platform.xiaomimimo.com/), not a Token Plan key.
 2. Select **Xiaomi MiMo TTS** in the plugin settings. Store the key with Obsidian SecretStorage, or use a one-line key file outside the vault on older Obsidian versions.
-3. Read the privacy notice and enable **Allow MiMo online processing**. Select one of eight official voices; the default is **Bai Hua / 白桦 (Chinese male)**. Xiaomi does not specify US/UK accents for these presets.
+3. Read the privacy notice and enable **Allow MiMo online processing**. Select one of eight official voices; the default is **Bai Hua / 白桦 (male, supports Chinese and English)**. Xiaomi does not specify US/UK accents for these presets.
 4. Read or export a note/PDF using the existing controls. The model is `mimo-v2.5-tts`, producing WAV audio. Online chunking and the one-upcoming-chunk prefetch limit also apply. Synthesis speed is requested through a natural-language instruction, not a guaranteed numerical rate.
 
 [Pricing](https://mimo.mi.com/docs/zh-CN/price/pay-as-you-go) lists this model as **temporarily free** as of 2026-10-04; pricing and quotas may change. The [MiMo privacy policy](https://privacy.mi.com/XiaomiMiMoPlatform/zh_CN/) states that supplied text is not used for training without prior consent, but **zero data retention is not confirmed**. Plugin consent only permits synthesis, not training. MiMo is a separate direct API engine, not an OpenRouter ZDR route. Voice cloning and voice design are not included.

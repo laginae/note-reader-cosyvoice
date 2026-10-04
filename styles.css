@@ -626,6 +626,24 @@
 .note-reader-native-heading { flex: 1 1 180px; }
 .note-reader-native-volume { width: 90px; flex: 0 1 90px; }
 .note-reader-native-status { font-size: var(--font-ui-smaller); color: var(--text-muted); overflow-wrap: anywhere; padding-top: 4px; }
+
+.note-reader-chat-modal { width: min(680px, 94vw); }
+.note-reader-chat-modal h2 { margin-top: 0; font-size: var(--font-ui-large); }
+.note-reader-chat-filters, .note-reader-chat-choices, .note-reader-chat-footer { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.note-reader-chat-filters input { flex: 1 1 180px; min-width: 0; }
+.note-reader-chat-filters .clickable-icon, .note-reader-chat-footer .clickable-icon { width: 30px; height: 30px; flex: 0 0 30px; }
+.note-reader-chat-files { width: 100%; max-width: 100%; margin-top: 10px; }
+.note-reader-chat-path, .note-reader-chat-status, .note-reader-chat-destination { font-size: var(--font-ui-small); color: var(--text-muted); overflow-wrap: anywhere; }
+.note-reader-chat-path { margin: 6px 0 12px; }
+.note-reader-chat-choices select { min-width: 0; max-width: 100%; }
+.note-reader-chat-question { display: inline-flex; align-items: center; gap: 6px; }
+.note-reader-chat-preview { width: 100%; height: min(260px, 35vh); min-height: 100px; resize: vertical; white-space: pre-wrap; font-family: var(--font-text); line-height: 1.6; }
+.note-reader-chat-footer { justify-content: flex-end; }
+.note-reader-chat-footer button { white-space: normal; }
+@media (max-width: 480px) {
+  .note-reader-chat-choices { align-items: flex-start; flex-direction: column; }
+  .note-reader-chat-choices select { width: 100%; }
+}
 .note-reader-pdf-overlay {
   position: absolute;
   inset: 0;

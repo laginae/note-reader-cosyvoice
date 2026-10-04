@@ -65,6 +65,11 @@ class NativeReaderToolbar {
       this.outline.hidden = !this.outline.hidden; this.outlineButton.setAttribute('aria-expanded', String(!this.outline.hidden));
       if (!this.outline.hidden) this.refreshOutline();
     });
+    this.chatButton = this.button(controls, 'messages-square', ['Read Copilot chat (click: choose; right-click: latest reply)', 'Copilot 聊天朗读（左键选择；右键朗读最近回答）'], () => plugin.openCopilotChat(view.file));
+    this.chatButton.addEventListener('contextmenu', event => {
+      event.preventDefault(); event.stopPropagation();
+      if (!this.chatButton.disabled && !this.chatButton.hidden) void this.action(() => plugin.readLatestCopilotReply());
+    });
     this.moreButton = this.button(controls, 'ellipsis', ['More controls', '更多控制'], () => {
       this.more.hidden = !this.more.hidden; this.moreButton.setAttribute('aria-expanded', String(!this.more.hidden));
     });
@@ -245,6 +250,8 @@ class NativeReaderToolbar {
     this.readScope.setAttribute('aria-label', scopeLabel);
     this.section.disabled = this.fromSection.disabled = this.heading.value === '' || exporting;
     this.readScope.disabled = this.exportButton.disabled = Boolean(exporting);
+    this.chatButton.hidden = this.plugin.settings.copilotChatEnabled === false;
+    this.chatButton.disabled = Boolean(exporting);
     const timing = this.plugin.getSegmentTiming?.() || { current: 0 };
     const estimate = estimatePlayback(session, Math.max(0, (state.currentChunk || 1) - 1), timing.current,
       session?.speechEngine === 'system-tts' ? 1 : this.plugin.settings.speed, this.plugin.settings.playbackSpeed);

@@ -8688,6 +8688,12 @@ var require_native_toolbar = __commonJS({
           this.outlineButton.setAttribute("aria-expanded", String(!this.outline.hidden));
           if (!this.outline.hidden) this.refreshOutline();
         });
+        this.chatButton = this.button(controls, "messages-square", ["Read Copilot chat (click: choose; right-click: latest reply)", "Copilot \u804A\u5929\u6717\u8BFB\uFF08\u5DE6\u952E\u9009\u62E9\uFF1B\u53F3\u952E\u6717\u8BFB\u6700\u8FD1\u56DE\u7B54\uFF09"], () => plugin.openCopilotChat(view.file));
+        this.chatButton.addEventListener("contextmenu", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          if (!this.chatButton.disabled && !this.chatButton.hidden) void this.action(() => plugin.readLatestCopilotReply());
+        });
         this.moreButton = this.button(controls, "ellipsis", ["More controls", "\u66F4\u591A\u63A7\u5236"], () => {
           this.more.hidden = !this.more.hidden;
           this.moreButton.setAttribute("aria-expanded", String(!this.more.hidden));
@@ -8923,6 +8929,8 @@ var require_native_toolbar = __commonJS({
         this.readScope.setAttribute("aria-label", scopeLabel);
         this.section.disabled = this.fromSection.disabled = this.heading.value === "" || exporting;
         this.readScope.disabled = this.exportButton.disabled = Boolean(exporting);
+        this.chatButton.hidden = this.plugin.settings.copilotChatEnabled === false;
+        this.chatButton.disabled = Boolean(exporting);
         const timing = this.plugin.getSegmentTiming?.() || { current: 0 };
         const estimate = estimatePlayback2(
           session,
@@ -9325,6 +9333,476 @@ var require_html_highlights = __commonJS({
       }
     };
     module2.exports = { HtmlReadingHighlights: HtmlReadingHighlights2 };
+  }
+});
+
+// src/copilot-chat.js
+var require_copilot_chat = __commonJS({
+  "src/copilot-chat.js"(exports2, module2) {
+    "use strict";
+    var MAX_CHAT_BYTES = 2 * 1024 * 1024;
+    var CHAT_SCOPES = ["latest", "two", "turn"];
+    var COPILOT_DEFAULTS2 = { copilotChatEnabled: true, copilotChatFolder: "", copilotChatScope: "latest", copilotIncludeQuestions: false };
+    function normalizeChatFolder(value) {
+      const original = String(value || "").trim().replace(/\\/g, "/");
+      if (!original) return "";
+      const folder = original.replace(/\/+$/, "");
+      if (!folder) throw new Error("CHAT_FOLDER");
+      if (folder.startsWith("/") || /[:\x00-\x1f]/.test(folder) || folder.split("/").some((part) => !part || part === "." || part === ".." || part.startsWith("."))) throw new Error("CHAT_FOLDER");
+      return folder;
+    }
+    function normalizeCopilotSettings2(settings) {
+      settings.copilotChatEnabled = settings.copilotChatEnabled !== false;
+      settings.copilotChatScope = CHAT_SCOPES.includes(settings.copilotChatScope) ? settings.copilotChatScope : "latest";
+      settings.copilotIncludeQuestions = settings.copilotIncludeQuestions === true;
+      settings.copilotChatFolder = typeof settings.copilotChatFolder === "string" ? settings.copilotChatFolder.trim() : "";
+    }
+    function listChatFiles(vault, configuredFolder = "") {
+      const folder = normalizeChatFolder(configuredFolder);
+      return vault.getMarkdownFiles().filter((file) => {
+        const path2 = file.path;
+        return typeof path2 === "string" && !path2.split("/").some((part) => part.startsWith(".")) && (folder ? path2.startsWith(`${folder}/`) : /(?:^|\/)copilot-conversations\//i.test(path2));
+      }).sort((a, b) => (b.stat?.mtime || 0) - (a.stat?.mtime || 0) || a.path.localeCompare(b.path));
+    }
+    function removePrivateBlocks(text) {
+      return text.replace(/<(think|thinking|analysis|tool_call|tool_calls|tool_result|tool_results|system)\b[^>]*>[\s\S]*?(?:<\/\1\s*>|$)/gi, "").replace(/<!--[\s\S]*?(?:-->|$)/g, "").trim();
+    }
+    function parseChatTranscript(raw) {
+      if (typeof raw !== "string" || raw.length > MAX_CHAT_BYTES) throw new Error("CHAT_SIZE");
+      let body = raw.replace(/^\uFEFF/, "").replace(/\r\n?/g, "\n");
+      if (body.startsWith("---\n")) {
+        const end = body.indexOf("\n---", 4);
+        if (end < 0) throw new Error("CHAT_FORMAT");
+        body = body.slice(end + 4).replace(/^\n/, "");
+      }
+      const messages = [];
+      let current = null, fence = null;
+      const finish = () => {
+        if (!current) return;
+        const lines = [...current.lines];
+        while (lines.length && !lines.at(-1).trim()) lines.pop();
+        const footer = !fence && /^\[Timestamp: ([^\n\]]+)\]$/.exec(lines.at(-1) || "");
+        if (footer) lines.pop();
+        while (lines.length && (!lines.at(-1).trim() || /^\[Context: .*\]$/.test(lines.at(-1)))) lines.pop();
+        messages.push({ role: current.role, text: removePrivateBlocks(lines.join("\n")), saved: Boolean(footer), timestamp: footer?.[1] || "" });
+      };
+      for (const line of body.split("\n")) {
+        const marker = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
+        if (marker) {
+          if (!fence) fence = { char: marker[1][0], length: marker[1].length };
+          else if (marker[1][0] === fence.char && marker[1].length >= fence.length && !marker[2].trim()) fence = null;
+          if (current) current.lines.push(line);
+          continue;
+        }
+        const header = !fence && /^\*\*(user|ai|assistant|system|tool)\*\*: ?(.*)$/.exec(line);
+        let previous = "";
+        if (header && current) for (let i = current.lines.length - 1; i >= 0; i--) {
+          if (current.lines[i].trim()) {
+            previous = current.lines[i];
+            break;
+          }
+        }
+        if (header && (!current || /^\[Timestamp: [^\n\]]+\]$/.test(previous || ""))) {
+          finish();
+          current = { role: header[1] === "assistant" ? "ai" : header[1], lines: [header[2]] };
+        } else if (current) current.lines.push(line);
+      }
+      finish();
+      if (!messages.length) throw new Error("CHAT_FORMAT");
+      return { messages, awaitingReply: messages.at(-1).role === "user" || !messages.at(-1).saved };
+    }
+    function selectChatText(transcript, scope = "latest", includeQuestions = false, chinese = false) {
+      if (!CHAT_SCOPES.includes(scope)) throw new Error("CHAT_SCOPE");
+      const messages = transcript.messages;
+      const answers = messages.map((message, index) => ({ message, index })).filter(({ message }) => message.role === "ai" && message.saved && message.text);
+      const chosen = answers.slice(scope === "two" ? -2 : -1);
+      if (!chosen.length) throw new Error("CHAT_NO_REPLY");
+      const selected = /* @__PURE__ */ new Set();
+      for (const { index } of chosen) {
+        if (includeQuestions || scope === "turn") {
+          for (let i = index - 1; i >= 0; i--) {
+            if (messages[i].role === "ai") break;
+            if (messages[i].role === "user") {
+              if (messages[i].saved && messages[i].text) selected.add(i);
+              break;
+            }
+          }
+        }
+        selected.add(index);
+      }
+      const withRoles = scope === "turn" || includeQuestions;
+      const text = [...selected].sort((a, b) => a - b).map((index) => {
+        const message = messages[index];
+        const label = message.role === "user" ? chinese ? "\u63D0\u95EE\uFF1A" : "Question: " : chinese ? "\u56DE\u7B54\uFF1A" : "Answer: ";
+        return `${withRoles ? label : ""}${message.text}`;
+      }).join("\n\n");
+      return { text, replyCount: chosen.length, awaitingReply: transcript.awaitingReply };
+    }
+    async function loadChatSnapshot(vault, file) {
+      const path2 = file.path, mtime = file.stat?.mtime, size = file.stat?.size;
+      if (!(size >= 0) || size > MAX_CHAT_BYTES) throw new Error("CHAT_SIZE");
+      if (vault.getAbstractFileByPath(path2) !== file) throw new Error("CHAT_CHANGED");
+      const raw = await vault.read(file);
+      if (file.path !== path2 || file.stat?.mtime !== mtime || file.stat?.size !== size || vault.getAbstractFileByPath(path2) !== file) throw new Error("CHAT_CHANGED");
+      return { file, path: path2, mtime, size, raw, transcript: parseChatTranscript(raw) };
+    }
+    async function verifyChatSnapshot(vault, snapshot) {
+      const { file, path: path2, mtime, size, raw } = snapshot;
+      if (vault.getAbstractFileByPath(path2) !== file || file.path !== path2 || file.stat?.mtime !== mtime || file.stat?.size !== size) throw new Error("CHAT_CHANGED");
+      if (await vault.read(file) !== raw || file.path !== path2 || file.stat?.mtime !== mtime || file.stat?.size !== size || vault.getAbstractFileByPath(path2) !== file) throw new Error("CHAT_CHANGED");
+    }
+    module2.exports = {
+      MAX_CHAT_BYTES,
+      COPILOT_DEFAULTS: COPILOT_DEFAULTS2,
+      CHAT_SCOPES,
+      normalizeChatFolder,
+      normalizeCopilotSettings: normalizeCopilotSettings2,
+      listChatFiles,
+      parseChatTranscript,
+      selectChatText,
+      loadChatSnapshot,
+      verifyChatSnapshot
+    };
+  }
+});
+
+// src/copilot-chat-ui.js
+var require_copilot_chat_ui = __commonJS({
+  "src/copilot-chat-ui.js"(exports2, module2) {
+    "use strict";
+    var { Modal: Modal2, Notice: Notice2, Setting: Setting2, setIcon: setIcon2 } = require("obsidian");
+    var { CHAT_SCOPES, normalizeChatFolder, listChatFiles, selectChatText, loadChatSnapshot, verifyChatSnapshot } = require_copilot_chat();
+    var SCOPE_LABELS = {
+      latest: ["\u6700\u65B0\u4E00\u6761\u56DE\u590D", "Latest reply"],
+      two: ["\u6700\u8FD1\u4E24\u6761\u56DE\u590D", "Last two replies"],
+      turn: ["\u6700\u8FD1\u4E00\u8F6E\u95EE\u7B54", "Latest question and answer"]
+    };
+    var ERRORS = {
+      CHAT_EMPTY: ["\u672A\u627E\u5230\u5DF2\u4FDD\u5B58\u7684 Copilot \u5BF9\u8BDD\u3002\u8BF7\u5148\u4FDD\u5B58\u5BF9\u8BDD\u6216\u68C0\u67E5\u5BF9\u8BDD\u76EE\u5F55\u8BBE\u7F6E\u3002", "No saved Copilot conversation found. Save a chat or check the conversation folder."],
+      CHAT_FOLDER: ["\u8BF7\u4F7F\u7528\u4ED3\u5E93\u5185\u7684\u76EE\u5F55\u8DEF\u5F84\uFF0C\u4E0D\u652F\u6301\u7EDD\u5BF9\u8DEF\u5F84\u6216\u4E0A\u7EA7\u76EE\u5F55\u3002", "Use a vault-relative folder without parent or hidden directories."],
+      CHAT_SIZE: ["\u5BF9\u8BDD\u8D85\u8FC7 2 MB\uFF0C\u6216\u6587\u4EF6\u5927\u5C0F\u4E0D\u53EF\u7528\u3002\u8BF7\u6253\u5F00\u6587\u4EF6\u5E76\u9009\u4E2D\u9700\u8981\u6717\u8BFB\u7684\u90E8\u5206\u3002", "Chat exceeds 2 MB or its size is unavailable. Open the note and read a selection instead."],
+      CHAT_FORMAT: ["\u672A\u8BC6\u522B\u5230 Copilot \u5BF9\u8BDD\u683C\u5F0F\u3002\u8BF7\u5728 Copilot \u4E2D\u4FDD\u5B58\u4E3A Markdown \u540E\u5237\u65B0\u3002", "Copilot transcript format not recognized. Save the chat as Markdown in Copilot, then refresh."],
+      CHAT_CHANGED: ["\u5BF9\u8BDD\u5DF2\u53D8\u5316\uFF0C\u8BF7\u5237\u65B0\u9884\u89C8\u540E\u518D\u64AD\u653E\u3002", "Conversation changed. Refresh the preview before playing."],
+      CHAT_NO_REPLY: ["\u5C1A\u65E0\u5DF2\u4FDD\u5B58\u7684 AI \u56DE\u590D\u3002\u8BF7\u7B49\u5F85\u56DE\u590D\u4FDD\u5B58\u540E\u5237\u65B0\u3002", "No saved AI reply yet. Refresh after the reply has been saved."]
+    };
+    function node(parent, tag, className = "", text = "") {
+      const el = parent.ownerDocument.createElement(tag);
+      el.className = className;
+      el.textContent = text;
+      parent.append(el);
+      return el;
+    }
+    function t(plugin, zh, en) {
+      return plugin.settings.settingsLanguage === "chinese" ? zh : en;
+    }
+    function preparationKey(plugin) {
+      return JSON.stringify([plugin.settings.speechEngine, plugin.settings.stripMarkdown, plugin.settings.mathReadingLanguage, plugin.settings.settingsLanguage]);
+    }
+    async function readLatestCopilotReply2(plugin, options = {}) {
+      if (plugin.latestCopilotReadPending) return;
+      const say = (zh, en) => new Notice2(t(plugin, zh, en));
+      if (plugin.settings.copilotChatEnabled === false) {
+        say("\u8BF7\u5148\u5F00\u542F Copilot \u804A\u5929\u6717\u8BFB\u3002", "Enable Copilot chat reading first.");
+        return;
+      }
+      if (plugin.activeSession?.kind === "audio-export") {
+        say("\u8BF7\u7B49\u5F85\u97F3\u9891\u5BFC\u51FA\u5B8C\u6210\u3002", "Wait for the audio export to finish.");
+        return;
+      }
+      plugin.latestCopilotReadPending = true;
+      const action = plugin.webActionSequence = (plugin.webActionSequence || 0) + 1;
+      const key = preparationKey(plugin), folder = plugin.settings.copilotChatFolder;
+      const cancelled = () => plugin.webActionSequence !== action || options.isCancelled?.() || plugin.settings.copilotChatEnabled === false;
+      try {
+        const vault = plugin.app.vault, file = listChatFiles(vault, folder)[0];
+        if (!file) throw new Error("CHAT_EMPTY");
+        const snapshot = await loadChatSnapshot(vault, file);
+        if (cancelled()) return;
+        const selection = selectChatText(snapshot.transcript, "latest", false);
+        if (!plugin.sanitizeAudioExportText(selection.text).trim()) throw new Error("CHAT_NO_REPLY");
+        await verifyChatSnapshot(vault, snapshot);
+        if (cancelled()) return;
+        if (folder !== plugin.settings.copilotChatFolder || key !== preparationKey(plugin) || listChatFiles(vault, folder)[0] !== file) throw new Error("CHAT_CHANGED");
+        if (plugin.activeSession?.kind === "audio-export") {
+          say("\u8BF7\u7B49\u5F85\u97F3\u9891\u5BFC\u51FA\u5B8C\u6210\u3002", "Wait for the audio export to finish.");
+          return;
+        }
+        const label = `Copilot \xB7 ${file.basename || file.name} \xB7 ${t(plugin, "\u6700\u65B0\u4E00\u6761\u56DE\u590D", "Latest reply")}`;
+        options.beforeStart?.();
+        await plugin.runUserAction("Read latest Copilot reply", () => plugin.startReading(selection.text, label, { sourceKind: "copilot", skipReadingPosition: true }));
+      } catch (error) {
+        if (!cancelled()) say(...ERRORS[error.message] || ["\u65E0\u6CD5\u8BFB\u53D6\u6700\u8FD1\u5BF9\u8BDD\uFF0C\u8BF7\u91CD\u8BD5\u6216\u6253\u5F00\u804A\u5929\u6717\u8BFB\u7A97\u53E3\u3002", "Cannot read the latest conversation. Retry or open the chat picker."]);
+      } finally {
+        plugin.latestCopilotReadPending = false;
+      }
+    }
+    var CopilotChatModal2 = class extends Modal2 {
+      constructor(plugin, preferredFile = null) {
+        super(plugin.app);
+        this.plugin = plugin;
+        this.preferredFile = preferredFile;
+        this.closed = false;
+        this.sequence = 0;
+        this.listeners = [];
+        this.busy = false;
+      }
+      text(zh, en) {
+        return t(this.plugin, zh, en);
+      }
+      icon(parent, name, label, action) {
+        const button = node(parent, "button", "clickable-icon");
+        button.type = "button";
+        button.setAttribute("aria-label", label);
+        setIcon2(button, name);
+        button.addEventListener("click", () => {
+          void action();
+        });
+        return button;
+      }
+      async onOpen() {
+        this.modalEl.classList.add("note-reader-chat-modal");
+        node(this.contentEl, "h2", "", this.text("Copilot \u804A\u5929\u6717\u8BFB", "Read Copilot chat"));
+        const filters = node(this.contentEl, "div", "note-reader-chat-filters");
+        this.search = node(filters, "input");
+        this.search.type = "search";
+        this.search.placeholder = this.text("\u641C\u7D22\u5DF2\u4FDD\u5B58\u7684\u5BF9\u8BDD", "Search saved conversations");
+        this.search.setAttribute("aria-label", this.search.placeholder);
+        this.refresh = this.icon(filters, "refresh-cw", this.text("\u5237\u65B0\u5BF9\u8BDD\u4E0E\u9884\u89C8", "Refresh conversations and preview"), () => this.reload());
+        this.files = node(this.contentEl, "select", "note-reader-chat-files");
+        this.files.setAttribute("aria-label", this.text("\u5DF2\u4FDD\u5B58\u7684\u5BF9\u8BDD", "Saved conversation"));
+        this.pathLabel = node(this.contentEl, "div", "note-reader-chat-path");
+        const choices = node(this.contentEl, "div", "note-reader-chat-choices");
+        this.readingScopeSelect = node(choices, "select");
+        this.readingScopeSelect.setAttribute("aria-label", this.text("\u6717\u8BFB\u8303\u56F4", "Reading scope"));
+        for (const value of CHAT_SCOPES) {
+          const option = node(this.readingScopeSelect, "option", "", this.text(...SCOPE_LABELS[value]));
+          option.value = value;
+        }
+        this.readingScopeSelect.value = this.plugin.settings.copilotChatScope || "latest";
+        const questionLabel = node(choices, "label", "note-reader-chat-question");
+        this.questions = node(questionLabel, "input");
+        this.questions.type = "checkbox";
+        this.questions.checked = this.plugin.settings.copilotIncludeQuestions === true;
+        node(questionLabel, "span", "", this.text("\u5305\u542B\u6211\u7684\u63D0\u95EE", "Include my questions"));
+        this.questionPreference = this.questions.checked;
+        this.status = node(this.contentEl, "p", "note-reader-chat-status");
+        this.status.setAttribute("role", "status");
+        this.preview = node(this.contentEl, "textarea", "note-reader-chat-preview");
+        this.preview.readOnly = true;
+        this.preview.setAttribute("aria-label", this.text("\u5373\u5C06\u6717\u8BFB\u7684\u6587\u5B57", "Text to be read"));
+        this.destination = node(this.contentEl, "p", "note-reader-chat-destination");
+        const footer = node(this.contentEl, "div", "note-reader-chat-footer");
+        this.latestReplyButton = node(footer, "button", "", this.text("\u6717\u8BFB\u6700\u8FD1\u56DE\u7B54", "Read latest reply"));
+        this.latestReplyButton.type = "button";
+        this.latestReplyButton.setAttribute("aria-label", this.text("\u76F4\u63A5\u6717\u8BFB\u6700\u8FD1\u4FDD\u5B58\u5BF9\u8BDD\u7684\u6700\u65B0\u4E00\u6761\u56DE\u7B54", "Read the latest saved reply in the most recently saved conversation"));
+        this.latestReplyButton.addEventListener("click", async () => {
+          if (this.busy || this.closed) return;
+          this.busy = true;
+          this.latestReplyButton.disabled = true;
+          this.play.disabled = true;
+          try {
+            await readLatestCopilotReply2(this.plugin, { isCancelled: () => this.closed, beforeStart: () => this.close() });
+          } finally {
+            this.busy = false;
+            if (!this.closed) {
+              this.latestReplyButton.disabled = false;
+              this.drawPreview();
+            }
+          }
+        });
+        this.openNote = this.icon(footer, "file-text", this.text("\u6253\u5F00\u5BF9\u8BDD\u7B14\u8BB0", "Open conversation note"), async () => {
+          const file = this.catalog.find((file2) => file2.path === this.files.value);
+          if (file) {
+            this.close();
+            await this.app.workspace.getLeaf(false).openFile(file);
+          }
+        });
+        this.play = node(footer, "button", "mod-cta", this.text("\u5F00\u59CB\u6717\u8BFB", "Read aloud"));
+        this.play.type = "button";
+        this.play.disabled = true;
+        this.play.addEventListener("click", () => {
+          void this.read();
+        });
+        this.search.addEventListener("input", () => this.drawFiles(this.files.value));
+        this.files.addEventListener("change", () => {
+          void this.loadSelected();
+        });
+        this.readingScopeSelect.addEventListener("change", () => this.drawPreview());
+        this.questions.addEventListener("change", () => {
+          this.questionPreference = this.questions.checked;
+          this.drawPreview();
+        });
+        if (this.app.vault.on) for (const event of ["modify", "rename", "delete"]) this.listeners.push(this.app.vault.on(event, (file) => {
+          if (file === this.snapshot?.file) this.invalidate(this.text(...ERRORS.CHAT_CHANGED));
+        }));
+        await this.reload(this.preferredFile?.path);
+      }
+      invalidate(message = "") {
+        this.sequence++;
+        this.snapshot = null;
+        this.rawText = "";
+        this.preview.value = "";
+        this.play.disabled = true;
+        this.status.textContent = message;
+      }
+      showError(error) {
+        this.invalidate(this.text(...ERRORS[error.message] || ["\u65E0\u6CD5\u8BFB\u53D6\u6B64\u5BF9\u8BDD\uFF0C\u8BF7\u5237\u65B0\u540E\u91CD\u8BD5\u3002", "Cannot read this conversation. Refresh and try again."]));
+      }
+      async reload(preferredPath = this.files.value) {
+        if (this.busy || this.closed) return;
+        this.invalidate();
+        try {
+          this.catalog = listChatFiles(this.app.vault, this.plugin.settings.copilotChatFolder);
+          this.drawFiles(preferredPath);
+          this.drawPreview();
+          if (this.files.value) await this.loadSelected();
+        } catch (error) {
+          this.showError(error);
+        }
+      }
+      drawFiles(preferredPath) {
+        const query = this.search.value.trim().toLocaleLowerCase();
+        const matches = this.catalog.filter((file) => file.path.toLocaleLowerCase().includes(query));
+        const choices = matches.slice(0, 200);
+        const preferred = matches.find((file) => file.path === preferredPath);
+        if (preferred && !choices.includes(preferred)) choices.push(preferred);
+        this.files.replaceChildren();
+        const empty = node(this.files, "option", "", this.text("\u9009\u62E9\u5BF9\u8BDD", "Choose a conversation"));
+        empty.value = "";
+        for (const file of choices) {
+          const modified = new Date(file.stat.mtime).toLocaleString(this.plugin.settings.settingsLanguage === "chinese" ? "zh-CN" : "en-US");
+          const option = node(this.files, "option", "", `${file.path} \xB7 ${modified}`);
+          option.value = file.path;
+        }
+        this.files.value = preferred?.path || "";
+        this.openNote.disabled = !this.files.value;
+        if (!this.files.value) {
+          this.pathLabel.textContent = "";
+          this.invalidate(!this.catalog.length ? this.text("\u672A\u627E\u5230\u5BF9\u8BDD\u3002\u8BF7\u5F00\u542F Copilot \u7684\u201CAutosave Chat as Markdown\u201D\uFF0C\u6216\u5728\u672C\u63D2\u4EF6\u8BBE\u7F6E\u4E2D\u6307\u5B9A\u5BF9\u8BDD\u76EE\u5F55\u3002", "No conversations found. Enable Copilot Autosave Chat as Markdown or set the conversation folder in this plugin.") : !matches.length ? this.text("\u6CA1\u6709\u5339\u914D\u7684\u5BF9\u8BDD\u3002", "No matching conversations.") : this.text("\u8BF7\u9009\u62E9\u8981\u6717\u8BFB\u7684\u5BF9\u8BDD\u3002\u5217\u8868\u6309\u4FDD\u5B58\u65F6\u95F4\u6392\u5E8F\uFF0C\u6700\u591A\u663E\u793A 200 \u9879\u3002", "Choose a conversation. Sorted by save time; up to 200 matches shown."));
+        }
+      }
+      async loadSelected() {
+        this.invalidate(this.text("\u6B63\u5728\u8BFB\u53D6\u5DF2\u4FDD\u5B58\u7684\u5BF9\u8BDD\u2026", "Loading saved conversation..."));
+        const sequence = this.sequence, file = this.catalog.find((file2) => file2.path === this.files.value);
+        this.openNote.disabled = !file;
+        this.pathLabel.textContent = file?.path || "";
+        if (!file) {
+          this.status.textContent = this.text("\u8BF7\u9009\u62E9\u5BF9\u8BDD\u3002", "Choose a conversation.");
+          return;
+        }
+        try {
+          const snapshot = await loadChatSnapshot(this.app.vault, file);
+          if (this.closed || sequence !== this.sequence) return;
+          this.snapshot = snapshot;
+          this.drawPreview();
+        } catch (error) {
+          if (!this.closed && sequence === this.sequence) this.showError(error);
+        }
+      }
+      drawPreview() {
+        const turn = this.readingScopeSelect.value === "turn";
+        this.questions.disabled = turn;
+        this.questions.checked = turn || this.questionPreference;
+        this.drawDestination();
+        if (!this.snapshot) return;
+        try {
+          const selection = selectChatText(this.snapshot.transcript, this.readingScopeSelect.value, this.questions.checked, this.plugin.settings.settingsLanguage === "chinese");
+          this.rawText = selection.text;
+          this.preview.value = this.plugin.sanitizeAudioExportText(selection.text);
+          this.preparedKey = preparationKey(this.plugin);
+          this.play.disabled = !this.preview.value || this.busy;
+          this.status.textContent = `${selection.replyCount} ${this.text("\u6761\u56DE\u590D", selection.replyCount === 1 ? "reply" : "replies")} \xB7 ${this.preview.value.length} ${this.text("\u5B57\u7B26", "characters")}`;
+          if (selection.awaitingReply) this.status.textContent += this.text("\u3002\u6700\u65B0\u6D88\u606F\u5C1A\u65E0\u5DF2\u4FDD\u5B58\u56DE\u590D\uFF0C\u5F53\u524D\u9884\u89C8\u4E3A\u6B64\u524D\u5DF2\u4FDD\u5B58\u7684\u56DE\u7B54\u3002", ". The newest message has no saved reply yet; this preview uses earlier saved answers.");
+          if (!this.preview.value) this.status.textContent = this.text("\u6240\u9009\u56DE\u590D\u6E05\u7406\u540E\u6CA1\u6709\u53EF\u6717\u8BFB\u6587\u5B57\u3002", "No readable text remains in the selected replies.");
+        } catch (error) {
+          this.rawText = "";
+          this.preview.value = "";
+          this.play.disabled = true;
+          this.status.textContent = this.text(...ERRORS[error.message] || ERRORS.CHAT_NO_REPLY);
+        }
+      }
+      drawDestination() {
+        const engine = this.plugin.settings.speechEngine;
+        const labels = { "local-cosyvoice": "CosyVoice", "system-tts": this.text("\u7CFB\u7EDF\u8BED\u97F3", "System speech"), "edge-tts": "Edge TTS", "azure-speech": "Azure Speech", "openrouter-tts": "OpenRouter TTS", "mimo-tts": "MiMo TTS" };
+        this.destination.textContent = `${labels[engine] || engine || ""} \xB7 ${["local-cosyvoice", "system-tts"].includes(engine) ? this.text("\u5728\u672C\u673A\u5408\u6210\u8BED\u97F3", "Speech is synthesized locally") : this.text("\u6240\u9009\u6587\u5B57\u5C06\u53D1\u9001\u7ED9\u6B64\u5728\u7EBF\u8BED\u97F3\u670D\u52A1", "Selected text will be sent to this online speech service")}`;
+      }
+      async read() {
+        if (this.busy || this.closed || !this.snapshot || !this.rawText || this.play.disabled) return;
+        if (this.plugin.settings.copilotChatEnabled === false) {
+          this.close();
+          return;
+        }
+        if (this.plugin.activeSession?.kind === "audio-export") {
+          this.status.textContent = this.text("\u8BF7\u7B49\u5F85\u97F3\u9891\u5BFC\u51FA\u5B8C\u6210\u540E\u518D\u5F00\u59CB\u6717\u8BFB\u3002", "Wait for the audio export to finish before reading.");
+          return;
+        }
+        if (this.preparedKey !== preparationKey(this.plugin)) {
+          this.drawPreview();
+          this.status.textContent = this.text("\u8BED\u97F3\u6216\u6587\u5B57\u8BBE\u7F6E\u5DF2\u53D8\u5316\uFF0C\u8BF7\u6838\u5BF9\u65B0\u9884\u89C8\u540E\u518D\u6B21\u70B9\u51FB\u64AD\u653E\u3002", "Speech or text settings changed. Review the updated preview, then play again.");
+          return;
+        }
+        this.busy = true;
+        this.play.disabled = true;
+        const snapshot = this.snapshot, rawText = this.rawText, scope = this.readingScopeSelect.value, sequence = this.sequence, action = this.plugin.webActionSequence;
+        try {
+          await verifyChatSnapshot(this.app.vault, snapshot);
+          if (this.closed || this.sequence !== sequence || this.plugin.webActionSequence !== action || this.rawText !== rawText || this.readingScopeSelect.value !== scope || this.plugin.settings.copilotChatEnabled === false) return;
+          if (this.preparedKey !== preparationKey(this.plugin)) {
+            this.drawPreview();
+            return;
+          }
+          const label = `Copilot \xB7 ${snapshot.file.basename || snapshot.path.replace(/.*\//, "").replace(/\.md$/i, "")} \xB7 ${this.text(...SCOPE_LABELS[this.readingScopeSelect.value])}`;
+          this.close();
+          void this.plugin.runUserAction("Read Copilot chat", () => this.plugin.startReading(rawText, label, { sourceKind: "copilot", skipReadingPosition: true }));
+        } catch (error) {
+          if (!this.closed && this.sequence === sequence) this.showError(error);
+        } finally {
+          this.busy = false;
+          if (!this.closed && this.snapshot) this.play.disabled = !this.preview.value;
+        }
+      }
+      onClose() {
+        this.closed = true;
+        this.sequence++;
+        for (const ref of this.listeners) this.app.vault.offref?.(ref);
+        this.listeners = [];
+        this.snapshot = null;
+        this.catalog = [];
+        this.rawText = "";
+        this.contentEl.replaceChildren();
+        if (this.plugin.copilotChatModal === this) this.plugin.copilotChatModal = null;
+      }
+    };
+    function addCopilotChatSettings2(container, plugin) {
+      const label = (zh, en) => t(plugin, zh, en);
+      new Setting2(container).setName(label("Copilot \u804A\u5929\u6717\u8BFB", "Copilot chat reading")).setDesc(label("\u6717\u8BFB\u5DF2\u4FDD\u5B58\u7684 Copilot Markdown \u5BF9\u8BDD\uFF0C\u4F7F\u7528\u5F53\u524D\u8BED\u97F3\u5F15\u64CE\u3002\u5728\u7EBF\u5F15\u64CE\u4F1A\u6536\u5230\u6240\u9009\u6587\u5B57\u3002", "Read saved Copilot Markdown conversations using the selected speech engine. Online engines receive the selected text.")).addToggle((toggle) => toggle.setValue(plugin.settings.copilotChatEnabled !== false).onChange(async (value) => {
+        plugin.settings.copilotChatEnabled = value;
+        if (!value) plugin.copilotChatModal?.close();
+        await plugin.saveSettings();
+        plugin.renderReaderViews();
+        plugin.nativeToolbars?.render();
+      }));
+      new Setting2(container).setName(label("Copilot \u5BF9\u8BDD\u76EE\u5F55", "Copilot conversation folder")).setDesc(label("\u7559\u7A7A\u81EA\u52A8\u67E5\u627E\u4ED3\u5E93\u4E2D\u540D\u4E3A copilot-conversations \u7684\u76EE\u5F55\u3002\u81EA\u5B9A\u4E49\u8DEF\u5F84\u4EE5\u4ED3\u5E93\u6839\u76EE\u5F55\u4E3A\u8D77\u70B9\u3002", "Leave empty to find copilot-conversations folders in the vault. Custom paths are relative to the vault root.")).addText((input) => input.setPlaceholder("copilot/copilot-conversations").setValue(plugin.settings.copilotChatFolder || "").onChange(async (value) => {
+        try {
+          plugin.settings.copilotChatFolder = normalizeChatFolder(value);
+          await plugin.saveSettings();
+        } catch (_) {
+          new Notice2(label(...ERRORS.CHAT_FOLDER));
+        }
+      }));
+      new Setting2(container).setName(label("\u804A\u5929\u9ED8\u8BA4\u6717\u8BFB\u8303\u56F4", "Default chat reading scope")).addDropdown((dropdown) => {
+        for (const value of CHAT_SCOPES) dropdown.addOption(value, label(...SCOPE_LABELS[value]));
+        dropdown.setValue(plugin.settings.copilotChatScope).onChange(async (value) => {
+          plugin.settings.copilotChatScope = value;
+          await plugin.saveSettings();
+        });
+      });
+      new Setting2(container).setName(label("\u804A\u5929\u6717\u8BFB\u5305\u542B\u6211\u7684\u63D0\u95EE", "Include my questions in chat reading")).addToggle((toggle) => toggle.setValue(plugin.settings.copilotIncludeQuestions === true).onChange(async (value) => {
+        plugin.settings.copilotIncludeQuestions = value;
+        await plugin.saveSettings();
+      }));
+    }
+    module2.exports = { CopilotChatModal: CopilotChatModal2, addCopilotChatSettings: addCopilotChatSettings2, readLatestCopilotReply: readLatestCopilotReply2 };
   }
 });
 
@@ -32711,6 +33189,8 @@ var { installNoteHighlights } = require_note_highlights();
 var { NativeToolbarManager } = require_native_toolbar();
 var { PdfReadingHighlights } = require_pdf_highlights();
 var { HtmlReadingHighlights } = require_html_highlights();
+var { COPILOT_DEFAULTS, normalizeCopilotSettings } = require_copilot_chat();
+var { CopilotChatModal, addCopilotChatSettings, readLatestCopilotReply } = require_copilot_chat_ui();
 var { createPdfSpeechChunker } = require_pdf_chunker();
 var { APPEARANCE_DEFAULTS, normalizeAppearance, applyAppearance, clearAppearance } = require_reader_appearance();
 var { SidebarOutline } = require_sidebar_outline();
@@ -34129,6 +34609,7 @@ function selectKnownSettings(defaults, candidate) {
 }
 function createDefaultSettings() {
   return {
+    ...COPILOT_DEFAULTS,
     ...MIMO_DEFAULTS,
     ...APPEARANCE_DEFAULTS,
     readingHighlight: "sentence",
@@ -34860,6 +35341,12 @@ var CosyVoiceReaderPlugin = class extends Plugin {
       this.pdfOutlineModal?.close();
       this.pdfOutlineCache?.clear();
     });
+    this.register(() => this.copilotChatModal?.close());
+    this.addCommand({
+      id: "read-copilot-chat",
+      name: "Read saved Copilot chat",
+      callback: () => this.openCopilotChat()
+    });
     this.addCommand({
       id: "pdf-outline-bookmarks",
       name: "PDF outline and bookmarks",
@@ -35100,6 +35587,7 @@ var CosyVoiceReaderPlugin = class extends Plugin {
     const hadAzureCredentialSource = Object.prototype.hasOwnProperty.call(source, "azureSpeechCredentialSource");
     const hadOpenRouterCredentialSource = Object.prototype.hasOwnProperty.call(source, "openRouterCredentialSource");
     this.settings = selectKnownSettings(defaults, source);
+    normalizeCopilotSettings(this.settings);
     normalizeAppearance(this.settings);
     this.settings.playbackVolume = normalizeVolume(this.settings.playbackVolume);
     this.settings.readingHighlight = normalizeReadingHighlight(this.settings.readingHighlight);
@@ -35149,6 +35637,7 @@ var CosyVoiceReaderPlugin = class extends Plugin {
     this.settings.readingHighlight = normalizeReadingHighlight(this.settings.readingHighlight);
     this.settings.readingFollow = this.settings.readingFollow === true;
     this.settings = selectKnownSettings(createDefaultSettings(), this.settings);
+    normalizeCopilotSettings(this.settings);
     this.settings.playbackSpeed = normalizeSpeed(this.settings.playbackSpeed);
     this.settings.playbackVolume = normalizeVolume(this.settings.playbackVolume);
     normalizeMimoSettings(this.settings);
@@ -37306,6 +37795,18 @@ ${embed}
     }
     await this.readMarkdownView(view, "from-selection");
   }
+  readLatestCopilotReply() {
+    return readLatestCopilotReply(this);
+  }
+  openCopilotChat(file = this.app.workspace.activeLeaf?.view?.file) {
+    if (this.settings.copilotChatEnabled === false) {
+      new Notice(this.settings.settingsLanguage === "chinese" ? "\u8BF7\u5148\u5728\u8BBE\u7F6E\u4E2D\u5F00\u542F Copilot \u804A\u5929\u6717\u8BFB\u3002" : "Enable Copilot chat reading in settings first.");
+      return;
+    }
+    if (this.copilotChatModal) return;
+    this.copilotChatModal = new CopilotChatModal(this, file);
+    this.copilotChatModal.open();
+  }
   async startReading(rawText, sourceLabel, options = {}) {
     const text = options.plainText || options.sourceKind === "html" ? this.prepareHtmlSpeechText(rawText) : this.settings.stripMarkdown ? sanitizeTextForSpeech(rawText, { mathReadingLanguage: this.settings.mathReadingLanguage }) : normalizeLineBreaks(rawText).trim();
     if (!text) {
@@ -38777,6 +39278,9 @@ var CosyVoiceReaderView = class extends ItemView {
       title: canInsertExport ? "Export audio and insert it into the current Markdown note" : "Audio can be inserted into Markdown notes, not PDF, HTML or web pages",
       triggerOnPointerDown: true
     });
+    if (this.plugin.settings.copilotChatEnabled !== false) this.createActionButton(secondaryActions, "messages-square", zhControls ? "\u804A\u5929\u6717\u8BFB" : "Read Copilot chat", () => {
+      this.runPluginAction("Read Copilot chat", () => this.plugin.openCopilotChat());
+    }, this.plugin.activeSession?.kind === "audio-export", { triggerOnPointerDown: true });
     const hasPendingAudioMerge = typeof this.plugin.hasPendingAudioMerge === "function" && this.plugin.hasPendingAudioMerge();
     if (hasPendingAudioMerge) {
       this.createActionButton(actions, "refresh-cw", "Retry merge only", () => {
@@ -39495,6 +39999,7 @@ var CosyVoiceReaderSettingTab = class extends PluginSettingTab {
       this.plugin.renderDocumentViews();
     }));
     addPdfOutlineSettings(containerEl, this.plugin);
+    addCopilotChatSettings(containerEl, this.plugin);
     new Setting(containerEl).setName(zhReading ? "HTML / \u7F51\u9875\u6BB5\u843D\u9AD8\u4EAE" : "HTML / web paragraph highlight").setDesc(zhReading ? "\u4EC5\u6807\u8BB0\u53EF\u51C6\u786E\u5339\u914D\u7684\u5F53\u524D\u6717\u8BFB\u6BB5\u843D\uFF0C\u6CBF\u7528\u9AD8\u4EAE\u989C\u8272\u548C\u5F3A\u5EA6\u3002\u4E0D\u6539\u52A8\u539F\u6587\u3001\u4E0D\u589E\u52A0 API \u8BF7\u6C42\uFF1B\u91CD\u590D\u6587\u5B57\u3001\u52A8\u6001\u9875\u9762\u6216\u4E0D\u652F\u6301\u7684\u5D4C\u5165\u5185\u5BB9\u53EF\u80FD\u65E0\u6CD5\u6807\u8BB0\u3002\u6B63\u6587\u6717\u8BFB\u6807\u8BB0\u5173\u95ED\u65F6\u4E5F\u4E0D\u9AD8\u4EAE\u3002" : "Mark uniquely matched current segments using the highlight color and strength. No text changes or extra API requests. Repeated text, dynamic pages and unsupported embedded content may remain unmarked. Requires reading text highlight to be enabled.").addToggle((toggle) => toggle.setValue(this.plugin.settings.webReadingHighlight !== false).onChange(async (value) => {
       this.plugin.settings.webReadingHighlight = value;
       await this.plugin.saveSettings();

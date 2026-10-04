@@ -76,6 +76,24 @@ function keyboardFixture() {
   } };
 }
 
+test('chat toolbar entry passes its source file and respects language, opt-out and active exports', async () => {
+  const f = fixture(), calls = [];
+  f.plugin.openCopilotChat = file => calls.push(file);
+  assert.match(f.toolbar.chatButton.getAttribute('aria-label'), /right-click: latest reply/);
+  f.toolbar.chatButton.click(); assert.deepEqual(calls, [f.view.file]);
+  f.plugin.settings.settingsLanguage = 'chinese'; f.toolbar.render();
+  assert.match(f.toolbar.chatButton.getAttribute('aria-label'), /右键朗读最近回答/);
+  assert.equal(f.toolbar.chatButton.hasAttribute('title'), false);
+  let quickReads = 0; f.plugin.readLatestCopilotReply = () => { quickReads++; };
+  const rightClick = () => f.toolbar.chatButton.dispatchEvent(new f.dom.window.MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+  assert.equal(rightClick(), false); assert.equal(quickReads, 1); assert.equal(calls.length, 1);
+  f.plugin.activeSession = { kind: 'audio-export' }; f.toolbar.render();
+  rightClick(); assert.equal(quickReads, 1);
+  assert.equal(f.toolbar.chatButton.disabled, true); f.toolbar.chatButton.click(); assert.equal(calls.length, 1);
+  f.plugin.settings.copilotChatEnabled = false; f.toolbar.render(); assert.equal(f.toolbar.chatButton.hidden, true);
+  f.manager.destroy(); f.dom.window.close();
+});
+
 test('toolbar focus enables shared pause and repeated five-second seeking; tooltips follow language and playback state', async () => {
   const f = keyboardFixture(), { toolbar, plugin, calls, key } = f;
   f.setMode('source');

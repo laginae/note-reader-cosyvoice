@@ -205,7 +205,7 @@ const testVaultPath = path.resolve('test-vault');
 const testAudioPath = path.join(testVaultPath, '.obsidian', 'plugins', 'note-reader-cosyvoice', 'cache', 'a.wav');
 assert.strictEqual(manifest.id, 'note-reader-cosyvoice');
 assert.strictEqual(manifest.name, 'Note and PDF Voice Reader');
-assert.strictEqual(manifest.version, '0.8.2');
+assert.strictEqual(manifest.version, '0.8.3');
 assert.strictEqual(
   moduleObject.exports.__test.sanitizeTextForSpeech('第一段的结尾。\n\n## 第二节标题\n\n下一节的正文。'),
   '第一段的结尾。\n第二节标题\n下一节的正文。'
@@ -286,6 +286,10 @@ assert.deepStrictEqual(moduleObject.exports.__test.createReaderState(), {
   totalChunks: 0,
 });
 assert.deepStrictEqual(moduleObject.exports.__test.createDefaultSettings(), {
+  copilotChatEnabled: true,
+  copilotChatFolder: '',
+  copilotChatScope: 'latest',
+  copilotIncludeQuestions: false,
   highlightColor: '#e5b83d',
   highlightStrength: 22,
   readerOpenMode: 'sidebar',

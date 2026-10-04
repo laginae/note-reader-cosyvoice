@@ -18,6 +18,8 @@ const { installNoteHighlights } = require('./note-highlights');
 const { NativeToolbarManager } = require('./native-toolbar');
 const { PdfReadingHighlights } = require('./pdf-highlights');
 const { HtmlReadingHighlights } = require('./html-highlights');
+const { COPILOT_DEFAULTS, normalizeCopilotSettings } = require('./copilot-chat');
+const { CopilotChatModal, addCopilotChatSettings, readLatestCopilotReply } = require('./copilot-chat-ui');
 const { createPdfSpeechChunker } = require('./pdf-chunker');
 const { APPEARANCE_DEFAULTS, normalizeAppearance, applyAppearance, clearAppearance } = require('./reader-appearance');
 const { SidebarOutline } = require('./sidebar-outline');
@@ -1668,6 +1670,7 @@ function selectKnownSettings(defaults, candidate) {
 
 function createDefaultSettings() {
   return {
+    ...COPILOT_DEFAULTS,
     ...MIMO_DEFAULTS,
     ...APPEARANCE_DEFAULTS,
     readingHighlight: 'sentence',
@@ -2537,6 +2540,11 @@ class CosyVoiceReaderPlugin extends Plugin {
     });
     this.register(() => clearAppearance(this));
     this.register(() => { this.pdfOutlineModal?.close(); this.pdfOutlineCache?.clear(); });
+    this.register(() => this.copilotChatModal?.close());
+    this.addCommand({
+      id: 'read-copilot-chat', name: 'Read saved Copilot chat',
+      callback: () => this.openCopilotChat(),
+    });
 
     this.addCommand({
       id: 'pdf-outline-bookmarks', name: 'PDF outline and bookmarks',
@@ -2799,6 +2807,7 @@ class CosyVoiceReaderPlugin extends Plugin {
     const hadAzureCredentialSource = Object.prototype.hasOwnProperty.call(source, 'azureSpeechCredentialSource');
     const hadOpenRouterCredentialSource = Object.prototype.hasOwnProperty.call(source, 'openRouterCredentialSource');
     this.settings = selectKnownSettings(defaults, source);
+    normalizeCopilotSettings(this.settings);
     normalizeAppearance(this.settings);
     this.settings.playbackVolume = normalizeVolume(this.settings.playbackVolume);
     this.settings.readingHighlight = normalizeReadingHighlight(this.settings.readingHighlight);
@@ -2853,6 +2862,7 @@ class CosyVoiceReaderPlugin extends Plugin {
     this.settings.readingHighlight = normalizeReadingHighlight(this.settings.readingHighlight);
     this.settings.readingFollow = this.settings.readingFollow === true;
     this.settings = selectKnownSettings(createDefaultSettings(), this.settings);
+    normalizeCopilotSettings(this.settings);
     this.settings.playbackSpeed = normalizeSpeed(this.settings.playbackSpeed);
     this.settings.playbackVolume = normalizeVolume(this.settings.playbackVolume);
     normalizeMimoSettings(this.settings);
@@ -5218,6 +5228,18 @@ class CosyVoiceReaderPlugin extends Plugin {
     await this.readMarkdownView(view, 'from-selection');
   }
 
+  readLatestCopilotReply() { return readLatestCopilotReply(this); }
+
+  openCopilotChat(file = this.app.workspace.activeLeaf?.view?.file) {
+    if (this.settings.copilotChatEnabled === false) {
+      new Notice(this.settings.settingsLanguage === 'chinese' ? '请先在设置中开启 Copilot 聊天朗读。' : 'Enable Copilot chat reading in settings first.');
+      return;
+    }
+    if (this.copilotChatModal) return;
+    this.copilotChatModal = new CopilotChatModal(this, file);
+    this.copilotChatModal.open();
+  }
+
   async startReading(rawText, sourceLabel, options = {}) {
     const text = options.plainText || options.sourceKind === 'html' ? this.prepareHtmlSpeechText(rawText)
       : this.settings.stripMarkdown
@@ -6854,6 +6876,9 @@ class CosyVoiceReaderView extends ItemView {
         : 'Audio can be inserted into Markdown notes, not PDF, HTML or web pages',
       triggerOnPointerDown: true,
     });
+    if (this.plugin.settings.copilotChatEnabled !== false) this.createActionButton(secondaryActions, 'messages-square', zhControls ? '聊天朗读' : 'Read Copilot chat', () => {
+      this.runPluginAction('Read Copilot chat', () => this.plugin.openCopilotChat());
+    }, this.plugin.activeSession?.kind === 'audio-export', { triggerOnPointerDown: true });
     const hasPendingAudioMerge = typeof this.plugin.hasPendingAudioMerge === 'function'
       && this.plugin.hasPendingAudioMerge();
     if (hasPendingAudioMerge) {
@@ -7824,6 +7849,7 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
           await this.plugin.saveSettings(); this.plugin.renderDocumentViews();
         }));
     addPdfOutlineSettings(containerEl, this.plugin);
+    addCopilotChatSettings(containerEl, this.plugin);
     new Setting(containerEl)
       .setName(zhReading ? 'HTML / 网页段落高亮' : 'HTML / web paragraph highlight')
       .setDesc(zhReading ? '仅标记可准确匹配的当前朗读段落，沿用高亮颜色和强度。不改动原文、不增加 API 请求；重复文字、动态页面或不支持的嵌入内容可能无法标记。正文朗读标记关闭时也不高亮。'
