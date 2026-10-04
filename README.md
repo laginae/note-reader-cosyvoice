@@ -81,7 +81,19 @@ Use pause/resume, playback speed, volume, segment navigation and seeking without
 
 ## Interface
 
+Public demonstration rendered from the current plugin's interface code, with sample text and an empty API-secret selection. Obsidian theme details can vary.
+
+**Read along:** the original document, reading toolbar and sidebar controls.
+
 ![Voice reader controls](docs/images/reader-controls.png)
+
+**Voice setup:** engine selection, online consent and the default MiMo voice.
+
+![Voice engine settings](docs/images/settings-engine.png)
+
+**Reading preferences:** highlighting, online prefetch and PDF bookmark saving.
+
+![Highlight and reading settings](docs/images/settings-reading.png)
 
 <details>
 <summary>View the complete settings page</summary>
