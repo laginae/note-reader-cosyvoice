@@ -79,4 +79,4 @@ function captureWebDocument(doc, options = {}) {
   };
 }
 
-module.exports = { captureWebDocument };
+module.exports = { captureWebDocument, ...require('./dom-highlights') };

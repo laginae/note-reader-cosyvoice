@@ -69,4 +69,25 @@ async function captureWebPage(view, options = {}) {
   return validateWebSnapshot(snapshot, url);
 }
 
-module.exports = { WEB_VIEW_TYPE, captureWebPage, getWebPageUrl, isWebPageView, validateWebSnapshot };
+async function updateWebHighlight(view, options) {
+  if (!options.text && view.readerView?.ownerDocument) {
+    require('./dom-highlights').clearDocumentHighlight(view.readerView.ownerDocument);
+  }
+  if(view.mode==='reader' && options.text) {
+    const root=view.readerView;
+    if(!root)return false;
+    const {highlightDocument}=require('./dom-highlights');
+    return highlightDocument(root.ownerDocument,{...options,url:undefined},root);
+  }
+  if(!GUEST_SOURCE||!view.webview?.executeJavaScript)return false;
+  // Keep the guest module alive so cleanup and mutation observers share state.
+  const code=`(function(){window.__noteReaderHighlightModule ||= (function(){${GUEST_SOURCE}\nreturn NoteReaderWebDocument;})(); return window.__noteReaderHighlightModule.highlightDocument(document,${JSON.stringify(options)});})()`;
+  let timer;
+  try {
+    return await Promise.race([
+      view.webview.executeJavaScript(code),
+      new Promise(resolve => { timer = setTimeout(() => resolve(false), WEB_TIMEOUT_MS); }),
+    ]);
+  } finally { clearTimeout(timer); }
+}
+module.exports = { WEB_VIEW_TYPE, captureWebPage, getWebPageUrl, isWebPageView, validateWebSnapshot, updateWebHighlight };

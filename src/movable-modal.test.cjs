@@ -1,0 +1,20 @@
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const { JSDOM } = require('jsdom');
+const { makeMovableModal } = require('./movable-modal');
+test('outline drag is clamped, keyboard-accessible, ignores controls and cleans up', () => {
+  const dom = new JSDOM('<div id="modal"><header tabindex="0"><button>Center</button></header></div>');
+  const win = dom.window, doc = win.document, modal = doc.querySelector('#modal'), header = doc.querySelector('header');
+  modal.getBoundingClientRect = () => ({ left: parseFloat(modal.style.left) || 100, top: parseFloat(modal.style.top) || 100, width: 300, height: 200 });
+  const control = makeMovableModal(modal, header);
+  const event = (type, target, x, y) => { const e = new win.MouseEvent(type, { bubbles: true, clientX: x, clientY: y, button: 0 }); Object.defineProperty(e, 'pointerId', { value: 1 }); target.dispatchEvent(e); };
+  event('pointerdown', header, 110, 110); event('pointermove', doc, -500, 9999);
+  assert.equal(modal.style.left, '8px'); assert.equal(modal.style.top, `${win.innerHeight - 208}px`);
+  event('pointerup', doc, 0, 0);
+  header.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Home' }));
+  assert.equal(modal.style.left, `${(win.innerWidth - 300) / 2}px`);
+  const left = modal.style.left; event('pointerdown', doc.querySelector('button'), 0, 0); event('pointermove', doc, 800, 600);
+  assert.equal(modal.style.left, left);
+  control.destroy(); header.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'ArrowLeft' })); assert.equal(modal.style.left, left);
+  dom.window.close();
+});

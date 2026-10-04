@@ -61,7 +61,8 @@ test('selection and from-selection start at the selected repeated occurrence', a
   const { plugin, file } = createPlugin();
   await plugin.readSelection();
   assert.equal(plugin.reading.text, 'Repeated phrase.');
-  assert.equal(plugin.reading.options.sourceKind, '');
+  assert.equal(plugin.reading.options.sourceKind, 'html');
+  assert.equal(plugin.reading.options.skipReadingPosition, true);
   await plugin.readFromSelection();
   assert.equal(plugin.reading.text, 'Repeated phrase. Later & x < 5.');
   assert.equal(plugin.reading.options.file, file);

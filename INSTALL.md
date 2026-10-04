@@ -25,6 +25,7 @@ The reader parses static body text locally without executing scripts or loading 
 Open `Settings -> Note and PDF Voice Reader` and choose `Speech engine`.
 
 - `Local CosyVoice` is the default and uses your configured PowerShell wrapper.
+- `System local speech (Windows/macOS)` uses installed Windows SAPI or macOS `say` voices without an API key, automatic downloads or cloud fallback. Select a detected voice, or keep the installed system default; refresh after downloading more voices. The settings page includes optional platform-specific download steps and official help links. Narrator natural voices and Siri-only voices may not be exposed to these interfaces. Synthesis and exported WAV use normal pace; adjust playback rate in the reader panel. See the bilingual README for privacy boundaries and macOS testing limitations.
 - `Microsoft Edge online voice` calls the configured `edge-tts` command-line tool and sends text to Microsoft Edge TTS after explicit consent. Its default voice is UK English male `en-GB-RyanNeural`.
 - `Microsoft Azure Speech` sends text by HTTPS to your selected Azure Speech cloud and region after separate explicit consent. Its default voice is UK English male `en-GB-RyanNeural`.
 - `OpenRouter TTS` sends text to OpenRouter and an eligible upstream TTS provider after separate explicit consent. Its default model is Fish Audio S2.1 Pro with a UK English male voice. Kokoro 82M is also available as a lower-cost model with 12 curated Chinese, US English, and UK English voice presets.

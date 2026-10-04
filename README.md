@@ -2,7 +2,49 @@
 
 **Language:** English | [简体中文](README.zh-CN.md)
 
-A privacy-first Obsidian desktop voice reader to **read aloud Markdown notes, text-based PDFs, local HTML files and Web viewer pages**. Use local CosyVoice by default, or explicitly opt in to Microsoft Edge online voice, Microsoft Azure Speech, OpenRouter TTS, or Xiaomi MiMo TTS.
+A privacy-first Obsidian desktop voice reader to **read aloud Markdown notes, text-based PDFs, local HTML files and Web viewer pages**. Use local CosyVoice by default, select installed Windows/macOS system voices, or explicitly opt in to Microsoft Edge online voice, Microsoft Azure Speech, OpenRouter TTS, or Xiaomi MiMo TTS.
+
+### System Local Speech Quickstart (0.6.0)
+
+1. Select **System local speech (Windows/macOS)** in plugin settings. No API key, model download or extra TTS package is required when a compatible voice is already installed.
+2. Choose **System default (already installed)** or an installed voice from the detected list. Use **Refresh** after installing voices and **Preview** to test a voice without sending note text to a provider. Windows and macOS voice preferences are stored separately.
+3. Read and export using the usual controls. System speech produces normal-pace PCM WAV; the panel adjusts playback speed and volume without resynthesis. Exported WAV remains at normal pace. Pause, segment navigation, progress seeking and confirmed scoped export remain available.
+
+**Optional Windows voice downloads:** Install ordinary system voices from **Settings -> Time & language -> Speech -> Manage voices -> Add voices**, then refresh the plugin list. Narrator-only downloads are separate: recent Windows 11 uses **Settings -> Accessibility -> Narrator** (or `Win+Ctrl+N`) -> **Narrator's voice -> Add voices -> Add**; older layouts may show **Add natural voices** or **Add legacy voices**. See [Microsoft's help](https://support.microsoft.com/en-us/accessibility/windows/narrator/appendix-a-supported-languages-and-voices). **The plugin cannot directly synthesize audio with Narrator Natural / Natural HD voices, even after download.** Microsoft does not currently provide a supported public interface for this plugin to use those Narrator voices; Windows system speech uses SAPI, not Narrator. Refreshing or downloading again cannot unlock them. Alternatively, use the independent **Reading text** view with Windows Narrator, as explained below. Do not modify the registry to force access. This limitation does not apply to macOS voices or Microsoft online speech services.
+
+On macOS, open **System Settings -> Accessibility -> Read & Speak** (older versions: **Spoken Content**) and manage/download **System voice** options; names vary by version. Download a language or offered enhanced voice, then refresh the plugin list. See [Apple's official steps](https://support.apple.com/guide/mac-help/change-the-voice-your-mac-uses-to-speak-text-mchlp2290/mac). Siri-only voices may not appear in `say`.
+
+**Privacy:** With installed offline voices, synthesis is local, similar to local CosyVoice: this mode does not send reading text to a TTS provider, install voice packs, or fall back to a cloud engine. Voice downloads require internet and are an explicit OS action. This is a simpler text-processing boundary than online TTS, not a guarantee about all OS telemetry, third-party installed voice engines, exported audio or vault synchronization. Temporary text/audio still follow the plugin's cleanup policy. No speech API quota is used. Voice quality and language coverage depend on installed voices; do not assume cloud-level neural quality. Windows native synthesis has been tested; macOS command handling has automated tests but still needs validation on a real Mac.
+
+### Reading Toolbar and Focus Reading (0.8.0)
+
+Settings let the ribbon icon open the sidebar, toolbar or both in Markdown, PDF, HTML Reader and Web viewer panes. Choose a highlight color and 5–60% strength, or reset highlighting independently. The sidebar includes a collapsible outline; export and diagnostic details are under More actions.
+
+Use **Reading toolbar** in the control panel, the pane header's audio icon, or **Toggle reading toolbar in current note, PDF, HTML or web page**. The toolbar stays above the original content, preserving images, embeds and layout. It provides pause/resume, segment navigation, five-second seeking, progress, speed, volume and three reading scopes. Close it without stopping playback. Outline controls are available for Markdown, PDF and local HTML Reader, not external Web viewer pages.
+
+The outline menu uses the note's headings: select a heading to navigate, then explicitly choose to read that section (including nested subsections) or continue to the end. The additional controls support whole-note, selected-text and from-selection reading. Export still requires confirmation. A changed note invalidates cached reading positions rather than starting at an outdated location.
+
+The optional **Focus reading** view remains useful for extracted text and system Narrator. Its selection commands use the actual selected occurrence, including repeated phrases. Reading from a selected position in a progressively loaded PDF body requires the complete body first.
+
+**PDF highlighting:** the original PDF pane can mark the currently spoken text with a faint background. It reuses rendered text layers and the existing column-ordering logic, without uploading the PDF or making extra speech requests. Marks require a unique match on the expected page (and the following page for a crossing segment); uncertain layouts, transformed formulas and unavailable text layers receive no guessed marks. Scanned pages require OCR. This is segment-level marking, not word timing, and does not automatically scroll the PDF.
+
+**HTML/web highlighting:** an independent setting marks uniquely matched current paragraphs in HTML Reader and Web viewer (including Reader mode). It uses temporary text highlights without rewriting the page or replacing selection. Repeated text, changed content, unsupported browser versions and inaccessible frames remain unmarked. Optional following is off by default; when enabled, an off-screen new segment scrolls into view. This adds no speech API requests.
+
+**PDF outline and bookmarks:** prefer existing bookmarks; otherwise detect numbered headings and typography locally. Review titles, numbering and levels, navigate, read one section or continue from it. The draggable title bar and Center button reposition the dialog; Select all / Deselect all control bookmark inclusion. Reopening an unchanged PDF reuses its outline and edits from a bounded memory-only cache (up to three PDFs, subject to a size cap). Reloading the plugin, clearing temporary data, file changes or cache eviction require reanalysis. No outline text is stored in settings.
+
+**HTML outlines:** use semantic HTML headings first, with conservative detection of short, standalone consecutive section numbers such as `1`, `1.1` and `1.1.1`. Inferred entries are labeled; isolated numbers, missing parents, ordinary lists and dates are excluded where detectable. Navigate or explicitly read a section with its subsections, or continue from it. Review inferred headings: numbering alone cannot prove that a paragraph is a heading.
+
+Saving bookmarks requires confirmation. Save a copy by default, or enable overwrite with a verified original backup. Existing bookmarks can be kept, merged or replaced. Encrypted or signed PDFs are refused. This writes PDF bookmarks, not a visible table-of-contents page, and does not change the document layout.
+
+### Focus Reading, Highlighting and Windows Narrator
+
+Click **Focus reading** in the control panel, or run **Toggle focus reading / Narrator document**. Click again, or use the view's back button, to close it and return to the original attached note without stopping playback. The view loads text locally without TTS requests or API secrets. Markdown uses Obsidian's native renderer and theme fonts, retaining headings, lists, emphasis, formulas and tables, with selectable text. Images and embeds are not automatically loaded; executable code-block processors and raw HTML are disabled in this view. Other formats display extracted text, not their original page layout. Playback reuses the existing queue, including progressively parsed PDF chunks; the view never saves a second document to settings.
+
+- **Highlight:** off, current segment, or sentence when reliable timestamps exist. Original Markdown editor/live-preview and reading panes also receive temporary source-block marks without changing text or selection. Windows ordinary system voices collect word boundaries during the same synthesis; exact source matches allow sentence marks in the editor. Native Markdown reading mode uses block marking; other engine adapters use segments. Edits or uncertain source mapping disable original-note marks rather than guessing. PDF marks follow the conservative matching rules above. No extra per-sentence API requests are made.
+- **Follow:** off by default. Only scrolls when a new highlight leaves the viewport; manual scrolling suspends following and keyboard focus stays unchanged. Text and selected ranges are not rebuilt on progress updates.
+- **Narrator:** stop plugin playback, then choose the accessibility icon in the reading view and confirm startup. Select a starting paragraph and use Narrator key (`Caps Lock` or `Insert`) + `R`; `Ctrl` stops speech and Narrator key + `Esc` exits. Windows Narrator uses the voice selected in its own settings, including installed natural voices. This is an accessibility route, not direct synthesis through the plugin: the plugin's pause, seek, audio export and sentence timeline do not control Narrator. The plugin does not change the registry, install voice packs or terminate an already-running Narrator.
+
+Windows WAV uses 16 kHz mono 16-bit PCM to avoid the observed boundary-time mismatch caused by resampling ordinary SAPI voices; macOS remains at 24 kHz. Invalid or incomplete boundary metadata falls back to segment highlighting. Windows English and Chinese public-text samples passed live boundary checks; macOS sentence synchronization is not implemented.
 
 ### Xiaomi MiMo TTS Quickstart
 
@@ -18,6 +60,8 @@ MiMo defaults to a configurable 200-character chunk cap (a conservative client s
 ## Highlights
 
 - **Privacy first:** Local CosyVoice is the default. Each online engine requires separate, explicit consent before it can receive text.
+- **Read along in the original document:** Optional current-segment highlighting in Markdown/live preview, text PDFs, local HTML and Web viewer pages. Adjustable color and strength, no document rewriting or extra speech requests. Sentence highlighting requires reliable engine timing; uncertain matches stay unmarked.
+- **Automatic outlines and section reading:** Use PDF bookmarks or locally inferred numbered/font-based headings; recognize HTML headings and coherent section numbering. Navigate, read a section or continue from it. PDFs also support confirmed bookmark saving, cached outlines and a movable outline panel. Scanned PDFs need OCR first.
 - **Confirmed, scoped audio export:** Export all content, selected text only, or from the selection to the end from a Markdown note, text-based PDF or local HTML file. A mandatory confirmation shows the exact readable character count, segment/request count, scope, and planned save path before synthesis.
 - **Layout-aware PDF reading:** Local PDF extraction uses text coordinates to read common two-column papers left column first, while preserving full-width headings and section boundaries.
 - **Progressive PDF start:** Markdown notes and text-based PDFs are parsed locally; ordinary text-based PDFs typically yield their first speech chunk within a few seconds, while later pages continue parsing.
@@ -358,6 +402,14 @@ To start at a specific position, select text in the PDF text layer and click `Re
 The PDF must contain selectable embedded text. Password-protected, damaged, scanned, or image-only files cannot be extracted; run OCR or unlock the file first. Version 0.4.0 and later use text coordinates to recognize common two-column pages and read each vertical band left column before right column, while treating full-width headings as boundaries. Unusual layouts, rotated text, sidebars, and complex tables can still require a manual selection start or a better-tagged source PDF.
 
 If `Remember reading position` is enabled, use `Resume file` in the control panel or `Resume reading current note, PDF or HTML` in the command palette. PDF resume starts on the saved page and locates the short anchor again; Markdown resume locates the same normalized anchor and falls back to the nearest saved chunk if the note changed.
+
+### PDF Outline And Bookmarks
+
+PDF panes also offer a toggleable reading toolbar from the pane's **Reading toolbar** action or the toolbar command. It follows the ribbon's sidebar/toolbar/both preference and provides playback, segment/5-second seeking, progress, speed, volume, selection scopes and the PDF outline dialog. Bookmark titles missing a section number recover it from a unique matching heading in the PDF; unverified numbers are not invented.
+
+Open a PDF, expand **Read by outline** in the reader sidebar, and choose **PDF outline and bookmarks** (also available as a command). Existing PDF bookmarks take priority. Without them, headings are inferred locally from numbering and typography; review automatic results before use. You can edit titles/levels, exclude entries, jump to a section, read only that section, or continue from it. Analysis does not call a speech API.
+
+Saving requires confirmation. Choose keep, merge, or replace for existing bookmarks. The default saves a `.bookmarks.pdf` copy beside the original. **Overwrite original PDF for bookmarks by default** is an optional setting, also adjustable per save. Overwriting first creates and verifies a `.before-bookmarks.pdf` backup; existing files get a numbered suffix. Concurrent source changes abort saving. Encrypted, restricted, or signed PDFs are rejected. Automatic headings and bookmark-derived reading boundaries can be imperfect; scans need OCR. Review the saved copy before adopting it, especially with third-party annotations.
 
 ## HTML Reading
 

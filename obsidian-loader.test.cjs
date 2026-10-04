@@ -33,7 +33,13 @@ class FakeElement {
     this.disabled = false;
     this.focusCount = 0;
     this.focusOptions = [];
+    this.ownerDocument = { createElement: tag => new FakeElement(tag), activeElement: null };
   }
+
+  appendChild(child) { child.parentElement = this; this.children.push(child); return child; }
+  remove() { if (this.parentElement) this.parentElement.children = this.parentElement.children.filter(child => child !== this); }
+  replaceChildren() { this.children = []; }
+  contains(element) { return element === this || this.children.some(child => child.contains?.(element)); }
 
   empty() {
     this.children = [];
@@ -157,7 +163,7 @@ function findElementByAriaLabel(root, label) {
   return null;
 }
 
-const allowedBuiltins = new Set(['crypto', 'fs', 'https', 'os', 'path', 'child_process', 'url']);
+const allowedBuiltins = new Set(['crypto', 'fs', 'https', 'os', 'path', 'child_process', 'url', 'process']);
 const mainPath = path.join(__dirname, 'main.js');
 const code = fs.readFileSync(mainPath, 'utf8');
 const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, 'manifest.json'), 'utf8'));
@@ -199,7 +205,7 @@ const testVaultPath = path.resolve('test-vault');
 const testAudioPath = path.join(testVaultPath, '.obsidian', 'plugins', 'note-reader-cosyvoice', 'cache', 'a.wav');
 assert.strictEqual(manifest.id, 'note-reader-cosyvoice');
 assert.strictEqual(manifest.name, 'Note and PDF Voice Reader');
-assert.strictEqual(manifest.version, '0.5.0');
+assert.strictEqual(manifest.version, '0.8.0');
 assert.strictEqual(
   moduleObject.exports.__test.sanitizeTextForSpeech('第一段的结尾。\n\n## 第二节标题\n\n下一节的正文。'),
   '第一段的结尾。\n第二节标题\n下一节的正文。'
@@ -280,6 +286,14 @@ assert.deepStrictEqual(moduleObject.exports.__test.createReaderState(), {
   totalChunks: 0,
 });
 assert.deepStrictEqual(moduleObject.exports.__test.createDefaultSettings(), {
+  highlightColor: '#e5b83d',
+  highlightStrength: 22,
+  readerOpenMode: 'sidebar',
+  readingHighlight: 'sentence',
+  webReadingHighlight: true,
+  webReadingFollow: false,
+  readingFollow: false,
+  pdfBookmarksOverwrite: false,
   playbackVolume: 1,
   playbackSpeed: 1,
   mimoConsent: false,
@@ -317,6 +331,8 @@ assert.deepStrictEqual(moduleObject.exports.__test.createDefaultSettings(), {
   settingsLanguage: 'english',
   scriptPath: '',
   speechEngine: 'local-cosyvoice',
+  systemVoiceWindows: '',
+  systemVoiceMac: '',
   speed: 1,
   stripMarkdown: true,
 });
@@ -961,6 +977,7 @@ const pdfSelectionContext = moduleObject.exports.__test.getPdfSelectionContext({
 assert.deepStrictEqual(pdfSelectionContext, {
   capturedAt: 12345,
   filePath: 'papers/paper.pdf',
+  fileMtime: 0,
   pageNumber: 3,
   selectedText: 'Selected PDF passage',
 });
@@ -984,6 +1001,7 @@ const positionedPdfSelectionContext = moduleObject.exports.__test.getPdfSelectio
 assert.deepStrictEqual(positionedPdfSelectionContext, {
   capturedAt: 12345,
   filePath: 'papers/paper.pdf',
+  fileMtime: 0,
   pageNumber: 3,
   selectedText: 'Selected PDF passage',
   selectionPosition: {
@@ -1066,7 +1084,7 @@ bilingualView.render();
 for (const name of ['朗读全文', '朗读选中文字', '从选中位置朗读', '导出音频', '导出并插入音频', '停止', '上一段', '下一段']) {
   assert.ok(findElementByAriaLabel(bilingualRoot, name), name);
 }
-assert.ok(findElementByAriaLabel(bilingualRoot, '暂停').attributes.title.includes('空格'));
+assert.ok(findElementByAriaLabel(bilingualRoot, '暂停朗读（也可按空格键）'));
 bilingualView.plugin.settings.settingsLanguage = 'english';
 bilingualView.render();
 assert.ok(findElementByAriaLabel(bilingualRoot, 'Read file'));
@@ -1169,9 +1187,9 @@ root.dispatchEvent(inputArrowEvent);
 assert.deepStrictEqual(seekBySecondsCalls, [-5, 5, 5, -5]);
 assert.strictEqual(inputArrowEvent.defaultPrevented, false);
 
-const pauseButton = findElementByAriaLabel(root, 'Pause');
+const pauseButton = findElementByAriaLabel(root, 'Pause reading (or press Space)');
 assert.ok(pauseButton);
-assert.strictEqual(pauseButton.attributes.title, 'Pause reading (or press Space)');
+assert.strictEqual(pauseButton.attributes.title, undefined);
 const pausePointerEvent = createPointerEvent();
 pauseButton.dispatchEvent(pausePointerEvent);
 assert.strictEqual(pauseOrResumeCalls, 2);
@@ -1189,9 +1207,9 @@ const pausedReaderView = new moduleObject.exports.__test.CosyVoiceReaderView({},
 pausedReaderView.contentEl = pausedRoot;
 pausedReaderView.containerEl = { children: [null, pausedRoot] };
 pausedReaderView.render();
-const resumeButton = findElementByAriaLabel(pausedRoot, 'Resume');
+const resumeButton = findElementByAriaLabel(pausedRoot, 'Resume reading (or press Space)');
 assert.ok(resumeButton);
-assert.strictEqual(resumeButton.attributes.title, 'Resume reading (or press Space)');
+assert.strictEqual(resumeButton.attributes.title, undefined);
 
 const previousChunkButton = findElementByAriaLabel(root, 'Previous chunk');
 assert.ok(previousChunkButton);
@@ -1769,7 +1787,7 @@ assert.deepStrictEqual(chunkNavigationCalls, [-1, 1]);
   assert.deepStrictEqual(
     progressivePdfSession.chunks,
     moduleObject.exports.__test.splitTextForSpeechChunks(
-      `${'A'.repeat(210)}\n\n${'B'.repeat(500)}`,
+      `${'A'.repeat(210)} ${'B'.repeat(500)}`,
       [200, 400, 800]
     )
   );

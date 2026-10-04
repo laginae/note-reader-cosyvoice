@@ -6,6 +6,24 @@ const { JSDOM } = require('jsdom');
 const { captureWebDocument } = require('./web-document');
 const { getWebPageUrl, validateWebSnapshot } = require('./web-page');
 
+test('guest highlights preserve selection, reuse one style and clear after a Reader-mode switch', async () => {
+  const guest = require('esbuild').buildSync({ entryPoints: [path.join(__dirname, 'web-document.js')], bundle: true,
+    platform: 'browser', format: 'iife', globalName: 'NoteReaderWebDocument', write: false }).outputFiles[0].text;
+  const module = { exports: {} };
+  new Function('require', 'module', '__NOTE_READER_WEB_GUEST__', fs.readFileSync(path.join(__dirname, 'web-page.js'), 'utf8'))(require, module, guest);
+  const dom = new JSDOM('<p>Public reading text.</p>', { url: 'https://example.test/', runScripts: 'outside-only' });
+  dom.window.CSS = { highlights: new Map() };
+  dom.window.Highlight = class extends Set { constructor(...ranges) { super(ranges); } };
+  const view = { mode: 'webview', webview: { executeJavaScript: async code => dom.window.eval(code) } };
+  const update = module.exports.updateWebHighlight;
+  assert.equal(await update(view, { text: 'Public reading text.', url: 'https://example.test/' }), true);
+  assert.equal(await update(view, { text: 'Public reading text.' }), true);
+  assert.equal(dom.window.document.querySelectorAll('style').length, 1);
+  view.mode = 'reader'; await update(view, {});
+  assert.equal(dom.window.CSS.highlights.size, 0); assert.equal(dom.window.document.querySelectorAll('style').length, 0);
+  dom.window.close();
+});
+
 const html = '<!doctype html><title>Public sample article</title><style>.secret{display:none}</style>'
   + '<nav>Navigation not speech</nav><main><h1>A sample article</h1>'
   + '<p>Repeated phrase. First occurrence.</p><p id="second">Repeated phrase. Second occurrence &amp; x &lt; 5.</p>'

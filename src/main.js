@@ -10,6 +10,19 @@ const { extractPdfTextLayout, extractTextFromPdfItems } = require('./pdf-layout'
 const { MAX_HTML_BYTES, captureHtmlSelection, extractHtmlText, getHtmlReaderDocument, isHtmlFile } = require('./html-text');
 const { WEB_VIEW_TYPE, captureWebPage, getWebPageUrl, isWebPageView } = require('./web-page');
 const { estimatePlayback, formatDuration } = require('./playback-estimate');
+const { getSystemVoiceKey, listSystemVoices, normalizeSystemVoice, synthesizeSystemSpeech, systemSpeechError } = require('./system-tts');
+const { AccessibleReaderView, DOCUMENT_VIEW_TYPE } = require('./accessible-reader');
+const { normalizeReadingHighlight, buildSentenceCues, sentenceAtTime, speechPartOffset } = require('./reading-highlights');
+const { buildMarkdownSource, compact } = require('./markdown-source');
+const { installNoteHighlights } = require('./note-highlights');
+const { NativeToolbarManager } = require('./native-toolbar');
+const { PdfReadingHighlights } = require('./pdf-highlights');
+const { HtmlReadingHighlights } = require('./html-highlights');
+const { createPdfSpeechChunker } = require('./pdf-chunker');
+const { APPEARANCE_DEFAULTS, normalizeAppearance, applyAppearance, clearAppearance } = require('./reader-appearance');
+const { SidebarOutline } = require('./sidebar-outline');
+const { PdfOutlineModal, addPdfOutlineSettings } = require('./pdf-outline-ui');
+const { readerRange } = require('./reader-selection');
 const { getSpeechParts, adjacentSpeechPart, getSpeechPartTiming } = require('./speech-parts');
 const { MIMO_ENDPOINT, MIMO_DEFAULTS, MIMO_VOICES, MIMO_MAX_CHUNK_CHARS, normalizeMimoSettings, buildMimoRequestBody, decodeMimoAudio } = require('./mimo-tts');
 const {
@@ -59,7 +72,7 @@ const SETTINGS_LANGUAGES = ['english', 'chinese'];
 const AUDIO_EXPORT_LOCATIONS = ['obsidian-attachment', 'note-folder', 'custom-folder'];
 const AUDIO_EXPORT_SCOPES = ['entire', 'selection', 'from-selection'];
 const CREDENTIAL_SOURCES = ['obsidian-secret', 'key-file'];
-const SPEECH_ENGINES = ['local-cosyvoice', 'edge-tts', 'azure-speech', 'openrouter-tts', 'mimo-tts'];
+const SPEECH_ENGINES = ['local-cosyvoice', 'system-tts', 'edge-tts', 'azure-speech', 'openrouter-tts', 'mimo-tts'];
 const AZURE_SPEECH_CLOUDS = ['public', 'china'];
 const REMOTE_TTS_MAX_AUDIO_BYTES = 20 * 1024 * 1024;
 const REMOTE_TTS_MAX_ATTEMPTS = 3;
@@ -219,8 +232,9 @@ const SETTINGS_UI_TEXT = {
     settingsLanguageEnglish: 'English',
     settingsLanguageChinese: '中文',
     speechEngineName: 'Speech engine',
-    speechEngineDesc: 'Choose local CosyVoice, Edge, Azure, OpenRouter, or Xiaomi MiMo TTS. Online modes send text to their service providers.',
+    speechEngineDesc: 'Choose local CosyVoice, installed system speech (Windows/macOS), or opt-in Edge, Azure, OpenRouter or MiMo online TTS.',
     speechEngineLocal: 'Local CosyVoice',
+    speechEngineSystem: 'System local speech (Windows/macOS)',
     speechEngineEdge: 'Microsoft Edge online voice',
     speechEngineAzure: 'Microsoft Azure Speech',
     speechEngineOpenRouter: 'OpenRouter TTS',
@@ -288,7 +302,7 @@ const SETTINGS_UI_TEXT = {
     speedName: 'Synthesis speed',
     speedDesc: 'Synthesis speed for new segments only; playing and already prepared audio remain unchanged. MiMo treats speed as an instruction, not an exact rate.',
     chunkLimitsName: 'Local chunk limits',
-    chunkLimitsDesc: 'Character limits for Local CosyVoice. The first segment plays in up to three audio parts: complete sentences reaching 20 characters, then 40 more, then the remainder (excluding whitespace). It remains one segment in the progress bar.',
+    chunkLimitsDesc: 'Character limits for local CosyVoice and system speech. The first segment plays in up to three audio parts: complete sentences reaching 20 characters, then 40 more, then the remainder (excluding whitespace). It remains one segment in the progress bar.',
     onlineChunkLimitsName: 'Online chunk limits',
     onlineChunkLimitsDesc: 'Used by Edge, Azure, OpenRouter, and MiMo for notes, PDFs, HTML and web pages (default 200,400,800). The first segment plays in up to three audio parts: sentences reaching 20 characters, then 40 more, then the remainder. It remains one visible segment; this can add up to two requests. Prefetch counts audio parts.',
     onlinePrefetchName: 'Online synthesis prefetch',
@@ -340,8 +354,9 @@ const SETTINGS_UI_TEXT = {
     settingsLanguageEnglish: 'English',
     settingsLanguageChinese: '中文',
     speechEngineName: '语音引擎',
-    speechEngineDesc: '选择本地 CosyVoice、Edge、Azure、OpenRouter 或小米 MiMo TTS。在线模式会把文本发送给相应服务商。',
+    speechEngineDesc: '选择本地 CosyVoice、已安装的系统语音（Windows/macOS），或主动授权 Edge、Azure、OpenRouter、MiMo 在线语音。',
     speechEngineLocal: '本地 CosyVoice',
+    speechEngineSystem: '系统本地语音（Windows/macOS）',
     speechEngineEdge: 'Microsoft Edge 在线语音',
     speechEngineAzure: 'Microsoft Azure Speech',
     speechEngineOpenRouter: 'OpenRouter TTS',
@@ -409,7 +424,7 @@ const SETTINGS_UI_TEXT = {
     speedName: '合成语速',
     speedDesc: '仅对新合成的分段生效，正在播放及已预合成的音频不变。MiMo 将速度作为指令理解，并非精确倍速。',
     chunkLimitsName: '本地分段长度',
-    chunkLimitsDesc: '本地 CosyVoice 的字符数上限，以英文逗号分隔。第一段内部按整句累加至 20 字，再从剩余内容累加至 40 字，最后合成余文（不计空白），最多三段音频；进度条仍显示为同一段。',
+    chunkLimitsDesc: '本地 CosyVoice 和系统语音的字符数上限，以英文逗号分隔。第一段内部按整句累加至 20 字，再从剩余内容累加至 40 字，最后合成余文（不计空白），最多三段音频；进度条仍显示为同一段。',
     onlineChunkLimitsName: '在线分段长度',
     onlineChunkLimitsDesc: 'Edge、Azure、OpenRouter 和 MiMo 朗读笔记、PDF、HTML 或网页时使用（默认 200,400,800）。第一段内部按整句累加至 20 字，再累加新的 40 字，最后合成余文（不计空白），界面仍显示同一段。最多增加两次请求，预合成数量按小音频计算。',
     onlinePrefetchName: '在线合成预取',
@@ -527,6 +542,8 @@ const DEFAULT_SETTINGS = {
   settingsLanguage: 'english',
   scriptPath: resolveDefaultScriptPath(),
   speechEngine: 'local-cosyvoice',
+  systemVoiceWindows: '',
+  systemVoiceMac: '',
   audioExportLocation: 'obsidian-attachment',
   audioExportFolder: '',
   edgeTtsConsent: false,
@@ -733,6 +750,7 @@ function getPdfSelectionContext(selection, leaves, fallbackFile = null, captured
     return {
       capturedAt: Number(capturedAt) || Date.now(),
       filePath: getPdfFileIdentity(file),
+      fileMtime: getFileMtime(file),
       pageNumber: pageInfo.pageNumber,
       selectedText: selectedText.slice(0, 2000),
       ...(selectionPosition ? { selectionPosition } : {}),
@@ -1310,7 +1328,7 @@ function normalizeSpeechEngine(value) {
 }
 
 function isOnlineSpeechEngine(value) {
-  return normalizeSpeechEngine(value) !== 'local-cosyvoice';
+  return !['local-cosyvoice', 'system-tts'].includes(normalizeSpeechEngine(value));
 }
 
 function normalizeOnlinePrefetchChunks(value) {
@@ -1618,6 +1636,7 @@ function buildEdgeTtsArgs(inputPath, outputPath, settings = {}) {
 
 function getSpeechEngineLabel(settings = {}) {
   const speechEngine = normalizeSpeechEngine(settings.speechEngine);
+  if (speechEngine === 'system-tts') return settings.settingsLanguage === 'chinese' ? '系统本地语音' : 'System local speech';
   if (speechEngine === 'mimo-tts') return 'Xiaomi MiMo TTS';
   if (speechEngine === 'edge-tts') {
     return 'Edge TTS';
@@ -1650,6 +1669,12 @@ function selectKnownSettings(defaults, candidate) {
 function createDefaultSettings() {
   return {
     ...MIMO_DEFAULTS,
+    ...APPEARANCE_DEFAULTS,
+    readingHighlight: 'sentence',
+    webReadingHighlight: true,
+    webReadingFollow: false,
+    readingFollow: false,
+    pdfBookmarksOverwrite: false,
     playbackVolume: 1,
     playbackSpeed: 1,
     audioExportFolder: normalizeAudioExportFolder(DEFAULT_SETTINGS.audioExportFolder),
@@ -1684,6 +1709,8 @@ function createDefaultSettings() {
     settingsLanguage: normalizeSettingsLanguage(DEFAULT_SETTINGS.settingsLanguage),
     scriptPath: resolveDefaultScriptPath(),
     speechEngine: normalizeSpeechEngine(DEFAULT_SETTINGS.speechEngine),
+    systemVoiceWindows: normalizeSystemVoice(DEFAULT_SETTINGS.systemVoiceWindows),
+    systemVoiceMac: normalizeSystemVoice(DEFAULT_SETTINGS.systemVoiceMac),
     speed: normalizeSpeed(DEFAULT_SETTINGS.speed),
     stripMarkdown: DEFAULT_SETTINGS.stripMarkdown,
   };
@@ -2049,7 +2076,7 @@ function isMarkdownFile(file) {
 }
 
 function getAudioExportExtension(speechEngine) {
-  return ['local-cosyvoice', 'mimo-tts'].includes(normalizeSpeechEngine(speechEngine)) ? 'wav' : 'mp3';
+  return ['local-cosyvoice', 'system-tts', 'mimo-tts'].includes(normalizeSpeechEngine(speechEngine)) ? 'wav' : 'mp3';
 }
 
 function normalizeAudioExportScope(value) {
@@ -2404,6 +2431,9 @@ class AudioExportConfirmModal extends Modal {
 
 class CosyVoiceReaderPlugin extends Plugin {
   async onload() {
+    this.systemSpeechUnloaded = false;
+    this.systemVoicesReady = false;
+    this.systemVoices = [];
     this.sequence = 0;
     this.activeSession = null;
     this.currentAudio = null;
@@ -2427,6 +2457,9 @@ class CosyVoiceReaderPlugin extends Plugin {
     this.pauseRequested = false;
     this.readerState = createReaderState();
     this.readerViews = new Set();
+    this.documentViews = new Set();
+    this.documentModel = null;
+    this.documentSequence = 0;
     this.vaultBasePath = null;
     this.cacheDir = null;
     this.legacyCacheDir = null;
@@ -2438,6 +2471,21 @@ class CosyVoiceReaderPlugin extends Plugin {
     await this.ensureCacheDir();
 
     this.registerView(VIEW_TYPE, (leaf) => new CosyVoiceReaderView(leaf, this));
+    this.registerView(DOCUMENT_VIEW_TYPE, leaf => new AccessibleReaderView(leaf, this));
+    this.nativeToolbars = new NativeToolbarManager(this);
+    this.pdfHighlights = new PdfReadingHighlights(this);
+    this.htmlHighlights = new HtmlReadingHighlights(this);
+    this.register(() => this.htmlHighlights?.destroy());
+    this.register(() => { this.nativeToolbars?.destroy(); this.pdfHighlights?.destroy(); });
+    this.registerEvent(this.app.workspace.on('layout-change', () => this.nativeToolbars.sync()));
+    this.registerEvent(this.app.workspace.on('file-open', () => this.nativeToolbars.sync()));
+    this.registerEvent(this.app.workspace.on('editor-change', editor => this.nativeToolbars.invalidate(editor)));
+    if (this.app.metadataCache?.on) this.registerEvent(this.app.metadataCache.on('changed', file => this.nativeToolbars.changed(file)));
+    this.app.workspace.onLayoutReady?.(() => { if (!this.systemSpeechUnloaded) this.nativeToolbars.sync(); });
+    if (typeof this.registerEditorExtension === 'function' && typeof this.registerMarkdownPostProcessor === 'function') {
+      this.noteHighlights = installNoteHighlights(this);
+      this.register(() => this.noteHighlights?.dispose());
+    }
     this.lastMarkdownView = this.app.workspace.getActiveViewOfType(MarkdownView);
     const initiallyActiveFile = typeof this.app.workspace.getActiveFile === 'function'
       ? this.app.workspace.getActiveFile()
@@ -2448,6 +2496,10 @@ class CosyVoiceReaderPlugin extends Plugin {
     this.getCurrentWebPageView();
     this.registerEvent(
       this.app.workspace.on('active-leaf-change', () => {
+        const activeView = this.app.workspace.activeLeaf?.view;
+        if (activeView?.getViewType?.() === DOCUMENT_VIEW_TYPE) {
+          this.lastDocumentView = activeView; this.lastReadableSource = 'document';
+        }
         const view = this.app.workspace.getActiveViewOfType(MarkdownView);
         if (view && view.editor) {
           this.lastMarkdownView = view;
@@ -2455,7 +2507,7 @@ class CosyVoiceReaderPlugin extends Plugin {
         const file = typeof this.app.workspace.getActiveFile === 'function'
           ? this.app.workspace.getActiveFile()
           : null;
-        if (isMarkdownFile(file) || isPdfFile(file) || isHtmlFile(file)) {
+        if (activeView?.getViewType?.() !== DOCUMENT_VIEW_TYPE && (isMarkdownFile(file) || isPdfFile(file) || isHtmlFile(file))) {
           this.lastReadableFile = file;
           this.lastReadableSource = 'file';
         }
@@ -2481,7 +2533,19 @@ class CosyVoiceReaderPlugin extends Plugin {
     }
 
     this.addRibbonIcon('volume-2', 'Open voice reader controls', () => {
-      void this.activateControlView();
+      void this.runUserAction('Open voice reader', () => this.openPreferredReader());
+    });
+    this.register(() => clearAppearance(this));
+    this.register(() => { this.pdfOutlineModal?.close(); this.pdfOutlineCache?.clear(); });
+
+    this.addCommand({
+      id: 'pdf-outline-bookmarks', name: 'PDF outline and bookmarks',
+      checkCallback: checking => {
+        const file = this.getCurrentReadableFile();
+        if (!isPdfFile(file)) return false;
+        if (!checking) this.openPdfOutline(file);
+        return true;
+      },
     });
 
     this.addCommand({
@@ -2498,6 +2562,16 @@ class CosyVoiceReaderPlugin extends Plugin {
       callback: () => {
         void this.runUserAction('Read file', () => this.readCurrentNote());
       },
+    });
+
+    this.addCommand({
+      id: 'open-reading-text',
+      name: 'Toggle focus reading / Narrator document',
+      callback: () => void this.runUserAction('Reading view', () => this.toggleDocumentView()),
+    });
+    this.addCommand({
+      id: 'toggle-reading-toolbar', name: 'Toggle reading toolbar in current note, PDF, HTML or web page',
+      callback: () => void this.runUserAction('Reading toolbar', () => this.toggleReadingToolbar()),
     });
 
     this.addCommand({
@@ -2687,6 +2761,17 @@ class CosyVoiceReaderPlugin extends Plugin {
   }
 
   async onunload() {
+    this.systemSpeechUnloaded = true;
+    this.htmlHighlights?.destroy();
+    this.nativeToolbars?.destroy(); this.pdfHighlights?.destroy();
+    this.noteHighlights?.dispose();
+    this.documentSequence = (this.documentSequence || 0) + 1;
+    await Promise.resolve(this.documentExtraction?.pdfLoadingTask?.destroy?.()).catch(() => {});
+    this.documentExtraction = null;
+    this.documentModel = null;
+    for (const leaf of this.app.workspace.getLeavesOfType?.(DOCUMENT_VIEW_TYPE) || []) leaf.detach?.();
+    this.documentViews?.clear();
+    this.systemVoiceController?.abort();
     this.webActionSequence = (this.webActionSequence || 0) + 1;
     this.clearWebPageObservers();
     this.lastWebPageView = null;
@@ -2714,13 +2799,18 @@ class CosyVoiceReaderPlugin extends Plugin {
     const hadAzureCredentialSource = Object.prototype.hasOwnProperty.call(source, 'azureSpeechCredentialSource');
     const hadOpenRouterCredentialSource = Object.prototype.hasOwnProperty.call(source, 'openRouterCredentialSource');
     this.settings = selectKnownSettings(defaults, source);
+    normalizeAppearance(this.settings);
     this.settings.playbackVolume = normalizeVolume(this.settings.playbackVolume);
+    this.settings.readingHighlight = normalizeReadingHighlight(this.settings.readingHighlight);
+    this.settings.readingFollow = this.settings.readingFollow === true;
     this.settings.playbackSpeed = normalizeSpeed(this.settings.playbackSpeed);
     normalizeMimoSettings(this.settings);
     this.settings.audioExportFolder = normalizeAudioExportFolder(this.settings.audioExportFolder);
     this.settings.audioExportLocation = normalizeAudioExportLocation(this.settings.audioExportLocation);
     this.settings.speed = normalizeSpeed(this.settings.speed);
     this.settings.speechEngine = normalizeSpeechEngine(this.settings.speechEngine);
+    this.settings.systemVoiceWindows = normalizeSystemVoice(this.settings.systemVoiceWindows);
+    this.settings.systemVoiceMac = normalizeSystemVoice(this.settings.systemVoiceMac);
     this.settings.azureSpeechCloud = normalizeAzureSpeechCloud(this.settings.azureSpeechCloud);
     this.settings.azureSpeechConsent = this.settings.azureSpeechConsent === true;
     this.settings.azureSpeechCredentialSource = !hadAzureCredentialSource && String(source.azureSpeechKeyPath || '').trim()
@@ -2759,6 +2849,9 @@ class CosyVoiceReaderPlugin extends Plugin {
   }
 
   async saveSettings() {
+    applyAppearance(this);
+    this.settings.readingHighlight = normalizeReadingHighlight(this.settings.readingHighlight);
+    this.settings.readingFollow = this.settings.readingFollow === true;
     this.settings = selectKnownSettings(createDefaultSettings(), this.settings);
     this.settings.playbackSpeed = normalizeSpeed(this.settings.playbackSpeed);
     this.settings.playbackVolume = normalizeVolume(this.settings.playbackVolume);
@@ -2767,6 +2860,8 @@ class CosyVoiceReaderPlugin extends Plugin {
     this.settings.audioExportLocation = normalizeAudioExportLocation(this.settings.audioExportLocation);
     this.settings.speed = normalizeSpeed(this.settings.speed);
     this.settings.speechEngine = normalizeSpeechEngine(this.settings.speechEngine);
+    this.settings.systemVoiceWindows = normalizeSystemVoice(this.settings.systemVoiceWindows);
+    this.settings.systemVoiceMac = normalizeSystemVoice(this.settings.systemVoiceMac);
     this.settings.azureSpeechCloud = normalizeAzureSpeechCloud(this.settings.azureSpeechCloud);
     this.settings.azureSpeechConsent = this.settings.azureSpeechConsent === true;
     this.settings.azureSpeechCredentialSource = normalizeCredentialSource(this.settings.azureSpeechCredentialSource);
@@ -2919,6 +3014,8 @@ class CosyVoiceReaderPlugin extends Plugin {
 
   async clearTemporaryData() {
     await this.stopReading({ silent: true });
+    this.pdfOutlineModal?.close();
+    this.pdfOutlineCache?.clear();
     this.pendingAudioMerge = null;
     await this.cleanupStaleTemporaryData();
     new Notice(getSettingsUiText(this.settings.settingsLanguage).temporaryDataClearedNotice);
@@ -2953,9 +3050,240 @@ class CosyVoiceReaderPlugin extends Plugin {
   }
 
   renderReaderViews() {
+    this.nativeToolbars?.render();
     for (const view of this.readerViews) {
       view.render();
     }
+    this.renderDocumentViews();
+  }
+
+  registerDocumentView(view) {
+    this.documentViews ||= new Set();
+    this.documentViews.add(view);
+    this.renderDocumentViews();
+  }
+
+  unregisterDocumentView(view) {
+    this.documentViews?.delete(view);
+    if (this.lastDocumentView === view) { this.lastDocumentView = null; this.lastReadableSource = 'file'; }
+    if (!this.documentViews?.size) {
+      this.documentSequence = (this.documentSequence || 0) + 1;
+      void Promise.resolve(this.documentExtraction?.pdfLoadingTask?.destroy?.()).catch(() => {});
+      this.documentModel = null;
+    }
+  }
+
+  renderDocumentViews() {
+    applyAppearance(this);
+    this.noteHighlights?.update();
+    this.pdfHighlights?.update();
+    this.htmlHighlights?.update();
+    if (!this.documentViews?.size) return;
+    const session = this.activeSession;
+    if (session && session.kind !== 'audio-export' && Array.isArray(session.chunks)) {
+      if (this.documentModel?.speechSessionId !== session.id) this.documentModel = {
+        label: session.sourceLabel, chunks: session.chunks, speechSessionId: session.id,
+        markdownSource: session.markdownSource,
+      };
+      this.documentModel.partial = !session.productionComplete;
+    }
+    for (const view of this.documentViews) view.render();
+  }
+
+  async openPreferredReader() {
+    const mode = this.settings.readerOpenMode;
+    const view = this.getReadingToolbarView();
+    if (mode !== 'sidebar' && view) {
+      if (!this.nativeToolbars.toolbars.has(view)) this.nativeToolbars.toggle(view);
+      if (mode === 'toolbar') { await this.app.workspace.revealLeaf(view.leaf); return; }
+    }
+    await this.activateControlView();
+  }
+
+  getCurrentReadingHighlight() {
+    const session = this.activeSession, audio = this.currentAudio;
+    if (!session || session.kind === 'audio-export' || session.seekTarget
+      || Number.isInteger(session.requestedChunkIndex) || !['playing', 'paused'].includes(this.readerState.phase)) return null;
+    const index = session.currentChunkIndex;
+    if (!Number.isInteger(index)) return null;
+    const sentence = audio?.noteReaderSessionId === session.id && audio.noteReaderChunkIndex === index
+      ? sentenceAtTime(audio.noteReaderSentenceCues, audio.currentTime) : null;
+    return { index, sentence };
+  }
+
+  async activateDocumentView(options = {}) {
+    if (this.activeSession?.kind === 'audio-export') {
+      new Notice(this.settings.settingsLanguage === 'chinese' ? '请等待音频导出完成后载入正文。' : 'Wait for audio export to finish before loading reading text.');
+      return null;
+    }
+    const context = this.activeSession && this.activeSession.kind !== 'audio-export' ? null
+      : this.getCurrentAudioExportContext({ notify: false, captureSelection: false });
+    let leaf = this.app.workspace.getLeavesOfType(DOCUMENT_VIEW_TYPE)[0];
+    if (!leaf) {
+      const previous = this.app.workspace.getMostRecentLeaf?.() || this.app.workspace.activeLeaf;
+      this.documentReturnLeaf = previous?.view?.getViewType?.() === VIEW_TYPE ? this.lastMarkdownView?.leaf : previous;
+      leaf = this.app.workspace.getLeaf('tab');
+      await leaf.setViewState({ type: DOCUMENT_VIEW_TYPE, active: true });
+    }
+    this.documentTogglePending = false;
+    this.app.workspace.revealLeaf(leaf);
+    if (this.activeSession && this.activeSession.kind !== 'audio-export') {
+      this.renderDocumentViews(); return leaf;
+    }
+    if (!options.reload && this.documentModel?.chunks.length && !this.documentModel.partial) { this.renderDocumentViews(); return leaf; }
+    const sequence = this.documentSequence = (this.documentSequence || 0) + 1;
+    await Promise.resolve(this.documentExtraction?.pdfLoadingTask?.destroy?.()).catch(() => {});
+    if (sequence !== this.documentSequence || !this.app.workspace.getLeavesOfType(DOCUMENT_VIEW_TYPE).includes(leaf)) return null;
+    const current = () => this.documentSequence === sequence && !this.systemSpeechUnloaded && !this.activeSession;
+    const model = { label: context?.fileName || '', chunks: [], loading: true };
+    this.documentModel = model; this.renderDocumentViews();
+    const extraction = { pdfLoadingTask: null, speechStarted: true };
+    this.documentExtraction = extraction;
+    try {
+      if (!context) throw new Error(this.settings.settingsLanguage === 'chinese'
+        ? '请先打开笔记、文本型 PDF、HTML 或网页。' : 'Open a note, text-based PDF, HTML file or web page first.');
+      let text;
+      if (context.documentKind === 'pdf') {
+        text = this.sanitizeAudioExportText(await this.extractPdfText(context.file, extraction, {
+          reportProgress: false, isCurrent: current,
+        }));
+      } else if (context.documentKind === 'html') {
+        text = this.prepareHtmlSpeechText(await this.getHtmlFileText(context.file));
+      } else if (context.documentKind === 'web') {
+        const web = await this.getWebPageContext(context.webView, { article: true });
+        text = this.prepareHtmlSpeechText(web.documentText); model.label = web.fileName;
+      } else {
+        text = this.sanitizeAudioExportText(context.documentText);
+        model.markdownSource = buildMarkdownSource(context.documentText, [], value => this.sanitizeAudioExportText(value), {
+          filePath: context.file?.path,
+        });
+      }
+      if (!current()) return leaf;
+      if (!text?.trim()) throw new Error(this.settings.settingsLanguage === 'chinese' ? '没有可读取的正文。' : 'No readable text found.');
+      model.chunks = splitTextForSpeechChunks(text, getChunkLimitsForSpeechEngine(this.settings, this.settings.speechEngine));
+      if (model.markdownSource) model.markdownSource = buildMarkdownSource(context.documentText, model.chunks,
+        value => this.sanitizeAudioExportText(value), { filePath: context.file?.path });
+    } catch (error) {
+      if (current()) model.error = messageFromError(error);
+    } finally {
+      if (this.documentExtraction === extraction) this.documentExtraction = null;
+      if (current()) { model.loading = false; this.renderDocumentViews(); }
+    }
+    return leaf;
+  }
+
+  async toggleDocumentView() {
+    if (this.documentTogglePending) return;
+    this.documentTogglePending = true;
+    try {
+      const leaves = this.app.workspace.getLeavesOfType(DOCUMENT_VIEW_TYPE);
+      if (!leaves.length) return await this.activateDocumentView();
+      const returnLeaf = this.documentReturnLeaf;
+      this.documentSequence = (this.documentSequence || 0) + 1;
+      for (const leaf of leaves) leaf.detach();
+      this.documentReturnLeaf = null;
+      let attached = false;
+      this.app.workspace.iterateAllLeaves?.(leaf => { if (leaf === returnLeaf) attached = true; });
+      if (attached) await this.app.workspace.revealLeaf(returnLeaf);
+      this.renderReaderViews();
+      return null;
+    } finally { this.documentTogglePending = false; }
+  }
+
+  getReadingToolbarView() {
+    const web = this.getCurrentWebPageView();
+    if (web) return web;
+    const file = this.getCurrentReadableFile();
+    if (isHtmlFile(file)) {
+      const views = this.getHtmlReaderLeaves().map(leaf => leaf.view).filter(view => view.file?.path === file.path);
+      return views.find(view => view === this.app.workspace.activeLeaf?.view) || views[0] || null;
+    }
+    if (isPdfFile(file)) {
+      const views = this.app.workspace.getLeavesOfType('pdf').map(leaf => leaf.view).filter(view => view?.file?.path === file.path);
+      return views.find(view => view === this.app.workspace.activeLeaf?.view) || views[0] || null;
+    }
+    const view = this.getActiveMarkdownView({ notify: false });
+    return view?.file?.path === file?.path && file?.extension === 'md' ? view : null;
+  }
+
+  toggleReadingToolbar() {
+    const view = this.getReadingToolbarView();
+    if (view) this.nativeToolbars?.toggle(view);
+    else new Notice(this.settings.settingsLanguage === 'chinese' ? '请先打开笔记、PDF、HTML 或网页。' : 'Open a note, PDF, HTML file or web page first.');
+  }
+
+  getCurrentDocumentView() {
+    const active = this.app.workspace.activeLeaf?.view;
+    if (active?.getViewType?.() === DOCUMENT_VIEW_TYPE) return active;
+    return this.lastReadableSource === 'document' && this.documentViews?.has(this.lastDocumentView) ? this.lastDocumentView : null;
+  }
+
+  async readDocumentSelection(view, scope) {
+    if (this.activeSession?.kind === 'audio-export') {
+      new Notice(this.settings.settingsLanguage === 'chinese' ? '请等待音频导出完成。' : 'Wait for audio export to finish.'); return;
+    }
+    const context = view?.getSelectionContext();
+    if (!context || !context.selectedText.trim()) {
+      new Notice(this.settings.settingsLanguage === 'chinese' ? '请先在专注朗读正文中选中文字。' : 'Select text in Focus reading first.'); return;
+    }
+    if (scope === 'from-selection' && view.model?.partial) {
+      new Notice(this.settings.settingsLanguage === 'chinese' ? '后续页面仍在解析，请等待正文完整后再从选中位置朗读。' : 'Wait for the remaining pages before reading from selection.'); return;
+    }
+    const text = scope === 'selection' ? context.selectedText : context.text.slice(context.startOffset);
+    const focusDisplay = view.model?.markdownSource ? { source: view.model.markdownSource, text: context.text, offset: context.startOffset } : null;
+    await this.startReading(text, view.model?.label || 'Focus reading', { plainText: true, focusDisplay });
+  }
+
+  captureMarkdownReadingSelection(view) {
+    if (!view?.editor || !view.file) return null;
+    const sourceText = view.editor.getValue();
+    if (view.getMode?.() === 'preview') {
+      const range = readerRange(view.contentEl);
+      if (!range) return null;
+      const offsets = this.noteHighlights?.selectionOffsets(view, range);
+      return { sourceText, filePath: view.file.path, selectedText: range.toString(), start: offsets?.start ?? null, end: offsets?.end ?? null };
+    }
+    const selectedText = view.editor.getSelection();
+    if (!selectedText?.trim()) return null;
+    return { sourceText, filePath: view.file.path, selectedText,
+      start: view.editor.posToOffset(view.editor.getCursor('from')), end: view.editor.posToOffset(view.editor.getCursor('to')) };
+  }
+
+  async readMarkdownView(view, scope = 'entire', cachedSelection = null) {
+    if (!view?.editor || !isMarkdownFile(view.file)) return;
+    const sourceText = view.editor.getValue(), file = view.file;
+    let from = 0, to = sourceText.length;
+    if (scope !== 'entire') {
+      const selection = this.captureMarkdownReadingSelection(view) || cachedSelection;
+      if (!selection || selection.filePath !== file.path || selection.sourceText !== sourceText) {
+        new Notice(this.settings.settingsLanguage === 'chinese' ? '请在当前笔记中重新选择文字。' : 'Select text in the current note first.'); return;
+      }
+      if (scope === 'selection' && (!Number.isInteger(selection.start) || !Number.isInteger(selection.end))) {
+        await this.startReading(selection.selectedText, file.basename || file.name, { plainText: true }); return;
+      }
+      if (!Number.isInteger(selection.start)) {
+        new Notice(this.settings.settingsLanguage === 'chinese' ? '无法精确定位该选区，请切换到实时预览后重新选择起点。' : 'Unable to locate this selection precisely. Select the starting point in Live Preview.'); return;
+      }
+      from = selection.start; if (scope === 'selection') to = selection.end;
+    }
+    await this.startReading(sourceText.slice(from, to), file.basename || file.name, { file, sourceKind: 'markdown', sourceText, sourceOffset: from });
+  }
+
+  async readDocumentFrom(index) {
+    const model = this.documentModel;
+    if (!model || model.loading || !Number.isInteger(index) || !model.chunks[index]) return;
+    if (this.activeSession?.id === model.speechSessionId) {
+      const current = this.activeSession.currentChunkIndex || 0;
+      if (index === current) this.seekCurrentSegmentToTime(0);
+      else this.jumpToAdjacentChunk(index - current);
+      return;
+    }
+    await this.startReading(model.chunks.slice(index).join('\n\n'), model.label, {
+      plainText: true, readingChunks: model.chunks.slice(index),
+      file: model.markdownSource?.filePath ? this.app.vault?.getAbstractFileByPath(model.markdownSource.filePath) : null,
+      sourceKind: model.markdownSource ? 'markdown' : '',
+      markdownSource: model.markdownSource ? { ...model.markdownSource, ranges: model.markdownSource.ranges.slice(index) } : null,
+    });
   }
 
   setReaderState(patch) {
@@ -3020,7 +3348,7 @@ class CosyVoiceReaderPlugin extends Plugin {
   getPdfSelectionForFile(file) {
     const liveSelection = this.capturePdfSelection();
     const context = liveSelection || this.lastPdfSelection;
-    return context && context.filePath === getPdfFileIdentity(file) ? context : null;
+    return context && context.filePath === getPdfFileIdentity(file) && context.fileMtime === getFileMtime(file) ? context : null;
   }
 
   getHtmlReaderLeaves() {
@@ -3152,7 +3480,7 @@ class CosyVoiceReaderPlugin extends Plugin {
     await this.activateControlView();
     if (action !== this.webActionSequence || !this.isWebPageContextCurrent(context)) return;
     await this.startReading(text, `${context.fileName} (Web: ${getAudioExportScopeLabel(this.settings.settingsLanguage, scope)})`, {
-      plainText: true, sourceKind: 'web',
+      plainText: true, sourceKind: 'web', webContext: context,
     });
   }
 
@@ -3243,7 +3571,7 @@ class CosyVoiceReaderPlugin extends Plugin {
     }
     await this.activateControlView();
     await this.startReading(text, `${file.basename || file.name || 'HTML'} (HTML: ${getAudioExportScopeLabel(this.settings.settingsLanguage, scope)})`, {
-      file, plainText: true, sourceKind: scope === 'selection' ? '' : 'html',
+      file, plainText: true, sourceKind: 'html', skipReadingPosition: scope === 'selection',
     });
   }
 
@@ -3290,7 +3618,7 @@ class CosyVoiceReaderPlugin extends Plugin {
   }
 
   getCurrentMarkdownContext(options = {}) {
-    const notify = options.notify !== false;
+    const notify = options.notify === true;
     const file = this.getCurrentReadableFile();
     const view = this.findMarkdownViewForFile(file);
     if (!file || !view) {
@@ -3302,8 +3630,8 @@ class CosyVoiceReaderPlugin extends Plugin {
     return { file, view };
   }
 
-  getActiveMarkdownView() {
-    const context = this.getCurrentMarkdownContext({ notify: true });
+  getActiveMarkdownView(options = {}) {
+    const context = this.getCurrentMarkdownContext({ notify: options.notify === true });
     return context ? context.view : null;
   }
 
@@ -4246,6 +4574,7 @@ class CosyVoiceReaderPlugin extends Plugin {
       || !this.settings
       || !this.settings.rememberReadingPosition
       || !session.filePath
+      || session.skipReadingPosition
       || session.kind === 'audio-export'
       || !['markdown', 'pdf', 'html'].includes(session.sourceKind)
       || !session.chunks.length
@@ -4315,6 +4644,11 @@ class CosyVoiceReaderPlugin extends Plugin {
     const speechEngine = normalizeSpeechEngine(this.settings.speechEngine);
     const engineLabel = getSpeechEngineLabel(this.settings);
     const scriptPath = String(this.settings.scriptPath || '').trim();
+    if (speechEngine === 'system-tts' && !['win32', 'darwin'].includes(os.platform())) {
+      new Notice(this.settings.settingsLanguage === 'chinese'
+        ? '系统本地语音目前仅支持 Windows 和 macOS。' : systemSpeechError('unavailable').message, 8000);
+      return null;
+    }
     if (speechEngine === 'mimo-tts') {
       if (this.settings.mimoConsent !== true) {
         new Notice('MiMo TTS: enable online processing consent in settings before reading. Text is sent to Xiaomi; ZDR is not confirmed.', 10000);
@@ -4366,6 +4700,7 @@ class CosyVoiceReaderPlugin extends Plugin {
       engineLabel,
       prefetchChunks: getSynthesisPrefetchCount(this.settings, speechEngine),
       speechEngine,
+      systemVoice: normalizeSystemVoice(this.settings[getSystemVoiceKey()]),
     };
   }
 
@@ -4394,7 +4729,10 @@ class CosyVoiceReaderPlugin extends Plugin {
       requestedChunkIndex: null,
       sourceLabel,
       sourceKind: options.sourceKind || '',
+      markdownSource: options.markdownSource || null,
       speechEngine: configuration.speechEngine,
+      systemVoice: configuration.systemVoice || '',
+      systemSpeechControllers: new Set(),
       speechStarted: false,
       stopped: false,
       taskState: createTaskState(id, options.kind === 'pdf-progressive' ? 'extracting' : 'queued'),
@@ -4517,6 +4855,15 @@ class CosyVoiceReaderPlugin extends Plugin {
     return index < session.chunks.length ? session.chunks[index] : null;
   }
 
+  openPdfOutline(file) {
+    if (isPdfFile(file)) {
+      if (this.pdfOutlineModal?.file === file && !this.pdfOutlineModal.closed) return;
+      this.pdfOutlineModal?.close();
+      this.pdfOutlineModal = new PdfOutlineModal(this, file);
+      this.pdfOutlineModal.open();
+    }
+  }
+
   async readCurrentPdf(pdfFile = null, options = {}) {
     const file = pdfFile || (
       typeof this.app.workspace.getActiveFile === 'function'
@@ -4527,6 +4874,8 @@ class CosyVoiceReaderPlugin extends Plugin {
       new Notice('CosyVoice: no active PDF file.');
       return;
     }
+    const outlineRange = options.outlineRange || null;
+    if (outlineRange && file.stat.mtime !== outlineRange.fileMtime) throw new Error('PDF changed. Reopen the outline.');
 
     const selectionContext = options && options.selectionContext
       && getPdfFileIdentity(file) === options.selectionContext.filePath
@@ -4563,6 +4912,7 @@ class CosyVoiceReaderPlugin extends Plugin {
       productionComplete: false,
       sourceKind: 'pdf',
     });
+    session.pdfOutlineRange = outlineRange;
     this.activeSession = session;
     this.updateStatus('PDF text extraction', {
       canPause: false,
@@ -4605,7 +4955,7 @@ class CosyVoiceReaderPlugin extends Plugin {
   }
 
   async producePdfSpeechChunks(file, session, selectionContext, chunkLimits) {
-    const chunker = createIncrementalSpeechChunker(chunkLimits, { detailed: true });
+    const chunker = createPdfSpeechChunker(chunkLimits);
     let readableTextLength = 0;
     let selectionFallbackNotified = false;
 
@@ -4635,9 +4985,10 @@ class CosyVoiceReaderPlugin extends Plugin {
         }
       },
       reportProgress: true,
+      outlineRange: session.pdfOutlineRange,
       selectedText: selectionContext ? selectionContext.selectedText : '',
       selectionPosition: selectionContext ? selectionContext.selectionPosition : null,
-      startPageNumber: selectionContext ? selectionContext.pageNumber : 1,
+      startPageNumber: session.pdfOutlineRange?.startPage || (selectionContext ? selectionContext.pageNumber : 1),
     });
 
     if (!this.isActive(session)) {
@@ -4650,6 +5001,7 @@ class CosyVoiceReaderPlugin extends Plugin {
   }
 
   async extractPdfText(file, session, options = {}) {
+    const isCurrent = typeof options.isCurrent === 'function' ? options.isCurrent : () => this.isActive(session);
     if (!isPdfFile(file)) {
       throw new Error('The active file is not a PDF.');
     }
@@ -4667,7 +5019,7 @@ class CosyVoiceReaderPlugin extends Plugin {
       loadPdfJs(),
       this.app.vault.readBinary(file),
     ]);
-    if (!this.isActive(session)) {
+    if (!isCurrent()) {
       return '';
     }
     if (!pdfjsLib || typeof pdfjsLib.getDocument !== 'function') {
@@ -4683,7 +5035,7 @@ class CosyVoiceReaderPlugin extends Plugin {
 
     try {
       pdfDocument = await loadingTask.promise;
-      if (!this.isActive(session)) {
+      if (!isCurrent()) {
         return '';
       }
 
@@ -4708,8 +5060,9 @@ class CosyVoiceReaderPlugin extends Plugin {
       const pageTexts = [];
       let textLength = 0;
 
-      for (let pageNumber = startPageNumber; pageNumber <= totalPages; pageNumber += 1) {
-        if (!this.isActive(session)) {
+      const endPageNumber = Math.min(totalPages, options.outlineRange?.endPage || totalPages);
+      for (let pageNumber = startPageNumber; pageNumber <= endPageNumber; pageNumber += 1) {
+        if (!isCurrent()) {
           return '';
         }
 
@@ -4732,18 +5085,33 @@ class CosyVoiceReaderPlugin extends Plugin {
         let page = null;
         try {
           page = await pdfDocument.getPage(pageNumber);
-          if (!this.isActive(session)) {
+          if (!isCurrent()) {
             return '';
           }
           const textContent = await page.getTextContent();
-          if (!this.isActive(session)) {
+          if (!isCurrent()) {
             return '';
           }
           const viewport = typeof page.getViewport === 'function'
             ? page.getViewport({ scale: 1 })
             : null;
+          if (session.kind === 'pdf-progressive') {
+            session.pdfHighlightPages ||= new Map();
+            session.pdfHighlightPages.set(pageNumber, {
+              viewport: viewport ? { width: viewport.width, height: viewport.height } : null,
+              items: textContent.items.filter(item => item.str?.trim()).map(item => ({
+                str: item.str, width: item.width, height: item.height, transform: Array.from(item.transform || []),
+              })),
+            });
+          }
           const pageLayout = extractPdfTextLayout(textContent && textContent.items, { viewport });
           let pageText = pageLayout.text;
+          if (options.outlineRange) {
+            const range = options.outlineRange;
+            if (file.stat.mtime !== range.fileMtime) throw new Error('PDF changed. Reopen the outline.');
+            pageText = pageText.slice(pageNumber === range.startPage ? range.startOffset : 0,
+              pageNumber === range.endPage ? range.endOffset : undefined);
+          }
           if (selectedText && pageNumber === startPageNumber) {
             const selectionSlice = slicePdfTextFromSelection(pageText, selectedText, {
               layout: pageLayout,
@@ -4795,6 +5163,8 @@ class CosyVoiceReaderPlugin extends Plugin {
   }
 
   async readSelection() {
+    const documentView = this.getCurrentDocumentView();
+    if (documentView) { await this.readDocumentSelection(documentView, 'selection'); return; }
     const webView = this.getCurrentWebPageView();
     if (webView) { await this.readCurrentWebPage(webView, 'selection'); return; }
     const activeFile = this.getCurrentReadableFile();
@@ -4822,17 +5192,12 @@ class CosyVoiceReaderPlugin extends Plugin {
       return;
     }
 
-    const selection = view.editor.getSelection();
-    if (!selection || !selection.trim()) {
-      new Notice('CosyVoice: select text first.');
-      return;
-    }
-
-    await this.activateControlView();
-    await this.startReading(selection, 'selection');
+    await this.readMarkdownView(view, 'selection');
   }
 
   async readFromSelection() {
+    const documentView = this.getCurrentDocumentView();
+    if (documentView) { await this.readDocumentSelection(documentView, 'from-selection'); return; }
     const webView = this.getCurrentWebPageView();
     if (webView) { await this.readCurrentWebPage(webView, 'from-selection'); return; }
     const activeFile = this.getCurrentReadableFile();
@@ -4850,23 +5215,7 @@ class CosyVoiceReaderPlugin extends Plugin {
       return;
     }
 
-    const selection = view.editor.getSelection();
-    if (!selection || !selection.trim()) {
-      new Notice('CosyVoice: select a start point first.');
-      return;
-    }
-
-    const from = view.editor.getCursor('from');
-    const lines = view.editor.getValue().split(/\r\n?|\n/);
-    const text = getTextFromPositionToEnd(lines, from);
-
-    if (!text) {
-      new Notice('CosyVoice: nothing to read after selection.');
-      return;
-    }
-
-    await this.activateControlView();
-    await this.startReading(text, 'from selection', { file: view.file, sourceKind: 'markdown' });
+    await this.readMarkdownView(view, 'from-selection');
   }
 
   async startReading(rawText, sourceLabel, options = {}) {
@@ -4888,11 +5237,25 @@ class CosyVoiceReaderPlugin extends Plugin {
     await this.stopReading({ silent: true });
     this.pauseRequested = false;
 
-    const chunks = splitTextForSpeechChunks(text, configuration.chunkLimits);
+    const chunks = options.readingChunks || splitTextForSpeechChunks(text, configuration.chunkLimits);
+    let markdownSource = options.markdownSource || (options.sourceKind === 'markdown' && !options.plainText
+      ? buildMarkdownSource(rawText, chunks, value => this.settings.stripMarkdown
+        ? sanitizeTextForSpeech(value, { mathReadingLanguage: this.settings.mathReadingLanguage })
+        : normalizeLineBreaks(value).trim(), { sourceText: options.sourceText, sourceOffset: options.sourceOffset, filePath: options.file?.path }) : null);
+    if (options.focusDisplay) {
+      const display = options.focusDisplay;
+      let start = compact(display.text.slice(0, display.offset)).length;
+      markdownSource = { ...display.source, mappingValid: false, displayMappingValid: true, speech: compact(display.text),
+        ranges: chunks.map(chunk => { const from = start; start += compact(chunk).length; return { start: from, end: start }; }) };
+    }
     const session = this.createSpeechSession(chunks, sourceLabel, configuration, {
       file: options.file,
       sourceKind: options.sourceKind || '',
+      markdownSource,
     });
+
+    session.webContext = options.webContext;
+    session.skipReadingPosition = options.skipReadingPosition === true;
 
     this.activeSession = session;
     this.updateStatus(`${configuration.engineLabel} 0/${chunks.length}`, {
@@ -5074,10 +5437,10 @@ class CosyVoiceReaderPlugin extends Plugin {
 
     session.speechStarted = true;
     session.synthesisSpeeds = session.synthesisSpeeds || {};
-    session.synthesisSpeeds[index] = normalizeSpeed(this.settings.speed);
     const speechEngine = normalizeSpeechEngine(session.speechEngine || this.settings.speechEngine);
+    session.synthesisSpeeds[index] = speechEngine === 'system-tts' ? 1 : normalizeSpeed(this.settings.speed);
     const engineLabel = session.engineLabel || getSpeechEngineLabel(this.settings);
-    const outputExtension = ['local-cosyvoice', 'mimo-tts'].includes(speechEngine) ? 'wav' : 'mp3';
+    const outputExtension = getAudioExportExtension(speechEngine);
     const basename = `${Date.now()}-${session.id}-${index}-${part}`;
     const inputPath = path.join(this.cacheDir, `${basename}.txt`);
     const outputPath = path.join(this.cacheDir, `${basename}.${outputExtension}`);
@@ -5107,8 +5470,12 @@ class CosyVoiceReaderPlugin extends Plugin {
         totalChunks: session.totalChunks || 0,
       });
     }
+    let alignment;
     try {
-      await this.runSpeechEngine(inputPath, outputPath, session, speechEngine);
+      alignment = await this.runSpeechEngine(inputPath, outputPath, session, speechEngine);
+    } catch (error) {
+      if (speechEngine === 'system-tts' && this.settings.cleanupCache) await this.removeTempFile(outputPath);
+      throw error;
     } finally {
       if (this.settings.cleanupCache) {
         await this.removeTempFile(inputPath);
@@ -5137,6 +5504,7 @@ class CosyVoiceReaderPlugin extends Plugin {
     return {
       outputPath,
       url,
+      sentenceCues: alignment ? buildSentenceCues(chunkText, alignment.boundaries, alignment.duration) : [],
     };
   }
 
@@ -5147,6 +5515,7 @@ class CosyVoiceReaderPlugin extends Plugin {
   }
 
   runSpeechEngine(inputPath, outputPath, session, speechEngine = normalizeSpeechEngine(this.settings.speechEngine)) {
+    if (speechEngine === 'system-tts') return this.runSystemTts(inputPath, outputPath, session);
     if (speechEngine === 'edge-tts') {
       return this.runEdgeTts(inputPath, outputPath, session);
     }
@@ -5161,6 +5530,59 @@ class CosyVoiceReaderPlugin extends Plugin {
     }
 
     return this.runCosyVoice(inputPath, outputPath, session);
+  }
+
+  async loadSystemSpeechVoices(refresh = false) {
+    if (this.systemSpeechUnloaded) throw systemSpeechError('stopped');
+    if (this.systemVoicePromise) return this.systemVoicePromise;
+    if (this.systemVoicesReady && !refresh) {
+      if (this.systemVoicesError) throw this.systemVoicesError;
+      return this.systemVoices;
+    }
+    const controller = new AbortController();
+    this.systemVoiceController = controller;
+    this.systemVoicePromise = listSystemVoices({ signal: controller.signal }).then(voices => {
+      if (!voices.length) throw systemSpeechError('voices');
+      this.systemVoices = voices;
+      this.systemVoicesError = null;
+      return voices;
+    }).catch(error => {
+      this.systemVoices = [];
+      this.systemVoicesError = error;
+      throw error;
+    }).finally(() => {
+      this.systemVoicesReady = true;
+      this.systemVoicePromise = null;
+      this.systemVoiceController = null;
+    });
+    return this.systemVoicePromise;
+  }
+
+  async runSystemTts(inputPath, outputPath, session) {
+    if (!this.isActive(session)) throw systemSpeechError('stopped');
+    const controller = new AbortController();
+    session.systemSpeechControllers.add(controller);
+    try {
+      const voices = await this.loadSystemSpeechVoices();
+      if (!this.isActive(session) || controller.signal.aborted) throw systemSpeechError('stopped');
+      return await synthesizeSystemSpeech({ inputPath, outputPath, voice: session.systemVoice, voices, signal: controller.signal });
+    } catch (error) {
+      if (this.settings.settingsLanguage === 'chinese') {
+        const messages = {
+          SYSTEM_TTS_UNAVAILABLE: '系统本地语音仅支持 Windows 和 macOS。',
+          SYSTEM_TTS_VOICES: '没有找到可调用的已安装音色，请按设置页提示安装音色并刷新。',
+          SYSTEM_TTS_VOICE: '所选系统音色不可用，请刷新并重新选择；不会回退到在线服务。',
+          SYSTEM_TTS_COMMAND: '系统语音调用失败，请检查已安装音色和系统语音服务。',
+          SYSTEM_TTS_TIMEOUT: '系统语音合成超时，请尝试其他已安装音色或更短的分段。',
+          SYSTEM_TTS_STOPPED: '系统语音已停止。',
+          SYSTEM_TTS_AUDIO: '系统语音生成的 WAV 音频无效或不完整。',
+        };
+        if (messages[error.code]) error.message = messages[error.code];
+      }
+      throw error;
+    } finally {
+      session.systemSpeechControllers.delete(controller);
+    }
   }
 
   runCosyVoice(inputPath, outputPath, session) {
@@ -5610,7 +6032,7 @@ class CosyVoiceReaderPlugin extends Plugin {
   getSegmentTiming(session = this.activeSession, index = Math.max(0, (this.readerState.currentChunk || 1) - 1),
     part = session?.currentPartIndex || 0, time = this.currentAudio?.currentTime || 0) {
     const timing = session?.chunks?.[index] !== undefined
-      ? getSpeechPartTiming(session, index, part, time, normalizeSpeed(this.settings.speed))
+      ? getSpeechPartTiming(session, index, part, time, session.speechEngine === 'system-tts' ? 1 : normalizeSpeed(this.settings.speed))
       : { duration: Number(this.currentAudio?.duration) || 0, current: time, offset: 0 };
     return { ...timing, fraction: timing.duration > 0 ? Math.min(1, timing.current / timing.duration) : 0 };
   }
@@ -5662,6 +6084,13 @@ class CosyVoiceReaderPlugin extends Plugin {
         audio.defaultPlaybackRate = normalizeSpeed(this.settings.playbackSpeed);
         audio.playbackRate = normalizeSpeed(this.settings.playbackSpeed);
         audio.noteReaderReleaseSource = source.release;
+        audio.noteReaderSessionId = session.id;
+        audio.noteReaderChunkIndex = index;
+        const partOffset = session.chunks?.[index] === undefined ? null
+          : speechPartOffset(session.chunks[index], getSpeechParts(session, index), part);
+        audio.noteReaderSentenceCues = partOffset === null ? [] : (prepared.sentenceCues || []).map(cue => ({
+          ...cue, start: cue.start + partOffset, end: cue.end + partOffset,
+        }));
         audio.preload = 'auto';
         const recordDuration = () => {
           if (this.isActive(session) && Number.isFinite(audio.duration) && audio.duration > 0) {
@@ -6091,6 +6520,7 @@ class CosyVoiceReaderPlugin extends Plugin {
   async cancelSessionOperations(session) {
     if (session) {
       session.stopped = true;
+      for (const controller of session.systemSpeechControllers || []) controller.abort();
       this.notifySessionNavigation(session);
     }
 
@@ -6232,6 +6662,12 @@ class CosyVoiceReaderView extends ItemView {
       'Previous chunk': '上一段', 'Next chunk': '下一段', 'Reading progress': '朗读进度',
       'Read selection': '朗读选中文字', 'Read from selection': '从选中位置朗读',
       'Read file': '朗读全文', 'Export audio': '导出音频',
+      'Reading text': '朗读视图',
+      'Reading view': '朗读视图',
+      'Reading toolbar': '朗读工具栏',
+      'Focus reading': '专注朗读',
+      'Open reading view': '进入朗读视图',
+      'Exit reading view': '退出朗读视图',
       'Export & insert audio': '导出并插入音频', 'Retry merge only': '仅重试拼接',
       'Resume file': '从上次位置续读', 'Resume': '继续', 'Pause': '暂停', 'Stop': '停止',
       'Resume reading (or press Space)': '继续朗读（也可按空格键）',
@@ -6269,10 +6705,12 @@ class CosyVoiceReaderView extends ItemView {
   }
 
   async onClose() {
+    this.sidebarOutline?.destroy();
     this.plugin.unregisterReaderView(this);
   }
 
   render() {
+    if (this.sidebarOutline?.root.contains(this.sidebarOutline.root.ownerDocument.activeElement)) return;
     if (this.volumeInteracting) return;
     if (this.chunkSeekEditing && this.chunkSeekAudio === this.plugin.currentAudio
       && this.plugin.readerState?.canSeek) return;
@@ -6280,6 +6718,7 @@ class CosyVoiceReaderView extends ItemView {
     const root = this.contentEl || this.containerEl.children[1] || this.containerEl;
     const state = this.plugin.readerState || createReaderState();
 
+    this.sidebarOutline?.root.remove();
     root.empty();
     root.addClass('note-reader-cosyvoice-view');
     root.setAttribute('tabindex', '0');
@@ -6309,7 +6748,7 @@ class CosyVoiceReaderView extends ItemView {
         max: '1000',
         min: '0',
         step: '1',
-        title: this.plugin.settings?.settingsLanguage === 'chinese'
+        'aria-description': this.plugin.settings?.settingsLanguage === 'chinese'
           ? '跳转到指定分段的开头；未合成的分段需要等待合成。'
           : 'Jump to the start of a segment; unprepared segments require synthesis.',
         type: 'range',
@@ -6342,7 +6781,7 @@ class CosyVoiceReaderView extends ItemView {
 
     const estimate = estimatePlayback(this.plugin.activeSession,
       Math.max(0, (state.currentChunk || 1) - 1),
-      this.plugin.getSegmentTiming().current, this.plugin.settings.speed,
+      this.plugin.getSegmentTiming().current, this.plugin.activeSession?.speechEngine === 'system-tts' ? 1 : this.plugin.settings.speed,
       normalizeSpeed(this.plugin.settings.playbackSpeed));
     if (estimate) {
       const zh = this.plugin.settings.settingsLanguage === 'chinese';
@@ -6386,13 +6825,28 @@ class CosyVoiceReaderView extends ItemView {
     this.createActionButton(actions, 'file-text', 'Read file', () => {
       this.runPluginAction('Read file', () => this.plugin.readCurrentNote());
     }, false, { triggerOnPointerDown: true });
-    this.createActionButton(actions, 'download', 'Export audio', () => {
+    this.sidebarOutline ||= new SidebarOutline(this.plugin, root.ownerDocument);
+    root.appendChild(this.sidebarOutline.root); this.sidebarOutline.refresh();
+    const extra = root.createEl('details', { cls: 'note-reader-sidebar-extra' });
+    extra.open = Boolean(this.extraOpen);
+    extra.createEl('summary', { text: zhControls ? '更多操作' : 'More actions' });
+    extra.addEventListener('toggle', () => { this.extraOpen = extra.open; });
+    const secondaryActions = extra.createDiv({ cls: 'note-reader-cosyvoice-actions' });
+    this.createActionButton(secondaryActions, 'audio-lines', 'Reading toolbar', () => {
+      this.runPluginAction('Reading toolbar', () => this.plugin.toggleReadingToolbar());
+    }, false, { triggerOnPointerDown: true });
+    const readingViewButton = this.createActionButton(secondaryActions, 'book-open', 'Focus reading', () => {
+      this.runPluginAction('Focus reading', () => this.plugin.toggleDocumentView());
+    }, false, { triggerOnPointerDown: true });
+    readingViewButton.setAttribute('aria-pressed', String(Boolean(this.plugin.documentViews?.size)));
+    readingViewButton.setAttribute('aria-description', this.translate(this.plugin.documentViews?.size ? 'Exit reading view' : 'Open reading view'));
+    this.createActionButton(secondaryActions, 'download', 'Export audio', () => {
       this.runPluginAction('Export audio', () => this.plugin.exportCurrentFileAudio({ insertAfterExport: false }));
     }, !canExportFile, {
       title: 'Export all, selected, or remaining audio from the current note, PDF, HTML or web page',
       triggerOnPointerDown: true,
     });
-    this.createActionButton(actions, 'paperclip', 'Export & insert audio', () => {
+    this.createActionButton(secondaryActions, 'paperclip', 'Export & insert audio', () => {
       this.runPluginAction('Export and insert audio', () => this.plugin.exportCurrentFileAudio({ insertAfterExport: true }));
     }, !canInsertExport, {
       title: canInsertExport
@@ -6441,7 +6895,7 @@ class CosyVoiceReaderView extends ItemView {
       { triggerOnPointerDown: true }
     );
 
-    const details = root.createDiv({ cls: 'note-reader-cosyvoice-details' });
+    const details = extra.createDiv({ cls: 'note-reader-cosyvoice-details' });
     details.createDiv({ cls: 'note-reader-cosyvoice-detail-label', text: this.translate('Phase') });
     details.createDiv({ cls: 'note-reader-cosyvoice-detail-value', text: state.phase });
     details.createDiv({ cls: 'note-reader-cosyvoice-detail-label', text: this.translate('Source') });
@@ -6569,7 +7023,6 @@ class CosyVoiceReaderView extends ItemView {
         attr: {
           'aria-label': speedTitle,
           'aria-pressed': String(isActive),
-          title: speedTitle,
         },
       });
       this.wireButtonAction(button, () => {
@@ -6607,7 +7060,6 @@ class CosyVoiceReaderView extends ItemView {
       cls: 'note-reader-cosyvoice-icon-button',
       attr: {
         'aria-label': label,
-        title: label,
       },
     });
     button.disabled = disabled;
@@ -6625,8 +7077,8 @@ class CosyVoiceReaderView extends ItemView {
     const button = parent.createEl('button', {
       cls: 'note-reader-cosyvoice-action',
       attr: {
-        'aria-label': label,
-        title: this.translate(options.title || label),
+        'aria-label': [this.translate('Pause'), this.translate('Resume')].includes(label) ? this.translate(options.title || label) : label,
+        'aria-description': this.translate(options.title || label),
       },
     });
     button.disabled = disabled;
@@ -6675,7 +7127,97 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
     this.plugin = plugin;
   }
 
+  hide() {
+    this.displaySequence = (this.displaySequence || 0) + 1;
+  }
+
+  displaySystemSpeechSettings(containerEl, language) {
+    const zh = language === 'chinese';
+    const label = (en, cn) => zh ? cn : en;
+    const plugin = this.plugin;
+    const supported = ['win32', 'darwin'].includes(os.platform());
+    const sequence = this.displaySequence;
+    const redraw = () => {
+      if (sequence === this.displaySequence && !plugin.systemSpeechUnloaded
+        && plugin.settings.speechEngine === 'system-tts') this.display();
+    };
+    new Setting(containerEl).setName(label('Local speech privacy', '系统本地语音与隐私'))
+      .setDesc(label(
+        'Uses installed Windows SAPI or macOS say voices. No API key, local model, automatic download or cloud fallback. Offline voices keep reading text on this computer, like local CosyVoice. Downloads need internet; exported audio and vault sync have separate privacy implications.',
+        '调用已安装的 Windows SAPI 或 macOS say 音色，无需 API 密钥或本地模型，不自动下载，也不回退到云端。离线音色与本地 CosyVoice 一样让朗读正文留在本机。下载需要联网；导出音频和库同步的隐私需另外考虑。'));
+    const voices = plugin.systemVoices || [];
+    const key = getSystemVoiceKey();
+    const selected = normalizeSystemVoice(plugin.settings[key]);
+    const status = !supported ? label('Windows and macOS only.', '仅支持 Windows 和 macOS。')
+      : plugin.systemVoicesError ? label('No usable voice list. Check installed voices, then refresh.', '无法获取可用音色列表，请检查已安装音色后刷新。')
+      : plugin.systemVoicesReady ? label(`${voices.length} installed voices accessible to this plugin.`, `检测到 ${voices.length} 种插件可调用的已安装音色。`)
+      : label('Detecting installed voices...', '正在检测已安装音色……');
+    new Setting(containerEl).setClass('note-reader-cosyvoice-system-voice')
+      .setName(label('Installed system voice', '已安装的系统音色')).setDesc(status)
+      .addDropdown(dropdown => {
+        dropdown.addOption('', label('System default (already installed)', '系统默认（已安装音色）'));
+        for (const voice of voices) {
+          const gender = voice.gender === 'Male' ? label('male', '男声') : voice.gender === 'Female' ? label('female', '女声') : '';
+          dropdown.addOption(voice.id, [voice.name, voice.language, gender].filter(Boolean).join(' / '));
+        }
+        if (selected && !voices.some(voice => voice.id === selected)) {
+          dropdown.addOption(selected, label(`Unavailable: ${selected}`, `不可用：${selected}`));
+        }
+        dropdown.setValue(selected).setDisabled(!supported).onChange(async value => {
+          plugin.settings[key] = normalizeSystemVoice(value);
+          await plugin.saveSettings();
+        });
+      })
+      .addButton(button => button.setButtonText(label('Refresh', '刷新')).setDisabled(!supported)
+        .onClick(async () => {
+          button.setDisabled(true);
+          try { await plugin.loadSystemSpeechVoices(true); }
+          catch { new Notice(label('Could not load installed voices. See the system voice help below.', '无法加载已安装音色，请查看下方系统音色帮助。'), 8000); }
+          finally { redraw(); }
+        }))
+      .addButton(button => button.setButtonText(label('Preview', '试听')).setDisabled(!supported || !voices.length || Boolean(plugin.systemVoicesError))
+        .onClick(() => {
+          if (plugin.settings.speechEngine !== 'system-tts') return;
+          if (plugin.activeSession) {
+            new Notice(label('Stop the current reading or export before previewing.', '请先停止当前朗读或导出，再试听音色。'));
+            return;
+          }
+          const currentVoice = normalizeSystemVoice(plugin.settings[key]);
+          const voice = voices.find(item => item.id === currentVoice) || (!currentVoice ? voices[0] : null);
+          const sample = /^zh/i.test(voice?.language || '')
+            ? '这是系统本地语音试听。朗读文本在本机处理。' : 'This is a local system voice preview. Reading text stays on this computer.';
+          void plugin.runUserAction(label('System voice preview', '系统音色试听'), () => plugin.startReading(sample, 'system voice preview', { plainText: true }));
+        }));
+    new Setting(containerEl).setName(label('Playback speed', '播放倍速'))
+      .setDesc(label('System speech is synthesized at its normal pace. Use the reader panel playback rate and volume controls; exported WAV audio remains at normal pace.',
+        '系统语音按正常语速合成。使用朗读面板调节播放倍速和音量；导出的 WAV 音频保持正常语速。'));
+    new Setting(containerEl).setName(label('Windows Narrator natural voices: no direct synthesis', 'Windows 讲述人自然音色：不能直接合成'))
+      .setDesc(label(
+        'This plugin cannot currently call Windows Narrator Natural / Natural HD voices for direct audio synthesis, even after download. Microsoft does not currently provide a supported public interface for this plugin to use those Narrator voices; Windows system speech uses SAPI, not Narrator. Downloading again or refreshing cannot unlock them. Alternatively, open Reading text and explicitly start Narrator to use its selected natural voice; plugin pause, seek, sentence sync and export do not control Narrator. This limitation does not apply to macOS voices or Microsoft online speech services.',
+        '当前插件不能调用 Windows 讲述人的 Natural / Natural HD 自然音色进行直接音频合成，即使已下载安装也不例外。微软目前尚未提供可供本插件受支持地调用这些讲述人音色的公开接口；Windows 系统语音使用 SAPI，并非讲述人。重复下载或刷新不能解锁。替代方式：打开“朗读正文”并主动启动讲述人，使用讲述人设置中的自然音色；插件的暂停、跳转、句子同步和导出不能控制讲述人。此限制不针对 macOS 音色或微软在线语音服务。'));
+    new Setting(containerEl).setName(label('Windows: voice downloads and compatibility', 'Windows：音色下载与兼容性'))
+      .setDesc(label(
+        'For ordinary system voices usable by this plugin: Settings -> Time & language -> Speech -> Manage voices -> Add voices; then Refresh above. Narrator-only downloads are separate: recent Windows 11 uses Settings -> Accessibility -> Narrator (or Win+Ctrl+N) -> Narrator\'s voice -> Add voices -> Add. Older layouts may say Add natural voices / Add legacy voices. Downloading Narrator Natural / Natural HD voices does not enable direct synthesis by this plugin; use Reading text with Narrator instead. Do not change the registry to expose them.',
+        '安装本插件可用的普通系统音色：设置 → 时间和语言 → 语音 → 管理语音 → 添加语音，安装后点击上方刷新。仅供讲述人使用的音色另行下载：新版 Windows 11 为设置 → 辅助功能 → 讲述人（或按 Win+Ctrl+N）→ 讲述人的声音 → 添加语音 → 添加。旧版界面可能显示“添加自然语音”或“添加旧版语音”。下载讲述人的 Natural / Natural HD 自然音色不会使本插件获得直接合成能力，可改用“朗读正文”配合讲述人；不建议修改注册表强行开放。'))
+      .addButton(button => button.setButtonText(label('Microsoft help', '微软官方步骤')).onClick(() => {
+        const url = 'https://support.microsoft.com/en-us/accessibility/windows/narrator/appendix-a-supported-languages-and-voices';
+        if (!openExternalUrl(url)) new Notice(url, 8000);
+      }));
+    new Setting(containerEl).setName(label('macOS: more / enhanced voices', 'macOS：更多音色 / 增强音色'))
+      .setDesc(label(
+        'System Settings -> Accessibility -> Read & Speak (Spoken Content on older versions) -> System voice -> manage voices / download. Choose the language and an offered enhanced voice, finish downloading, then refresh above. Names vary by macOS version; Siri-only voices may not appear in say. Downloading is optional.',
+        '系统设置 → 辅助功能 → 朗读与说话（旧版为朗读内容）→ 系统声音 → 管理声音 / 下载。选择语言及可用的增强音色，完成下载后点击上方刷新。不同 macOS 版本名称可能不同；仅供 Siri 使用的音色可能不会出现在 say 列表中。下载并非必需。'))
+      .addButton(button => button.setButtonText(label('Apple help', '苹果官方步骤')).onClick(() => {
+        const url = 'https://support.apple.com/guide/mac-help/change-the-voice-your-mac-uses-to-speak-text-mchlp2290/mac';
+        if (!openExternalUrl(url)) new Notice(url, 8000);
+      }));
+    if (supported && (!plugin.systemVoicesReady || plugin.systemVoicePromise)) {
+      void plugin.loadSystemSpeechVoices().catch(() => {}).finally(redraw);
+    }
+  }
+
   display() {
+    this.displaySequence = (this.displaySequence || 0) + 1;
     const { containerEl } = this;
     containerEl.empty();
 
@@ -6708,6 +7250,7 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
       .addDropdown((dropdown) => {
         dropdown
           .addOption('local-cosyvoice', ui.speechEngineLocal)
+          .addOption('system-tts', ui.speechEngineSystem)
           .addOption('edge-tts', ui.speechEngineEdge)
           .addOption('azure-speech', ui.speechEngineAzure)
           .addOption('openrouter-tts', ui.speechEngineOpenRouter)
@@ -6719,6 +7262,8 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
             this.display();
           });
       });
+
+    if (selectedSpeechEngine === 'system-tts') this.displaySystemSpeechSettings(containerEl, settingsLanguage);
 
     if (selectedSpeechEngine === 'mimo-tts') {
       const zh = settingsLanguage === 'chinese';
@@ -7164,7 +7709,7 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
         .setDesc(ui.openRouterPrivacyDesc);
     }
 
-    new Setting(containerEl)
+    if (selectedSpeechEngine !== 'system-tts') new Setting(containerEl)
       .setName(ui.speedName)
       .setDesc(ui.speedDesc)
       .addSlider((slider) => {
@@ -7245,6 +7790,74 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
             });
         });
     }
+
+    const zhReading = this.plugin.settings.settingsLanguage === 'chinese';
+    new Setting(containerEl)
+      .setName(zhReading ? '左侧朗读图标打开方式' : 'Ribbon icon opens')
+      .setDesc(zhReading ? '工具栏用于 Markdown 笔记；PDF、HTML 和网页使用侧边栏。' : 'The toolbar is for Markdown notes; PDF, HTML and web pages use the sidebar.')
+      .addDropdown(dropdown => dropdown.addOption('sidebar', zhReading ? '侧边栏' : 'Sidebar')
+        .addOption('toolbar', zhReading ? '朗读工具栏' : 'Reading toolbar').addOption('both', zhReading ? '两者同时' : 'Both')
+        .setValue(this.plugin.settings.readerOpenMode).onChange(async value => { this.plugin.settings.readerOpenMode = value; await this.plugin.saveSettings(); }));
+    new Setting(containerEl).setName(zhReading ? '高亮颜色' : 'Highlight color')
+      .addColorPicker(picker => picker.setValue(this.plugin.settings.highlightColor).onChange(async value => {
+        this.plugin.settings.highlightColor = value; await this.plugin.saveSettings(); this.plugin.renderDocumentViews();
+      }));
+    new Setting(containerEl).setName(zhReading ? '高亮强度' : 'Highlight strength')
+      .addSlider(slider => slider.setLimits(5, 60, 1).setValue(this.plugin.settings.highlightStrength).setDynamicTooltip().onChange(async value => {
+        this.plugin.settings.highlightStrength = value; await this.plugin.saveSettings(); this.plugin.renderDocumentViews();
+      }))
+      .addButton(button => button.setButtonText(zhReading ? '恢复默认高亮' : 'Reset highlighting').onClick(async () => {
+        this.plugin.settings.highlightColor = APPEARANCE_DEFAULTS.highlightColor;
+        this.plugin.settings.highlightStrength = APPEARANCE_DEFAULTS.highlightStrength;
+        this.plugin.settings.readingHighlight = 'sentence';
+        await this.plugin.saveSettings(); this.plugin.renderDocumentViews(); this.display();
+      }));
+    new Setting(containerEl)
+      .setName(zhReading ? '正文朗读标记' : 'Reading text highlight')
+      .setDesc(zhReading ? '在原笔记、专注朗读和 PDF 文字层中淡色标记当前段。Windows 常规音色有可靠时间信息且对应原文时，可在编辑器标记句子。PDF 仅标记能准确匹配的已渲染文字；扫描页、复杂公式或不确定位置不强行标记。不增加 API 请求。'
+        : 'Subtle marks in original notes, Focus reading and rendered PDF text layers. Editor sentence marks require verified Windows timing and exact source text. PDF marks require a reliable text match; scanned pages and uncertain formulas/layouts are left unmarked. No extra API requests.')
+      .addDropdown(dropdown => dropdown.addOption('off', zhReading ? '关闭' : 'Off')
+        .addOption('segment', zhReading ? '当前段' : 'Current segment')
+        .addOption('sentence', zhReading ? '当前句子（如支持，否则当前段）' : 'Sentence if available, otherwise segment')
+        .setValue(normalizeReadingHighlight(this.plugin.settings.readingHighlight)).onChange(async value => {
+          this.plugin.settings.readingHighlight = value;
+          await this.plugin.saveSettings(); this.plugin.renderDocumentViews();
+        }));
+    addPdfOutlineSettings(containerEl, this.plugin);
+    new Setting(containerEl)
+      .setName(zhReading ? 'HTML / 网页段落高亮' : 'HTML / web paragraph highlight')
+      .setDesc(zhReading ? '仅标记可准确匹配的当前朗读段落，沿用高亮颜色和强度。不改动原文、不增加 API 请求；重复文字、动态页面或不支持的嵌入内容可能无法标记。正文朗读标记关闭时也不高亮。'
+        : 'Mark uniquely matched current segments using the highlight color and strength. No text changes or extra API requests. Repeated text, dynamic pages and unsupported embedded content may remain unmarked. Requires reading text highlight to be enabled.')
+      .addToggle(toggle => toggle.setValue(this.plugin.settings.webReadingHighlight !== false).onChange(async value => {
+        this.plugin.settings.webReadingHighlight = value;
+        await this.plugin.saveSettings(); this.plugin.renderDocumentViews();
+      }));
+    new Setting(containerEl)
+      .setName(zhReading ? 'HTML / 网页跟随滚动' : 'Follow HTML / web reading')
+      .setDesc(zhReading ? '默认关闭。开启后在切换段落且标记不在可见区域时滚动，不移动键盘焦点。'
+        : 'Off by default. On segment changes, scroll an off-screen highlight into view without moving keyboard focus.')
+      .addToggle(toggle => toggle.setValue(this.plugin.settings.webReadingFollow === true).onChange(async value => {
+        this.plugin.settings.webReadingFollow = value;
+        await this.plugin.saveSettings(); this.plugin.renderDocumentViews();
+      }));
+    new Setting(containerEl)
+      .setName(zhReading ? '正文跟随滚动' : 'Follow reading text')
+      .setDesc(zhReading ? '默认关闭。开启后仅在标记移出可见区域时滚动；手动滚动会暂停跟随，不抢占键盘焦点。'
+        : 'Off by default. Scrolls only when the highlight leaves the viewport. Manual scrolling suspends following without moving keyboard focus.')
+      .addToggle(toggle => toggle.setValue(this.plugin.settings.readingFollow === true).onChange(async value => {
+        this.plugin.settings.readingFollow = value;
+        await this.plugin.saveSettings();
+        for (const view of this.plugin.documentViews || []) { view.manualScroll = false; view.lastHighlight = ''; }
+        this.plugin.noteHighlights?.resetFollowing();
+        this.plugin.renderDocumentViews();
+      }));
+    new Setting(containerEl)
+      .setName(zhReading ? '专注朗读与系统讲述人' : 'Focus reading and system Narrator')
+      .setDesc(zhReading ? '打开本地解析的正文，不调用语音 API。Windows 用户可在正文视图中主动启动讲述人，使用其设置中的自然音色；插件不能直接合成该音色，也不能用播放器按钮控制讲述人。'
+        : 'Open locally parsed text without TTS API requests. On Windows, explicitly start Narrator from that view to use its selected natural voice. Plugin playback controls and audio export do not control Narrator.')
+      .addButton(button => button.setButtonText(zhReading ? '切换专注朗读' : 'Toggle focus reading').onClick(() => {
+        void this.plugin.runUserAction('Reading view', () => this.plugin.toggleDocumentView());
+      }));
 
     new Setting(containerEl)
       .setName(ui.stripMarkdownName)
@@ -7365,6 +7978,9 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
 module.exports = {
   default: CosyVoiceReaderPlugin,
   __test: {
+    AccessibleReaderView,
+    DOCUMENT_VIEW_TYPE,
+    CosyVoiceReaderSettingTab,
     AZURE_TTS_PRIVACY_URL,
     DEFAULT_ONLINE_CHUNK_LIMITS,
     GITHUB_ISSUES_URL,
