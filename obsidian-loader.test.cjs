@@ -205,7 +205,7 @@ const testVaultPath = path.resolve('test-vault');
 const testAudioPath = path.join(testVaultPath, '.obsidian', 'plugins', 'note-reader-cosyvoice', 'cache', 'a.wav');
 assert.strictEqual(manifest.id, 'note-reader-cosyvoice');
 assert.strictEqual(manifest.name, 'Note and PDF Voice Reader');
-assert.strictEqual(manifest.version, '0.8.4');
+assert.strictEqual(manifest.version, '0.8.5');
 assert.strictEqual(
   moduleObject.exports.__test.sanitizeTextForSpeech('第一段的结尾。\n\n## 第二节标题\n\n下一节的正文。'),
   '第一段的结尾。\n第二节标题\n下一节的正文。'
@@ -301,6 +301,10 @@ assert.deepStrictEqual(moduleObject.exports.__test.createDefaultSettings(), {
   pdfFootnoteMode: 'body',
   pdfSkipHeaders: true,
   pdfIncludeGlossary: false,
+  academicMathMode: 'smart',
+  academicMathStyle: 'concise',
+  academicTableMode: 'smart',
+  academicSkipNotice: true,
   playbackVolume: 1,
   playbackSpeed: 1,
   mimoConsent: false,
@@ -350,7 +354,7 @@ assert.strictEqual(moduleObject.exports.__test.normalizeMathReadingLanguage('ski
 assert.strictEqual(moduleObject.exports.__test.normalizeMathReadingLanguage('bad'), 'english');
 const reportedOpenRouterText = 'As a reference, the static scheme (S) uses no forecast information. Its interval is centered at zero, and the half-width is taken directly as the 0.95 empirical quantile of $|Y\\_{k,h}|$ on the same hold-out data:';
 const sanitizedReportedOpenRouterText = moduleObject.exports.__test.sanitizeTextForSpeech(reportedOpenRouterText);
-assert.ok(sanitizedReportedOpenRouterText.includes('absolute value of Y subscript k,h'));
+assert.ok(sanitizedReportedOpenRouterText.includes('absolute value of Y sub k,h'));
 assert.ok(!/[|$\\]/.test(sanitizedReportedOpenRouterText));
 const reportedMarkdownTable = `**Table I. Coverage**
 
@@ -365,7 +369,7 @@ assert.ok(!/-{3,}/.test(sanitizedMarkdownTable));
 const reportedCitationText = 'The results are given in Supplementary Material S3 [28], [29], and verified on the test month [30].';
 assert.strictEqual(
   moduleObject.exports.__test.sanitizeTextForSpeech(reportedCitationText),
-  'The results are given in Supplementary Material S3 reference 28, reference 29, and verified on the test month reference 30.'
+  'The results are given in Supplementary Material S3 references 28 and 29, and verified on the test month reference 30.'
 );
 assert.strictEqual(
   moduleObject.exports.__test.sanitizeTextForSpeech('Units [s] and [%] stay unchanged.'),
@@ -373,6 +377,20 @@ assert.strictEqual(
 );
 assert.strictEqual(moduleObject.exports.__test.normalizeSettingsLanguage('chinese'), 'chinese');
 assert.strictEqual(moduleObject.exports.__test.normalizeSettingsLanguage('bad'), 'english');
+for (const language of ['german','french','russian','korean','japanese','spanish','italian','portuguese']) {
+  assert.strictEqual(moduleObject.exports.__test.normalizeSettingsLanguage(language), language);
+  assert.notStrictEqual(moduleObject.exports.__test.getSettingsUiText(language).speechEngineName, 'Speech engine');
+}
+const academicClean = moduleObject.exports.__test.sanitizeTextForSpeech;
+assert.strictEqual(academicClean('研究[2][4]。'), '研究 文献2和4。');
+assert.strictEqual(academicClean('$x<y$ and $z>w$'), 'x less than y and z greater than w');
+assert.strictEqual(academicClean('$\\frac{1}{2}$', { mathReadingLanguage:'chinese' }), '2 分之 1');
+const academicTable = ['Table 1. Results', '|Region|A|B|','|---|---|---|', ...Array.from({length:8},(_,i)=>`|R${i}|${10+i}|${20+i}|`), '', 'After the table.'].join('\n');
+assert.ok(!academicClean(academicTable).includes('R7'));
+assert.ok(academicClean(academicTable).includes('Table 1. Results'));
+assert.ok(academicClean(academicTable).includes('After the table.'));
+assert.ok(academicClean(academicTable,{academicTableMode:'all'}).includes('R7'));
+assert.ok(!academicClean(academicTable,{academicSkipNotice:false}).includes('omitted'));
 assert.strictEqual(moduleObject.exports.__test.normalizeCredentialSource('key-file'), 'key-file');
 assert.strictEqual(moduleObject.exports.__test.normalizeCredentialSource('bad'), 'obsidian-secret');
 assert.strictEqual(moduleObject.exports.__test.getSettingsUiText('english').speechEngineName, 'Speech engine');
@@ -845,7 +863,7 @@ assert.strictEqual(
 );
 assert.strictEqual(
   moduleObject.exports.__test.sanitizeTextForSpeech('长公式 $\\int_0^1 x^2 + y^2 + z^2 dx$ 跳过，短公式 $a_b$ 读。'),
-  '长公式 跳过，短公式 a subscript b 读。'
+  '长公式 Formula omitted. 跳过，短公式 a sub b 读。'
 );
 assert.strictEqual(
   moduleObject.exports.__test.calculateCurrentChunkSeekTime({

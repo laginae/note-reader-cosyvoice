@@ -1,4 +1,5 @@
 'use strict';
+const { academicOptions } = require('./academic-speech');
 const { getHtmlReaderDocument } = require('./html-text');
 const { highlightDocument, clearDocumentHighlight, isDocumentHighlightCurrent } = require('./dom-highlights');
 const { updateWebHighlight, getWebPageUrl } = require('./web-page');
@@ -34,7 +35,7 @@ class HtmlReadingHighlights {
       && htmlDocuments.every(doc => this.documents.has(doc) && this.htmlObservers.get(doc)?.root === (readerRoot || doc.body)
         && (!this.markedDocuments.has(doc) || isDocumentHighlightCurrent(doc))))))return;
     this.clear();this.key=key;
-    const options={text:s.chunks[h.index],color:p.settings.highlightColor,strength:p.settings.highlightStrength,follow:p.settings.webReadingFollow===true};
+    const options={text:s.chunks[h.index],color:p.settings.highlightColor,strength:p.settings.highlightStrength,follow:p.settings.webReadingFollow===true,academic:academicOptions(p.settings)};
     if(local) {
       for (const doc of htmlDocuments) {
         const root = readerRoot || doc.body;

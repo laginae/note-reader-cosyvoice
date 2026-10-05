@@ -47,7 +47,7 @@ async function captureWebPage(view, options = {}) {
   if (view.mode === 'reader') {
     const root = view.readerView;
     if (!root || !root.ownerDocument) throw new Error('WEB_UNAVAILABLE');
-    snapshot = captureWebDocument(root.ownerDocument, { root, range: options.range, article: false });
+    snapshot = captureWebDocument(root.ownerDocument, { root, range: options.range, article: false, academic: options.academic });
     snapshot.url = url;
     snapshot.title = String(view.title || 'Web page').slice(0, 200);
   } else {
@@ -56,7 +56,7 @@ async function captureWebPage(view, options = {}) {
     let timer;
     try {
       // Only fixed bundled code runs in the guest. No page-provided code, URLs, credentials or host APIs are injected.
-      const code = `(function(){${GUEST_SOURCE}\nreturn NoteReaderWebDocument.captureWebDocument(document,{article:${options.article !== false}});})()`;
+      const code = `(function(){${GUEST_SOURCE}\nreturn NoteReaderWebDocument.captureWebDocument(document,{article:${options.article !== false},academic:${JSON.stringify(options.academic || {})}});})()`;
       snapshot = await Promise.race([
         webview.executeJavaScript(code),
         new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('WEB_TIMEOUT')), WEB_TIMEOUT_MS); }),

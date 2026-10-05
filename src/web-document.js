@@ -57,7 +57,7 @@ function captureWebDocument(doc, options = {}) {
     if (root.contains(live.startContainer) && root.contains(live.endContainer)) range = live;
   }
   if (range && (!root.contains(range.startContainer) || !root.contains(range.endContainer))) range = null;
-  const result = extractHtmlTreeText(root, range, { omitNode: omitWebNode });
+  const result = extractHtmlTreeText(root, range, { ...options.academic, omitNode: omitWebNode });
   let text = result.text;
   let method = 'visible-body';
   if (options.article !== false && !options.root && text) {
@@ -65,7 +65,7 @@ function captureWebDocument(doc, options = {}) {
     const article = new Readability(clone, { maxElemsToParse: MAX_HTML_NODES, charThreshold: 0 }).parse();
     if (article && article.content) {
       const parsed = new doc.defaultView.DOMParser().parseFromString(article.content, 'text/html');
-      const articleText = extractHtmlTreeText(parsed.body).text;
+      const articleText = extractHtmlTreeText(parsed.body, null, options.academic || {}).text;
       if (articleText) { text = articleText; method = 'article'; }
     }
   }

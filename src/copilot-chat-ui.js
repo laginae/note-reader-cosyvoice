@@ -1,6 +1,7 @@
 'use strict';
 
 const { Modal, Notice, Setting, setIcon } = require('obsidian');
+const { academicOptions } = require('./academic-speech');
 const { CHAT_SCOPES, normalizeChatFolder, listChatFiles, selectChatText, loadChatSnapshot, verifyChatSnapshot } = require('./copilot-chat');
 
 const SCOPE_LABELS = {
@@ -19,7 +20,7 @@ function node(parent, tag, className = '', text = '') {
 }
 function t(plugin, zh, en) { return plugin.settings.settingsLanguage === 'chinese' ? zh : en; }
 function preparationKey(plugin) {
-  return JSON.stringify([plugin.settings.speechEngine, plugin.settings.stripMarkdown, plugin.settings.mathReadingLanguage, plugin.settings.settingsLanguage]);
+  return JSON.stringify([plugin.settings.speechEngine, plugin.settings.stripMarkdown, academicOptions(plugin.settings), plugin.settings.settingsLanguage]);
 }
 
 async function readLatestCopilotReply(plugin, options = {}) {

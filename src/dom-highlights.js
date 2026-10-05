@@ -30,6 +30,7 @@ function highlightDocument(doc, options = {}, root = doc.body) {
   // Use the speech extractor's separators while mapping only real text nodes to ranges.
   try {
     extractHtmlTreeText(root, null, {
+      ...options.academic,
       omitNode: node => hidden(node, win),
       onText(value, node) {
         const part = compact(value), start = text.length;
@@ -39,6 +40,10 @@ function highlightDocument(doc, options = {}, root = doc.body) {
     });
   } catch (_) { return false; }
   const start = text.indexOf(needle);
+  // Explicit selections retain HTML table data even when whole-document reading omits it.
+  if (start < 0 && options.academic?.academicTableMode && options.academic.academicTableMode !== 'all') {
+    return highlightDocument(doc, { ...options, academic:{ ...options.academic, academicTableMode:'all' } }, root);
+  }
   if (start < 0 || text.indexOf(needle, start+1) >= 0) return false;
   const end = start + needle.length;
   const included = nodes.filter(item=>item.start<end && item.end>start);

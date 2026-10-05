@@ -1,6 +1,7 @@
 'use strict';
 
 const { parseDocument } = require('htmlparser2');
+const { skipTable, omission } = require('./academic-speech');
 
 const MAX_HTML_BYTES = 50 * 1024 * 1024;
 const MAX_HTML_TEXT_CHARS = 5_000_000;
@@ -40,6 +41,29 @@ function nodeInfo(node) {
 }
 
 // The same walk handles parsed source and HTML Reader's rendered DOM, retaining exact range offsets.
+function tableSpeechSummary(table, options) {
+  const rows = [], stack = [{ node: table }]; let visited = 0, caption = '';
+  while (stack.length) {
+    if (++visited > MAX_HTML_NODES) throw new Error('HTML contains too many elements.');
+    const { node, row, cell, isCaption } = stack.pop(), info = nodeInfo(node);
+    if (info.omit || options.omitNode?.(node)) continue;
+    if (info.text !== undefined) {
+      if (cell) cell.text += info.text;
+      if (isCaption) caption += info.text;
+      continue;
+    }
+    if (info.tag === 'table' && node !== table) return null;
+    const nextRow = info.tag === 'tr' ? [] : row;
+    if (info.tag === 'tr') rows.push(nextRow);
+    const nextCell = ['td','th'].includes(info.tag) && nextRow ? { text: '' } : cell;
+    if (nextCell !== cell) nextRow.push(nextCell);
+    for (const child of [...info.children].reverse()) stack.push({ node: child, row: nextRow, cell: nextCell, isCaption: isCaption || info.tag === 'caption' });
+  }
+  const data = rows.map(row => row.map(cell => cell.text.trim()));
+  if (!data.length || !skipTable(data[0], data.slice(1), options)) return null;
+  return [caption.trim(), omission('table', options, data.flat().join(' '))].filter(Boolean).join('\n');
+}
+
 function extractHtmlTreeText(root, range = null, options = {}) {
   const pieces = [];
   let length = 0;
@@ -71,6 +95,10 @@ function extractHtmlTreeText(root, range = null, options = {}) {
     const node = action.node;
     const info = nodeInfo(node);
     if (info.omit || (options.omitNode && options.omitNode(node))) continue;
+    if (!range && info.tag === 'table' && options.academicTableMode) {
+      const summary = tableSpeechSummary(node, options);
+      if (summary !== null) { append(`\n${summary}\n`); continue; }
+    }
     if (info.text !== undefined) {
       const text = String(info.text || '');
       if (range && range.startContainer === node) start = length + Math.min(text.length, range.startOffset);
@@ -96,10 +124,10 @@ function extractHtmlTreeText(root, range = null, options = {}) {
   return { text, selection: selectedText ? { startOffset, endOffset, selectedText } : null };
 }
 
-function extractHtmlText(source) {
+function extractHtmlText(source, options = {}) {
   const value = String(source || '');
   if (Buffer.byteLength(value, 'utf8') > MAX_HTML_BYTES) throw new Error('HTML file exceeds the 50 MiB size limit.');
-  return extractHtmlTreeText(parseDocument(value, { decodeEntities: true })).text;
+  return extractHtmlTreeText(parseDocument(value, { decodeEntities: true }), null, options).text;
 }
 
 function getHtmlReaderDocument(view) {

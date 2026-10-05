@@ -1,6 +1,7 @@
 'use strict';
 
 const { setIcon, Notice } = require('obsidian');
+const { translate } = require('./i18n');
 const { outlineSections } = require('./reader-selection');
 const { currentSourceRanges } = require('./markdown-source');
 const { estimatePlayback, formatDuration } = require('./playback-estimate');
@@ -104,7 +105,7 @@ class NativeReaderToolbar {
     this.status = node(this.root, 'div', 'note-reader-native-status');
     this.refreshOutline(); this.render();
   }
-  t(en, zh) { return this.plugin.settings.settingsLanguage === 'chinese' ? zh : en; }
+  t(en, zh) { return translate(this.plugin.settings.settingsLanguage, en, zh); }
   action(action) { return this.plugin.runUserAction('Reading toolbar', action); }
   handleKeydown(event, readOnlyBody = false) {
     if ((!readOnlyBody && !this.root.contains(this.root.ownerDocument.activeElement))

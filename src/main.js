@@ -1,4 +1,5 @@
-const { ItemView, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, SecretComponent, Setting, loadPdfJs, setIcon } = require('obsidian');
+const { ItemView, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, SecretComponent, Setting: ObsidianSetting, loadPdfJs, setIcon } = require('obsidian');
+const { LANGUAGES, translate: translateInterface, localizedSetting } = require('./i18n');
 const crypto = require('crypto');
 const fs = require('fs');
 const https = require('https');
@@ -9,6 +10,8 @@ const { pathToFileURL } = require('url');
 const { extractPdfTextLayout, extractTextFromPdfItems } = require('./pdf-layout');
 const { partitionFootnotes, footnoteRules, normalizeFootnoteMode, addFootnoteSettings, splitFootnotesInRange } = require('./pdf-footnotes');
 const { recurringEdges, ancillaryLayout, inside: insidePdfRegion, textOf: pdfLinesText, addAncillarySettings } = require('./pdf-ancillary');
+const { ACADEMIC_DEFAULTS, academicOptions, academicLatex, mathSpeech, citations, skipTable, omission } = require('./academic-speech');
+const { numericTableRegions } = require('./pdf-academic');
 const { MAX_HTML_BYTES, captureHtmlSelection, extractHtmlText, getHtmlReaderDocument, isHtmlFile } = require('./html-text');
 const { WEB_VIEW_TYPE, captureWebPage, getWebPageUrl, isWebPageView } = require('./web-page');
 const { estimatePlayback, formatDuration } = require('./playback-estimate');
@@ -70,9 +73,8 @@ const OPENROUTER_TTS_ENDPOINT = 'https://openrouter.ai/api/v1/audio/speech';
 const RECOMMENDED_SCRIPT_PATH = '%LOCALAPPDATA%\\note-reader-cosyvoice\\cosyvoice-wrapper.ps1';
 const SPEED_PRESETS = [1, 1.25, 1.5, 2, 1.1, 1.2, 1.3, 1.4];
 const KEYBOARD_SEEK_SECONDS = 5;
-const LATEX_FORMULA_MAX_CHARS = 12;
 const MATH_READING_LANGUAGES = ['english', 'chinese', 'skip'];
-const SETTINGS_LANGUAGES = ['english', 'chinese'];
+const SETTINGS_LANGUAGES = Object.keys(LANGUAGES);
 const AUDIO_EXPORT_LOCATIONS = ['obsidian-attachment', 'note-folder', 'custom-folder'];
 const AUDIO_EXPORT_SCOPES = ['entire', 'selection', 'from-selection'];
 const CREDENTIAL_SOURCES = ['obsidian-secret', 'key-file'];
@@ -1004,7 +1006,8 @@ function isMarkdownTableDelimiterLine(line) {
   return cells.length >= 2 && cells.every((cell) => /^:?-{3,}:?$/.test(cell.replace(/\s+/g, '')));
 }
 
-function formatMarkdownTableForSpeech(headers, rows) {
+function formatMarkdownTableForSpeech(headers, rows, options = {}) {
+  if (skipTable(headers, rows, options)) return omission('table', options, headers.concat(...rows).join(' '));
   const tableText = headers.concat(...rows).join(' ');
   const useChineseLabels = /[\u3040-\u30ff\u3400-\u9fff\uf900-\ufaff]/.test(tableText);
   const output = [];
@@ -1035,7 +1038,7 @@ function formatMarkdownTableForSpeech(headers, rows) {
   return output.join('\n');
 }
 
-function sanitizeMarkdownTablesForSpeech(text) {
+function sanitizeMarkdownTablesForSpeech(text, options = {}) {
   const lines = normalizeLineBreaks(text).split('\n');
   const output = [];
 
@@ -1056,7 +1059,7 @@ function sanitizeMarkdownTablesForSpeech(text) {
         rowIndex += 1;
       }
 
-      output.push(formatMarkdownTableForSpeech(headers, rows));
+      output.push(formatMarkdownTableForSpeech(headers, rows, options));
       index = rowIndex - 1;
       continue;
     }
@@ -1069,46 +1072,8 @@ function sanitizeMarkdownTablesForSpeech(text) {
   return output.join('\n');
 }
 
-function joinCitationSpeechParts(parts, useChineseLabels) {
-  if (useChineseLabels) {
-    return parts.join('、');
-  }
-  if (parts.length <= 1) {
-    return parts[0] || '';
-  }
-  if (parts.length === 2) {
-    return `${parts[0]} and ${parts[1]}`;
-  }
-  return `${parts.slice(0, -1).join(', ')}, and ${parts.at(-1)}`;
-}
-
 function verbalizeNumericCitationsForSpeech(text) {
-  const value = String(text || '');
-  const useChineseLabels = /[\u3040-\u30ff\u3400-\u9fff\uf900-\ufaff]/.test(value);
-
-  return value.replace(
-    /\[(\d+(?:\s*(?:[,;]|[-–—])\s*\d+)*)\](?:\([^)]*\))?/g,
-    (match, content) => {
-      const numbers = content.match(/\d+/g) || [];
-      if (!numbers.length || numbers.some((number) => Number(number) < 1 || Number(number) > 999)) {
-        return match;
-      }
-
-      const parts = content
-        .split(/\s*[,;]\s*/)
-        .map((part) => {
-          const range = /^(\d+)\s*[-–—]\s*(\d+)$/.exec(part);
-          if (!range) {
-            return part.trim();
-          }
-          return `${range[1]} ${useChineseLabels ? '到' : 'to'} ${range[2]}`;
-        })
-        .filter(Boolean);
-      const isPlural = parts.length > 1 || /[-–—]/.test(content);
-      const label = useChineseLabels ? '参考文献' : (isPlural ? 'references' : 'reference');
-      return ` ${label} ${joinCitationSpeechParts(parts, useChineseLabels)} `;
-    }
-  );
+  return citations(text);
 }
 
 function sanitizeTextForSpeech(text, options = {}) {
@@ -1122,9 +1087,9 @@ function sanitizeTextForSpeech(text, options = {}) {
   value = value.replace(/\[\[([^\]]+)\]\]/g, '$1');
   value = verbalizeNumericCitationsForSpeech(value);
   value = value.replace(/\[([^\]]+)\]\([^)]*\)/g, '$1');
-  value = sanitizeMarkdownTablesForSpeech(value);
+  value = sanitizeMarkdownTablesForSpeech(value, options);
   value = value.replace(/`([^`]+)`/g, '$1');
-  value = value.replace(/<[^>]+>/g, ' ');
+  value = value.replace(/<\/?[A-Za-z][A-Za-z0-9-]*(?:\s+[^<>]*?)?\s*\/?>/g, ' ');
   value = value.replace(/^\s{0,3}#{1,6}\s+/gm, '');
   value = value.replace(/^\s*>\s?/gm, '');
   value = value.replace(/^\s*[-+*]\s+/gm, '');
@@ -1144,27 +1109,10 @@ function sanitizeTextForSpeech(text, options = {}) {
 }
 
 function sanitizeLatexForSpeech(text, options = {}) {
-  let value = normalizeLineBreaks(text);
+  let value = academicLatex(normalizeLineBreaks(text), options);
   const mathReadingLanguage = normalizeMathReadingLanguage(options.mathReadingLanguage);
 
-  value = value.replace(/\$\$([\s\S]*?)\$\$/g, (match, content) => replaceLatexFormula(match, content, mathReadingLanguage));
-  value = value.replace(/\\\[([\s\S]*?)\\\]/g, (match, content) => replaceLatexFormula(match, content, mathReadingLanguage));
-  value = value.replace(/\\\(([\s\S]*?)\\\)/g, (match, content) => replaceLatexFormula(match, content, mathReadingLanguage));
-  value = value.replace(/\$([^$\n]+?)\$/g, (match, content) => replaceLatexFormula(match, content, mathReadingLanguage));
-
   return verbalizeLatexCommands(value, mathReadingLanguage);
-}
-
-function replaceLatexFormula(match, content, mathReadingLanguage) {
-  if (mathReadingLanguage === 'skip' || isLongLatexFormula(content)) {
-    return ' ';
-  }
-
-  return ` ${verbalizeShortLatex(content, mathReadingLanguage)} `;
-}
-
-function isLongLatexFormula(content) {
-  return stripLatexDelimiters(content).replace(/\s+/g, '').length > LATEX_FORMULA_MAX_CHARS;
 }
 
 function stripLatexDelimiters(content) {
@@ -1179,29 +1127,7 @@ function stripLatexDelimiters(content) {
 }
 
 function verbalizeShortLatex(content, mathReadingLanguage = DEFAULT_MATH_READING_LANGUAGE) {
-  let value = stripLatexDelimiters(content);
-  const language = normalizeMathReadingLanguage(mathReadingLanguage);
-
-  value = verbalizeLatexCommands(value, language);
-  value = verbalizeLatexAbsoluteValues(value, language);
-  value = value.replace(/_/g, language === 'chinese' ? ' 下标 ' : ' subscript ');
-  value = value.replace(/\^/g, language === 'chinese' ? ' 上标 ' : ' superscript ');
-  value = value.replace(/\+/g, language === 'chinese' ? ' 加 ' : ' plus ');
-  value = value.replace(/=/g, language === 'chinese' ? ' 等于 ' : ' equals ');
-  value = value.replace(/[{}()[\]]/g, ' ');
-  value = value.replace(/\\/g, ' ');
-
-  return cleanupLatexSpeech(value);
-}
-
-function verbalizeLatexAbsoluteValues(text, mathReadingLanguage) {
-  let value = String(text || '').replace(/\\(?:lvert|rvert|vert)\b/g, '|');
-  value = value.replace(/\|([^|\n]+)\|/g, (_match, inner) => (
-    mathReadingLanguage === 'chinese'
-      ? `${inner} 的绝对值`
-      : `absolute value of ${inner}`
-  ));
-  return value.replace(/\|/g, ' ');
+  return mathSpeech(stripLatexDelimiters(content), { mathReadingLanguage });
 }
 
 function verbalizeLatexCommands(text, mathReadingLanguage = DEFAULT_MATH_READING_LANGUAGE) {
@@ -1214,7 +1140,7 @@ function verbalizeLatexCommands(text, mathReadingLanguage = DEFAULT_MATH_READING
 function replaceLatexCommands(text, mathReadingLanguage) {
   let value = String(text || '');
   let previous = '';
-  const fractionSpeech = mathReadingLanguage === 'chinese' ? '$1 分之 $2' : '$1 over $2';
+  const fractionSpeech = mathReadingLanguage === 'chinese' ? '$2 分之 $1' : '$1 over $2';
 
   while (value !== previous) {
     previous = value;
@@ -1291,7 +1217,9 @@ function normalizeCredentialSource(value) {
 }
 
 function getSettingsUiText(language) {
-  return SETTINGS_UI_TEXT[normalizeSettingsLanguage(language)];
+  const normalized = normalizeSettingsLanguage(language);
+  return SETTINGS_UI_TEXT[normalized] || Object.fromEntries(Object.entries(SETTINGS_UI_TEXT.english)
+    .map(([key, value]) => [key, translateInterface(normalized, value)]));
 }
 
 function openExternalUrl(url) {
@@ -1672,6 +1600,7 @@ function selectKnownSettings(defaults, candidate) {
 
 function createDefaultSettings() {
   return {
+    ...ACADEMIC_DEFAULTS,
     ...COPILOT_DEFAULTS,
     ...MIMO_DEFAULTS,
     ...APPEARANCE_DEFAULTS,
@@ -3465,7 +3394,7 @@ class CosyVoiceReaderPlugin extends Plugin {
     const range = cached && cached.view === view && cached.root === view.readerView
       && cached.url === context.webUrl && cached.revision === context.webRevision ? cached.range : null;
     let snapshot;
-    try { snapshot = await captureWebPage(view, { ...options, range }); }
+    try { snapshot = await captureWebPage(view, { ...options, range, academic: academicOptions(this.settings) }); }
     catch (error) {
       const zh = this.settings.settingsLanguage === 'chinese';
       const timeout = error && error.message === 'WEB_TIMEOUT';
@@ -3556,13 +3485,11 @@ class CosyVoiceReaderPlugin extends Plugin {
 
   async getHtmlFileText(file) {
     if (file.stat && file.stat.size > MAX_HTML_BYTES) throw new Error('HTML file exceeds the 50 MiB size limit.');
-    return extractHtmlText(await this.app.vault.cachedRead(file));
+    return extractHtmlText(await this.app.vault.cachedRead(file), academicOptions(this.settings));
   }
 
   prepareHtmlSpeechText(text) {
-    return sanitizeLatexForSpeech(verbalizeNumericCitationsForSpeech(normalizeLineBreaks(text)), {
-      mathReadingLanguage: this.settings.mathReadingLanguage,
-    }).trim();
+    return verbalizeNumericCitationsForSpeech(sanitizeLatexForSpeech(normalizeLineBreaks(text), academicOptions(this.settings))).trim();
   }
 
   async readCurrentHtml(file, scope = 'entire', options = {}) {
@@ -4117,9 +4044,7 @@ class CosyVoiceReaderPlugin extends Plugin {
 
   sanitizeAudioExportText(value) {
     return this.settings.stripMarkdown
-      ? sanitizeTextForSpeech(value, {
-        mathReadingLanguage: this.settings.mathReadingLanguage,
-      })
+      ? sanitizeTextForSpeech(value, academicOptions(this.settings))
       : normalizeLineBreaks(value).trim();
   }
 
@@ -4552,7 +4477,7 @@ class CosyVoiceReaderPlugin extends Plugin {
       return;
     }
     const fullText = this.settings.stripMarkdown
-      ? sanitizeTextForSpeech(view.editor.getValue(), { mathReadingLanguage: this.settings.mathReadingLanguage })
+      ? sanitizeTextForSpeech(view.editor.getValue(), academicOptions(this.settings))
       : normalizeLineBreaks(view.editor.getValue()).trim();
     let resumeSlice = sliceTextFromReadingPosition(fullText, position);
     if (!resumeSlice.matched) {
@@ -4990,7 +4915,7 @@ class CosyVoiceReaderPlugin extends Plugin {
           inFootnotes = Boolean(pageInfo.footnote);
         }
         const text = this.settings.stripMarkdown
-          ? sanitizeTextForSpeech(pageText, { mathReadingLanguage: this.settings.mathReadingLanguage })
+          ? sanitizeTextForSpeech(pageText, academicOptions(this.settings))
           : normalizeLineBreaks(pageText).trim();
         readableTextLength += text.length;
         this.appendSessionChunks(session, chunker.push(text, { pageNumber: pageInfo.pageNumber, footnote: inFootnotes }));
@@ -5148,7 +5073,8 @@ class CosyVoiceReaderPlugin extends Plugin {
           const partition = footnoteMode === 'inline' ? null : partitionFootnotes(textContent.items, viewport, rules, { pageNumber });
           const ancillary = ancillaryLayout(textContent.items, viewport, rules, skipHeaders ? repeatedHeaders : new Set());
           const omittedRegions = [...(skipHeaders ? ancillary.headers : []),
-            ...(contentScope !== 'glossary' && this.settings?.pdfIncludeGlossary !== true ? ancillary.glossary : [])];
+            ...(contentScope !== 'glossary' && this.settings?.pdfIncludeGlossary !== true ? ancillary.glossary : []),
+            ...(contentScope === 'body' && footnoteMode !== 'footnotes' ? numericTableRegions(ancillary.layout,viewport,this.settings) : [])];
           if (!isCurrent()) return '';
           if (session.kind === 'pdf-progressive') {
             session.pdfHighlightPages ||= new Map();
@@ -5316,7 +5242,7 @@ class CosyVoiceReaderPlugin extends Plugin {
   async startReading(rawText, sourceLabel, options = {}) {
     const text = options.plainText || options.sourceKind === 'html' ? this.prepareHtmlSpeechText(rawText)
       : this.settings.stripMarkdown
-      ? sanitizeTextForSpeech(rawText, { mathReadingLanguage: this.settings.mathReadingLanguage })
+      ? sanitizeTextForSpeech(rawText, academicOptions(this.settings))
       : normalizeLineBreaks(rawText).trim();
 
     if (!text) {
@@ -5335,7 +5261,7 @@ class CosyVoiceReaderPlugin extends Plugin {
     const chunks = options.readingChunks || splitTextForSpeechChunks(text, configuration.chunkLimits);
     let markdownSource = options.markdownSource || (options.sourceKind === 'markdown' && !options.plainText
       ? buildMarkdownSource(rawText, chunks, value => this.settings.stripMarkdown
-        ? sanitizeTextForSpeech(value, { mathReadingLanguage: this.settings.mathReadingLanguage })
+        ? sanitizeTextForSpeech(value, academicOptions(this.settings))
         : normalizeLineBreaks(value).trim(), { sourceText: options.sourceText, sourceOffset: options.sourceOffset, filePath: options.file?.path }) : null);
     if (options.focusDisplay) {
       const display = options.focusDisplay;
@@ -6751,7 +6677,7 @@ class CosyVoiceReaderPlugin extends Plugin {
 
 class CosyVoiceReaderView extends ItemView {
   translate(text) {
-    if (this.plugin.settings?.settingsLanguage !== 'chinese') return text;
+    if (this.plugin.settings?.settingsLanguage !== 'chinese') return translateInterface(this.plugin.settings?.settingsLanguage, text);
     return {
       'Voice Reader': '语音朗读', 'Voice reader controls': '朗读控制面板',
       'Previous chunk': '上一段', 'Next chunk': '下一段', 'Reading progress': '朗读进度',
@@ -7230,6 +7156,7 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
   }
 
   displaySystemSpeechSettings(containerEl, language) {
+    const Setting = localizedSetting(ObsidianSetting, language);
     const zh = language === 'chinese';
     const label = (en, cn) => zh ? cn : en;
     const plugin = this.plugin;
@@ -7321,6 +7248,7 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
 
     containerEl.createEl('h2', { text: 'Note and PDF Voice Reader' });
     const settingsLanguage = normalizeSettingsLanguage(this.plugin.settings.settingsLanguage);
+    const Setting = localizedSetting(ObsidianSetting, settingsLanguage);
     const ui = getSettingsUiText(settingsLanguage);
     const selectedSpeechEngine = normalizeSpeechEngine(this.plugin.settings.speechEngine);
     const microsoftVoicePresets = getMicrosoftVoicePresets(settingsLanguage);
@@ -7330,10 +7258,8 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
       .setName(ui.settingsLanguageName)
       .setDesc(ui.settingsLanguageDesc)
       .addDropdown((dropdown) => {
-        dropdown
-          .addOption('english', ui.settingsLanguageEnglish)
-          .addOption('chinese', ui.settingsLanguageChinese)
-          .setValue(settingsLanguage)
+        for (const [language, name] of Object.entries(LANGUAGES)) dropdown.addOption(language, name);
+        dropdown.setValue(settingsLanguage)
           .onChange(async (value) => {
             this.plugin.settings.settingsLanguage = normalizeSettingsLanguage(value);
             await this.plugin.saveSettings();
@@ -7341,6 +7267,9 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
             this.display();
           });
       });
+
+    if (!['english','chinese'].includes(settingsLanguage)) new Setting(containerEl)
+      .setDesc(translateInterface(settingsLanguage, 'Some advanced help remains in English. Interface language does not change the speech voice.'));
 
     new Setting(containerEl)
       .setName(ui.speechEngineName)
@@ -7922,8 +7851,6 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
           await this.plugin.saveSettings(); this.plugin.renderDocumentViews();
         }));
     addPdfOutlineSettings(containerEl, this.plugin);
-    addFootnoteSettings(containerEl, this.plugin, Setting);
-    addAncillarySettings(containerEl, this.plugin, Setting);
     addCopilotChatSettings(containerEl, this.plugin);
     new Setting(containerEl)
       .setName(zhReading ? 'HTML / 网页段落高亮' : 'HTML / web paragraph highlight')
@@ -7960,6 +7887,7 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
         void this.plugin.runUserAction('Reading view', () => this.plugin.toggleDocumentView());
       }));
 
+    containerEl.createEl('h3', { text: translateInterface(settingsLanguage, 'Academic reading', '学术阅读') });
     new Setting(containerEl)
       .setName(ui.stripMarkdownName)
       .setDesc(ui.stripMarkdownDesc)
@@ -7970,9 +7898,19 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
         });
       });
 
+    new Setting(containerEl).setName(zhReading ? '公式朗读策略' : 'Formula reading')
+      .setDesc(zhReading ? '智能模式默认跳过复杂公式；支持的短公式在本地转换。完整模式也不会猜读无法可靠解析的公式。需开启“移除 Markdown 格式”。' : 'Smart mode skips complex formulas. Supported short formulas are converted locally; unsupported notation is never guessed. Requires Strip Markdown.')
+      .addDropdown(dropdown => dropdown.addOption('smart', zhReading ? '智能：跳过复杂公式' : 'Smart: skip complex formulas')
+        .addOption('all', zhReading ? '朗读支持的公式' : 'Read supported formulas').addOption('skip', zhReading ? '跳过所有公式' : 'Skip all formulas')
+        .setValue(academicOptions(this.plugin.settings).academicMathMode).onChange(async value => { this.plugin.settings.academicMathMode=value; await this.plugin.saveSettings(); }));
+    new Setting(containerEl).setName(zhReading ? '公式读法' : 'Formula style')
+      .setDesc(zhReading ? '简洁模式使用 sub、bar 等符号名；bar 表示上划线，不一定表示平均值。' : 'Short symbols use sub and bar; bar names the symbol, not necessarily a mean.')
+      .addDropdown(dropdown => dropdown.addOption('concise',zhReading ? '简洁（sub、bar）' : 'Concise (sub, bar)')
+        .addOption('verbose',zhReading ? '明确（下标、subscript）' : 'Explicit (subscript)')
+        .setValue(academicOptions(this.plugin.settings).academicMathStyle).onChange(async value => { this.plugin.settings.academicMathStyle=value; await this.plugin.saveSettings(); }));
     new Setting(containerEl)
       .setName(ui.mathLanguageName)
-      .setDesc(ui.mathLanguageDesc)
+      .setDesc(zhReading ? '公式转换目前支持中文和英文，与界面语言及语音音色分别设置。' : 'Formula conversion supports Chinese and English, independently of interface language and speech voice.')
       .addDropdown((dropdown) => {
         dropdown
           .addOption('english', ui.mathEnglish)
@@ -7985,6 +7923,18 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
           });
       });
 
+    new Setting(containerEl).setName(zhReading ? '表格朗读策略' : 'Table reading')
+      .setDesc(zhReading ? '智能模式跳过较长且数字密集的表格，保留标题、小表及文字表。PDF 只过滤能可靠识别的带标题数字表格；无法确定时保留。选中的 HTML 表格仍完整提取。' : 'Smart mode skips long numeric tables, retaining captions, small tables and text tables. PDF filtering requires a recognizable caption and numeric rows; uncertain content is retained. Selected HTML tables are preserved.')
+      .addDropdown(dropdown => dropdown.addOption('smart',zhReading ? '智能：跳过长数字表格' : 'Smart: skip long numeric tables')
+        .addOption('all',zhReading ? '完整朗读表格' : 'Read all tables').addOption('skip',zhReading ? '跳过所有已识别表格' : 'Skip all recognized tables')
+        .setValue(academicOptions(this.plugin.settings).academicTableMode).onChange(async value => { this.plugin.settings.academicTableMode=value; await this.plugin.saveSettings(); }));
+    new Setting(containerEl).setName(zhReading ? '简短提示略过内容' : 'Announce skipped content')
+      .setDesc(zhReading ? '略过公式或表格数据时简短提示。关闭后直接继续正文。PDF 保留表格标题，不额外插入提示。' : 'Briefly announce omitted formulas or table data. Disable for uninterrupted prose.')
+      .addToggle(toggle => toggle.setValue(this.plugin.settings.academicSkipNotice !== false).onChange(async value => { this.plugin.settings.academicSkipNotice=value; await this.plugin.saveSettings(); }));
+    addFootnoteSettings(containerEl, this.plugin, Setting);
+    addAncillarySettings(containerEl, this.plugin, Setting);
+
+    containerEl.createEl('h3', { text: translateInterface(settingsLanguage, 'Storage and maintenance', '存储与维护') });
     new Setting(containerEl)
       .setName(ui.rememberPositionName)
       .setDesc(ui.rememberPositionDesc)

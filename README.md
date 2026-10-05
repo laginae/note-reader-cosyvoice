@@ -1,6 +1,6 @@
 # Note and PDF Voice Reader
 
-**Language:** English | [简体中文](README.zh-CN.md)
+**Language:** English | [简体中文](README.zh-CN.md) | [Deutsch](README.de.md) | [Français](README.fr.md) | [Русский](README.ru.md) | [한국어](README.ko.md) | [日本語](README.ja.md) | [Español](README.es.md) | [Italiano](README.it.md) | [Português](README.pt.md)
 
 Read aloud your **notes, PDFs, HTML files and web pages** in Obsidian. Listen while following the original document, jump between sections, or export audio for later.
 
@@ -17,6 +17,7 @@ English demo with public sample text, rendered from the plugin's interface code;
 - **Follow along without losing the layout.** Optional, adjustable highlighting in Markdown/live preview, text PDFs, local HTML and Web viewer, with reading-order support for common two-column PDF papers. The toolbar stays with the original content.
 - **Listen to Copilot replies.** Read saved conversations: the latest reply, last two replies, or a question and answer. Preview your selection, or right-click the toolbar chat icon to read the most recently saved conversation's latest answer.
 - **Navigate by outline.** Use note headings, PDF bookmarks or locally inferred PDF headings, and HTML headings or coherent section numbering. Read one section or continue from it.
+- **Academic reading without the noise.** Skip complex LaTeX formulas and long numeric tables, use concise `sub` / `bar` notation, and merge adjacent numbered references. Keep short formulas, small tables and prose; PDF filtering is conservative.
 - **Start listening sooner.** Progressive text extraction and short startup audio parts reduce the wait; later PDF pages can be processed while playback begins.
 - **Avoid unnecessary synthesis.** By default, online playback prepares only one upcoming audio part. Choose zero prefetch for on-demand synthesis. Audio export always asks for confirmation.
 - **Keep an audio copy.** Export all, selected or remaining text; insert the result into a Markdown note. If final merging fails, retry with retained audio instead of synthesizing it again.
@@ -214,26 +215,35 @@ MiMo defaults to a configurable 200-character chunk cap (a conservative client s
 - Supports pause, resume, stop, Space to pause or resume in the control panel, repeated Left/Right Arrow 5-second seeking, previous/next chunk buttons, and progress dragging while the current audio chunk is playing.
 - Provides right-panel speed presets: `1x`, `1.25x`, `1.5x`, `2x`, `1.1x`, `1.2x`, `1.3x`, and `1.4x`.
 - Lets you choose `Local CosyVoice`, `Microsoft Edge online voice`, `Microsoft Azure Speech`, or `OpenRouter TTS` in settings. Local CosyVoice is the default.
-- Lets you switch the complete plugin settings page between English and Chinese.
+- Provides English and Chinese settings, plus German, French, Russian, Korean, Japanese, Spanish, Italian and Portuguese translations for core settings and playback controls. Some advanced help and secondary dialogs remain in English.
 - Requires a separate opt-in before each online engine can receive text.
 - Uses separate local and online chunk limits. Online notes, PDFs and HTML default to `200,400,800`, with at most one future audio part synthesized early by default. MiMo's additional chunk cap still applies.
 - For quicker startup, the first logical segment is synthesized in up to three audio parts: complete sentences reaching 20 non-whitespace characters, then 40 more, then the remaining text. All parts share one segment number and progress timeline. The default prefetch prepares only the next audio part. This can add up to two requests; actual latency depends on the provider. Audio export uses normal chunking.
 - Uses Obsidian SecretStorage for Azure and OpenRouter API keys by default on Obsidian 1.11.4 or later, with an external key-file compatibility option.
 - Provides common Chinese and English voice presets, model-specific OpenRouter voice menus, and custom voice ID fields.
-- Cleans Markdown before synthesis and converts Markdown tables into speech-friendly column and row descriptions while skipping empty cells.
-- Reads numeric citations such as `[28]`, `[28, 29]`, and `[28-30]` as spoken references while preserving unit labels such as `[s]` and `[%]`.
+- Cleans Markdown before synthesis; small tables become column and row descriptions, while long numeric tables can be omitted.
+- Merges adjacent citations: `[2][4]` and `[2], [4]` become "references 2 and 4" in English prose, or "文献2和4" in Chinese prose. Preserves unit labels such as `[s]` and `[%]`.
 - Provides a settings-page `Restore defaults` button for resetting all plugin settings.
 - Provides a settings-page link to [GitHub Issues](https://github.com/laginae/note-reader-cosyvoice/issues) for feedback and bug reports.
-- Handles common LaTeX before synthesis with a configurable `Math reading language` setting:
-  - Skips formulas longer than 12 non-space characters.
-  - `English` is the default for public releases, for example `$a_b$` -> `a subscript b`.
-  - `Chinese` keeps Chinese math words, for example `$a_b$` -> `a 下标 b`.
-  - Converts short absolute-value notation such as `$|Y_{k,h}|$` into spoken words instead of sending raw vertical bars.
-  - `Skip math` skips short formulas as well as long formulas.
-  - Leaves common Greek commands as English names, such as `\alpha` -> `alpha`, `\beta` -> `beta`, and `\pi` -> `pi`.
-  - Reads common non-Greek symbols such as `\leq`, `\times`, and `_`.
-  - Unwraps style commands such as `\textbf{...}`, `\mathbf{...}`, and `\boldsymbol{...}`.
-  - Reads short `\frac{a}{b}` as `a over b` in English mode or `a 分之 b` in Chinese mode.
+
+## Academic reading
+
+The separate **Academic reading** settings section groups formulas, tables and PDF ancillary content. Processing is local and changes only the text prepared for speech, not your document. Enable **Strip Markdown** for Markdown/PDF text cleanup.
+
+| Setting | Default | Alternatives |
+| --- | --- | --- |
+| Formula reading | Smart: skip complex formulas | Read supported formulas; skip all recognized formulas |
+| Formula style | Concise: `x_i` → `x sub i`; `\bar{x}` → `x bar` | Explicit: `subscript` / `下标` |
+| Table reading | Smart: skip long numeric tables | Read all; skip recognized tables |
+| Announce skipped content | Brief omission notice | Disable for continuous prose |
+
+Short fractions, roots, absolute values and common operators are converted conservatively. For example, `\frac{1}{2}` becomes "1 over 2" or "2 分之 1". `bar` names an overbar; it does not assume the symbol means an average. Unknown commands, matrices, integrals and sums are omitted rather than guessed. Smart mode measures formula complexity after shortening command names, not the old raw 12-character limit. "Read supported formulas" increases the length allowance but does not support arbitrary LaTeX.
+
+For Markdown and HTML, smart table filtering requires at least 8 data rows or 48 nonempty cells, at least 16 nonempty cells in total, and at least 60% numeric cells. Captions outside Markdown tables and HTML captions are retained. Text-heavy glossaries and small tables remain readable. Explicit HTML selections retain table data.
+
+**PDF limitations:** only clearly captioned, consecutive numeric table rows are filtered; ambiguous layouts are kept. PDF captions remain, without an extra omission announcement. This is not a universal PDF table or equation detector: unstructured PDF formulas may still be read. Scanned documents require OCR.
+
+Interface language, voice and formula language are independent. Formula conversion currently supports English and Chinese. The eight additional READMEs are concise translated guides; the full configuration reference remains in English and Chinese.
 
 ## Privacy
 
