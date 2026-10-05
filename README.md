@@ -163,6 +163,8 @@ Saving bookmarks requires confirmation. Save a copy by default, or enable overwr
 
 ### Read Saved Copilot Conversations
 
+**Setup:** Install and enable the **Copilot** community plugin in Obsidian to create and save conversations. Copilot is a separate plugin and is not bundled with this reader. It is optional: ordinary note, PDF, HTML and web-page reading does not require it. This feature reads saved Markdown transcripts, so Copilot does not need to remain open while an existing saved conversation is read.
+
 Enable **Autosave Chat as Markdown** in Copilot, then use the toolbar's **Read Copilot chat** icon, the sidebar's **More actions**, or the **Read saved Copilot chat** command. Choose a conversation, preview its text, and select the latest reply, last two replies, or latest question and answer. Reading only AI replies is the default; including your questions is optional.
 
 For one-click playback, choose **Read latest reply** in the chat picker or **right-click the toolbar chat icon**. This reads only the latest saved AI answer in the most recently modified saved conversation, not necessarily the chat currently on screen. It never falls back to another conversation when no readable answer exists. Your current speech engine and online-processing consent still apply. Left-click continues to open the picker and preview.
