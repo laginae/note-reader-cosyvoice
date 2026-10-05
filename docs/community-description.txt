@@ -1,11 +1,11 @@
-Privacy-first read aloud with fast playback startup for notes, text PDFs, HTML and Obsidian Web viewer pages. Read all text, a selection, or continue from a selected position.
+Privacy-first read aloud with fast startup for notes, text PDFs, HTML and Web viewer pages. Read all, a selection, or from a selected position.
 
-Follow along with adjustable highlighting and an in-place toolbar, including reading-order support for common two-column PDF papers. Navigate headings or PDF bookmarks; infer PDF/HTML outlines locally. Progressive parsing helps playback start sooner; timing depends on document size and speech service.
+Keep the original layout with a playback toolbar and adjustable highlighting. Supports common two-column PDF papers, bookmarks and locally inferred PDF/HTML outlines.
 
-Listen to saved Copilot conversations: the latest reply, last two replies, or a question and answer. Preview before reading, or right-click the toolbar chat icon to play the most recently saved conversation's latest answer.
+Listen to saved Copilot chats: latest reply, last two replies, or a question and answer. Right-click the chat icon to play the most recently saved chat's latest answer.
 
-Try Xiaomi MiMo with Bai Hua, a male voice supporting Chinese and English; Edge TTS for online voices; installed system voices for offline use; or OpenRouter for model choice and enforced ZDR. MiMo is temporarily free; costs and quotas vary. Edge needs a helper. Local CosyVoice and Azure are also available.
+Try MiMo's Bai Hua male voice for Chinese and English, Edge TTS, installed offline system voices, or OpenRouter with enforced ZDR. Local CosyVoice and Azure are also available.
 
-Online speech requires consent and sends text to providers. Only one upcoming audio part is prefetched by default. Confirm scope and destination before audio export.
+Online speech requires consent and sends text to providers. One upcoming audio part is prefetched by default; audio export requires confirmation. Costs and quotas vary.
 
-Scans need OCR; complex layouts can affect outlines and highlighting. Desktop only. See the README for setup and privacy details.
+Scans need OCR; complex layouts can affect recognition. Local HTML needs a viewer plugin. Desktop only. See README for setup and privacy details.
