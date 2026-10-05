@@ -25,6 +25,41 @@ function pdfPage(doc, number, rows) {
   doc.body.appendChild(page); return page;
 }
 
+test('PDF body highlighting skips glossary and headers while standalone glossary marks only its rows', () => {
+  const { ancillaryLayout, recurringEdges } = require('./pdf-ancillary');
+  const dom=new JSDOM(''),doc=dom.window.document,viewport={width:600,height:800};
+  const rows=[['A. Author et al.',40,40],['Glossary',40,100],['AC Alternating current',40,120],['DC Direct current',40,140],
+    ['Left body.',40,200],['Right body.',330,110],['Right continues.',330,130],['Right ending.',330,150]];
+  const page=pdfPage(doc,1,rows),items=rows.map(([str,x,y])=>({str,width:220,height:10,transform:[10,0,0,10,x,800-y]}));
+  const ancillary=ancillaryLayout(items,viewport,[],recurringEdges([{items,viewport},{items,viewport}]));
+  const source={items,viewport,footnoteMode:'inline',omittedRegions:[...ancillary.headers,...ancillary.glossary],glossaryRegions:ancillary.glossary,contentScope:'body'};
+  const body=pdfPageLines(page,x=>x,source);
+  assert.deepEqual(matchPdfChunk([body],'Left body. Right body.').map(n=>n.textContent),['Left body.','Right body.']);
+  assert.equal(matchPdfChunk([body],'AC Alternating current').length,0);
+  const glossary=pdfPageLines(page,x=>x,{...source,omittedRegions:ancillary.headers,contentScope:'glossary'});
+  assert.deepEqual(matchPdfChunk([glossary],'AC Alternating current DC Direct current').map(n=>n.textContent),['AC Alternating current','DC Direct current']);
+  assert.equal(matchPdfChunk([glossary],'Right body.').length,0);
+  dom.window.close();
+});
+
+test('filtered body crosses column footnotes while footnote playback marks only the notes', () => {
+  const { partitionFootnotes } = require('./pdf-footnotes');
+  const dom = new JSDOM(''), doc = dom.window.document;
+  const rows = [['Left first.',40,150],['Right first.',330,150],['Left ending.',40,580],['Right ending.',330,580],
+    ['2 Left note.',40,665],['Left note ending.',40,678],['3 Right note.',330,665],['Right note ending.',330,678]];
+  const page = pdfPage(doc,1,rows), viewport = {width:600,height:800};
+  const items = rows.map(([str,x,y],i) => ({str,width:220,height:i<4?10:9,transform:[10,0,0,i<4?10:9,x,800-y]}));
+  const part = partitionFootnotes(items,viewport);
+  assert.equal(part.regions.length,2);
+  const source = {items,viewport,footnoteRegions:part.regions,footnoteMode:'after'};
+  const body = pdfPageLines(page,text=>text,source);
+  assert.deepEqual(matchPdfChunk([body],'Left ending. Right first.').map(node=>node.textContent),['Left ending.','Right first.']);
+  const notes = pdfPageLines(page,text=>text,source,true);
+  assert.deepEqual(matchPdfChunk([notes],'2 Left note. Left note ending.').map(node=>node.textContent),['2 Left note.','Left note ending.']);
+  assert.equal(matchPdfChunk([body],'2 Left note.').length,0);
+  dom.window.close();
+});
+
 test('original PDF coordinates override distorted rendered baselines only with exact item correspondence', () => {
   const doc = new JSDOM('').window.document;
   const rows = [['Left first.', 40, 100], ['Right first.', 330, 100], ['Left next.', 40, 120],

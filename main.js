@@ -320,6 +320,222 @@ var require_pdf_layout2 = __commonJS({
   }
 });
 
+// src/pdf-footnotes.js
+var require_pdf_footnotes = __commonJS({
+  "src/pdf-footnotes.js"(exports2, module2) {
+    "use strict";
+    var { extractPdfTextLayout: extractPdfTextLayout2 } = require_pdf_layout2();
+    var MODES = ["body", "after", "inline", "footnotes"];
+    function normalizeFootnoteMode2(value) {
+      return MODES.includes(value) ? value : "body";
+    }
+    function textOf(lines) {
+      return lines.map((line) => line.text).join("\n").replace(/([A-Za-z])-\n(?=[a-z])/g, "$1").trim();
+    }
+    function partitionFootnotes2(items, viewport, rules = [], options = {}) {
+      const layout = extractPdfTextLayout2(items, { viewport });
+      const height = Number(viewport?.height), width = Number(viewport?.width);
+      if (!(height > 0 && width > 0) || !layout.lines.length) return { layout, body: layout, notes: { ...layout, text: "", lines: [] }, regions: [] };
+      const positioned = (items || []).filter((item) => item.str?.trim() && item.transform?.length >= 6).map((item) => ({ x: item.transform[4], y: item.transform[5], height: Math.abs(item.height || item.transform[3]), weight: item.str.trim().length }));
+      const upper = positioned.filter((item) => item.y > height * 0.22 && item.y < height * 0.92);
+      const counts = /* @__PURE__ */ new Map();
+      for (const item of upper) {
+        const size = Math.round(item.height * 10) / 10;
+        counts.set(size, (counts.get(size) || 0) + item.weight);
+      }
+      const bodySize = [...counts].sort((a, b) => b[1] - a[1])[0]?.[0];
+      if (!bodySize) return { layout, body: layout, notes: { ...layout, text: "", lines: [] }, regions: [] };
+      const regions = [];
+      if (options.pageNumber === 1) {
+        const ordered = [...layout.lines].sort((a, b) => b.y - a.y);
+        for (const line of ordered) {
+          if (line.y > height * 0.28 || line.y < height * 0.035 || !/^[*\u2217\u2020\u2021\s]*(?:corresponding author|correspondence|e[-\s]?mail address)\b/i.test(line.text)) continue;
+          const below = ordered.filter((candidate) => candidate.y <= line.y && candidate.y > height * 0.035);
+          const spans = positioned.filter((item) => item.y <= line.y + bodySize * 0.5 && item.y > height * 0.035 && item.weight > 2);
+          const small = spans.length && spans.every((item) => item.height <= bodySize * 0.96);
+          const metadata = below.some((candidate) => candidate !== line && /e[-\s]?mail address|doi\.org|received\b|accepted\b|available\s*online|copyright|\u00a9/i.test(candidate.text));
+          const rule = rules.some((rule2) => rule2.y > line.y && rule2.y - line.y < bodySize * 3 && rule2.x >= line.xMin - bodySize * 2 && rule2.x <= line.xMin + bodySize && rule2.width > 20 && rule2.width < width * 0.45);
+          const above = ordered.filter((candidate) => candidate.y > line.y + bodySize * 0.5);
+          const gap = above.length ? Math.min(...above.map((candidate) => candidate.y)) - line.y : 0;
+          if (!small || !metadata || !rule && gap < bodySize * 2) continue;
+          regions.push({
+            xMin: Math.min(...below.map((l) => l.xMin)) - 2,
+            xMax: Math.max(...below.map((l) => l.xMax)) + 2,
+            yMin: Math.min(...below.map((l) => l.y)) - bodySize * 0.6,
+            yMax: line.y + bodySize * 0.6
+          });
+          break;
+        }
+      }
+      for (const left of layout.twoColumn ? [true, false] : [true]) {
+        const column = layout.lines.filter((line) => !layout.twoColumn || line.xMin < width / 2 === left).sort((a, b) => b.y - a.y);
+        for (let i = 0; i < column.length; i++) {
+          const line = column[i];
+          if (regions.some((region) => line.y >= region.yMin && line.y <= region.yMax && line.xMin >= region.xMin && line.xMax <= region.xMax)) continue;
+          if (line.y > height * 0.28 || line.y < height * 0.035 || !/^\d{1,3}\s+\S/.test(line.text)) continue;
+          const nearby = positioned.filter((item) => Math.abs(item.y - line.y) <= bodySize * 0.6 && item.x >= line.xMin - 2 && item.x <= line.xMax + 2);
+          const letters = nearby.filter((item) => item.weight > 2);
+          if (!letters.length) continue;
+          const size = letters.reduce((sum, item) => sum + item.height * item.weight, 0) / letters.reduce((sum, item) => sum + item.weight, 0);
+          const rule = rules.some((rule2) => rule2.y > line.y && rule2.y - line.y < bodySize * 3 && rule2.x >= line.xMin - bodySize && rule2.x <= line.xMin + bodySize && rule2.width > 20 && rule2.width < width * 0.45);
+          const gap = i > 0 ? column[i - 1].y - line.y : 0;
+          if (size > bodySize * 0.94 || !rule && (size > bodySize * 0.91 || gap < bodySize * 1.7)) continue;
+          const below = column.slice(i).filter((candidate) => candidate.y > height * 0.035);
+          const consistent = below.every((candidate) => {
+            const spans = positioned.filter((item) => Math.abs(item.y - candidate.y) <= bodySize * 0.5 && item.x >= candidate.xMin - 2 && item.x <= candidate.xMax + 2 && item.weight > 2);
+            return !spans.length || spans.every((item) => item.height <= bodySize * 0.96);
+          });
+          if (!consistent) continue;
+          regions.push({
+            xMin: Math.min(...below.map((l) => l.xMin)) - 2,
+            xMax: Math.max(...below.map((l) => l.xMax)) + 2,
+            yMin: Math.min(...below.map((l) => l.y)) - bodySize * 0.6,
+            yMax: line.y + bodySize * 0.6
+          });
+          break;
+        }
+      }
+      const isNote = (line) => regions.some((region) => line.xMin >= region.xMin && line.xMax <= region.xMax && line.y >= region.yMin && line.y <= region.yMax);
+      const notes = layout.lines.filter(isNote), body = layout.lines.filter((line) => !isNote(line));
+      return { layout, body: { ...layout, lines: body, text: textOf(body) }, notes: { ...layout, lines: notes, text: textOf(notes) }, regions };
+    }
+    function splitFootnotesInRange2(text, partition) {
+      let body = text;
+      const notes = [];
+      for (let i = 0; i < partition.notes.lines.length; i++) {
+        const line = partition.notes.lines[i], next = partition.notes.lines[i + 1];
+        const value = /[A-Za-z]-$/.test(line.text) && /^[a-z]/.test(next?.text || "") ? line.text.slice(0, -1) : line.text;
+        const pattern = value.trim().split(/\s+/).map((word) => word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("\\s+");
+        const re = new RegExp(pattern, "g"), matches = [...body.matchAll(re)];
+        if (matches.length === 1) {
+          notes.push(matches[0][0]);
+          body = body.slice(0, matches[0].index) + "\n" + body.slice(matches[0].index + matches[0][0].length);
+        }
+      }
+      return { body: body.trim(), notes: notes.join("\n") };
+    }
+    async function footnoteRules2(page, OPS) {
+      if (!page.getOperatorList || !OPS) return [];
+      try {
+        const list = await page.getOperatorList(), rules = [];
+        for (let i = 0; i < list.fnArray.length; i++) {
+          if (list.fnArray[i] !== OPS.constructPath) continue;
+          const [ops, coords] = list.argsArray[i] || [];
+          if (!Array.isArray(ops) && !ArrayBuffer.isView(ops)) continue;
+          let index = 0, from = null;
+          for (const op of ops) {
+            if (op === OPS.moveTo) {
+              from = [coords[index++], coords[index++]];
+            } else if (op === OPS.lineTo) {
+              const to = [coords[index++], coords[index++]];
+              if (from && Math.abs(from[1] - to[1]) < 1) rules.push({ x: Math.min(from[0], to[0]), y: to[1], width: Math.abs(to[0] - from[0]) });
+              from = to;
+            } else if (op === OPS.curveTo) index += 6;
+            else if (op === OPS.rectangle) {
+              index += 4;
+              from = null;
+            } else if (op !== OPS.closePath) {
+              from = null;
+              break;
+            }
+          }
+        }
+        return rules;
+      } catch (_) {
+        return [];
+      }
+    }
+    function addFootnoteSettings2(container, plugin, Setting2) {
+      const zh = plugin.settings.settingsLanguage === "chinese";
+      new Setting2(container).setName(zh ? "PDF \u811A\u6CE8\u6717\u8BFB" : "PDF footnote reading").setDesc(zh ? "\u9ED8\u8BA4\u53EA\u8BFB\u6B63\u6587\u3002\u7ED3\u5408\u9875\u5E95\u7F16\u53F7\u3001\u5B57\u53F7\u548C\u95F4\u8DDD\u8BC6\u522B\u811A\u6CE8\u53CA\u9996\u9875\u4F5C\u8005\u3001\u51FA\u7248\u4FE1\u606F\uFF0C\u4E0D\u786E\u5B9A\u7684\u6587\u5B57\u4FDD\u7559\u3002\u4EC5\u6717\u8BFB\u9009\u4E2D\u6587\u5B57\u65F6\u4ECD\u8BFB\u5B8C\u6574\u6240\u9009\u5185\u5BB9\u3002" : "Body only by default. Detects bottom-page notes and first-page correspondence/publication blocks using size and spacing; uncertain text is retained. Selection-only reading preserves the selected text.").addDropdown((dropdown) => {
+        const labels = zh ? ["\u53EA\u8BFB\u6B63\u6587", "\u6B63\u6587\u7ED3\u675F\u540E\u8BFB\u811A\u6CE8", "\u4FDD\u7559\u539F\u987A\u5E8F\uFF08\u542B\u811A\u6CE8\uFF09", "\u53EA\u8BFB\u811A\u6CE8"] : ["Body only", "Footnotes after body", "Original order, including footnotes", "Footnotes only"];
+        MODES.forEach((mode, i) => dropdown.addOption(mode, labels[i]));
+        dropdown.setValue(normalizeFootnoteMode2(plugin.settings.pdfFootnoteMode)).onChange(async (value) => {
+          plugin.settings.pdfFootnoteMode = normalizeFootnoteMode2(value);
+          await plugin.saveSettings();
+        });
+      });
+    }
+    module2.exports = { partitionFootnotes: partitionFootnotes2, footnoteRules: footnoteRules2, normalizeFootnoteMode: normalizeFootnoteMode2, addFootnoteSettings: addFootnoteSettings2, splitFootnotesInRange: splitFootnotesInRange2 };
+  }
+});
+
+// src/pdf-ancillary.js
+var require_pdf_ancillary = __commonJS({
+  "src/pdf-ancillary.js"(exports2, module2) {
+    "use strict";
+    var { extractPdfTextLayout: extractPdfTextLayout2 } = require_pdf_layout2();
+    var inside = (line, region) => line.y >= region.yMin && line.y <= region.yMax && line.xMin >= region.xMin && line.xMax <= region.xMax;
+    var textOf = (lines) => lines.map((line) => line.text).join("\n").replace(/([A-Za-z])-\n(?=[a-z])/g, "$1").trim();
+    function edgeKey(line, viewport) {
+      const band = line.y > viewport.height * 0.93 ? "top" : line.y < viewport.height * 0.045 ? "bottom" : "";
+      if (!band) return "";
+      const value = line.text.toLowerCase().replace(/\d+/g, "#").replace(/\s+/g, " ").trim();
+      return `${band}:${Math.round(line.xMin / viewport.width * 10)}:${value}`;
+    }
+    function recurringEdges2(pages) {
+      const counts = /* @__PURE__ */ new Map();
+      for (const page of pages) {
+        if (!page.viewport?.height) continue;
+        const keys = new Set(extractPdfTextLayout2(page.items, { viewport: page.viewport }).lines.map((line) => edgeKey(line, page.viewport)).filter(Boolean));
+        for (const key of keys) counts.set(key, (counts.get(key) || 0) + 1);
+      }
+      return new Set([...counts].filter(([, count]) => count >= 2).map(([key]) => key));
+    }
+    function ancillaryLayout2(items, viewport, rules = [], repeated = /* @__PURE__ */ new Set()) {
+      const layout = extractPdfTextLayout2(items, { viewport });
+      const headers = [], glossary = [];
+      if (!viewport?.height || !viewport?.width) return { layout, headers, glossary };
+      for (const line of layout.lines) {
+        if (repeated.has(edgeKey(line, viewport)) || line.y < viewport.height * 0.045 && /^\d{1,4}$/.test(line.text.trim())) {
+          headers.push({ xMin: line.xMin - 2, xMax: line.xMax + 2, yMin: line.y - 2, yMax: line.y + 2 });
+        }
+      }
+      const heading = /^(?:(?:\d+(?:\.\d+)*|[A-Z])\.?\s+)?(?:list of (?:abbreviations|symbols)|abbreviations|nomenclature|glossary|symbols and abbreviations|术语表|缩略语表|缩写表|符号表)\s*[:：]?$/i;
+      const row = /^(?:[A-Z0-9][A-Z0-9/()+\-]{0,19}[:：]?\s+\S|[^\s:：]{1,20}[:：]\s*\S)/;
+      for (const title of layout.lines.filter((line) => heading.test(line.text.trim()))) {
+        const columnLeft = layout.twoColumn && title.xMax < viewport.width / 2;
+        const columnRight = layout.twoColumn && title.xMin > viewport.width / 2;
+        const xMin = columnRight ? viewport.width / 2 : 0;
+        const xMax = columnLeft ? viewport.width / 2 : viewport.width;
+        const candidates = layout.lines.filter((line) => line.y < title.y && line.xMin >= xMin && line.xMax <= xMax).sort((a, b) => b.y - a.y);
+        const selected = [title];
+        let previous = title, rows = 0;
+        const sizes = items.filter((item) => item.transform && Math.abs(item.transform[5] - title.y) < 5).map((item) => Math.abs(item.height || item.transform[3]));
+        const size = Math.max(5, ...sizes);
+        const bottomRule = rules.filter((rule) => rule.y < title.y && rule.width > (xMax - xMin) * 0.55 && rule.x <= title.xMin && rule.x + rule.width >= title.xMax).sort((a, b) => b.y - a.y)[0];
+        for (const line of candidates) {
+          if (bottomRule && line.y < bottomRule.y) break;
+          if (previous.y - line.y > size * 2.7 || !row.test(line.text) && (!bottomRule || rows === 0)) break;
+          if (row.test(line.text)) rows++;
+          selected.push(line);
+          previous = line;
+        }
+        if (rows < 2) continue;
+        glossary.push({
+          xMin: Math.min(...selected.map((line) => line.xMin)) - 2,
+          xMax: Math.max(...selected.map((line) => line.xMax)) + 2,
+          yMin: Math.min(...selected.map((line) => line.y)) - 2,
+          yMax: title.y + 2
+        });
+      }
+      return { layout, headers, glossary };
+    }
+    function addAncillarySettings2(container, plugin, Setting2) {
+      const zh = plugin.settings.settingsLanguage === "chinese";
+      new Setting2(container).setName(zh ? "\u8DF3\u8FC7 PDF \u9875\u7709\u9875\u811A" : "Skip PDF headers and footers").setDesc(zh ? "\u9ED8\u8BA4\u5F00\u542F\u3002\u62BD\u67E5\u5C11\u91CF\u9875\u9762\uFF0C\u6392\u9664\u8FB9\u7F18\u91CD\u590D\u7684\u4F5C\u8005\u3001\u671F\u520A\u4FE1\u606F\u548C\u9875\u7801\uFF0C\u4E0D\u6539\u52A8 PDF\u3002" : "On by default. Samples a few pages to omit recurring author/journal information at page edges and page numbers without changing the PDF.").addToggle((toggle) => toggle.setValue(plugin.settings.pdfSkipHeaders !== false).onChange(async (value) => {
+        plugin.settings.pdfSkipHeaders = value;
+        await plugin.saveSettings();
+      }));
+      new Setting2(container).setName(zh ? "\u6B63\u6587\u6717\u8BFB\u65F6\u5305\u542B PDF \u672F\u8BED\u8868" : "Include PDF glossary in body reading").setDesc(zh ? "\u9ED8\u8BA4\u5173\u95ED\u3002\u4EC5\u6392\u9664\u6709\u660E\u786E\u6807\u9898\u548C\u8868\u683C\u6392\u5217\u7684\u672F\u8BED\u8868\uFF1B\u4E0D\u786E\u5B9A\u7684\u6587\u5B57\u4FDD\u7559\u3002\u53EF\u5728 PDF \u5DE5\u5177\u680F\u4E2D\u5355\u72EC\u6717\u8BFB\u6574\u7BC7 PDF \u7684\u672F\u8BED\u8868\u6216\u811A\u6CE8\uFF1B\u4EC5\u9009\u4E2D\u6587\u5B57\u65F6\u4E0D\u81EA\u52A8\u8FC7\u6EE4\u3002" : "Off by default. Omits confidently identified glossary tables; uncertain text is retained. The PDF toolbar can read the whole PDF's glossary or footnotes separately. Selection-only reading is not filtered.").addToggle((toggle) => toggle.setValue(plugin.settings.pdfIncludeGlossary === true).onChange(async (value) => {
+        plugin.settings.pdfIncludeGlossary = value;
+        await plugin.saveSettings();
+      }));
+    }
+    module2.exports = { recurringEdges: recurringEdges2, ancillaryLayout: ancillaryLayout2, inside, textOf, addAncillarySettings: addAncillarySettings2 };
+  }
+});
+
 // node_modules/entities/dist/commonjs/generated/decode-data-html.js
 var require_decode_data_html = __commonJS({
   "node_modules/entities/dist/commonjs/generated/decode-data-html.js"(exports2) {
@@ -8715,6 +8931,11 @@ var require_native_toolbar = __commonJS({
           option.value = value;
           this.labels.push([option, en, zh, "text"]);
         }
+        if (this.isPdf) for (const [value, en, zh] of [["glossary", "Glossary only (whole PDF)", "\u4EC5\u6717\u8BFB\u672F\u8BED\u8868\uFF08\u6574\u7BC7 PDF\uFF09"], ["footnotes", "Footnotes only (whole PDF)", "\u4EC5\u6717\u8BFB\u811A\u6CE8\uFF08\u6574\u7BC7 PDF\uFF09"]]) {
+          const option = node(this.scope, "option");
+          option.value = value;
+          this.labels.push([option, en, zh, "text"]);
+        }
         this.readScope = this.button(this.more, "play", ["Read selected scope", "\u6717\u8BFB\u6240\u9009\u8303\u56F4"], () => this.read(this.scope.value));
         this.volume = node(this.more, "input");
         this.volume.type = "range";
@@ -8786,6 +9007,7 @@ var require_native_toolbar = __commonJS({
         if (!this.isPdf) return this.plugin.readMarkdownView(this.view, scope, this.selection);
         const file = this.view.file;
         if (scope === "entire") return this.plugin.readCurrentPdf(file);
+        if (scope === "glossary" || scope === "footnotes") return this.plugin.readCurrentPdf(file, { contentScope: scope });
         const context = this.selection || this.plugin.getPdfSelectionForFile(file);
         if (!context || context.filePath !== file.path || context.fileMtime !== file.stat?.mtime) {
           new Notice2(this.t("Select text in this PDF first.", "\u8BF7\u5148\u5728\u6B64 PDF \u4E2D\u9009\u4E2D\u6587\u5B57\u3002"));
@@ -8925,7 +9147,7 @@ var require_native_toolbar = __commonJS({
         this.heading.setAttribute("aria-label", this.t("Outline section", "\u5927\u7EB2\u7AE0\u8282"));
         if (this.heading.options[0]) this.heading.options[0].textContent = this.t("Choose a heading", "\u9009\u62E9\u7AE0\u8282");
         this.scope.setAttribute("aria-label", this.t("Reading scope", "\u6717\u8BFB\u8303\u56F4"));
-        const scopeLabel = this.scope.value === "selection" ? this.t("Read selected text", "\u6717\u8BFB\u9009\u4E2D\u6587\u5B57") : this.scope.value === "from-selection" ? this.t("Read from selection", "\u4ECE\u9009\u4E2D\u4F4D\u7F6E\u5F00\u59CB\u6717\u8BFB") : this.t("Read entire document", "\u6717\u8BFB\u5168\u6587");
+        const scopeLabel = this.scope.value === "selection" ? this.t("Read selected text", "\u6717\u8BFB\u9009\u4E2D\u6587\u5B57") : this.scope.value === "from-selection" ? this.t("Read from selection", "\u4ECE\u9009\u4E2D\u4F4D\u7F6E\u5F00\u59CB\u6717\u8BFB") : this.scope.value === "glossary" ? this.t("Read glossary only (whole PDF)", "\u4EC5\u6717\u8BFB\u672F\u8BED\u8868\uFF08\u6574\u7BC7 PDF\uFF09") : this.scope.value === "footnotes" ? this.t("Read footnotes only (whole PDF)", "\u4EC5\u6717\u8BFB\u811A\u6CE8\uFF08\u6574\u7BC7 PDF\uFF09") : this.t("Read entire document", "\u6717\u8BFB\u5168\u6587");
         this.readScope.setAttribute("aria-label", scopeLabel);
         this.section.disabled = this.fromSection.disabled = this.heading.value === "" || exporting;
         this.readScope.disabled = this.exportButton.disabled = Boolean(exporting);
@@ -9023,7 +9245,8 @@ var require_pdf_highlights = __commonJS({
     "use strict";
     var { extractPdfTextLayout: extractPdfTextLayout2 } = require_pdf_layout2();
     var { compact: compact2 } = require_markdown_source();
-    function pdfPageLines(page, clean, source = null) {
+    var { inside } = require_pdf_ancillary();
+    function pdfPageLines(page, clean, source = null, footnote = false) {
       const bounds = page.getBoundingClientRect();
       if (!(bounds.width > 0 && bounds.height > 0)) return null;
       const spans = [...page.querySelectorAll(".textLayer span")].filter((span) => !span.querySelector("span") && span.textContent.trim());
@@ -9058,6 +9281,20 @@ var require_pdf_highlights = __commonJS({
         });
         if (nearest >= 0) lineNodes[nearest].push(span);
       });
+      const ancillaryFilter = source?.omittedRegions?.length || source?.contentScope === "glossary";
+      if (exact && (ancillaryFilter || source.footnoteMode && source.footnoteMode !== "inline" && source.footnoteRegions?.length)) {
+        const indices = layout.lines.map((line, index) => ({ line, index })).filter(({ line }) => {
+          if (source.omittedRegions?.some((region) => inside(line, region))) return false;
+          if (source.contentScope === "glossary") return source.glossaryRegions?.some((region) => inside(line, region));
+          if (!source.footnoteMode || source.footnoteMode === "inline") return true;
+          const isNote = source.footnoteRegions?.some((region) => line.y >= region.yMin && line.y <= region.yMax && line.xMin >= region.xMin && line.xMax <= region.xMax);
+          return Boolean(isNote) === footnote;
+        });
+        layout.lines = indices.map(({ line }) => line);
+        const keptNodes = indices.map(({ index }) => lineNodes[index]);
+        lineNodes.splice(0, lineNodes.length, ...keptNodes);
+        layout.text = layout.lines.map((line) => line.text).join("\n").replace(/([A-Za-z])-\n(?=[a-z])/g, "$1").trim();
+      } else if (!exact && (ancillaryFilter || source?.footnoteRegions?.length && source.footnoteMode !== "inline")) return null;
       const text = compact2(clean(layout.text));
       let offset = 0;
       const lines = layout.lines.map((line, index) => {
@@ -9200,8 +9437,8 @@ var require_pdf_highlights = __commonJS({
           if (!cache || cache.signature !== signature || cache.first !== first || cache.last !== last || cache.nextFirst !== nextFirst || cache.dirty || cache.layers.length !== layers.length || cache.layers.some((layer, i) => layer !== layers[i]) || cache.observers.some((observer) => observer.takeRecords().length > 0) || cache.nodes.some((node) => !node.isConnected) || !cache.nodes.length && Date.now() - cache.created > 1e3) {
             this.discardCache(view);
             const clean = (text) => plugin.sanitizeAudioExportText(text);
-            const currentPage = pdfPageLines(page, clean, session.pdfHighlightPages?.get(pageNumber));
-            const nextPage = following ? pdfPageLines(following, clean, session.pdfHighlightPages?.get(pageNumber + 1)) : null;
+            const currentPage = pdfPageLines(page, clean, session.pdfHighlightPages?.get(pageNumber), Boolean(session.chunkFootnotes?.[highlight.index]));
+            const nextPage = following ? pdfPageLines(following, clean, session.pdfHighlightPages?.get(pageNumber + 1), Boolean(session.chunkFootnotes?.[highlight.index])) : null;
             cache = { signature, first, last, nextFirst, layers, observers: [], dirty: false, created: Date.now(), nodes: currentPage ? matchPdfChunk(nextPage ? [currentPage, nextPage] : [currentPage], session.chunks[highlight.index]) : [] };
             for (const layer of layers) {
               const Observer = layer.ownerDocument.defaultView?.MutationObserver;
@@ -33178,6 +33415,8 @@ var path = require("path");
 var { spawn } = require("child_process");
 var { pathToFileURL } = require("url");
 var { extractPdfTextLayout, extractTextFromPdfItems } = require_pdf_layout2();
+var { partitionFootnotes, footnoteRules, normalizeFootnoteMode, addFootnoteSettings, splitFootnotesInRange } = require_pdf_footnotes();
+var { recurringEdges, ancillaryLayout, inside: insidePdfRegion, textOf: pdfLinesText, addAncillarySettings } = require_pdf_ancillary();
 var { MAX_HTML_BYTES, captureHtmlSelection, extractHtmlText, getHtmlReaderDocument, isHtmlFile } = require_html_text();
 var { WEB_VIEW_TYPE, captureWebPage, getWebPageUrl, isWebPageView } = require_web_page();
 var { estimatePlayback, formatDuration } = require_playback_estimate();
@@ -34617,6 +34856,9 @@ function createDefaultSettings() {
     webReadingFollow: false,
     readingFollow: false,
     pdfBookmarksOverwrite: false,
+    pdfFootnoteMode: "body",
+    pdfSkipHeaders: true,
+    pdfIncludeGlossary: false,
     playbackVolume: 1,
     playbackSpeed: 1,
     audioExportFolder: normalizeAudioExportFolder(DEFAULT_SETTINGS.audioExportFolder),
@@ -37431,13 +37673,15 @@ ${embed}
       const detailed = chunk && typeof chunk === "object" && Object.prototype.hasOwnProperty.call(chunk, "text");
       const text = String(detailed ? chunk.text : chunk || "").trim();
       const pageNumber = detailed && chunk.metadata ? Math.max(1, Math.floor(Number(chunk.metadata.pageNumber) || 1)) : options.pageNumber ? Math.max(1, Math.floor(Number(options.pageNumber) || 1)) : null;
-      return text ? { pageNumber, text } : null;
+      return text ? { pageNumber, text, footnote: Boolean(chunk.metadata?.footnote) } : null;
     }).filter(Boolean);
     if (!readableChunks.length) {
       return 0;
     }
     session.chunks.push(...readableChunks.map((chunk) => chunk.text));
     session.chunkPageNumbers.push(...readableChunks.map((chunk) => chunk.pageNumber));
+    session.chunkFootnotes || (session.chunkFootnotes = session.chunks.slice(0, -readableChunks.length).map(() => false));
+    session.chunkFootnotes.push(...readableChunks.map((chunk) => chunk.footnote));
     session.totalChunks = session.chunks.length;
     const currentChunk = this.readerState.currentChunk;
     this.setReaderState({
@@ -37514,6 +37758,7 @@ ${embed}
       sourceKind: "pdf"
     });
     session.pdfOutlineRange = outlineRange;
+    session.pdfContentScope = ["glossary", "footnotes"].includes(options.contentScope) ? options.contentScope : "body";
     this.activeSession = session;
     this.updateStatus("PDF text extraction", {
       canPause: false,
@@ -37549,7 +37794,8 @@ ${embed}
     await this.runSpeechSession(session);
   }
   async producePdfSpeechChunks(file, session, selectionContext, chunkLimits) {
-    const chunker = createPdfSpeechChunker(chunkLimits);
+    let chunker = createPdfSpeechChunker(chunkLimits);
+    let inFootnotes = false;
     let readableTextLength = 0;
     let selectionFallbackNotified = false;
     await this.extractPdfText(file, session, {
@@ -37558,9 +37804,14 @@ ${embed}
         if (!this.isActive(session)) {
           return;
         }
+        if (Boolean(pageInfo.footnote) !== inFootnotes) {
+          this.appendSessionChunks(session, chunker.finish());
+          chunker = createPdfSpeechChunker(chunkLimits);
+          inFootnotes = Boolean(pageInfo.footnote);
+        }
         const text = this.settings.stripMarkdown ? sanitizeTextForSpeech(pageText, { mathReadingLanguage: this.settings.mathReadingLanguage }) : normalizeLineBreaks(pageText).trim();
         readableTextLength += text.length;
-        this.appendSessionChunks(session, chunker.push(text, { pageNumber: pageInfo.pageNumber }));
+        this.appendSessionChunks(session, chunker.push(text, { pageNumber: pageInfo.pageNumber, footnote: inFootnotes }));
         if (selectionContext && pageInfo.pageNumber === selectionContext.pageNumber && session.pdfSelectionMatched === false && !selectionFallbackNotified) {
           selectionFallbackNotified = true;
           new Notice(
@@ -37571,6 +37822,7 @@ ${embed}
       },
       reportProgress: true,
       outlineRange: session.pdfOutlineRange,
+      contentScope: session.pdfContentScope,
       selectedText: selectionContext ? selectionContext.selectedText : "",
       selectionPosition: selectionContext ? selectionContext.selectionPosition : null,
       startPageNumber: session.pdfOutlineRange?.startPage || (selectionContext ? selectionContext.pageNumber : 1)
@@ -37580,6 +37832,10 @@ ${embed}
     }
     this.appendSessionChunks(session, chunker.finish());
     if (!readableTextLength || !session.chunks.length) {
+      if (session.pdfContentScope === "glossary" || session.pdfContentScope === "footnotes") {
+        const zh = this.settings.settingsLanguage === "chinese";
+        throw new Error(session.pdfContentScope === "glossary" ? zh ? "\u672A\u53EF\u9760\u8BC6\u522B\u5230\u672F\u8BED\u8868\u3002\u53EF\u9009\u4E2D\u76F8\u5E94\u6587\u5B57\uFF0C\u4F7F\u7528\u201C\u4EC5\u9009\u4E2D\u6587\u5B57\u201D\u3002" : "No glossary was reliably identified. Select its text and use Selection only." : zh ? "\u672A\u53EF\u9760\u8BC6\u522B\u5230\u811A\u6CE8\u3002\u53EF\u9009\u4E2D\u76F8\u5E94\u6587\u5B57\uFF0C\u4F7F\u7528\u201C\u4EC5\u9009\u4E2D\u6587\u5B57\u201D\u3002" : "No footnotes were reliably identified. Select their text and use Selection only.");
+      }
       throw new Error("No extractable text was found. This PDF may be scanned or image-only; run OCR first and try again.");
     }
   }
@@ -37633,6 +37889,26 @@ ${embed}
         session.totalChunks = totalPages;
       }
       const pageTexts = [];
+      const delayedNotes = [];
+      const contentScope = options.contentScope || "body";
+      const footnoteMode = contentScope === "glossary" ? "inline" : contentScope === "footnotes" ? "footnotes" : normalizeFootnoteMode(options.footnoteMode ?? this.settings?.pdfFootnoteMode);
+      const skipHeaders = this.settings?.pdfSkipHeaders === true;
+      let repeatedHeaders = /* @__PURE__ */ new Set();
+      if (skipHeaders) {
+        const samples = [];
+        for (let n = 1; n <= Math.min(3, totalPages); n++) {
+          if (!isCurrent()) return "";
+          const sample = await pdfDocument.getPage(n);
+          try {
+            const content = await sample.getTextContent();
+            samples.push({ items: content.items, viewport: sample.getViewport?.({ scale: 1 }) });
+          } finally {
+            sample.cleanup?.();
+          }
+        }
+        if (!isCurrent()) return "";
+        repeatedHeaders = recurringEdges(samples);
+      }
       let textLength = 0;
       const endPageNumber = Math.min(totalPages, options.outlineRange?.endPage || totalPages);
       for (let pageNumber = startPageNumber; pageNumber <= endPageNumber; pageNumber += 1) {
@@ -37665,6 +37941,14 @@ ${embed}
             return "";
           }
           const viewport = typeof page.getViewport === "function" ? page.getViewport({ scale: 1 }) : null;
+          const rules = await footnoteRules(page, pdfjsLib.OPS);
+          const partition = footnoteMode === "inline" ? null : partitionFootnotes(textContent.items, viewport, rules, { pageNumber });
+          const ancillary = ancillaryLayout(textContent.items, viewport, rules, skipHeaders ? repeatedHeaders : /* @__PURE__ */ new Set());
+          const omittedRegions = [
+            ...skipHeaders ? ancillary.headers : [],
+            ...contentScope !== "glossary" && this.settings?.pdfIncludeGlossary !== true ? ancillary.glossary : []
+          ];
+          if (!isCurrent()) return "";
           if (session.kind === "pdf-progressive") {
             session.pdfHighlightPages || (session.pdfHighlightPages = /* @__PURE__ */ new Map());
             session.pdfHighlightPages.set(pageNumber, {
@@ -37674,7 +37958,12 @@ ${embed}
                 width: item.width,
                 height: item.height,
                 transform: Array.from(item.transform || [])
-              }))
+              })),
+              footnoteRegions: partition?.regions || [],
+              footnoteMode,
+              omittedRegions,
+              glossaryRegions: ancillary.glossary,
+              contentScope
             });
           }
           const pageLayout = extractPdfTextLayout(textContent && textContent.items, { viewport });
@@ -37695,15 +37984,35 @@ ${embed}
             pageText = selectionSlice.text;
             session.pdfSelectionMatched = selectionSlice.matched;
           }
+          let noteText = "";
+          if (partition?.regions.length) {
+            if (!options.outlineRange && !(selectedText && pageNumber === startPageNumber)) {
+              pageText = partition.body.text;
+              noteText = partition.notes.text;
+            } else {
+              const separated = splitFootnotesInRange(pageText, partition);
+              pageText = separated.body;
+              noteText = separated.notes;
+            }
+          }
+          if (footnoteMode === "footnotes") pageText = noteText;
+          if (contentScope === "glossary") {
+            pageText = pdfLinesText(ancillary.layout.lines.filter((line) => ancillary.glossary.some((region) => insidePdfRegion(line, region))));
+            noteText = "";
+          } else if (omittedRegions.length) {
+            const omitted = { notes: { lines: ancillary.layout.lines.filter((line) => omittedRegions.some((region) => insidePdfRegion(line, region))) } };
+            pageText = splitFootnotesInRange(pageText, omitted).body;
+          }
+          if (footnoteMode === "after" && noteText) delayedNotes.push({ text: noteText, pageNumber });
           if (collectText) {
             pageTexts.push(pageText);
           }
-          textLength += pageText.length;
+          textLength += pageText.length + (footnoteMode === "after" ? noteText.length : 0);
           if (textLength > PDF_MAX_TEXT_CHARS) {
             throw new Error("This PDF contains more than 5,000,000 extractable characters. Split it before reading.");
           }
           if (onPageText) {
-            await onPageText(pageText, { pageNumber, totalPages });
+            await onPageText(pageText, { pageNumber, totalPages, footnote: footnoteMode === "footnotes" });
           }
         } finally {
           if (page && typeof page.cleanup === "function") {
@@ -37716,6 +38025,11 @@ ${embed}
             progress: pageNumber / totalPages
           });
         }
+      }
+      for (const note of delayedNotes) {
+        if (!isCurrent()) return "";
+        if (collectText) pageTexts.push(note.text);
+        if (onPageText) await onPageText(note.text, { pageNumber: note.pageNumber, totalPages, footnote: true });
       }
       return collectText ? joinPdfPageText(pageTexts) : "";
     } finally {
@@ -39999,6 +40313,8 @@ var CosyVoiceReaderSettingTab = class extends PluginSettingTab {
       this.plugin.renderDocumentViews();
     }));
     addPdfOutlineSettings(containerEl, this.plugin);
+    addFootnoteSettings(containerEl, this.plugin, Setting);
+    addAncillarySettings(containerEl, this.plugin, Setting);
     addCopilotChatSettings(containerEl, this.plugin);
     new Setting(containerEl).setName(zhReading ? "HTML / \u7F51\u9875\u6BB5\u843D\u9AD8\u4EAE" : "HTML / web paragraph highlight").setDesc(zhReading ? "\u4EC5\u6807\u8BB0\u53EF\u51C6\u786E\u5339\u914D\u7684\u5F53\u524D\u6717\u8BFB\u6BB5\u843D\uFF0C\u6CBF\u7528\u9AD8\u4EAE\u989C\u8272\u548C\u5F3A\u5EA6\u3002\u4E0D\u6539\u52A8\u539F\u6587\u3001\u4E0D\u589E\u52A0 API \u8BF7\u6C42\uFF1B\u91CD\u590D\u6587\u5B57\u3001\u52A8\u6001\u9875\u9762\u6216\u4E0D\u652F\u6301\u7684\u5D4C\u5165\u5185\u5BB9\u53EF\u80FD\u65E0\u6CD5\u6807\u8BB0\u3002\u6B63\u6587\u6717\u8BFB\u6807\u8BB0\u5173\u95ED\u65F6\u4E5F\u4E0D\u9AD8\u4EAE\u3002" : "Mark uniquely matched current segments using the highlight color and strength. No text changes or extra API requests. Repeated text, dynamic pages and unsupported embedded content may remain unmarked. Requires reading text highlight to be enabled.").addToggle((toggle) => toggle.setValue(this.plugin.settings.webReadingHighlight !== false).onChange(async (value) => {
       this.plugin.settings.webReadingHighlight = value;

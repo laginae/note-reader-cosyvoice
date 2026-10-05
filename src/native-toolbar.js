@@ -86,6 +86,9 @@ class NativeReaderToolbar {
     for (const [value, en, zh] of [['entire', this.isWeb || this.isHtml ? 'Entire page' : this.isPdf ? 'Entire PDF' : 'Entire note', this.isWeb || this.isHtml ? '整个页面' : this.isPdf ? '整篇 PDF' : '整篇笔记'], ['selection', 'Selection only', '仅选中文字'], ['from-selection', 'From selection', '从选中位置']]) {
       const option = node(this.scope, 'option'); option.value = value; this.labels.push([option, en, zh, 'text']);
     }
+    if (this.isPdf) for (const [value, en, zh] of [['glossary', 'Glossary only (whole PDF)', '仅朗读术语表（整篇 PDF）'], ['footnotes', 'Footnotes only (whole PDF)', '仅朗读脚注（整篇 PDF）']]) {
+      const option = node(this.scope, 'option'); option.value = value; this.labels.push([option, en, zh, 'text']);
+    }
     this.readScope = this.button(this.more, 'play', ['Read selected scope', '朗读所选范围'], () => this.read(this.scope.value));
     this.volume = node(this.more, 'input'); this.volume.type = 'range'; this.volume.min = '0'; this.volume.max = '100'; this.volume.step = '1';
     this.volume.className = 'note-reader-native-volume';
@@ -136,6 +139,7 @@ class NativeReaderToolbar {
     if (!this.isPdf) return this.plugin.readMarkdownView(this.view, scope, this.selection);
     const file = this.view.file;
     if (scope === 'entire') return this.plugin.readCurrentPdf(file);
+    if (scope === 'glossary' || scope === 'footnotes') return this.plugin.readCurrentPdf(file, { contentScope: scope });
     const context = this.selection || this.plugin.getPdfSelectionForFile(file);
     if (!context || context.filePath !== file.path || context.fileMtime !== file.stat?.mtime) {
       new Notice(this.t('Select text in this PDF first.', '请先在此 PDF 中选中文字。')); return;
@@ -246,6 +250,8 @@ class NativeReaderToolbar {
     this.scope.setAttribute('aria-label', this.t('Reading scope', '朗读范围'));
     const scopeLabel = this.scope.value === 'selection' ? this.t('Read selected text', '朗读选中文字')
       : this.scope.value === 'from-selection' ? this.t('Read from selection', '从选中位置开始朗读')
+      : this.scope.value === 'glossary' ? this.t('Read glossary only (whole PDF)', '仅朗读术语表（整篇 PDF）')
+      : this.scope.value === 'footnotes' ? this.t('Read footnotes only (whole PDF)', '仅朗读脚注（整篇 PDF）')
       : this.t('Read entire document', '朗读全文');
     this.readScope.setAttribute('aria-label', scopeLabel);
     this.section.disabled = this.fromSection.disabled = this.heading.value === '' || exporting;

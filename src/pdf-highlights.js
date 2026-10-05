@@ -2,8 +2,9 @@
 
 const { extractPdfTextLayout } = require('./pdf-layout');
 const { compact } = require('./markdown-source');
+const { inside } = require('./pdf-ancillary');
 
-function pdfPageLines(page, clean, source = null) {
+function pdfPageLines(page, clean, source = null, footnote = false) {
   const bounds = page.getBoundingClientRect();
   if (!(bounds.width > 0 && bounds.height > 0)) return null;
   const spans = [...page.querySelectorAll('.textLayer span')].filter(span => !span.querySelector('span') && span.textContent.trim());
@@ -34,6 +35,21 @@ function pdfPageLines(page, clean, source = null) {
     });
     if (nearest >= 0) lineNodes[nearest].push(span);
   });
+  const ancillaryFilter = source?.omittedRegions?.length || source?.contentScope === 'glossary';
+  if (exact && (ancillaryFilter || (source.footnoteMode && source.footnoteMode !== 'inline' && source.footnoteRegions?.length))) {
+    const indices = layout.lines.map((line, index) => ({ line, index })).filter(({ line }) => {
+      if (source.omittedRegions?.some(region => inside(line, region))) return false;
+      if (source.contentScope === 'glossary') return source.glossaryRegions?.some(region => inside(line, region));
+      if (!source.footnoteMode || source.footnoteMode === 'inline') return true;
+      const isNote = source.footnoteRegions?.some(region => line.y >= region.yMin && line.y <= region.yMax
+        && line.xMin >= region.xMin && line.xMax <= region.xMax);
+      return Boolean(isNote) === footnote;
+    });
+    layout.lines = indices.map(({ line }) => line);
+    const keptNodes = indices.map(({ index }) => lineNodes[index]);
+    lineNodes.splice(0, lineNodes.length, ...keptNodes);
+    layout.text = layout.lines.map(line => line.text).join('\n').replace(/([A-Za-z])-\n(?=[a-z])/g, '$1').trim();
+  } else if (!exact && (ancillaryFilter || (source?.footnoteRegions?.length && source.footnoteMode !== 'inline'))) return null;
   const text = compact(clean(layout.text));
   let offset = 0;
   const lines = layout.lines.map((line, index) => {
@@ -172,8 +188,8 @@ class PdfReadingHighlights {
         || (!cache.nodes.length && Date.now() - cache.created > 1000)) {
         this.discardCache(view);
         const clean = text => plugin.sanitizeAudioExportText(text);
-        const currentPage = pdfPageLines(page, clean, session.pdfHighlightPages?.get(pageNumber));
-        const nextPage = following ? pdfPageLines(following, clean, session.pdfHighlightPages?.get(pageNumber + 1)) : null;
+        const currentPage = pdfPageLines(page, clean, session.pdfHighlightPages?.get(pageNumber), Boolean(session.chunkFootnotes?.[highlight.index]));
+        const nextPage = following ? pdfPageLines(following, clean, session.pdfHighlightPages?.get(pageNumber + 1), Boolean(session.chunkFootnotes?.[highlight.index])) : null;
         cache = { signature, first, last, nextFirst, layers, observers: [], dirty: false, created: Date.now(), nodes: currentPage
           ? matchPdfChunk(nextPage ? [currentPage, nextPage] : [currentPage], session.chunks[highlight.index]) : [] };
         // Text-layer updates can replace middle spans without changing either endpoint.

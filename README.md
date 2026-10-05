@@ -161,6 +161,12 @@ The optional **Focus reading** view remains useful for extracted text and system
 
 Saving bookmarks requires confirmation. Save a copy by default, or enable overwrite with a verified original backup. Existing bookmarks can be kept, merged or replaced. Encrypted or signed PDFs are refused. This writes PDF bookmarks, not a visible table-of-contents page, and does not change the document layout.
 
+### PDF Footnotes
+
+PDF reading skips recurring headers, footers, page numbers and confidently identified glossary tables by default. Settings can retain headers/footers or include the glossary in body reading. The PDF toolbar scope menu offers **Glossary only (whole PDF)** and **Footnotes only (whole PDF)** without changing global settings, and reports when no matching content is identified. Detection is local and does not modify the PDF. Selection-only reading is not filtered.
+
+**PDF footnotes:** **PDF footnote reading** defaults to **Body only**. Choose **Footnotes after body**, **Original order, including footnotes**, or **Footnotes only** in settings. Detection conservatively combines bottom-page numbering, font size, spacing and extractable separator lines; uncertain text is retained. Full PDF reading and exports use this setting; selection-only reading and exports preserve the selected text. Detection varies with layout; original order provides a comparison mode.
+
 ### Read Saved Copilot Conversations
 
 **Setup:** Install and enable the **Copilot** community plugin in Obsidian to create and save conversations. Copilot is a separate plugin and is not bundled with this reader. It is optional: ordinary note, PDF, HTML and web-page reading does not require it. This feature reads saved Markdown transcripts, so Copilot does not need to remain open while an existing saved conversation is read.

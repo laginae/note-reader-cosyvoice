@@ -7,6 +7,8 @@ const path = require('path');
 const { spawn } = require('child_process');
 const { pathToFileURL } = require('url');
 const { extractPdfTextLayout, extractTextFromPdfItems } = require('./pdf-layout');
+const { partitionFootnotes, footnoteRules, normalizeFootnoteMode, addFootnoteSettings, splitFootnotesInRange } = require('./pdf-footnotes');
+const { recurringEdges, ancillaryLayout, inside: insidePdfRegion, textOf: pdfLinesText, addAncillarySettings } = require('./pdf-ancillary');
 const { MAX_HTML_BYTES, captureHtmlSelection, extractHtmlText, getHtmlReaderDocument, isHtmlFile } = require('./html-text');
 const { WEB_VIEW_TYPE, captureWebPage, getWebPageUrl, isWebPageView } = require('./web-page');
 const { estimatePlayback, formatDuration } = require('./playback-estimate');
@@ -1678,6 +1680,9 @@ function createDefaultSettings() {
     webReadingFollow: false,
     readingFollow: false,
     pdfBookmarksOverwrite: false,
+    pdfFootnoteMode: 'body',
+    pdfSkipHeaders: true,
+    pdfIncludeGlossary: false,
     playbackVolume: 1,
     playbackSpeed: 1,
     audioExportFolder: normalizeAudioExportFolder(DEFAULT_SETTINGS.audioExportFolder),
@@ -4808,7 +4813,7 @@ class CosyVoiceReaderPlugin extends Plugin {
         const pageNumber = detailed && chunk.metadata
           ? Math.max(1, Math.floor(Number(chunk.metadata.pageNumber) || 1))
           : (options.pageNumber ? Math.max(1, Math.floor(Number(options.pageNumber) || 1)) : null);
-        return text ? { pageNumber, text } : null;
+        return text ? { pageNumber, text, footnote: Boolean(chunk.metadata?.footnote) } : null;
       })
       .filter(Boolean);
     if (!readableChunks.length) {
@@ -4817,6 +4822,8 @@ class CosyVoiceReaderPlugin extends Plugin {
 
     session.chunks.push(...readableChunks.map((chunk) => chunk.text));
     session.chunkPageNumbers.push(...readableChunks.map((chunk) => chunk.pageNumber));
+    session.chunkFootnotes ||= session.chunks.slice(0, -readableChunks.length).map(() => false);
+    session.chunkFootnotes.push(...readableChunks.map((chunk) => chunk.footnote));
     session.totalChunks = session.chunks.length;
     const currentChunk = this.readerState.currentChunk;
     this.setReaderState({
@@ -4923,6 +4930,7 @@ class CosyVoiceReaderPlugin extends Plugin {
       sourceKind: 'pdf',
     });
     session.pdfOutlineRange = outlineRange;
+    session.pdfContentScope = ['glossary', 'footnotes'].includes(options.contentScope) ? options.contentScope : 'body';
     this.activeSession = session;
     this.updateStatus('PDF text extraction', {
       canPause: false,
@@ -4965,7 +4973,8 @@ class CosyVoiceReaderPlugin extends Plugin {
   }
 
   async producePdfSpeechChunks(file, session, selectionContext, chunkLimits) {
-    const chunker = createPdfSpeechChunker(chunkLimits);
+    let chunker = createPdfSpeechChunker(chunkLimits);
+    let inFootnotes = false;
     let readableTextLength = 0;
     let selectionFallbackNotified = false;
 
@@ -4975,11 +4984,16 @@ class CosyVoiceReaderPlugin extends Plugin {
         if (!this.isActive(session)) {
           return;
         }
+        if (Boolean(pageInfo.footnote) !== inFootnotes) {
+          this.appendSessionChunks(session, chunker.finish());
+          chunker = createPdfSpeechChunker(chunkLimits);
+          inFootnotes = Boolean(pageInfo.footnote);
+        }
         const text = this.settings.stripMarkdown
           ? sanitizeTextForSpeech(pageText, { mathReadingLanguage: this.settings.mathReadingLanguage })
           : normalizeLineBreaks(pageText).trim();
         readableTextLength += text.length;
-        this.appendSessionChunks(session, chunker.push(text, { pageNumber: pageInfo.pageNumber }));
+        this.appendSessionChunks(session, chunker.push(text, { pageNumber: pageInfo.pageNumber, footnote: inFootnotes }));
 
         if (
           selectionContext
@@ -4996,6 +5010,7 @@ class CosyVoiceReaderPlugin extends Plugin {
       },
       reportProgress: true,
       outlineRange: session.pdfOutlineRange,
+      contentScope: session.pdfContentScope,
       selectedText: selectionContext ? selectionContext.selectedText : '',
       selectionPosition: selectionContext ? selectionContext.selectionPosition : null,
       startPageNumber: session.pdfOutlineRange?.startPage || (selectionContext ? selectionContext.pageNumber : 1),
@@ -5006,6 +5021,12 @@ class CosyVoiceReaderPlugin extends Plugin {
     }
     this.appendSessionChunks(session, chunker.finish());
     if (!readableTextLength || !session.chunks.length) {
+      if (session.pdfContentScope === 'glossary' || session.pdfContentScope === 'footnotes') {
+        const zh = this.settings.settingsLanguage === 'chinese';
+        throw new Error(session.pdfContentScope === 'glossary'
+          ? (zh ? '未可靠识别到术语表。可选中相应文字，使用“仅选中文字”。' : 'No glossary was reliably identified. Select its text and use Selection only.')
+          : (zh ? '未可靠识别到脚注。可选中相应文字，使用“仅选中文字”。' : 'No footnotes were reliably identified. Select their text and use Selection only.'));
+      }
       throw new Error('No extractable text was found. This PDF may be scanned or image-only; run OCR first and try again.');
     }
   }
@@ -5068,6 +5089,24 @@ class CosyVoiceReaderPlugin extends Plugin {
         session.totalChunks = totalPages;
       }
       const pageTexts = [];
+      const delayedNotes = [];
+      const contentScope = options.contentScope || 'body';
+      const footnoteMode = contentScope === 'glossary' ? 'inline' : contentScope === 'footnotes' ? 'footnotes' : normalizeFootnoteMode(options.footnoteMode ?? this.settings?.pdfFootnoteMode);
+      const skipHeaders = this.settings?.pdfSkipHeaders === true;
+      let repeatedHeaders = new Set();
+      if (skipHeaders) {
+        const samples = [];
+        for (let n = 1; n <= Math.min(3, totalPages); n++) {
+          if (!isCurrent()) return '';
+          const sample = await pdfDocument.getPage(n);
+          try {
+            const content = await sample.getTextContent();
+            samples.push({ items: content.items, viewport: sample.getViewport?.({ scale: 1 }) });
+          } finally { sample.cleanup?.(); }
+        }
+        if (!isCurrent()) return '';
+        repeatedHeaders = recurringEdges(samples);
+      }
       let textLength = 0;
 
       const endPageNumber = Math.min(totalPages, options.outlineRange?.endPage || totalPages);
@@ -5105,6 +5144,12 @@ class CosyVoiceReaderPlugin extends Plugin {
           const viewport = typeof page.getViewport === 'function'
             ? page.getViewport({ scale: 1 })
             : null;
+          const rules = await footnoteRules(page, pdfjsLib.OPS);
+          const partition = footnoteMode === 'inline' ? null : partitionFootnotes(textContent.items, viewport, rules, { pageNumber });
+          const ancillary = ancillaryLayout(textContent.items, viewport, rules, skipHeaders ? repeatedHeaders : new Set());
+          const omittedRegions = [...(skipHeaders ? ancillary.headers : []),
+            ...(contentScope !== 'glossary' && this.settings?.pdfIncludeGlossary !== true ? ancillary.glossary : [])];
+          if (!isCurrent()) return '';
           if (session.kind === 'pdf-progressive') {
             session.pdfHighlightPages ||= new Map();
             session.pdfHighlightPages.set(pageNumber, {
@@ -5112,6 +5157,11 @@ class CosyVoiceReaderPlugin extends Plugin {
               items: textContent.items.filter(item => item.str?.trim()).map(item => ({
                 str: item.str, width: item.width, height: item.height, transform: Array.from(item.transform || []),
               })),
+              footnoteRegions: partition?.regions || [],
+              footnoteMode,
+              omittedRegions,
+              glossaryRegions: ancillary.glossary,
+              contentScope,
             });
           }
           const pageLayout = extractPdfTextLayout(textContent && textContent.items, { viewport });
@@ -5130,15 +5180,33 @@ class CosyVoiceReaderPlugin extends Plugin {
             pageText = selectionSlice.text;
             session.pdfSelectionMatched = selectionSlice.matched;
           }
+          let noteText = '';
+          if (partition?.regions.length) {
+            if (!options.outlineRange && !(selectedText && pageNumber === startPageNumber)) {
+              pageText = partition.body.text; noteText = partition.notes.text;
+            } else {
+              const separated = splitFootnotesInRange(pageText, partition);
+              pageText = separated.body; noteText = separated.notes;
+            }
+          }
+          if (footnoteMode === 'footnotes') pageText = noteText;
+          if (contentScope === 'glossary') {
+            pageText = pdfLinesText(ancillary.layout.lines.filter(line => ancillary.glossary.some(region => insidePdfRegion(line, region))));
+            noteText = '';
+          } else if (omittedRegions.length) {
+            const omitted = { notes: { lines: ancillary.layout.lines.filter(line => omittedRegions.some(region => insidePdfRegion(line, region))) } };
+            pageText = splitFootnotesInRange(pageText, omitted).body;
+          }
+          if (footnoteMode === 'after' && noteText) delayedNotes.push({ text: noteText, pageNumber });
           if (collectText) {
             pageTexts.push(pageText);
           }
-          textLength += pageText.length;
+          textLength += pageText.length + (footnoteMode === 'after' ? noteText.length : 0);
           if (textLength > PDF_MAX_TEXT_CHARS) {
             throw new Error('This PDF contains more than 5,000,000 extractable characters. Split it before reading.');
           }
           if (onPageText) {
-            await onPageText(pageText, { pageNumber, totalPages });
+            await onPageText(pageText, { pageNumber, totalPages, footnote: footnoteMode === 'footnotes' });
           }
         } finally {
           if (page && typeof page.cleanup === 'function') {
@@ -5154,6 +5222,11 @@ class CosyVoiceReaderPlugin extends Plugin {
         }
       }
 
+      for (const note of delayedNotes) {
+        if (!isCurrent()) return '';
+        if (collectText) pageTexts.push(note.text);
+        if (onPageText) await onPageText(note.text, { pageNumber: note.pageNumber, totalPages, footnote: true });
+      }
       return collectText ? joinPdfPageText(pageTexts) : '';
     } finally {
       const ownsLoadingTask = session.pdfLoadingTask === loadingTask;
@@ -7849,6 +7922,8 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
           await this.plugin.saveSettings(); this.plugin.renderDocumentViews();
         }));
     addPdfOutlineSettings(containerEl, this.plugin);
+    addFootnoteSettings(containerEl, this.plugin, Setting);
+    addAncillarySettings(containerEl, this.plugin, Setting);
     addCopilotChatSettings(containerEl, this.plugin);
     new Setting(containerEl)
       .setName(zhReading ? 'HTML / 网页段落高亮' : 'HTML / web paragraph highlight')

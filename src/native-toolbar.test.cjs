@@ -226,5 +226,13 @@ test('PDF toolbar reuses playback and scope actions without changing PDF content
   assert.equal(calls[0][1],file);assert.equal(calls[1][2].selectionContext,context);assert.equal(calls[2][1],'PDF words');
   toolbar.outlineButton.click();assert.equal(calls[3][0],'outline');
   file.stat.mtime=2;await toolbar.read('from-selection');assert.equal(calls.length,4);
+  toolbar.selection = null; plugin.getPdfSelectionForFile = () => null;
+  await toolbar.read('glossary'); await toolbar.read('footnotes');
+  assert.deepEqual(calls.slice(4).map(call=>call[2]),[{contentScope:'glossary'},{contentScope:'footnotes'}]);
+  assert.deepEqual([...toolbar.scope.options].map(option=>option.value),['entire','selection','from-selection','glossary','footnotes']);
+  plugin.settings.settingsLanguage='chinese';toolbar.scope.value='glossary';toolbar.render();
+  assert.equal(toolbar.readScope.getAttribute('aria-label'),'仅朗读术语表（整篇 PDF）');
+  toolbar.scope.value='footnotes';toolbar.render();
+  assert.equal(toolbar.readScope.getAttribute('aria-label'),'仅朗读脚注（整篇 PDF）');
   manager.toggle(view);assert.equal(view.contentEl.querySelector('span'),span);manager.destroy();
 });
