@@ -133,5 +133,12 @@
   "Read entire document": ["Ganzes Dokument lesen","Lire tout le document","Читать весь документ","전체 문서 읽기","文書全体を読む","Leer documento completo","Leggi tutto il documento"],
   "Read glossary only (whole PDF)": ["Nur Glossar lesen (gesamtes PDF)","Lire le glossaire uniquement (PDF entier)","Читать только глоссарий (весь PDF)","용어집만 읽기 (전체 PDF)","用語集のみ読む（PDF 全体）","Leer solo glosario (PDF completo)","Leggi solo il glossario (PDF intero)"],
   "Read footnotes only (whole PDF)": ["Nur Fußnoten lesen (gesamtes PDF)","Lire les notes uniquement (PDF entier)","Читать только сноски (весь PDF)","각주만 읽기 (전체 PDF)","脚注のみ読む（PDF 全体）","Leer solo notas al pie (PDF completo)","Leggi solo le note (PDF intero)"],
-  "Remaining ~": ["Verbleibend ~","Restant ~","Осталось ~","남은 시간 ~","残り約 ","Restante ~","Rimanente ~"]
+  "Remaining ~": ["Verbleibend ~","Restant ~","Осталось ~","남은 시간 ~","残り約 ","Restante ~","Rimanente ~"],
+  "Playback and interface": ["Wiedergabe und Oberfläche","Lecture et interface","Воспроизведение и интерфейс","재생 및 인터페이스","再生と表示","Reproducción e interfaz","Riproduzione e interfaccia"],
+  "Export and storage": ["Export und Speicher","Export et stockage","Экспорт и хранение","내보내기 및 저장","書き出しと保存","Exportación y almacenamiento","Esportazione e archiviazione"],
+  "Privacy and help": ["Datenschutz und Hilfe","Confidentialité et aide","Конфиденциальность и помощь","개인정보 보호 및 도움말","プライバシーとヘルプ","Privacidad y ayuda","Privacy e aiuto"],
+  "Settings categories": ["Einstellungskategorien","Catégories des paramètres","Категории настроек","설정 분류","設定の分類","Categorías de ajustes","Categorie delle impostazioni"],
+  "Playback": ["Wiedergabe","Lecture","Воспроизведение","재생","再生","Reproducción","Riproduzione"],
+  "Appearance": ["Darstellung","Apparence","Оформление","모양","外観","Apariencia","Aspetto"],
+  "PDF content": ["PDF-Inhalt","Contenu PDF","Содержимое PDF","PDF 내용","PDF の内容","Contenido PDF","Contenuto PDF"]
 }

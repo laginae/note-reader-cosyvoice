@@ -1,5 +1,6 @@
 const { ItemView, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, SecretComponent, Setting: ObsidianSetting, loadPdfJs, setIcon } = require('obsidian');
 const { LANGUAGES, translate: translateInterface, localizedSetting } = require('./i18n');
+const { createSettingsPages, createSettingsHeader } = require('./settings-pages');
 const crypto = require('crypto');
 const fs = require('fs');
 const https = require('https');
@@ -7243,10 +7244,9 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
 
   display() {
     this.displaySequence = (this.displaySequence || 0) + 1;
-    const { containerEl } = this;
+    let { containerEl } = this;
     containerEl.empty();
 
-    containerEl.createEl('h2', { text: 'Note and PDF Voice Reader' });
     const settingsLanguage = normalizeSettingsLanguage(this.plugin.settings.settingsLanguage);
     const Setting = localizedSetting(ObsidianSetting, settingsLanguage);
     const ui = getSettingsUiText(settingsLanguage);
@@ -7254,23 +7254,17 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
     const microsoftVoicePresets = getMicrosoftVoicePresets(settingsLanguage);
     const commonVoiceIds = new Set(microsoftVoicePresets.map(([id]) => id));
 
-    new Setting(containerEl)
-      .setName(ui.settingsLanguageName)
-      .setDesc(ui.settingsLanguageDesc)
-      .addDropdown((dropdown) => {
-        for (const [language, name] of Object.entries(LANGUAGES)) dropdown.addOption(language, name);
-        dropdown.setValue(settingsLanguage)
-          .onChange(async (value) => {
-            this.plugin.settings.settingsLanguage = normalizeSettingsLanguage(value);
-            await this.plugin.saveSettings();
-            this.plugin.renderReaderViews();
-            this.display();
-          });
-      });
+    createSettingsHeader(containerEl, settingsLanguage, async value => {
+      this.plugin.settings.settingsLanguage = normalizeSettingsLanguage(value);
+      await this.plugin.saveSettings();
+      this.plugin.renderReaderViews();
+      this.display();
+    });
 
-    if (!['english','chinese'].includes(settingsLanguage)) new Setting(containerEl)
+    const pages = createSettingsPages(containerEl, settingsLanguage, this.settingsPage, page => { this.settingsPage = page; });
+    if (!['english','chinese'].includes(settingsLanguage)) new Setting(pages.privacy)
       .setDesc(translateInterface(settingsLanguage, 'Some advanced help remains in English. Interface language does not change the speech voice.'));
-
+    containerEl = pages.engine;
     new Setting(containerEl)
       .setName(ui.speechEngineName)
       .setDesc(ui.speechEngineDesc)
@@ -7450,7 +7444,7 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
           });
         });
 
-      new Setting(containerEl)
+      new Setting(pages.privacy)
         .setName(ui.azurePrivacyName)
         .setDesc(ui.azurePrivacyDesc)
         .addButton((button) => {
@@ -7731,11 +7725,13 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
             });
         });
 
-      new Setting(containerEl)
+      new Setting(pages.privacy)
         .setName(ui.openRouterPrivacyName)
         .setDesc(ui.openRouterPrivacyDesc);
     }
 
+    containerEl = pages.playback;
+    containerEl.createEl('h3', { text: translateInterface(settingsLanguage, 'Playback', '播放') });
     if (selectedSpeechEngine !== 'system-tts') new Setting(containerEl)
       .setName(ui.speedName)
       .setDesc(ui.speedDesc)
@@ -7787,6 +7783,7 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
           });
       });
 
+    containerEl = pages.storage;
     new Setting(containerEl)
       .setName(ui.audioExportLocationName)
       .setDesc(ui.audioExportLocationDesc)
@@ -7818,6 +7815,8 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
         });
     }
 
+    containerEl = pages.playback;
+    containerEl.createEl('h3', { text: translateInterface(settingsLanguage, 'Appearance', '外观') });
     const zhReading = this.plugin.settings.settingsLanguage === 'chinese';
     new Setting(containerEl)
       .setName(zhReading ? '左侧朗读图标打开方式' : 'Ribbon icon opens')
@@ -7850,8 +7849,6 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
           this.plugin.settings.readingHighlight = value;
           await this.plugin.saveSettings(); this.plugin.renderDocumentViews();
         }));
-    addPdfOutlineSettings(containerEl, this.plugin);
-    addCopilotChatSettings(containerEl, this.plugin);
     new Setting(containerEl)
       .setName(zhReading ? 'HTML / 网页段落高亮' : 'HTML / web paragraph highlight')
       .setDesc(zhReading ? '仅标记可准确匹配的当前朗读段落，沿用高亮颜色和强度。不改动原文、不增加 API 请求；重复文字、动态页面或不支持的嵌入内容可能无法标记。正文朗读标记关闭时也不高亮。'
@@ -7887,7 +7884,9 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
         void this.plugin.runUserAction('Reading view', () => this.plugin.toggleDocumentView());
       }));
 
-    containerEl.createEl('h3', { text: translateInterface(settingsLanguage, 'Academic reading', '学术阅读') });
+    containerEl.createEl('h3', { text: 'Copilot' });
+    addCopilotChatSettings(containerEl, this.plugin);
+    containerEl = pages.academic;
     new Setting(containerEl)
       .setName(ui.stripMarkdownName)
       .setDesc(ui.stripMarkdownDesc)
@@ -7931,9 +7930,12 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
     new Setting(containerEl).setName(zhReading ? '简短提示略过内容' : 'Announce skipped content')
       .setDesc(zhReading ? '略过公式或表格数据时简短提示。关闭后直接继续正文。PDF 保留表格标题，不额外插入提示。' : 'Briefly announce omitted formulas or table data. Disable for uninterrupted prose.')
       .addToggle(toggle => toggle.setValue(this.plugin.settings.academicSkipNotice !== false).onChange(async value => { this.plugin.settings.academicSkipNotice=value; await this.plugin.saveSettings(); }));
+    containerEl.createEl('h3', { text: translateInterface(settingsLanguage, 'PDF content', 'PDF 内容') });
     addFootnoteSettings(containerEl, this.plugin, Setting);
     addAncillarySettings(containerEl, this.plugin, Setting);
+    addPdfOutlineSettings(containerEl, this.plugin);
 
+    containerEl = pages.storage;
     containerEl.createEl('h3', { text: translateInterface(settingsLanguage, 'Storage and maintenance', '存储与维护') });
     new Setting(containerEl)
       .setName(ui.rememberPositionName)
@@ -7969,7 +7971,7 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
         });
       });
 
-    new Setting(containerEl)
+    new Setting(pages.privacy)
       .setName(ui.diagnosticName)
       .setDesc(ui.diagnosticDesc)
       .addToggle((toggle) => {
@@ -7991,20 +7993,7 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
           });
       });
 
-    new Setting(containerEl)
-      .setName(ui.restoreDefaultsName)
-      .setDesc(ui.restoreDefaultsDesc)
-      .addButton((button) => {
-        button
-          .setButtonText(ui.restoreDefaultsButton)
-          .setWarning()
-          .onClick(async () => {
-            await this.plugin.resetSettingsToDefaults();
-            new Notice(ui.settingsRestoredNotice);
-            this.display();
-          });
-      });
-
+    containerEl = pages.privacy;
     new Setting(containerEl)
       .setName(ui.feedbackName)
       .setDesc(ui.feedbackDesc)
@@ -8023,6 +8012,16 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
       cls: 'note-reader-cosyvoice-muted',
       text: ui.commandsFooter,
     });
+    new Setting(containerEl)
+      .setName(ui.restoreDefaultsName)
+      .setDesc(ui.restoreDefaultsDesc)
+      .addButton((button) => {
+        button.setButtonText(ui.restoreDefaultsButton).setWarning().onClick(async () => {
+          await this.plugin.resetSettingsToDefaults();
+          new Notice(ui.settingsRestoredNotice);
+          this.display();
+        });
+      });
   }
 }
 

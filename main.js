@@ -160,7 +160,14 @@ var require_common = __commonJS({
       "Read entire document": ["Ganzes Dokument lesen", "Lire tout le document", "\u0427\u0438\u0442\u0430\u0442\u044C \u0432\u0435\u0441\u044C \u0434\u043E\u043A\u0443\u043C\u0435\u043D\u0442", "\uC804\uCCB4 \uBB38\uC11C \uC77D\uAE30", "\u6587\u66F8\u5168\u4F53\u3092\u8AAD\u3080", "Leer documento completo", "Leggi tutto il documento"],
       "Read glossary only (whole PDF)": ["Nur Glossar lesen (gesamtes PDF)", "Lire le glossaire uniquement (PDF entier)", "\u0427\u0438\u0442\u0430\u0442\u044C \u0442\u043E\u043B\u044C\u043A\u043E \u0433\u043B\u043E\u0441\u0441\u0430\u0440\u0438\u0439 (\u0432\u0435\u0441\u044C PDF)", "\uC6A9\uC5B4\uC9D1\uB9CC \uC77D\uAE30 (\uC804\uCCB4 PDF)", "\u7528\u8A9E\u96C6\u306E\u307F\u8AAD\u3080\uFF08PDF \u5168\u4F53\uFF09", "Leer solo glosario (PDF completo)", "Leggi solo il glossario (PDF intero)"],
       "Read footnotes only (whole PDF)": ["Nur Fu\xDFnoten lesen (gesamtes PDF)", "Lire les notes uniquement (PDF entier)", "\u0427\u0438\u0442\u0430\u0442\u044C \u0442\u043E\u043B\u044C\u043A\u043E \u0441\u043D\u043E\u0441\u043A\u0438 (\u0432\u0435\u0441\u044C PDF)", "\uAC01\uC8FC\uB9CC \uC77D\uAE30 (\uC804\uCCB4 PDF)", "\u811A\u6CE8\u306E\u307F\u8AAD\u3080\uFF08PDF \u5168\u4F53\uFF09", "Leer solo notas al pie (PDF completo)", "Leggi solo le note (PDF intero)"],
-      "Remaining ~": ["Verbleibend ~", "Restant ~", "\u041E\u0441\u0442\u0430\u043B\u043E\u0441\u044C ~", "\uB0A8\uC740 \uC2DC\uAC04 ~", "\u6B8B\u308A\u7D04 ", "Restante ~", "Rimanente ~"]
+      "Remaining ~": ["Verbleibend ~", "Restant ~", "\u041E\u0441\u0442\u0430\u043B\u043E\u0441\u044C ~", "\uB0A8\uC740 \uC2DC\uAC04 ~", "\u6B8B\u308A\u7D04 ", "Restante ~", "Rimanente ~"],
+      "Playback and interface": ["Wiedergabe und Oberfl\xE4che", "Lecture et interface", "\u0412\u043E\u0441\u043F\u0440\u043E\u0438\u0437\u0432\u0435\u0434\u0435\u043D\u0438\u0435 \u0438 \u0438\u043D\u0442\u0435\u0440\u0444\u0435\u0439\u0441", "\uC7AC\uC0DD \uBC0F \uC778\uD130\uD398\uC774\uC2A4", "\u518D\u751F\u3068\u8868\u793A", "Reproducci\xF3n e interfaz", "Riproduzione e interfaccia"],
+      "Export and storage": ["Export und Speicher", "Export et stockage", "\u042D\u043A\u0441\u043F\u043E\u0440\u0442 \u0438 \u0445\u0440\u0430\u043D\u0435\u043D\u0438\u0435", "\uB0B4\uBCF4\uB0B4\uAE30 \uBC0F \uC800\uC7A5", "\u66F8\u304D\u51FA\u3057\u3068\u4FDD\u5B58", "Exportaci\xF3n y almacenamiento", "Esportazione e archiviazione"],
+      "Privacy and help": ["Datenschutz und Hilfe", "Confidentialit\xE9 et aide", "\u041A\u043E\u043D\u0444\u0438\u0434\u0435\u043D\u0446\u0438\u0430\u043B\u044C\u043D\u043E\u0441\u0442\u044C \u0438 \u043F\u043E\u043C\u043E\u0449\u044C", "\uAC1C\uC778\uC815\uBCF4 \uBCF4\uD638 \uBC0F \uB3C4\uC6C0\uB9D0", "\u30D7\u30E9\u30A4\u30D0\u30B7\u30FC\u3068\u30D8\u30EB\u30D7", "Privacidad y ayuda", "Privacy e aiuto"],
+      "Settings categories": ["Einstellungskategorien", "Cat\xE9gories des param\xE8tres", "\u041A\u0430\u0442\u0435\u0433\u043E\u0440\u0438\u0438 \u043D\u0430\u0441\u0442\u0440\u043E\u0435\u043A", "\uC124\uC815 \uBD84\uB958", "\u8A2D\u5B9A\u306E\u5206\u985E", "Categor\xEDas de ajustes", "Categorie delle impostazioni"],
+      Playback: ["Wiedergabe", "Lecture", "\u0412\u043E\u0441\u043F\u0440\u043E\u0438\u0437\u0432\u0435\u0434\u0435\u043D\u0438\u0435", "\uC7AC\uC0DD", "\u518D\u751F", "Reproducci\xF3n", "Riproduzione"],
+      Appearance: ["Darstellung", "Apparence", "\u041E\u0444\u043E\u0440\u043C\u043B\u0435\u043D\u0438\u0435", "\uBAA8\uC591", "\u5916\u89B3", "Apariencia", "Aspetto"],
+      "PDF content": ["PDF-Inhalt", "Contenu PDF", "\u0421\u043E\u0434\u0435\u0440\u0436\u0438\u043C\u043E\u0435 PDF", "PDF \uB0B4\uC6A9", "PDF \u306E\u5185\u5BB9", "Contenido PDF", "Contenuto PDF"]
     };
   }
 });
@@ -303,7 +310,14 @@ var require_pt = __commonJS({
       "Read entire document": "Ler documento inteiro",
       "Read glossary only (whole PDF)": "Ler apenas o gloss\xE1rio (PDF inteiro)",
       "Read footnotes only (whole PDF)": "Ler apenas notas de rodap\xE9 (PDF inteiro)",
-      "Remaining ~": "Restante ~"
+      "Remaining ~": "Restante ~",
+      "Playback and interface": "Reprodu\xE7\xE3o e interface",
+      "Export and storage": "Exporta\xE7\xE3o e armazenamento",
+      "Privacy and help": "Privacidade e ajuda",
+      "Settings categories": "Categorias de configura\xE7\xF5es",
+      Playback: "Reprodu\xE7\xE3o",
+      Appearance: "Apar\xEAncia",
+      "PDF content": "Conte\xFAdo do PDF"
     };
   }
 });
@@ -360,6 +374,96 @@ var require_i18n = __commonJS({
       };
     }
     module2.exports = { LANGUAGES: LANGUAGES2, translate, localizedSetting: localizedSetting2 };
+  }
+});
+
+// src/settings-pages.js
+var require_settings_pages = __commonJS({
+  "src/settings-pages.js"(exports2, module2) {
+    "use strict";
+    var { translate, LANGUAGES: LANGUAGES2 } = require_i18n();
+    var PAGES = [
+      ["engine", "Speech engine", "\u8BED\u97F3\u5F15\u64CE"],
+      ["playback", "Playback and interface", "\u64AD\u653E\u4E0E\u754C\u9762"],
+      ["academic", "Academic reading", "\u5B66\u672F\u9605\u8BFB"],
+      ["storage", "Export and storage", "\u5BFC\u51FA\u4E0E\u5B58\u50A8"],
+      ["privacy", "Privacy and help", "\u9690\u79C1\u4E0E\u5E2E\u52A9"]
+    ];
+    var sequence = 0;
+    function createSettingsHeader2(root, language, onChange) {
+      const doc = root.ownerDocument;
+      const header = doc.createElement("div");
+      header.className = "note-reader-settings-header";
+      const title = doc.createElement("h2");
+      title.textContent = "Note and PDF Voice Reader";
+      const select = doc.createElement("select");
+      select.className = "note-reader-settings-language";
+      const label = translate(language, "Settings language", "\u8BBE\u7F6E\u8BED\u8A00");
+      select.setAttribute("aria-label", label);
+      select.title = label;
+      for (const [id, name] of Object.entries(LANGUAGES2)) {
+        const option = doc.createElement("option");
+        option.value = id;
+        option.textContent = name;
+        select.append(option);
+      }
+      select.value = LANGUAGES2[language] ? language : "english";
+      select.addEventListener("change", () => onChange(select.value));
+      header.append(title, select);
+      root.append(header);
+      return header;
+    }
+    function createSettingsPages2(root, language, selected = "engine", onSelect = () => {
+    }) {
+      const doc = root.ownerDocument, prefix = `note-reader-settings-${++sequence}`;
+      const nav = doc.createElement("div");
+      nav.className = "note-reader-settings-tabs";
+      nav.setAttribute("role", "tablist");
+      nav.setAttribute("aria-label", translate(language, "Settings categories", "\u8BBE\u7F6E\u5206\u7C7B"));
+      root.append(nav);
+      const pages = {}, buttons = /* @__PURE__ */ new Map();
+      const activate = (id, notify = true) => {
+        if (!pages[id]) id = "engine";
+        for (const [key, button] of buttons) {
+          const active = key === id;
+          button.setAttribute("aria-selected", String(active));
+          button.tabIndex = active ? 0 : -1;
+          pages[key].hidden = !active;
+        }
+        if (notify) onSelect(id);
+      };
+      for (const [id, en, zh] of PAGES) {
+        const button = doc.createElement("button"), panel = doc.createElement("div");
+        button.type = "button";
+        button.id = `${prefix}-tab-${id}`;
+        button.textContent = translate(language, en, zh);
+        button.setAttribute("role", "tab");
+        button.setAttribute("aria-controls", `${prefix}-panel-${id}`);
+        panel.id = `${prefix}-panel-${id}`;
+        panel.className = "note-reader-settings-panel";
+        panel.dataset.settingsPage = id;
+        panel.setAttribute("role", "tabpanel");
+        panel.setAttribute("aria-labelledby", button.id);
+        panel.tabIndex = 0;
+        pages[id] = panel;
+        buttons.set(id, button);
+        button.addEventListener("click", () => activate(id));
+        button.addEventListener("keydown", (event) => {
+          if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+          event.preventDefault();
+          event.stopPropagation();
+          const ids = PAGES.map((page) => page[0]), index = ids.indexOf(id);
+          const target = event.key === "Home" ? ids[0] : event.key === "End" ? ids.at(-1) : ids[(index + (event.key === "ArrowRight" ? 1 : ids.length - 1)) % ids.length];
+          activate(target);
+          buttons.get(target).focus();
+        });
+        nav.append(button);
+        root.append(panel);
+      }
+      activate(selected, false);
+      return pages;
+    }
+    module2.exports = { PAGES, createSettingsPages: createSettingsPages2, createSettingsHeader: createSettingsHeader2 };
   }
 });
 
@@ -33925,6 +34029,7 @@ var require_task_state2 = __commonJS({
 // src/main.js
 var { ItemView, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, SecretComponent, Setting: ObsidianSetting, loadPdfJs, setIcon } = require("obsidian");
 var { LANGUAGES, translate: translateInterface, localizedSetting } = require_i18n();
+var { createSettingsPages, createSettingsHeader } = require_settings_pages();
 var crypto = require("crypto");
 var fs = require("fs");
 var https = require("https");
@@ -40405,25 +40510,25 @@ var CosyVoiceReaderSettingTab = class extends PluginSettingTab {
   }
   display() {
     this.displaySequence = (this.displaySequence || 0) + 1;
-    const { containerEl } = this;
+    let { containerEl } = this;
     containerEl.empty();
-    containerEl.createEl("h2", { text: "Note and PDF Voice Reader" });
     const settingsLanguage = normalizeSettingsLanguage(this.plugin.settings.settingsLanguage);
     const Setting = localizedSetting(ObsidianSetting, settingsLanguage);
     const ui = getSettingsUiText(settingsLanguage);
     const selectedSpeechEngine = normalizeSpeechEngine(this.plugin.settings.speechEngine);
     const microsoftVoicePresets = getMicrosoftVoicePresets(settingsLanguage);
     const commonVoiceIds = new Set(microsoftVoicePresets.map(([id]) => id));
-    new Setting(containerEl).setName(ui.settingsLanguageName).setDesc(ui.settingsLanguageDesc).addDropdown((dropdown) => {
-      for (const [language, name] of Object.entries(LANGUAGES)) dropdown.addOption(language, name);
-      dropdown.setValue(settingsLanguage).onChange(async (value) => {
-        this.plugin.settings.settingsLanguage = normalizeSettingsLanguage(value);
-        await this.plugin.saveSettings();
-        this.plugin.renderReaderViews();
-        this.display();
-      });
+    createSettingsHeader(containerEl, settingsLanguage, async (value) => {
+      this.plugin.settings.settingsLanguage = normalizeSettingsLanguage(value);
+      await this.plugin.saveSettings();
+      this.plugin.renderReaderViews();
+      this.display();
     });
-    if (!["english", "chinese"].includes(settingsLanguage)) new Setting(containerEl).setDesc(translateInterface(settingsLanguage, "Some advanced help remains in English. Interface language does not change the speech voice."));
+    const pages = createSettingsPages(containerEl, settingsLanguage, this.settingsPage, (page) => {
+      this.settingsPage = page;
+    });
+    if (!["english", "chinese"].includes(settingsLanguage)) new Setting(pages.privacy).setDesc(translateInterface(settingsLanguage, "Some advanced help remains in English. Interface language does not change the speech voice."));
+    containerEl = pages.engine;
     new Setting(containerEl).setName(ui.speechEngineName).setDesc(ui.speechEngineDesc).addDropdown((dropdown) => {
       dropdown.addOption("local-cosyvoice", ui.speechEngineLocal).addOption("system-tts", ui.speechEngineSystem).addOption("edge-tts", ui.speechEngineEdge).addOption("azure-speech", ui.speechEngineAzure).addOption("openrouter-tts", ui.speechEngineOpenRouter).addOption("mimo-tts", "Xiaomi MiMo TTS").setValue(selectedSpeechEngine).onChange(async (value) => {
         this.plugin.settings.speechEngine = normalizeSpeechEngine(value);
@@ -40547,7 +40652,7 @@ var CosyVoiceReaderSettingTab = class extends PluginSettingTab {
           await this.plugin.saveSettings();
         });
       });
-      new Setting(containerEl).setName(ui.azurePrivacyName).setDesc(ui.azurePrivacyDesc).addButton((button) => {
+      new Setting(pages.privacy).setName(ui.azurePrivacyName).setDesc(ui.azurePrivacyDesc).addButton((button) => {
         button.setButtonText(ui.azurePrivacyButton).setTooltip(ui.azurePrivacyTooltip).onClick(() => {
           if (!openAzureTtsPrivacyDocs()) {
             new Notice(AZURE_TTS_PRIVACY_URL, 8e3);
@@ -40704,8 +40809,10 @@ var CosyVoiceReaderSettingTab = class extends PluginSettingTab {
           if (!openExternalUrl(url)) new Notice(url, 8e3);
         });
       });
-      new Setting(containerEl).setName(ui.openRouterPrivacyName).setDesc(ui.openRouterPrivacyDesc);
+      new Setting(pages.privacy).setName(ui.openRouterPrivacyName).setDesc(ui.openRouterPrivacyDesc);
     }
+    containerEl = pages.playback;
+    containerEl.createEl("h3", { text: translateInterface(settingsLanguage, "Playback", "\u64AD\u653E") });
     if (selectedSpeechEngine !== "system-tts") new Setting(containerEl).setName(ui.speedName).setDesc(ui.speedDesc).addSlider((slider) => {
       slider.setLimits(0.5, 2, 0.05).setValue(this.plugin.settings.speed).setDynamicTooltip().onChange(async (value) => {
         this.plugin.settings.speed = normalizeSpeed(value);
@@ -40733,6 +40840,7 @@ var CosyVoiceReaderSettingTab = class extends PluginSettingTab {
         await this.plugin.saveSettings();
       });
     });
+    containerEl = pages.storage;
     new Setting(containerEl).setName(ui.audioExportLocationName).setDesc(ui.audioExportLocationDesc).addDropdown((dropdown) => {
       dropdown.addOption("obsidian-attachment", ui.audioExportLocationAttachment).addOption("note-folder", ui.audioExportLocationNote).addOption("custom-folder", ui.audioExportLocationCustom).setValue(normalizeAudioExportLocation(this.plugin.settings.audioExportLocation)).onChange(async (value) => {
         this.plugin.settings.audioExportLocation = normalizeAudioExportLocation(value);
@@ -40748,6 +40856,8 @@ var CosyVoiceReaderSettingTab = class extends PluginSettingTab {
         });
       });
     }
+    containerEl = pages.playback;
+    containerEl.createEl("h3", { text: translateInterface(settingsLanguage, "Appearance", "\u5916\u89C2") });
     const zhReading = this.plugin.settings.settingsLanguage === "chinese";
     new Setting(containerEl).setName(zhReading ? "\u5DE6\u4FA7\u6717\u8BFB\u56FE\u6807\u6253\u5F00\u65B9\u5F0F" : "Ribbon icon opens").setDesc(zhReading ? "\u5DE5\u5177\u680F\u7528\u4E8E Markdown \u7B14\u8BB0\uFF1BPDF\u3001HTML \u548C\u7F51\u9875\u4F7F\u7528\u4FA7\u8FB9\u680F\u3002" : "The toolbar is for Markdown notes; PDF, HTML and web pages use the sidebar.").addDropdown((dropdown) => dropdown.addOption("sidebar", zhReading ? "\u4FA7\u8FB9\u680F" : "Sidebar").addOption("toolbar", zhReading ? "\u6717\u8BFB\u5DE5\u5177\u680F" : "Reading toolbar").addOption("both", zhReading ? "\u4E24\u8005\u540C\u65F6" : "Both").setValue(this.plugin.settings.readerOpenMode).onChange(async (value) => {
       this.plugin.settings.readerOpenMode = value;
@@ -40775,8 +40885,6 @@ var CosyVoiceReaderSettingTab = class extends PluginSettingTab {
       await this.plugin.saveSettings();
       this.plugin.renderDocumentViews();
     }));
-    addPdfOutlineSettings(containerEl, this.plugin);
-    addCopilotChatSettings(containerEl, this.plugin);
     new Setting(containerEl).setName(zhReading ? "HTML / \u7F51\u9875\u6BB5\u843D\u9AD8\u4EAE" : "HTML / web paragraph highlight").setDesc(zhReading ? "\u4EC5\u6807\u8BB0\u53EF\u51C6\u786E\u5339\u914D\u7684\u5F53\u524D\u6717\u8BFB\u6BB5\u843D\uFF0C\u6CBF\u7528\u9AD8\u4EAE\u989C\u8272\u548C\u5F3A\u5EA6\u3002\u4E0D\u6539\u52A8\u539F\u6587\u3001\u4E0D\u589E\u52A0 API \u8BF7\u6C42\uFF1B\u91CD\u590D\u6587\u5B57\u3001\u52A8\u6001\u9875\u9762\u6216\u4E0D\u652F\u6301\u7684\u5D4C\u5165\u5185\u5BB9\u53EF\u80FD\u65E0\u6CD5\u6807\u8BB0\u3002\u6B63\u6587\u6717\u8BFB\u6807\u8BB0\u5173\u95ED\u65F6\u4E5F\u4E0D\u9AD8\u4EAE\u3002" : "Mark uniquely matched current segments using the highlight color and strength. No text changes or extra API requests. Repeated text, dynamic pages and unsupported embedded content may remain unmarked. Requires reading text highlight to be enabled.").addToggle((toggle) => toggle.setValue(this.plugin.settings.webReadingHighlight !== false).onChange(async (value) => {
       this.plugin.settings.webReadingHighlight = value;
       await this.plugin.saveSettings();
@@ -40800,7 +40908,9 @@ var CosyVoiceReaderSettingTab = class extends PluginSettingTab {
     new Setting(containerEl).setName(zhReading ? "\u4E13\u6CE8\u6717\u8BFB\u4E0E\u7CFB\u7EDF\u8BB2\u8FF0\u4EBA" : "Focus reading and system Narrator").setDesc(zhReading ? "\u6253\u5F00\u672C\u5730\u89E3\u6790\u7684\u6B63\u6587\uFF0C\u4E0D\u8C03\u7528\u8BED\u97F3 API\u3002Windows \u7528\u6237\u53EF\u5728\u6B63\u6587\u89C6\u56FE\u4E2D\u4E3B\u52A8\u542F\u52A8\u8BB2\u8FF0\u4EBA\uFF0C\u4F7F\u7528\u5176\u8BBE\u7F6E\u4E2D\u7684\u81EA\u7136\u97F3\u8272\uFF1B\u63D2\u4EF6\u4E0D\u80FD\u76F4\u63A5\u5408\u6210\u8BE5\u97F3\u8272\uFF0C\u4E5F\u4E0D\u80FD\u7528\u64AD\u653E\u5668\u6309\u94AE\u63A7\u5236\u8BB2\u8FF0\u4EBA\u3002" : "Open locally parsed text without TTS API requests. On Windows, explicitly start Narrator from that view to use its selected natural voice. Plugin playback controls and audio export do not control Narrator.").addButton((button) => button.setButtonText(zhReading ? "\u5207\u6362\u4E13\u6CE8\u6717\u8BFB" : "Toggle focus reading").onClick(() => {
       void this.plugin.runUserAction("Reading view", () => this.plugin.toggleDocumentView());
     }));
-    containerEl.createEl("h3", { text: translateInterface(settingsLanguage, "Academic reading", "\u5B66\u672F\u9605\u8BFB") });
+    containerEl.createEl("h3", { text: "Copilot" });
+    addCopilotChatSettings(containerEl, this.plugin);
+    containerEl = pages.academic;
     new Setting(containerEl).setName(ui.stripMarkdownName).setDesc(ui.stripMarkdownDesc).addToggle((toggle) => {
       toggle.setValue(this.plugin.settings.stripMarkdown).onChange(async (value) => {
         this.plugin.settings.stripMarkdown = value;
@@ -40829,8 +40939,11 @@ var CosyVoiceReaderSettingTab = class extends PluginSettingTab {
       this.plugin.settings.academicSkipNotice = value;
       await this.plugin.saveSettings();
     }));
+    containerEl.createEl("h3", { text: translateInterface(settingsLanguage, "PDF content", "PDF \u5185\u5BB9") });
     addFootnoteSettings(containerEl, this.plugin, Setting);
     addAncillarySettings(containerEl, this.plugin, Setting);
+    addPdfOutlineSettings(containerEl, this.plugin);
+    containerEl = pages.storage;
     containerEl.createEl("h3", { text: translateInterface(settingsLanguage, "Storage and maintenance", "\u5B58\u50A8\u4E0E\u7EF4\u62A4") });
     new Setting(containerEl).setName(ui.rememberPositionName).setDesc(ui.rememberPositionDesc).addToggle((toggle) => {
       toggle.setValue(this.plugin.settings.rememberReadingPosition === true).onChange(async (value) => {
@@ -40851,7 +40964,7 @@ var CosyVoiceReaderSettingTab = class extends PluginSettingTab {
         await this.plugin.saveSettings();
       });
     });
-    new Setting(containerEl).setName(ui.diagnosticName).setDesc(ui.diagnosticDesc).addToggle((toggle) => {
+    new Setting(pages.privacy).setName(ui.diagnosticName).setDesc(ui.diagnosticDesc).addToggle((toggle) => {
       toggle.setValue(this.plugin.settings.diagnosticLogging === true).onChange(async (value) => {
         this.plugin.settings.diagnosticLogging = value;
         await this.plugin.saveSettings();
@@ -40862,13 +40975,7 @@ var CosyVoiceReaderSettingTab = class extends PluginSettingTab {
         await this.plugin.clearTemporaryData();
       });
     });
-    new Setting(containerEl).setName(ui.restoreDefaultsName).setDesc(ui.restoreDefaultsDesc).addButton((button) => {
-      button.setButtonText(ui.restoreDefaultsButton).setWarning().onClick(async () => {
-        await this.plugin.resetSettingsToDefaults();
-        new Notice(ui.settingsRestoredNotice);
-        this.display();
-      });
-    });
+    containerEl = pages.privacy;
     new Setting(containerEl).setName(ui.feedbackName).setDesc(ui.feedbackDesc).addButton((button) => {
       button.setButtonText(ui.feedbackButton).setTooltip(ui.feedbackTooltip).onClick(() => {
         if (!openGitHubIssues()) {
@@ -40879,6 +40986,13 @@ var CosyVoiceReaderSettingTab = class extends PluginSettingTab {
     containerEl.createEl("p", {
       cls: "note-reader-cosyvoice-muted",
       text: ui.commandsFooter
+    });
+    new Setting(containerEl).setName(ui.restoreDefaultsName).setDesc(ui.restoreDefaultsDesc).addButton((button) => {
+      button.setButtonText(ui.restoreDefaultsButton).setWarning().onClick(async () => {
+        await this.plugin.resetSettingsToDefaults();
+        new Notice(ui.settingsRestoredNotice);
+        this.display();
+      });
     });
   }
 };

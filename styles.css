@@ -684,3 +684,92 @@
   .note-reader-native-progress { order: 1; flex-basis: 100%; }
   .note-reader-native-controls { gap: 2px; }
 }
+.note-reader-settings-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  margin-bottom: 12px;
+}
+
+.note-reader-settings-header h2 {
+  flex: 1 1 220px;
+  min-width: 0;
+  margin: 0;
+  font-size: 18px;
+  line-height: 1.4;
+  letter-spacing: 0;
+  overflow-wrap: anywhere;
+}
+
+.note-reader-settings-header .note-reader-settings-language {
+  flex: 0 1 auto;
+  width: auto;
+  max-width: min(170px, 100%);
+  min-width: 0;
+  margin: 0;
+}
+
+.note-reader-settings-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin: 8px 0 16px;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--background-modifier-border);
+  position: static;
+  background: var(--background-primary);
+}
+
+.note-reader-settings-tabs button {
+  height: auto;
+  min-height: 36px;
+  max-width: 100%;
+  padding: 6px 2px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
+  color: var(--text-muted);
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: start;
+  line-height: 1.4;
+  letter-spacing: 0;
+}
+
+.note-reader-settings-tabs button[aria-selected="true"] {
+  border-bottom-color: var(--interactive-accent);
+  color: var(--text-normal);
+}
+
+.note-reader-settings-tabs button:focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: 2px;
+}
+
+.note-reader-settings-panel[hidden] {
+  display: none;
+}
+
+.note-reader-settings-panel .setting-item {
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.note-reader-settings-panel .setting-item-info {
+  min-width: min(220px, 100%);
+  overflow-wrap: anywhere;
+}
+
+.note-reader-settings-panel .setting-item-control {
+  max-width: 100%;
+  flex-wrap: wrap;
+}
+
+.note-reader-settings-panel .setting-item-control select,
+.note-reader-settings-panel .setting-item-control input[type="text"] {
+  max-width: 100%;
+}

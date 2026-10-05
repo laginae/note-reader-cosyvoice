@@ -228,6 +228,8 @@ MiMo defaults to a configurable 200-character chunk cap (a conservative client s
 
 ## Academic reading
 
+Settings are organized into five pages: **Speech engine**, **Playback and interface**, **Academic reading**, **Export and storage**, and **Privacy and help**. A compact language selector sits beside the title and wraps on narrow windows. The header and category tabs scroll normally with the page, avoiding overlapping text. Page changes do not alter preferences; changing a setting that redraws the page preserves the selected category. Online consent and credentials stay next to the selected engine, while resetting all settings remains at the bottom of Privacy and help.
+
 The separate **Academic reading** settings section groups formulas, tables and PDF ancillary content. Processing is local and changes only the text prepared for speech, not your document. Enable **Strip Markdown** for Markdown/PDF text cleanup.
 
 | Setting | Default | Alternatives |

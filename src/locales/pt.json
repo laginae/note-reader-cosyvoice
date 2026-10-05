@@ -133,5 +133,12 @@
   "Read entire document": "Ler documento inteiro",
   "Read glossary only (whole PDF)": "Ler apenas o glossário (PDF inteiro)",
   "Read footnotes only (whole PDF)": "Ler apenas notas de rodapé (PDF inteiro)",
-  "Remaining ~": "Restante ~"
+  "Remaining ~": "Restante ~",
+  "Playback and interface": "Reprodução e interface",
+  "Export and storage": "Exportação e armazenamento",
+  "Privacy and help": "Privacidade e ajuda",
+  "Settings categories": "Categorias de configurações",
+  "Playback": "Reprodução",
+  "Appearance": "Aparência",
+  "PDF content": "Conteúdo do PDF"
 }
