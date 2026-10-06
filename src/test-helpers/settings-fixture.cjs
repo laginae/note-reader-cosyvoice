@@ -4,7 +4,7 @@ const { JSDOM } = require('jsdom');
 
 function settingsFixture(language = 'english', engine = 'mimo-tts') {
   const dom = new JSDOM('<!doctype html><html><body><main></main></body></html>');
-  const doc = dom.window.document, rows = [];
+  const doc = dom.window.document, rows = [], modals = [];
   const proto = dom.window.HTMLElement.prototype;
   proto.empty = function() { this.replaceChildren(); };
   proto.addClass = function(name) { this.classList.add(name); };
@@ -37,7 +37,7 @@ function settingsFixture(language = 'english', engine = 'mimo-tts') {
         setDisabled:v=>{el.disabled=v;return c;},setWarning:()=>{el.classList.add('mod-warning');return c;},
         setDynamicTooltip:()=>c,setLimits:(a,b,step)=>{el.min=a;el.max=b;el.step=step;return c;},
         addOption:(id,label)=>{const o=doc.createElement('option');o.value=id;o.textContent=label;el.append(o);return c;},
-        onChange:fn=>{this.change=fn;return c;},onClick:fn=>{this.click=fn;return c;}};
+        onChange:fn=>{this.change=fn;return c;},onClick:fn=>{this.click=fn;el.onclick=fn;return c;}};
       callback(c); return this;
     }
     addText(fn) { return this.component('input','text',fn); }
@@ -49,7 +49,11 @@ function settingsFixture(language = 'english', engine = 'mimo-tts') {
   }
   const loaded={exports:{}};
   new Function('require','module','exports',fs.readFileSync(path.join(__dirname,'../../main.js'),'utf8'))(
-    name=>name==='obsidian'?{Setting,Plugin:class{},ItemView:class{},Modal:class{},Notice:class{},
+    name=>name==='obsidian'?{Setting,Plugin:class{},ItemView:class{},Modal:class{
+      constructor(){ this.contentEl=doc.createElement('section');modals.push(this); }
+      open(){ this.onOpen(); }
+      close(){ this.closed=true;this.onClose?.(); }
+    },Notice:class{},
       PluginSettingTab:class{constructor(app){this.app=app;this.containerEl=doc.querySelector('main');}}}:require(name),loaded,loaded.exports);
   const api=loaded.exports.__test;
   const plugin={settings:{...api.createDefaultSettings(),settingsLanguage:language,speechEngine:engine},
@@ -57,6 +61,6 @@ function settingsFixture(language = 'english', engine = 'mimo-tts') {
     systemVoicesReady:true,systemVoices:[],documentViews:[]};
   const tab=new api.CosyVoiceReaderSettingTab({},plugin);
   tab.display();
-  return {dom,doc,plugin,tab,rows};
+  return {dom,doc,plugin,tab,rows,modals};
 }
 module.exports={settingsFixture};

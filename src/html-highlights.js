@@ -35,7 +35,11 @@ class HtmlReadingHighlights {
       && htmlDocuments.every(doc => this.documents.has(doc) && this.htmlObservers.get(doc)?.root === (readerRoot || doc.body)
         && (!this.markedDocuments.has(doc) || isDocumentHighlightCurrent(doc))))))return;
     this.clear();this.key=key;
-    const options={text:s.chunks[h.index],color:p.settings.highlightColor,strength:p.settings.highlightStrength,follow:p.settings.webReadingFollow===true,academic:academicOptions(p.settings)};
+    const speechSettings = s.synthesisSettings || p.settings;
+    const options={text:s.chunks[h.index],color:p.settings.highlightColor,strength:p.settings.highlightStrength,follow:p.settings.webReadingFollow===true,academic:academicOptions(speechSettings)};
+    if (s.sourceKind === 'html' && typeof p.prepareHtmlSpeechText === 'function') {
+      options.speechTransform = text => p.prepareHtmlSpeechText(text, speechSettings);
+    }
     if(local) {
       for (const doc of htmlDocuments) {
         const root = readerRoot || doc.body;

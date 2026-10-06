@@ -8,10 +8,24 @@ function getSpeechParts(session, index) {
   if (typeof text !== 'string') return [];
   session.audioParts ||= {};
   if (!session.audioParts[index]) {
-    session.audioParts[index] = index === 0 && session.kind !== 'audio-export'
+    session.audioParts[index] = index === 0 && session.smartQuickStart !== false && session.kind !== 'audio-export'
       ? splitOpeningAudioParts(text) : [text];
   }
   return session.audioParts[index];
+}
+
+// Freeze the plan before the first request. Timing/highlight queries may have
+// populated an estimate, but must never cause an in-flight request to be split.
+function planSpeechParts(session, index, foreground = false) {
+  session.plannedAudioParts ||= new Set();
+  if (!session.plannedAudioParts.has(index)) {
+    session.audioParts ||= {};
+    const text = session.chunks[index];
+    session.audioParts[index] = foreground && session.smartQuickStart !== false && session.kind !== 'audio-export'
+      ? splitOpeningAudioParts(text) : [text];
+    session.plannedAudioParts.add(index);
+  }
+  return getSpeechParts(session, index);
 }
 
 function adjacentSpeechPart(session, index, part, delta) {
@@ -36,4 +50,4 @@ function getSpeechPartTiming(session, index, part = 0, time = 0, speed = 1) {
   return { durations, offset, duration, current: Math.min(duration, offset + Math.max(0, time)) };
 }
 
-module.exports = { getSpeechParts, adjacentSpeechPart, getSpeechPartTiming };
+module.exports = { getSpeechParts, planSpeechParts, adjacentSpeechPart, getSpeechPartTiming };

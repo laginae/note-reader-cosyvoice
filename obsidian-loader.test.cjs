@@ -205,7 +205,7 @@ const testVaultPath = path.resolve('test-vault');
 const testAudioPath = path.join(testVaultPath, '.obsidian', 'plugins', 'note-reader-cosyvoice', 'cache', 'a.wav');
 assert.strictEqual(manifest.id, 'note-reader-cosyvoice');
 assert.strictEqual(manifest.name, 'Note and PDF Voice Reader');
-assert.strictEqual(manifest.version, '0.8.6');
+assert.strictEqual(manifest.version, '0.9.0');
 assert.strictEqual(
   moduleObject.exports.__test.sanitizeTextForSpeech('第一段的结尾。\n\n## 第二节标题\n\n下一节的正文。'),
   '第一段的结尾。\n第二节标题\n下一节的正文。'
@@ -328,6 +328,8 @@ assert.deepStrictEqual(moduleObject.exports.__test.createDefaultSettings(), {
   onlinePrefetchChunks: 1,
   readingPositions: {},
   rememberReadingPosition: false,
+  readingHistoryMode: 'session',
+  smartQuickStart: true,
   diagnosticLogging: false,
   edgeTtsConsent: false,
   edgeTtsExecutable: 'edge-tts',
@@ -2099,6 +2101,7 @@ assert.deepStrictEqual(chunkNavigationCalls, [-1, 1]);
   let savedPositionSettings = null;
   positionPlugin.settings = {
     ...moduleObject.exports.__test.createDefaultSettings(),
+    readingHistoryMode: 'persistent',
     rememberReadingPosition: true,
   };
   positionPlugin.saveData = async (value) => {
@@ -2160,6 +2163,7 @@ assert.deepStrictEqual(chunkNavigationCalls, [-1, 1]);
     file: resumeFile,
   });
   resumePlugin.activateControlView = async () => {};
+  resumePlugin.getSpeechConfiguration = () => ({ chunkLimits: [200, 400, 800] });
   let resumedMarkdown = null;
   resumePlugin.startReading = async (text, source, options) => {
     resumedMarkdown = { options, source, text };
@@ -2270,8 +2274,8 @@ assert.deepStrictEqual(chunkNavigationCalls, [-1, 1]);
   assert.strictEqual(plugin.currentAudio.playbackRate, 1);
   plugin.currentAudio = null;
 
-  assert.deepStrictEqual(plugin.settings, moduleObject.exports.__test.createDefaultSettings());
-  assert.deepStrictEqual(savedSettings, moduleObject.exports.__test.createDefaultSettings());
+  assert.deepStrictEqual(plugin.settings, { ...moduleObject.exports.__test.createDefaultSettings(), scriptPath: 'custom.ps1' });
+  assert.deepStrictEqual(savedSettings, { ...moduleObject.exports.__test.createDefaultSettings(), scriptPath: 'custom.ps1' });
   assert.notStrictEqual(savedSettings, moduleObject.exports.__test.createDefaultSettings());
 
   plugin.settings.openRouterSecretName = 'openrouter-api-key';

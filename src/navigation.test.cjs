@@ -14,6 +14,17 @@ new Function('require', 'module', 'exports', fs.readFileSync(path.join(__dirname
 const PluginClass = loaded.exports.default;
 const tick = () => new Promise(resolve => setImmediate(resolve));
 
+test('later unprepared target uses a short first request without waiting for stale work', async () => {
+  const long = '字'.repeat(19) + '。' + '文'.repeat(39) + '。' + '余'.repeat(19) + '。';
+  const { plugin, session, requests } = fixture(['First.', long]);
+  const run = plugin.runSpeechSession(session); await tick();
+  session.requestedChunkIndex = 1; plugin.notifySessionNavigation(session); await tick();
+  assert.equal(session.audioParts[1].length, 3);
+  assert.ok(requests.has('1:0')); assert.equal(requests.size, 2);
+  requests.get('1:0').resolve({}); await run;
+  requests.get('0:0').resolve({});
+});
+
 function deferred() {
   let resolve, reject;
   const promise = new Promise((ok, fail) => { resolve = ok; reject = fail; });

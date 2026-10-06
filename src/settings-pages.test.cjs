@@ -34,8 +34,9 @@ test('actual settings retain all groups and place global reset last without chan
     ['Online synthesis prefetch','playback'],['Highlight color','playback'],['Copilot chat reading','playback'],
     ['Formula reading','academic'],['PDF footnote reading','academic'],['Overwrite original PDF for bookmarks by default','academic'],
     ['Audio export save location','storage'],['Clean temporary audio','storage'],['Clear temporary data','storage'],
-    ['Diagnostic logging','privacy'],['Feedback and bug reports','privacy'],['Restore default settings','privacy'] ]) assert.equal(group(name),page,name);
-  assert.equal(doc.querySelector('[data-settings-page=privacy]').lastElementChild.querySelector('.setting-item-name').textContent,'Restore default settings');
+    ['Diagnostic logging','privacy'],['Feedback and bug reports','privacy'],['Restore all default settings','privacy'] ]) assert.equal(group(name),page,name);
+  assert.equal(doc.querySelector('[data-settings-page=privacy]').lastElementChild.querySelector('.setting-item-name').textContent,'Restore all default settings');
+  assert.equal(rows.filter(row => row.nameEl.textContent === 'Restore this page defaults').length, 5);
   const before=JSON.stringify(plugin.settings);
   doc.querySelectorAll('[role=tab]')[3].click();
   assert.equal(plugin.saves,0); assert.equal(JSON.stringify(plugin.settings),before);

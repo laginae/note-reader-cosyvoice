@@ -4,6 +4,38 @@ const { JSDOM } = require('jsdom');
 const { highlightDocument, clearDocumentHighlight } = require('./dom-highlights');
 const { HtmlReadingHighlights } = require('./html-highlights');
 const { extractHtmlText } = require('./html-text');
+const { createReadingAnchor, sliceTextFromReadingPosition, sliceOriginalTextFromReadingPosition } = require('./reading-position');
+
+test('resumed HTML with full-width punctuation keeps a matchable DOM stream', () => {
+  const { dom, doc } = fixture();
+  doc.body.innerHTML = '<p>Earlier paragraph.</p><p>数据说明：容量（２０％），<em>持续３０分钟</em>；随后继续。</p><p>下一段正文。</p>';
+  const original = '数据说明：容量（２０％），持续３０分钟；随后继续。';
+  const text = extractHtmlText(doc.body.innerHTML), position = { anchor: createReadingAnchor(original) };
+  const old = sliceTextFromReadingPosition(text, position);
+  assert.equal(old.matched, true);
+  assert.equal(highlightDocument(doc, { text: old.text }), false);
+  const resumed = sliceOriginalTextFromReadingPosition(text, position);
+  assert.equal(resumed.matched, true);
+  assert.equal(highlightDocument(doc, { text: resumed.text }), true);
+  assert.ok(resumed.text.includes('\n'));
+  dom.window.close();
+});
+
+test('local formula speech maps to original nodes without changing content or guessing cross-node expressions', () => {
+  const { dom, doc, marks } = fixture();
+  const speechTransform = text => text.replace(/\\\(x_1\\\)/g, 'x sub 1');
+  doc.body.innerHTML = '<p>Before.</p><p>The value \\(x_1\\) is positive.</p><p>After.</p>';
+  const before = doc.body.innerHTML;
+  const options = { text: 'The value x sub 1 is positive.', speechTransform };
+  assert.equal(highlightDocument(doc, options), true);
+  assert.equal([...marks.get('note-reader-speech')][0].toString(), 'The value \\(x_1\\) is positive.');
+  assert.equal(doc.body.innerHTML, before);
+  doc.body.innerHTML = '<p>The value \\(x_<em>1</em>\\) is positive.</p>';
+  assert.equal(highlightDocument(doc, options), false);
+  doc.body.innerHTML = before + before;
+  assert.equal(highlightDocument(doc, options), false);
+  dom.window.close();
+});
 
 function fixture() {
   const dom = new JSDOM('<main><p>First <em>public paragraph.</em></p><form>Not for reading</form><p>Second paragraph.</p><p hidden>Private hidden text.</p></main>', { url: 'https://example.test/' });

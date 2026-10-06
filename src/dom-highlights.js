@@ -26,20 +26,28 @@ function highlightDocument(doc, options = {}, root = doc.body) {
   if (options.url && doc.location.href !== options.url) return false;
   const needle = compact(options.text);
   if (!needle || needle.length > 20000) return false;
-  const nodes = []; let text = '';
+  const nodes = []; let text = '', originalText = '';
   // Use the speech extractor's separators while mapping only real text nodes to ranges.
   try {
     extractHtmlTreeText(root, null, {
       ...options.academic,
       omitNode: node => hidden(node, win),
       onText(value, node) {
-        const part = compact(value), start = text.length;
+        originalText += value;
+        const original = compact(value);
+        const part = options.speechMapped ? compact(options.speechTransform(value)) : original, start = text.length;
         text += part;
-        if (node && part) nodes.push({ node, start, end: text.length });
+        if (node && part) nodes.push({ node, start, end: text.length, transformed: part !== original });
       },
     });
   } catch (_) { return false; }
+  // Per-node conversion is safe only when it agrees with whole-stream conversion.
+  // Cross-node formulas or context-dependent citations otherwise remain unmarked.
+  if (options.speechMapped && text !== compact(options.speechTransform(originalText))) return false;
   const start = text.indexOf(needle);
+  if (start < 0 && !options.speechMapped && typeof options.speechTransform === 'function') {
+    if (highlightDocument(doc, { ...options, speechMapped: true }, root)) return true;
+  }
   // Explicit selections retain HTML table data even when whole-document reading omits it.
   if (start < 0 && options.academic?.academicTableMode && options.academic.academicTableMode !== 'all') {
     return highlightDocument(doc, { ...options, academic:{ ...options.academic, academicTableMode:'all' } }, root);
@@ -58,8 +66,8 @@ function highlightDocument(doc, options = {}, root = doc.body) {
   // Separate text-node ranges never paint excluded forms between two paragraphs.
   const ranges = included.map(item => {
     const range = doc.createRange();
-    range.setStart(item.node, item.start < start ? offset(item.node, start - item.start) : 0);
-    range.setEnd(item.node, item.end > end ? offset(item.node, end - item.start - 1) + 1 : item.node.nodeValue.length);
+    range.setStart(item.node, !item.transformed && item.start < start ? offset(item.node, start - item.start) : 0);
+    range.setEnd(item.node, !item.transformed && item.end > end ? offset(item.node, end - item.start - 1) + 1 : item.node.nodeValue.length);
     return range;
   });
   const color = /^#[\da-f]{6}$/i.test(options.color) ? options.color : '#e5b83d';

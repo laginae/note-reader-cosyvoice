@@ -7,8 +7,29 @@ const {
   normalizeReadingPositions,
   removeReadingPosition,
   sliceTextFromReadingPosition,
+  sliceOriginalTextFromReadingPosition,
   upsertReadingPosition,
 } = require('./reading-position');
+
+test('HTML resume preserves original punctuation, ligatures, accents and paragraph breaks', () => {
+  for (const original of [
+    '中文：全角（括号），百分比２０％。\n\n下一段。',
+    'English ﬁgures and cafe\u0301.\n\nNext paragraph.',
+    'Some hyphen-\nated wording and a soft\u00adhyphen.\n\nNext paragraph.',
+    '한글과 ＡＢＣ 테스트。\n\n다음 문장.',
+  ]) {
+    const source = 'Earlier paragraph.\n\n' + original;
+    const result = sliceOriginalTextFromReadingPosition(source, { anchor: createReadingAnchor(original) });
+    assert.equal(result.matched, true);
+    assert.equal(result.text, original);
+    assert.equal(source.slice(result.offset), original);
+  }
+});
+
+test('original-text resume refuses duplicate anchors and starts inside expanding graphemes', () => {
+  assert.equal(sliceOriginalTextFromReadingPosition('Repeat. Repeat.', { anchor: 'Repeat.' }).matched, false);
+  assert.equal(sliceOriginalTextFromReadingPosition('ﬁrst example.', { anchor: 'irst example.' }).matched, false);
+});
 
 test('reading history stores a bounded anchor instead of the complete document', () => {
   const privateDocument = 'Private academic paragraph. '.repeat(100);
@@ -46,6 +67,12 @@ test('a saved anchor resumes at the matching text after whitespace changes', () 
 
   assert.equal(sliced.matched, true);
   assert.equal(sliced.text, 'Selected passage continues with the result. Conclusion.');
+});
+
+test('repeated or partially changed anchors never silently resume at the wrong occurrence', () => {
+  const anchor = 'The repeated paragraph has the same opening.';
+  assert.equal(sliceTextFromReadingPosition(`${anchor} Middle. ${anchor}`, { anchor }).matched, false);
+  assert.equal(sliceTextFromReadingPosition('The repeated paragraph has a different ending.', { anchor }).matched, false);
 });
 
 test('HTML positions survive normalization while invalid updates preserve an existing position', () => {

@@ -140,5 +140,10 @@
   "Settings categories": ["Einstellungskategorien","Catégories des paramètres","Категории настроек","설정 분류","設定の分類","Categorías de ajustes","Categorie delle impostazioni"],
   "Playback": ["Wiedergabe","Lecture","Воспроизведение","재생","再生","Reproducción","Riproduzione"],
   "Appearance": ["Darstellung","Apparence","Оформление","모양","外観","Apariencia","Aspetto"],
-  "PDF content": ["PDF-Inhalt","Contenu PDF","Содержимое PDF","PDF 내용","PDF の内容","Contenido PDF","Contenuto PDF"]
+  "PDF content": ["PDF-Inhalt","Contenu PDF","Содержимое PDF","PDF 내용","PDF の内容","Contenido PDF","Contenuto PDF"],
+  "Smart quick start": ["Intelligenter Schnellstart","Démarrage rapide intelligent","Умный быстрый запуск","스마트 빠른 시작","スマートクイックスタート","Inicio rápido inteligente","Avvio rapido intelligente"],
+  "This session only": ["Nur diese Sitzung","Cette session uniquement","Только этот сеанс","현재 세션만","このセッションのみ","Solo esta sesión","Solo questa sessione"],
+  "Keep across restarts": ["Nach Neustarts behalten","Conserver après redémarrage","Сохранять после перезапуска","재시작 후에도 유지","再起動後も保持","Conservar tras reiniciar","Mantieni dopo il riavvio"],
+  "Restore this page defaults": ["Diese Seite zurücksetzen","Réinitialiser cette page","Сбросить настройки этой страницы","이 페이지 기본값 복원","このページの設定を初期化","Restablecer esta página","Ripristina questa pagina"],
+  "Restore all default settings": ["Alle Einstellungen zurücksetzen","Réinitialiser tous les paramètres","Сбросить все настройки","모든 기본 설정 복원","すべての設定を初期化","Restablecer todos los ajustes","Ripristina tutte le impostazioni"]
 }

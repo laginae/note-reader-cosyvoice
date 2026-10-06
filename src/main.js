@@ -1,6 +1,8 @@
 const { ItemView, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, SecretComponent, Setting: ObsidianSetting, loadPdfJs, setIcon } = require('obsidian');
 const { LANGUAGES, translate: translateInterface, localizedSetting } = require('./i18n');
-const { createSettingsPages, createSettingsHeader } = require('./settings-pages');
+const { PAGES, createSettingsPages, createSettingsHeader } = require('./settings-pages');
+const { resetPageSettings } = require('./settings-reset');
+const { SettingsConfirmModal } = require('./settings-confirm');
 const crypto = require('crypto');
 const fs = require('fs');
 const https = require('https');
@@ -31,7 +33,7 @@ const { APPEARANCE_DEFAULTS, normalizeAppearance, applyAppearance, clearAppearan
 const { SidebarOutline } = require('./sidebar-outline');
 const { PdfOutlineModal, addPdfOutlineSettings } = require('./pdf-outline-ui');
 const { readerRange } = require('./reader-selection');
-const { getSpeechParts, adjacentSpeechPart, getSpeechPartTiming } = require('./speech-parts');
+const { getSpeechParts, planSpeechParts, adjacentSpeechPart, getSpeechPartTiming } = require('./speech-parts');
 const { MIMO_ENDPOINT, MIMO_DEFAULTS, MIMO_VOICES, MIMO_MAX_CHUNK_CHARS, normalizeMimoSettings, buildMimoRequestBody, decodeMimoAudio } = require('./mimo-tts');
 const {
   MAX_EXPORTED_AUDIO_BYTES,
@@ -42,9 +44,13 @@ const {
 const {
   createReadingAnchor,
   normalizeReadingPositions,
+  normalizeAnchorText,
   removeReadingPosition,
   sliceTextFromReadingPosition,
+  sliceOriginalTextFromReadingPosition,
   upsertReadingPosition,
+  historyMode,
+  settingsForStorage,
 } = require('./reading-position');
 const {
   createIncrementalSpeechChunker,
@@ -1632,6 +1638,8 @@ function createDefaultSettings() {
     ).join(','),
     onlinePrefetchChunks: normalizeOnlinePrefetchChunks(DEFAULT_SETTINGS.onlinePrefetchChunks),
     readingPositions: normalizeReadingPositions(DEFAULT_SETTINGS.readingPositions),
+    readingHistoryMode: 'session',
+    smartQuickStart: true,
     rememberReadingPosition: DEFAULT_SETTINGS.rememberReadingPosition,
     diagnosticLogging: DEFAULT_SETTINGS.diagnosticLogging,
     edgeTtsConsent: DEFAULT_SETTINGS.edgeTtsConsent,
@@ -2416,7 +2424,10 @@ class CosyVoiceReaderPlugin extends Plugin {
     this.register(() => this.htmlHighlights?.destroy());
     this.register(() => { this.nativeToolbars?.destroy(); this.pdfHighlights?.destroy(); });
     this.registerEvent(this.app.workspace.on('layout-change', () => this.nativeToolbars.sync()));
-    this.registerEvent(this.app.workspace.on('file-open', () => this.nativeToolbars.sync()));
+    this.registerEvent(this.app.workspace.on('file-open', () => {
+      this.nativeToolbars.sync();
+      this.runUserAction('Save reading position', () => this.saveSessionReadingPosition(this.activeSession));
+    }));
     this.registerEvent(this.app.workspace.on('editor-change', editor => this.nativeToolbars.invalidate(editor)));
     if (this.app.metadataCache?.on) this.registerEvent(this.app.metadataCache.on('changed', file => this.nativeToolbars.changed(file)));
     this.app.workspace.onLayoutReady?.(() => { if (!this.systemSpeechUnloaded) this.nativeToolbars.sync(); });
@@ -2742,6 +2753,9 @@ class CosyVoiceReaderPlugin extends Plugin {
     const hadAzureCredentialSource = Object.prototype.hasOwnProperty.call(source, 'azureSpeechCredentialSource');
     const hadOpenRouterCredentialSource = Object.prototype.hasOwnProperty.call(source, 'openRouterCredentialSource');
     this.settings = selectKnownSettings(defaults, source);
+    this.settings.readingHistoryMode = ['off', 'session', 'persistent'].includes(source.readingHistoryMode)
+      ? source.readingHistoryMode : source.rememberReadingPosition === true ? 'persistent' : 'session';
+    if (this.settings.readingHistoryMode !== 'persistent') this.settings.readingPositions = {};
     normalizeCopilotSettings(this.settings);
     normalizeAppearance(this.settings);
     this.settings.playbackVolume = normalizeVolume(this.settings.playbackVolume);
@@ -2787,8 +2801,9 @@ class CosyVoiceReaderPlugin extends Plugin {
     this.settings.onlinePrefetchChunks = normalizeOnlinePrefetchChunks(this.settings.onlinePrefetchChunks);
     this.settings.readingPositions = normalizeReadingPositions(this.settings.readingPositions);
     this.settings.rememberReadingPosition = this.settings.rememberReadingPosition === true;
-    if (removedObsoleteSettings || missingKnownSettings) {
-      await this.saveData(this.settings);
+    if (removedObsoleteSettings || missingKnownSettings
+      || (this.settings.readingHistoryMode !== 'persistent' && Object.keys(source.readingPositions || {}).length)) {
+      await this.saveData(settingsForStorage(this.settings));
     }
   }
 
@@ -2797,6 +2812,8 @@ class CosyVoiceReaderPlugin extends Plugin {
     this.settings.readingHighlight = normalizeReadingHighlight(this.settings.readingHighlight);
     this.settings.readingFollow = this.settings.readingFollow === true;
     this.settings = selectKnownSettings(createDefaultSettings(), this.settings);
+    this.settings.readingHistoryMode = historyMode(this.settings);
+    this.settings.smartQuickStart = this.settings.smartQuickStart !== false;
     normalizeCopilotSettings(this.settings);
     this.settings.playbackSpeed = normalizeSpeed(this.settings.playbackSpeed);
     this.settings.playbackVolume = normalizeVolume(this.settings.playbackVolume);
@@ -2834,11 +2851,11 @@ class CosyVoiceReaderPlugin extends Plugin {
     this.settings.onlinePrefetchChunks = normalizeOnlinePrefetchChunks(this.settings.onlinePrefetchChunks);
     this.settings.readingPositions = normalizeReadingPositions(this.settings.readingPositions);
     this.settings.rememberReadingPosition = this.settings.rememberReadingPosition === true;
-    await this.saveData(this.settings);
+    await this.saveData(settingsForStorage(this.settings));
   }
 
-  async resetSettingsToDefaults() {
-    this.settings = createDefaultSettings();
+  async resetSettingsToDefaults(page = 'all') {
+    this.settings = resetPageSettings(this.settings, createDefaultSettings(), page);
     if (this.currentAudio) {
       this.currentAudio.volume = this.settings.playbackVolume;
       this.currentAudio.playbackRate = this.settings.playbackSpeed;
@@ -3211,7 +3228,9 @@ class CosyVoiceReaderPlugin extends Plugin {
       }
       from = selection.start; if (scope === 'selection') to = selection.end;
     }
-    await this.startReading(sourceText.slice(from, to), file.basename || file.name, { file, sourceKind: 'markdown', sourceText, sourceOffset: from });
+    await this.startReading(sourceText.slice(from, to), file.basename || file.name, {
+      file, sourceKind: 'markdown', sourceText, sourceOffset: from, skipReadingPosition: scope === 'selection',
+    });
   }
 
   async readDocumentFrom(index) {
@@ -3489,8 +3508,8 @@ class CosyVoiceReaderPlugin extends Plugin {
     return extractHtmlText(await this.app.vault.cachedRead(file), academicOptions(this.settings));
   }
 
-  prepareHtmlSpeechText(text) {
-    return verbalizeNumericCitationsForSpeech(sanitizeLatexForSpeech(normalizeLineBreaks(text), academicOptions(this.settings))).trim();
+  prepareHtmlSpeechText(text, settings = this.settings) {
+    return verbalizeNumericCitationsForSpeech(sanitizeLatexForSpeech(normalizeLineBreaks(text), academicOptions(settings))).trim();
   }
 
   async readCurrentHtml(file, scope = 'entire', options = {}) {
@@ -3508,9 +3527,12 @@ class CosyVoiceReaderPlugin extends Plugin {
       text = scope === 'selection' ? context.selectedText : context.text.slice(context.startOffset);
     }
     if (options.resumePosition) {
-      const resumed = sliceTextFromReadingPosition(this.prepareHtmlSpeechText(text), options.resumePosition);
+      const resumed = sliceOriginalTextFromReadingPosition(this.prepareHtmlSpeechText(text), options.resumePosition);
+      if (!resumed.matched) {
+        new Notice('Saved position changed. Read from the beginning or select a new starting point.', 8000);
+        return;
+      }
       text = resumed.text;
-      if (!resumed.matched) new Notice('CosyVoice HTML: saved text changed; reading from the beginning.', 8000);
     }
     await this.activateControlView();
     await this.startReading(text, `${file.basename || file.name || 'HTML'} (HTML: ${getAudioExportScopeLabel(this.settings.settingsLanguage, scope)})`, {
@@ -4440,7 +4462,7 @@ class CosyVoiceReaderPlugin extends Plugin {
 
   getSavedReadingPosition(file) {
     const filePath = getPdfFileIdentity(file);
-    if (!filePath || !this.settings || !this.settings.rememberReadingPosition) {
+    if (!filePath || !this.settings || historyMode(this.settings) === 'off') {
       return null;
     }
     return normalizeReadingPositions(this.settings.readingPositions)[filePath] || null;
@@ -4452,7 +4474,7 @@ class CosyVoiceReaderPlugin extends Plugin {
   }
 
   async resumeCurrentFile() {
-    if (!this.settings || !this.settings.rememberReadingPosition) {
+    if (!this.settings || historyMode(this.settings) === 'off') {
       new Notice('CosyVoice: enable Remember reading position in the plugin settings first.', 8000);
       return;
     }
@@ -4463,11 +4485,20 @@ class CosyVoiceReaderPlugin extends Plugin {
       return;
     }
 
+    if (this.activeSession?.filePath === position.filePath && this.currentAudio) {
+      if (this.pauseRequested || this.currentAudio.paused) await this.pauseOrResume();
+      return;
+    }
+
     if (isHtmlFile(file)) {
       await this.readCurrentHtml(file, 'entire', { resumePosition: position });
       return;
     }
     if (isPdfFile(file)) {
+      if (position.fileMtime && getFileMtime(file) !== position.fileMtime) {
+        new Notice('PDF changed. Select a new starting point before reading.', 8000);
+        return;
+      }
       await this.readCurrentPdf(file, { resumePosition: position });
       return;
     }
@@ -4477,28 +4508,33 @@ class CosyVoiceReaderPlugin extends Plugin {
       new Notice('CosyVoice: open the saved note before resuming.', 6000);
       return;
     }
-    const fullText = this.settings.stripMarkdown
-      ? sanitizeTextForSpeech(view.editor.getValue(), academicOptions(this.settings))
-      : normalizeLineBreaks(view.editor.getValue()).trim();
+    const rawText = view.editor.getValue();
+    const clean = value => normalizeAnchorText(this.settings.stripMarkdown
+      ? sanitizeTextForSpeech(value, academicOptions(this.settings)) : normalizeLineBreaks(value).trim());
+    const fullText = clean(rawText);
     let resumeSlice = sliceTextFromReadingPosition(fullText, position);
     if (!resumeSlice.matched) {
-      const configuration = this.getSpeechConfiguration();
-      if (!configuration) {
-        return;
-      }
-      const chunks = splitTextForSpeechChunks(fullText, configuration.chunkLimits);
-      const fallbackIndex = Math.min(Math.max(0, position.chunkIndex), Math.max(0, chunks.length - 1));
-      resumeSlice = { matched: false, text: chunks.slice(fallbackIndex).join('\n\n') };
-      new Notice('CosyVoice: the saved text anchor changed. Resuming from the nearest saved chunk.', 8000);
+      new Notice(this.settings.settingsLanguage === 'chinese'
+        ? '原朗读位置已变化，无法可靠定位。请从头朗读或重新选择起点。'
+        : 'The saved position changed. Read from the beginning or select a new starting point.', 8000);
+      return;
     }
     if (!resumeSlice.text) {
       new Notice('CosyVoice: the saved position is no longer readable.', 6000);
       return;
     }
+    const configuration = this.getSpeechConfiguration();
+    if (!configuration) return;
+    const readingChunks = splitTextForSpeechChunks(resumeSlice.text, configuration.chunkLimits);
+    const markdownSource = buildMarkdownSource(rawText,
+      [fullText.slice(0, resumeSlice.offset), ...readingChunks], clean, { filePath: file.path });
+    if (markdownSource) markdownSource.ranges.shift();
     await this.activateControlView();
     await this.startReading(resumeSlice.text, `${file.basename || file.name || 'note'} (resumed)`, {
       file,
       sourceKind: 'markdown',
+      readingChunks,
+      markdownSource,
     });
   }
 
@@ -4513,7 +4549,7 @@ class CosyVoiceReaderPlugin extends Plugin {
     if (
       !session
       || !this.settings
-      || !this.settings.rememberReadingPosition
+      || historyMode(this.settings) === 'off'
       || !session.filePath
       || session.skipReadingPosition
       || session.kind === 'audio-export'
@@ -4533,6 +4569,8 @@ class CosyVoiceReaderPlugin extends Plugin {
     }
     this.settings.readingPositions = upsertReadingPosition(this.settings.readingPositions, {
       anchor,
+      audioTime: this.activeSession === session && this.currentAudio ? this.currentAudio.currentTime : 0,
+      partIndex: session.currentPartIndex || 0,
       chunkIndex,
       fileMtime: session.fileMtime,
       filePath: session.filePath,
@@ -4548,7 +4586,7 @@ class CosyVoiceReaderPlugin extends Plugin {
   }
 
   async clearSessionReadingPosition(session) {
-    if (!session || !session.filePath || !this.settings || !this.settings.rememberReadingPosition) {
+    if (!session || !session.filePath || !this.settings || historyMode(this.settings) === 'off') {
       return false;
     }
     const current = normalizeReadingPositions(this.settings.readingPositions);
@@ -4672,6 +4710,8 @@ class CosyVoiceReaderPlugin extends Plugin {
       sourceKind: options.sourceKind || '',
       markdownSource: options.markdownSource || null,
       speechEngine: configuration.speechEngine,
+      smartQuickStart: this.settings.smartQuickStart !== false,
+      synthesisSettings: { ...this.settings, readingPositions: {} },
       systemVoice: configuration.systemVoice || '',
       systemSpeechControllers: new Set(),
       speechStarted: false,
@@ -4856,6 +4896,7 @@ class CosyVoiceReaderPlugin extends Plugin {
       sourceKind: 'pdf',
     });
     session.pdfOutlineRange = outlineRange;
+    session.resumingPosition = Boolean(resumePosition);
     session.pdfContentScope = ['glossary', 'footnotes'].includes(options.contentScope) ? options.contentScope : 'body';
     this.activeSession = session;
     this.updateStatus('PDF text extraction', {
@@ -4910,13 +4951,18 @@ class CosyVoiceReaderPlugin extends Plugin {
         if (!this.isActive(session)) {
           return;
         }
+        if (session.resumingPosition && selectionContext && pageInfo.pageNumber === selectionContext.pageNumber
+          && session.pdfSelectionMatched === false) {
+          throw new Error('Saved PDF position could not be matched. Select a new starting point.');
+        }
         if (Boolean(pageInfo.footnote) !== inFootnotes) {
           this.appendSessionChunks(session, chunker.finish());
           chunker = createPdfSpeechChunker(chunkLimits);
           inFootnotes = Boolean(pageInfo.footnote);
         }
-        const text = this.settings.stripMarkdown
-          ? sanitizeTextForSpeech(pageText, academicOptions(this.settings))
+        const settings = session.synthesisSettings || this.settings;
+        const text = settings.stripMarkdown
+          ? sanitizeTextForSpeech(pageText, academicOptions(settings))
           : normalizeLineBreaks(pageText).trim();
         readableTextLength += text.length;
         this.appendSessionChunks(session, chunker.push(text, { pageNumber: pageInfo.pageNumber, footnote: inFootnotes }));
@@ -4927,6 +4973,7 @@ class CosyVoiceReaderPlugin extends Plugin {
           && session.pdfSelectionMatched === false
           && !selectionFallbackNotified
         ) {
+          if (session.resumingPosition) throw new Error('Saved PDF position could not be matched. Select a new starting point.');
           selectionFallbackNotified = true;
           new Notice(
             `CosyVoice PDF: the selected text could not be matched exactly. Reading from the start of page ${selectionContext.pageNumber}.`,
@@ -4958,6 +5005,7 @@ class CosyVoiceReaderPlugin extends Plugin {
   }
 
   async extractPdfText(file, session, options = {}) {
+    const settings = session.synthesisSettings || this.settings;
     const isCurrent = typeof options.isCurrent === 'function' ? options.isCurrent : () => this.isActive(session);
     if (!isPdfFile(file)) {
       throw new Error('The active file is not a PDF.');
@@ -5017,8 +5065,8 @@ class CosyVoiceReaderPlugin extends Plugin {
       const pageTexts = [];
       const delayedNotes = [];
       const contentScope = options.contentScope || 'body';
-      const footnoteMode = contentScope === 'glossary' ? 'inline' : contentScope === 'footnotes' ? 'footnotes' : normalizeFootnoteMode(options.footnoteMode ?? this.settings?.pdfFootnoteMode);
-      const skipHeaders = this.settings?.pdfSkipHeaders === true;
+      const footnoteMode = contentScope === 'glossary' ? 'inline' : contentScope === 'footnotes' ? 'footnotes' : normalizeFootnoteMode(options.footnoteMode ?? settings?.pdfFootnoteMode);
+      const skipHeaders = settings?.pdfSkipHeaders === true;
       let repeatedHeaders = new Set();
       if (skipHeaders) {
         const samples = [];
@@ -5074,8 +5122,8 @@ class CosyVoiceReaderPlugin extends Plugin {
           const partition = footnoteMode === 'inline' ? null : partitionFootnotes(textContent.items, viewport, rules, { pageNumber });
           const ancillary = ancillaryLayout(textContent.items, viewport, rules, skipHeaders ? repeatedHeaders : new Set());
           const omittedRegions = [...(skipHeaders ? ancillary.headers : []),
-            ...(contentScope !== 'glossary' && this.settings?.pdfIncludeGlossary !== true ? ancillary.glossary : []),
-            ...(contentScope === 'body' && footnoteMode !== 'footnotes' ? numericTableRegions(ancillary.layout,viewport,this.settings) : [])];
+            ...(contentScope !== 'glossary' && settings?.pdfIncludeGlossary !== true ? ancillary.glossary : []),
+            ...(contentScope === 'body' && footnoteMode !== 'footnotes' ? numericTableRegions(ancillary.layout,viewport,settings) : [])];
           if (!isCurrent()) return '';
           if (session.kind === 'pdf-progressive') {
             session.pdfHighlightPages ||= new Map();
@@ -5309,7 +5357,8 @@ class CosyVoiceReaderPlugin extends Plugin {
 
   async runSpeechSession(session) {
     const preparedChunks = new Map();
-    const getPreparedChunk = (index, part = 0) => {
+    const getPreparedChunk = (index, part = 0, foreground = false) => {
+      planSpeechParts(session, index, foreground && !session.seekTarget);
       const key = `${index}:${part}`;
       if (!preparedChunks.has(key)) {
         const preparing = this.queuePrepareChunk(getSpeechParts(session, index)[part], index, session, part);
@@ -5375,7 +5424,7 @@ class CosyVoiceReaderPlugin extends Plugin {
         session.currentChunkIndex = index;
         session.currentPartIndex = part;
         if (session.lastCompletedChunkIndex === index) session.lastCompletedChunkIndex = null;
-        const prepared = await this.waitForSessionOperation(session, getPreparedChunk(index, part));
+        const prepared = await this.waitForSessionOperation(session, getPreparedChunk(index, part, true));
         if (!this.isActive(session)) {
           break;
         }
@@ -5460,7 +5509,7 @@ class CosyVoiceReaderPlugin extends Plugin {
     session.speechStarted = true;
     session.synthesisSpeeds = session.synthesisSpeeds || {};
     const speechEngine = normalizeSpeechEngine(session.speechEngine || this.settings.speechEngine);
-    session.synthesisSpeeds[index] = speechEngine === 'system-tts' ? 1 : normalizeSpeed(this.settings.speed);
+    session.synthesisSpeeds[index] = speechEngine === 'system-tts' ? 1 : normalizeSpeed((session.synthesisSettings || this.settings).speed);
     const engineLabel = session.engineLabel || getSpeechEngineLabel(this.settings);
     const outputExtension = getAudioExportExtension(speechEngine);
     const basename = `${Date.now()}-${session.id}-${index}-${part}`;
@@ -5608,7 +5657,8 @@ class CosyVoiceReaderPlugin extends Plugin {
   }
 
   runCosyVoice(inputPath, outputPath, session) {
-    const scriptPath = this.settings.scriptPath.trim();
+    const settings = session.synthesisSettings || this.settings;
+    const scriptPath = settings.scriptPath.trim();
     const args = [
       '-NoProfile',
       '-ExecutionPolicy',
@@ -5620,7 +5670,7 @@ class CosyVoiceReaderPlugin extends Plugin {
       '-OutputPath',
       outputPath,
       '-Speed',
-      String(normalizeSpeed(this.settings.speed)),
+      String(normalizeSpeed(settings.speed)),
     ];
 
     return new Promise((resolve, reject) => {
@@ -5690,8 +5740,9 @@ class CosyVoiceReaderPlugin extends Plugin {
   }
 
   runEdgeTts(inputPath, outputPath, session) {
-    const args = buildEdgeTtsArgs(inputPath, outputPath, this.settings);
-    const executable = normalizeEdgeTtsExecutable(this.settings.edgeTtsExecutable);
+    const settings = session.synthesisSettings || this.settings;
+    const args = buildEdgeTtsArgs(inputPath, outputPath, settings);
+    const executable = normalizeEdgeTtsExecutable(settings.edgeTtsExecutable);
 
     return new Promise((resolve, reject) => {
       const child = spawn(executable, args, {
@@ -5782,18 +5833,18 @@ class CosyVoiceReaderPlugin extends Plugin {
     return readObsidianSecretValue(secretNameValue, this.app, serviceLabel);
   }
 
-  async readOpenRouterKey() {
-    if (normalizeCredentialSource(this.settings.openRouterCredentialSource) === 'obsidian-secret') {
-      return this.readObsidianSecret(this.settings.openRouterSecretName, 'OpenRouter API');
+  async readOpenRouterKey(settings = this.settings) {
+    if (normalizeCredentialSource(settings.openRouterCredentialSource) === 'obsidian-secret') {
+      return this.readObsidianSecret(settings.openRouterSecretName, 'OpenRouter API');
     }
-    return this.readSecretFileOutsideVault(this.settings.openRouterKeyPath, 'OpenRouter API');
+    return this.readSecretFileOutsideVault(settings.openRouterKeyPath, 'OpenRouter API');
   }
 
-  async readAzureSpeechKey() {
-    if (normalizeCredentialSource(this.settings.azureSpeechCredentialSource) === 'obsidian-secret') {
-      return this.readObsidianSecret(this.settings.azureSpeechSecretName, 'Azure Speech');
+  async readAzureSpeechKey(settings = this.settings) {
+    if (normalizeCredentialSource(settings.azureSpeechCredentialSource) === 'obsidian-secret') {
+      return this.readObsidianSecret(settings.azureSpeechSecretName, 'Azure Speech');
     }
-    return this.readSecretFileOutsideVault(this.settings.azureSpeechKeyPath, 'Azure Speech');
+    return this.readSecretFileOutsideVault(settings.azureSpeechKeyPath, 'Azure Speech');
   }
 
   async waitForRemoteRetry(session, delayMs) {
@@ -5951,17 +6002,18 @@ class CosyVoiceReaderPlugin extends Plugin {
   }
 
   async runAzureSpeech(inputPath, outputPath, session) {
+    const settings = session.synthesisSettings || this.settings;
     const [text, subscriptionKey] = await Promise.all([
       fs.promises.readFile(inputPath, 'utf8'),
-      this.readAzureSpeechKey(),
+      this.readAzureSpeechKey(settings),
     ]);
     if (!this.isActive(session)) {
       throw new Error('Reading stopped.');
     }
 
-    const body = buildAzureSpeechSsml(text, this.settings);
+    const body = buildAzureSpeechSsml(text, settings);
     await this.requestRemoteAudio({
-      endpoint: new URL(buildAzureSpeechEndpoint(this.settings)),
+      endpoint: new URL(buildAzureSpeechEndpoint(settings)),
       headers: {
         Accept: 'audio/mpeg',
         'Content-Length': Buffer.byteLength(body, 'utf8'),
@@ -5980,13 +6032,14 @@ class CosyVoiceReaderPlugin extends Plugin {
   }
 
   async runMimoTts(inputPath, outputPath, session) {
-    if (this.settings.mimoConsent !== true) throw new Error('MiMo online processing consent is required.');
-    const apiKey = normalizeCredentialSource(this.settings.mimoCredentialSource) === 'obsidian-secret'
-      ? await this.readObsidianSecret(this.settings.mimoSecretName, 'MiMo API')
-      : await this.readSecretFileOutsideVault(this.settings.mimoKeyPath, 'MiMo API');
+    const settings = session.synthesisSettings || this.settings;
+    if (settings.mimoConsent !== true) throw new Error('MiMo online processing consent is required.');
+    const apiKey = normalizeCredentialSource(settings.mimoCredentialSource) === 'obsidian-secret'
+      ? await this.readObsidianSecret(settings.mimoSecretName, 'MiMo API')
+      : await this.readSecretFileOutsideVault(settings.mimoKeyPath, 'MiMo API');
     const text = await fs.promises.readFile(inputPath, 'utf8');
     if (!this.isActive(session)) throw new Error('Reading stopped.');
-    const body = buildMimoRequestBody(text, this.settings);
+    const body = buildMimoRequestBody(text, settings);
     await this.requestRemoteAudio({
       endpoint: new URL(MIMO_ENDPOINT),
       headers: { 'api-key': apiKey, Accept: 'application/json', 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
@@ -6000,15 +6053,16 @@ class CosyVoiceReaderPlugin extends Plugin {
   }
 
   async runOpenRouterTts(inputPath, outputPath, session) {
+    const settings = session.synthesisSettings || this.settings;
     const [text, apiKey] = await Promise.all([
       fs.promises.readFile(inputPath, 'utf8'),
-      this.readOpenRouterKey(),
+      this.readOpenRouterKey(settings),
     ]);
     if (!this.isActive(session)) {
       throw new Error('Reading stopped.');
     }
 
-    const body = buildOpenRouterTtsRequestBody(text, this.settings);
+    const body = buildOpenRouterTtsRequestBody(text, settings);
     await this.requestRemoteAudio({
       endpoint: new URL(OPENROUTER_TTS_ENDPOINT),
       headers: {
@@ -6527,6 +6581,7 @@ class CosyVoiceReaderPlugin extends Plugin {
     } else {
       this.pauseRequested = true;
       audio.pause();
+      void this.runUserAction('Save reading position', () => this.saveSessionReadingPosition(this.activeSession));
       this.updateStatus('CosyVoice paused', {
         canPause: true,
         ...getChunkNavigationState(this.readerState.currentChunk, this.readerState.totalChunks),
@@ -7732,6 +7787,14 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
 
     containerEl = pages.playback;
     containerEl.createEl('h3', { text: translateInterface(settingsLanguage, 'Playback', '播放') });
+    new Setting(containerEl)
+      .setName(translateInterface(settingsLanguage, 'Smart quick start', '智能快速起读'))
+      .setDesc(translateInterface(settingsLanguage,
+        'Split unprepared playback targets at complete sentences after 20 and 40 characters. Reuse existing requests; exports keep normal segments. Applies to the next reading session.',
+        '尚未合成的播放目标按完整句子累加到20、40字，再合成剩余内容；复用已有请求，导出保持常规分段。下次朗读生效。'))
+      .addToggle(toggle => toggle.setValue(this.plugin.settings.smartQuickStart !== false).onChange(async value => {
+        this.plugin.settings.smartQuickStart = value; await this.plugin.saveSettings();
+      }));
     if (selectedSpeechEngine !== 'system-tts') new Setting(containerEl)
       .setName(ui.speedName)
       .setDesc(ui.speedDesc)
@@ -7939,10 +8002,16 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
     containerEl.createEl('h3', { text: translateInterface(settingsLanguage, 'Storage and maintenance', '存储与维护') });
     new Setting(containerEl)
       .setName(ui.rememberPositionName)
-      .setDesc(ui.rememberPositionDesc)
-      .addToggle((toggle) => {
-        toggle.setValue(this.plugin.settings.rememberReadingPosition === true).onChange(async (value) => {
-          this.plugin.settings.rememberReadingPosition = value;
+      .setDesc(translateInterface(settingsLanguage,
+        'Session-only history stays in memory and is cleared on reload or exit. Persistent history stores local file paths, short text anchors and positions, not audio. Regenerated audio resumes at the segment start. Web pages are excluded.',
+        '默认仅本次运行：记录只放内存，重载或退出后清空。跨重启保留会保存本地文件路径、短文本定位片段及位置，不保留音频；重新合成时从段首续读。网页不记录历史。'))
+      .addDropdown((dropdown) => {
+        dropdown.addOption('off', translateInterface(settingsLanguage, 'Off', '关闭'))
+          .addOption('session', translateInterface(settingsLanguage, 'This session only', '仅本次运行'))
+          .addOption('persistent', translateInterface(settingsLanguage, 'Keep across restarts', '跨重启保留'))
+          .setValue(historyMode(this.plugin.settings)).onChange(async (value) => {
+          this.plugin.settings.readingHistoryMode = value;
+          this.plugin.settings.rememberReadingPosition = value === 'persistent';
           await this.plugin.saveSettings();
           this.plugin.renderReaderViews();
         });
@@ -8012,14 +8081,28 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
       cls: 'note-reader-cosyvoice-muted',
       text: ui.commandsFooter,
     });
+    const resetDescription = translateInterface(settingsLanguage,
+      'Credentials, service configuration, interface language and reading records are preserved; no files are deleted. Synthesis changes apply to the next reading session. Resetting history mode to session-only removes its disk copy but keeps records in memory until exit.',
+      '保留密钥引用、服务配置、界面语言和朗读记录，不删除文件。合成相关修改在下次朗读生效。历史模式恢复为仅本次运行时移除磁盘副本，内存记录保留至退出。');
+    for (const [id, en, zh] of PAGES) {
+      const title = translateInterface(settingsLanguage, 'Restore this page defaults', '恢复本页默认设置');
+      new Setting(pages[id]).setName(title).setDesc(translateInterface(settingsLanguage,
+        'Reset this category only. Credentials and records are preserved.', '仅恢复当前分类；保留密钥引用和朗读记录。'))
+        .addButton(button => button.setButtonText(title).onClick(() => {
+          new SettingsConfirmModal(this.plugin, `${title}: ${translateInterface(settingsLanguage, en, zh)}`, resetDescription, async () => {
+            await this.plugin.resetSettingsToDefaults(id); this.display(); new Notice(ui.settingsRestoredNotice);
+          }).open();
+        }));
+    }
     new Setting(containerEl)
-      .setName(ui.restoreDefaultsName)
-      .setDesc(ui.restoreDefaultsDesc)
+      .setName(translateInterface(settingsLanguage, 'Restore all default settings', '恢复全部默认设置'))
+      .setDesc(resetDescription)
       .addButton((button) => {
-        button.setButtonText(ui.restoreDefaultsButton).setWarning().onClick(async () => {
-          await this.plugin.resetSettingsToDefaults();
-          new Notice(ui.settingsRestoredNotice);
-          this.display();
+        button.setButtonText(ui.restoreDefaultsButton).setWarning().onClick(() => {
+          new SettingsConfirmModal(this.plugin, translateInterface(settingsLanguage, 'Restore all default settings', '恢复全部默认设置'), resetDescription, async () => {
+            await this.plugin.resetSettingsToDefaults();
+            new Notice(ui.settingsRestoredNotice); this.display();
+          }).open();
         });
       });
   }

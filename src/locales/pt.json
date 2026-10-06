@@ -140,5 +140,10 @@
   "Settings categories": "Categorias de configurações",
   "Playback": "Reprodução",
   "Appearance": "Aparência",
-  "PDF content": "Conteúdo do PDF"
+  "PDF content": "Conteúdo do PDF",
+  "Smart quick start": "Início rápido inteligente",
+  "This session only": "Somente nesta sessão",
+  "Keep across restarts": "Manter após reiniciar",
+  "Restore this page defaults": "Restaurar padrões desta página",
+  "Restore all default settings": "Restaurar todas as configurações padrão"
 }
