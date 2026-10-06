@@ -81,6 +81,7 @@ class NativeReaderToolbar {
       const option = node(this.speed, 'option'); option.value = String(value); option.textContent = `${value}x`;
     }
     this.speed.addEventListener('change', () => this.action(() => plugin.setPlaybackSpeed(Number(this.speed.value))));
+    this.locate = this.button(controls, 'locate-fixed', ['Locate current reading', '定位正在朗读的位置'], () => plugin.locateCurrentReading());
     this.outlineButton = this.button(controls, 'list-tree', ['Outline', '大纲'], () => {
       if (this.isPdf) { plugin.openPdfOutline(view.file); return; }
       this.outline.hidden = !this.outline.hidden; this.outlineButton.setAttribute('aria-expanded', String(!this.outline.hidden));
@@ -246,6 +247,7 @@ class NativeReaderToolbar {
     else this.play.removeAttribute('aria-keyshortcuts');
     this.play.disabled = Boolean(session && !state.canPause);
     this.stop.disabled = !state.canStop || exporting;
+    this.locate.disabled = !session || exporting;
     this.previous.disabled = !state.canPreviousChunk || exporting;
     this.next.disabled = !state.canNextChunk || exporting;
     this.back.disabled = this.forward.disabled = (!state.canSeek && !session?.seekTarget) || exporting;

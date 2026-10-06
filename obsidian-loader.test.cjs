@@ -205,7 +205,7 @@ const testVaultPath = path.resolve('test-vault');
 const testAudioPath = path.join(testVaultPath, '.obsidian', 'plugins', 'note-reader-cosyvoice', 'cache', 'a.wav');
 assert.strictEqual(manifest.id, 'note-reader-cosyvoice');
 assert.strictEqual(manifest.name, 'Note and PDF Voice Reader');
-assert.strictEqual(manifest.version, '0.9.1');
+assert.strictEqual(manifest.version, '0.9.2');
 assert.strictEqual(
   moduleObject.exports.__test.sanitizeTextForSpeech('第一段的结尾。\n\n## 第二节标题\n\n下一节的正文。'),
   '第一段的结尾。\n第二节标题\n下一节的正文。'
@@ -1244,6 +1244,16 @@ const previousChunkButton = findElementByAriaLabel(root, 'Previous chunk');
 assert.ok(previousChunkButton);
 previousChunkButton.dispatchEvent(createPointerEvent());
 assert.deepStrictEqual(chunkNavigationCalls, [-1]);
+
+let locateCalls = 0;
+readerView.plugin.locateCurrentReading = () => { locateCalls++; };
+const locateButton = findElementByAriaLabel(root, 'Locate current reading');
+assert.ok(locateButton);
+locateButton.disabled = false;
+locateButton.dispatchEvent(createPointerEvent());
+assert.strictEqual(locateCalls, 1);
+locateButton.dispatchEvent(createPointerEvent({ type: 'click' }));
+assert.strictEqual(locateCalls, 1);
 
 previousChunkButton.dispatchEvent(createPointerEvent({ type: 'click' }));
 assert.deepStrictEqual(chunkNavigationCalls, [-1]);

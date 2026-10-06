@@ -3,6 +3,16 @@ const { academicOptions } = require('./academic-speech');
 const { getHtmlReaderDocument } = require('./html-text');
 const { highlightDocument, clearDocumentHighlight, isDocumentHighlightCurrent } = require('./dom-highlights');
 const { updateWebHighlight, getWebPageUrl } = require('./web-page');
+const { getSpeechParts } = require('./speech-parts');
+function htmlReadingTarget(session, highlight, settings) {
+  const chunk = session.chunks[highlight.index];
+  const sentence = settings.readingHighlight === 'sentence' && highlight.sentence;
+  const part = Number.isInteger(session.currentPartIndex) ? session.currentPartIndex : 0;
+  const valid = sentence && Number.isInteger(sentence.start) && Number.isInteger(sentence.end)
+    && sentence.start >= 0 && sentence.end > sentence.start && sentence.end <= chunk.length;
+  return { text: valid ? chunk.slice(sentence.start, sentence.end) : getSpeechParts(session, highlight.index)[part] || chunk,
+    key: `${part}:${valid ? `${sentence.start}-${sentence.end}` : ''}` };
+}
 class HtmlReadingHighlights {
   constructor(plugin) { this.plugin=plugin;this.documents=new Set();this.markedDocuments=new Set();this.htmlObservers=new Map();this.web=null;this.key='';this.chain=Promise.resolve(); }
   clear() {
@@ -25,7 +35,8 @@ class HtmlReadingHighlights {
     } else if (!p.getHtmlReaderLeaves().some(({view}) => view.file?.path === s.filePath && view.file?.stat?.mtime === s.fileMtime)) {
       this.clear(); return;
     }
-    const key=[s.id,h.index,p.settings.highlightColor,p.settings.highlightStrength,p.settings.webReadingFollow].join(':');
+    const target = htmlReadingTarget(s, h, p.settings);
+    const key=[s.id,h.index,target.key,p.settings.readingHighlight,p.settings.highlightColor,p.settings.highlightStrength,p.settings.webReadingFollow].join(':');
     const readerRoot = s.sourceKind === 'web' && s.webContext.webView.mode === 'reader' ? s.webContext.webView.readerView : null;
     const htmlDocuments = s.sourceKind === 'html' ? [...new Set(p.getHtmlReaderLeaves()
       .filter(({view}) => view.file?.path === s.filePath && view.file?.stat?.mtime === s.fileMtime)
@@ -36,7 +47,7 @@ class HtmlReadingHighlights {
         && (!this.markedDocuments.has(doc) || isDocumentHighlightCurrent(doc))))))return;
     this.clear();this.key=key;
     const speechSettings = s.synthesisSettings || p.settings;
-    const options={text:s.chunks[h.index],color:p.settings.highlightColor,strength:p.settings.highlightStrength,follow:p.settings.webReadingFollow===true,academic:academicOptions(speechSettings)};
+    const options={text:target.text,color:p.settings.highlightColor,strength:p.settings.highlightStrength,follow:p.settings.webReadingFollow===true,restoreOnChange:true,academic:academicOptions(speechSettings)};
     if (s.sourceKind === 'html' && typeof p.prepareHtmlSpeechText === 'function') {
       options.speechTransform = text => p.prepareHtmlSpeechText(text, speechSettings);
     }
@@ -44,7 +55,11 @@ class HtmlReadingHighlights {
       for (const doc of htmlDocuments) {
         const root = readerRoot || doc.body;
         this.documents.add(doc);
-        try { if (highlightDocument(doc,options,root)) this.markedDocuments.add(doc); } catch (_) { clearDocumentHighlight(doc); }
+        try {
+          const matched = highlightDocument(doc, options, root)
+            || (target.text !== s.chunks[h.index] && highlightDocument(doc, { ...options, text: s.chunks[h.index] }, root));
+          if (matched) this.markedDocuments.add(doc);
+        } catch (_) { clearDocumentHighlight(doc); }
         if (root && doc.defaultView?.MutationObserver) {
           const observer = new doc.defaultView.MutationObserver(() => {
             if (this.documents.has(doc) && this.key === key) this.key = '';
@@ -58,12 +73,17 @@ class HtmlReadingHighlights {
       const context=s.webContext,view=context?.webView;
       if(!view||getWebPageUrl(view)!==context.webUrl||p.getWebPageState(view).revision!==context.webRevision)return;
       this.web=view;
-      this.chain=this.chain.catch(()=>{}).then(()=>{
+      this.chain=this.chain.catch(()=>{}).then(async ()=>{
         if(this.key!==key||p.activeSession!==s)return;
-        return updateWebHighlight(view,{...options,url:context.webUrl,restoreOnChange:true});
+        const matched = await updateWebHighlight(view,{...options,url:context.webUrl,restoreOnChange:true});
+        if (!matched && target.text !== s.chunks[h.index] && this.key === key && p.activeSession === s
+          && getWebPageUrl(view) === context.webUrl && p.getWebPageState(view).revision === context.webRevision) {
+          return updateWebHighlight(view, { ...options, text: s.chunks[h.index], url: context.webUrl, restoreOnChange: true });
+        }
+        return matched;
       }).catch(()=>{});
     }
   }
   destroy(){this.clear();}
 }
-module.exports={HtmlReadingHighlights};
+module.exports={HtmlReadingHighlights,htmlReadingTarget};

@@ -35,6 +35,7 @@ const { PdfOutlineModal, addPdfOutlineSettings } = require('./pdf-outline-ui');
 const { readerRange } = require('./reader-selection');
 const { getSpeechParts, planSpeechParts, adjacentSpeechPart, getSpeechPartTiming } = require('./speech-parts');
 const { preparationStatusText } = require('./preparation-status');
+const { locateReading } = require('./locate-reading');
 const { MIMO_ENDPOINT, MIMO_DEFAULTS, MIMO_VOICES, MIMO_MAX_CHUNK_CHARS, normalizeMimoSettings, buildMimoRequestBody, decodeMimoAudio } = require('./mimo-tts');
 const {
   MAX_EXPORTED_AUDIO_BYTES,
@@ -6429,6 +6430,22 @@ class CosyVoiceReaderPlugin extends Plugin {
     return this.seekCurrentSegmentToTime(seekTime);
   }
 
+  async locateCurrentReading() {
+    if (this.locatingReading) return;
+    this.locatingReading = true;
+    try {
+      const result = await locateReading(this);
+      const messages = {
+        unavailable: ['No locatable reading position is available.', '当前没有可定位的朗读位置。'],
+        changed: ['The source has changed or the web page is no longer open. Restart reading to locate it safely.', '原文已变化或网页已关闭，请重新开始朗读后再定位。'],
+        unmatched: ['The document is open, but the current passage could not be located reliably.', '已尝试打开原文，但无法可靠定位当前段落。'],
+        page: ['Located the PDF page; the paragraph is not yet available.', '已定位到 PDF 对应页，暂未定位到具体段落。'],
+        segment: ['Located the current segment; the exact spoken passage could not be matched.', '已定位到当前合成段，暂未精确匹配正在朗读的句子。'],
+      };
+      if (messages[result]) new Notice(translateInterface(this.settings.settingsLanguage, ...messages[result]));
+    } finally { this.locatingReading = false; }
+  }
+
   seekCurrentAudioBySeconds(deltaSeconds) {
     const audio = this.currentAudio;
     const delta = Number(deltaSeconds);
@@ -6837,7 +6854,11 @@ class CosyVoiceReaderView extends ItemView {
     header.createDiv({ cls: `note-reader-cosyvoice-state is-${state.status}`, text: state.label });
 
     const progressWrap = root.createDiv({ cls: 'note-reader-cosyvoice-progress-wrap' });
-    progressWrap.createDiv({ cls: 'note-reader-cosyvoice-section-label', text: this.translate('Overall progress') });
+    const progressHeading = progressWrap.createDiv({ cls: 'note-reader-progress-heading' });
+    progressHeading.createDiv({ cls: 'note-reader-cosyvoice-section-label', text: this.translate('Overall progress') });
+    this.createIconButton(progressHeading, 'locate-fixed', this.plugin.settings.settingsLanguage === 'chinese'
+      ? '定位正在朗读的位置' : 'Locate current reading', () => this.plugin.locateCurrentReading(),
+      !this.plugin.activeSession || this.plugin.activeSession.kind === 'audio-export', { triggerOnPointerDown: true });
     const progressControls = progressWrap.createDiv({ cls: 'note-reader-cosyvoice-progress-controls' });
     this.createIconButton(progressControls, 'skip-back', 'Previous chunk', () => {
       this.plugin.jumpToAdjacentChunk(-1);

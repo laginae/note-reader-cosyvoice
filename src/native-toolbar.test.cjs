@@ -76,6 +76,21 @@ function keyboardFixture() {
   } };
 }
 
+test('locate toolbar action is available for reading but not export and follows language', () => {
+  const { plugin, toolbar, manager, dom } = fixture();
+  let count = 0; plugin.locateCurrentReading = () => count++;
+  assert.equal(toolbar.locate.disabled, true);
+  assert.equal(toolbar.speed.nextElementSibling, toolbar.locate);
+  assert.equal(toolbar.locate.nextElementSibling, toolbar.outlineButton);
+  plugin.activeSession = { chunks: ['Public text.'] }; toolbar.render();
+  toolbar.locate.click(); assert.equal(count, 1);
+  plugin.settings.settingsLanguage = 'chinese'; toolbar.render();
+  assert.equal(toolbar.locate.getAttribute('aria-label'), '定位正在朗读的位置');
+  plugin.activeSession.kind = 'audio-export'; toolbar.render();
+  assert.equal(toolbar.locate.disabled, true);
+  manager.destroy(); dom.window.close();
+});
+
 test('progress hover label explains seek boundaries in both languages without duplicate native tooltip', () => {
   const { dom, toolbar, plugin, manager } = fixture();
   assert.match(toolbar.progress.getAttribute('aria-label'), /Across segments: jump to the target segment start/);
