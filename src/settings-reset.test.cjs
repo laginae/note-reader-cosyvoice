@@ -60,3 +60,14 @@ test('page reset requires confirmation and cancel leaves settings untouched', as
   assert.deepEqual(called, ['engine']); assert.equal(modals.at(-1).closed, true);
   dom.window.close();
 });
+
+test('note side marker is optional, saved by its control and included in playback reset', async () => {
+  const { dom, plugin, rows } = settingsFixture();
+  const row = rows.find(row => row.nameEl.textContent === 'Note highlight side marker');
+  assert.ok(row); assert.equal(plugin.settings.noteHighlightBorder, false);
+  plugin.renderDocumentViews = () => {};
+  await row.change(true);
+  assert.equal(plugin.settings.noteHighlightBorder, true);
+  assert.equal(resetPageSettings(plugin.settings, { noteHighlightBorder: false }, 'playback').noteHighlightBorder, false);
+  dom.window.close();
+});

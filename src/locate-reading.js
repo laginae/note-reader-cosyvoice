@@ -1,11 +1,12 @@
 'use strict';
 
-const { currentSourceRanges } = require('./markdown-source');
+const { currentSourceRanges, markdownReadingHighlight } = require('./markdown-source');
 const { getHtmlReaderDocument } = require('./html-text');
 const { highlightDocument } = require('./dom-highlights');
 const { getWebPageUrl, updateWebHighlight } = require('./web-page');
 const { academicOptions } = require('./academic-speech');
 const { htmlReadingTarget } = require('./html-highlights');
+const { pdfReadingPage } = require('./pdf-highlights');
 
 async function locateReading(plugin) {
   const session = plugin.activeSession;
@@ -48,7 +49,8 @@ async function locateReading(plugin) {
   if (type === 'markdown') {
     const source = session.markdownSource;
     if (!source || view.editor?.getValue() !== source.text) return 'changed';
-    const range = currentSourceRanges(source, { index })[0];
+    const highlight = plugin.getCurrentReadingHighlight?.();
+    const range = currentSourceRanges(source, markdownReadingHighlight(session, highlight?.index === index ? highlight : { index }, plugin.settings))[0];
     if (!range) return 'unmatched';
     const from = view.editor.offsetToPos(range.from);
     if (view.getMode?.() === 'preview') {
@@ -78,7 +80,9 @@ async function locateReading(plugin) {
       // eight times. Only wait for an iframe that has not mounted yet.
       if (doc?.body?.textContent?.trim()) return 'unmatched';
     } else {
-      const number = session.chunkPageNumbers?.[index];
+      const highlight = plugin.getCurrentReadingHighlight?.();
+      const number = pdfReadingPage(session, highlight?.index === index ? highlight : { index }, plugin.settings,
+        text => plugin.sanitizeAudioExportText(text, session.synthesisSettings || plugin.settings));
       if (!Number.isInteger(number)) return 'unmatched';
       const page = (view.contentEl || view.containerEl)?.querySelector(`[data-page-number="${number}"]`);
       if (page) {

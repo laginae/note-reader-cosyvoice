@@ -10,5 +10,10 @@ test('appearance applies to leaf documents and is removed on unload', () => {
   const document = new JSDOM('<main/>').window.document;
   const plugin = { settings: { highlightColor: '#123456', highlightStrength: 30 }, app: { workspace: { iterateAllLeaves: fn => fn({ view: { containerEl: document.body } }) } } };
   applyAppearance(plugin); assert.equal(document.documentElement.style.getPropertyValue('--note-reader-highlight-strength'), '30%');
+  assert.equal(document.documentElement.style.getPropertyValue('--note-reader-note-highlight-strength'), '14%');
+  assert.equal(document.documentElement.style.getPropertyValue('--note-reader-note-border'), 'none');
+  plugin.settings.noteHighlightBorder = true; applyAppearance(plugin);
+  assert.match(document.documentElement.style.getPropertyValue('--note-reader-note-border'), /inset 2px/);
   clearAppearance(plugin); assert.equal(document.documentElement.style.getPropertyValue('--note-reader-highlight-color'), '');
+  assert.equal(document.documentElement.style.getPropertyValue('--note-reader-note-border'), '');
 });

@@ -1,19 +1,22 @@
 'use strict';
 
 const { extractPdfTextLayout } = require('./pdf-layout');
-const { compact } = require('./markdown-source');
+const { compact, markdownReadingHighlight: readingTarget } = require('./markdown-source');
 const { inside } = require('./pdf-ancillary');
 
 function pdfPageLines(page, clean, source = null, footnote = false) {
   const bounds = page.getBoundingClientRect();
   if (!(bounds.width > 0 && bounds.height > 0)) return null;
   const spans = [...page.querySelectorAll('.textLayer span')].filter(span => !span.querySelector('span') && span.textContent.trim());
-  const positioned = spans.map(span => ({ span, rect: span.getBoundingClientRect() })).filter(item => item.rect.width > 0 && item.rect.height > 0);
+  const positioned = spans.map((span, sourceIndex) => ({ span, sourceIndex, rect: span.getBoundingClientRect() }))
+    .filter(item => item.rect.width > 0 && item.rect.height > 0);
   if (!positioned.length) return null;
   let items = positioned.map(({ span, rect }) => ({ str: span.textContent, width: rect.width, height: rect.height,
     transform: [rect.height, 0, 0, rect.height, rect.left - bounds.left, bounds.top - rect.top] }));
   const original = source?.items?.filter(item => item.str?.trim());
-  const exact = original?.length === positioned.length && original.every((item, index) => item.str === positioned[index].span.textContent);
+  // Zero-width combining marks still belong to the source text, even though
+  // they cannot produce a rectangle. Verify before filtering by visible area.
+  const exact = original?.length === spans.length && original.every((item, index) => item.str === spans[index].textContent);
   if (exact) items = original;
   const layout = extractPdfTextLayout(items, { viewport: exact ? source.viewport : { width: bounds.width, height: bounds.height } });
   const heights = items.map(item => Math.max(1, Math.abs(item.height || 0), Math.abs(item.transform?.[1] || 0), Math.abs(item.transform?.[3] || 0))).sort((a, b) => a - b);
@@ -22,8 +25,8 @@ function pdfPageLines(page, clean, source = null, footnote = false) {
   // Match the layout's baseline tolerance; paired columns can shift its mean baseline.
   const tolerance = Math.max(2, medianHeight * 0.5);
   const lineNodes = layout.lines.map(() => []);
-  positioned.forEach(({ span, rect }, i) => {
-    const item = items[i], x = exact ? item.transform[4] : rect.left - bounds.left;
+  positioned.forEach(({ span, rect, sourceIndex }, i) => {
+    const item = items[exact ? sourceIndex : i], x = exact ? item.transform[4] : rect.left - bounds.left;
     const y = exact ? item.transform[5] : bounds.top - rect.top;
     const width = exact ? Math.abs(item.width) : rect.width;
     let nearest = -1, distance = Infinity;
@@ -35,6 +38,16 @@ function pdfPageLines(page, clean, source = null, footnote = false) {
     });
     if (nearest >= 0) lineNodes[nearest].push(span);
   });
+  return finishPageLines(layout, lineNodes, clean, source, footnote, exact);
+}
+
+function pdfSourceLines(source, clean, footnote = false) {
+  if (!source?.items?.length || !source.viewport) return null;
+  const layout = extractPdfTextLayout(source.items, { viewport: source.viewport });
+  return finishPageLines(layout, layout.lines.map(() => []), clean, source, footnote, true);
+}
+
+function finishPageLines(layout, lineNodes, clean, source, footnote, exact) {
   const ancillaryFilter = source?.omittedRegions?.length || source?.contentScope === 'glossary';
   if (exact && (ancillaryFilter || (source.footnoteMode && source.footnoteMode !== 'inline' && source.footnoteRegions?.length))) {
     const indices = layout.lines.map((line, index) => ({ line, index })).filter(({ line }) => {
@@ -72,18 +85,38 @@ function pdfPageLines(page, clean, source = null, footnote = false) {
   return { text, lines };
 }
 
-function matchPdfChunk(pages, chunk) {
+function pdfChunkRange(pages, chunk, range) {
   const needle = compact(chunk), text = pages.map(page => page.text).join('');
-  if (!needle) return [];
+  if (!needle) return null;
   const start = text.indexOf(needle);
-  if (start < 0 || text.indexOf(needle, start + 1) >= 0) return [];
-  const end = start + needle.length, result = [];
+  if (start < 0 || text.indexOf(needle, start + 1) >= 0) return null;
+  const valid = range && Number.isInteger(range.start) && Number.isInteger(range.end)
+    && range.start >= 0 && range.end > range.start && range.end <= needle.length;
+  return { start: start + (valid ? range.start : 0), end: start + (valid ? range.end : needle.length) };
+}
+
+function matchPdfChunk(pages, chunk, range) {
+  const match = pdfChunkRange(pages, chunk, range);
+  if (!match) return [];
+  const { start, end } = match, result = [];
   let offset = 0;
   for (const page of pages) {
     for (const line of page.lines) if (offset + line.start < end && offset + line.end > start) result.push(...line.nodes);
     offset += page.text.length;
   }
   return [...new Set(result)];
+}
+
+function pdfReadingPage(session, highlight, settings, clean) {
+  const number = session.chunkPageNumbers?.[highlight.index];
+  if (!Number.isInteger(number)) return number;
+  const footnote = Boolean(session.chunkFootnotes?.[highlight.index]);
+  const first = pdfSourceLines(session.pdfHighlightPages?.get(number), clean, footnote);
+  const next = pdfSourceLines(session.pdfHighlightPages?.get(number + 1), clean, footnote);
+  if (!first || !next) return number;
+  const target = readingTarget(session, highlight, settings);
+  const range = pdfChunkRange([first, next], session.chunks[highlight.index], target.speechRange);
+  return range && range.start >= first.text.length ? number + 1 : number;
 }
 
 function mergeHighlightRects(rects) {
@@ -123,22 +156,25 @@ class PdfReadingHighlights {
     for (const { element } of this.overlays.values()) element.remove();
     this.overlays.clear();
   }
-  renderOverlays(nodes) {
+  renderOverlays(nodes, groups = new Map()) {
     const pages = new Map();
     for (const node of nodes) {
       const page = node.closest('[data-page-number]');
       if (!page) continue;
-      if (!pages.has(page)) pages.set(page, []);
-      const bounds = page.getBoundingClientRect(), rect = node.getBoundingClientRect();
+      if (!pages.has(page)) pages.set(page, { bounds: page.getBoundingClientRect(), groups: new Map() });
+      const data = pages.get(page), bounds = data.bounds, rect = node.getBoundingClientRect();
       if (!(bounds.width > 0 && bounds.height > 0 && rect.width > 0 && rect.height > 0)) continue;
-      pages.get(page).push([rect.left - bounds.left, rect.top - bounds.top, rect.width, rect.height]);
+      const group = groups.get(node) || page;
+      if (!data.groups.has(group)) data.groups.set(group, []);
+      data.groups.get(group).push([rect.left - bounds.left, rect.top - bounds.top, rect.width, rect.height]);
     }
     for (const [page, overlay] of this.overlays) if (!pages.has(page)) {
       overlay.element.remove(); this.overlays.delete(page);
     }
-    for (const [page, rawRects] of pages) {
-      const bounds = page.getBoundingClientRect();
-      const rects = mergeHighlightRects(rawRects).map(([x, y, w, h]) =>
+    for (const [page, data] of pages) {
+      const bounds = data.bounds;
+      // Keep separate layout lines separate, even when column gutters are narrow.
+      const rects = [...data.groups.values()].flatMap(mergeHighlightRects).map(([x, y, w, h]) =>
         [x / bounds.width * 100, y / bounds.height * 100, w / bounds.width * 100, h / bounds.height * 100]);
       const signature = JSON.stringify(rects);
       let overlay = this.overlays.get(page);
@@ -158,6 +194,7 @@ class PdfReadingHighlights {
         return mark;
       }));
       overlay.signature = signature;
+      overlay.count = rects.length;
     }
   }
   update() {
@@ -167,31 +204,45 @@ class PdfReadingHighlights {
     }
     const pageNumber = session.chunkPageNumbers?.[highlight.index];
     if (!Number.isInteger(pageNumber)) { this.clear(); this.clearCache(); return; }
-    const next = new Set(), live = new Set();
+    const target = readingTarget(session, highlight, plugin.settings);
+    const settings = session.synthesisSettings || plugin.settings;
+    const clean = text => plugin.sanitizeAudioExportText(text, settings);
+    const next = new Set(), live = new Set(), groups = new Map();
+    let geometryChanged = false;
     for (const leaf of plugin.app.workspace.getLeavesOfType('pdf')) {
       const view = leaf.view;
       if (view.file?.path !== session.filePath || (session.fileMtime && view.file?.stat?.mtime !== session.fileMtime)) continue;
       const root = view.contentEl || view.containerEl;
       const page = root?.querySelector(`[data-page-number="${pageNumber}"]`);
-      if (!page) continue;
+      const following = root?.querySelector(`[data-page-number="${pageNumber + 1}"]`);
+      if (!page && !following) continue;
       live.add(view);
-      const following = root.querySelector(`[data-page-number="${pageNumber + 1}"]`);
-      const signature = `${session.id}:${highlight.index}:${plugin.settings.stripMarkdown}:${plugin.settings.mathReadingLanguage}:${page.getBoundingClientRect().width}:${page.getBoundingClientRect().height}`;
-      const first = page.querySelector('.textLayer span'), last = page.querySelector('.textLayer')?.lastElementChild;
+      const pageBounds = page?.getBoundingClientRect(), nextBounds = following?.getBoundingClientRect();
+      const footnote = Boolean(session.chunkFootnotes?.[highlight.index]);
+      const sources = [session.pdfHighlightPages?.get(pageNumber), session.pdfHighlightPages?.get(pageNumber + 1)];
+      const signature = `${session.id}:${pageNumber}:${footnote}:${pageBounds?.width}:${pageBounds?.height}:${nextBounds?.width}:${nextBounds?.height}`;
+      const first = page?.querySelector('.textLayer span'), last = page?.querySelector('.textLayer')?.lastElementChild;
       const nextFirst = following?.querySelector('.textLayer span');
-      const layers = [page.querySelector('.textLayer'), following?.querySelector('.textLayer')].filter(Boolean);
+      const layers = [page?.querySelector('.textLayer'), following?.querySelector('.textLayer')].filter(Boolean);
       let cache = this.cached.get(view);
-      if (!cache || cache.signature !== signature || cache.first !== first || cache.last !== last || cache.nextFirst !== nextFirst
+      if (!cache || cache.signature !== signature || cache.settings !== settings || cache.sources.some((source, i) => source !== sources[i])
+        || cache.first !== first || cache.last !== last || cache.nextFirst !== nextFirst
         || cache.dirty || cache.layers.length !== layers.length || cache.layers.some((layer, i) => layer !== layers[i])
         || cache.observers.some(observer => observer.takeRecords().length > 0)
         || cache.nodes.some(node => !node.isConnected)
         || (!cache.nodes.length && Date.now() - cache.created > 1000)) {
         this.discardCache(view);
-        const clean = text => plugin.sanitizeAudioExportText(text);
-        const currentPage = pdfPageLines(page, clean, session.pdfHighlightPages?.get(pageNumber), Boolean(session.chunkFootnotes?.[highlight.index]));
-        const nextPage = following ? pdfPageLines(following, clean, session.pdfHighlightPages?.get(pageNumber + 1), Boolean(session.chunkFootnotes?.[highlight.index])) : null;
-        cache = { signature, first, last, nextFirst, layers, observers: [], dirty: false, created: Date.now(), nodes: currentPage
-          ? matchPdfChunk(nextPage ? [currentPage, nextPage] : [currentPage], session.chunks[highlight.index]) : [] };
+        const pages = [page, following].map((element, i) => {
+          const rendered = element ? pdfPageLines(element, clean, sources[i], footnote) : null;
+          const original = pdfSourceLines(sources[i], clean, footnote);
+          // Anchor in parsed source even if the next page has not mounted yet.
+          return original ? { text: original.text, lines: rendered?.text === original.text ? rendered.lines : [] }
+            : rendered || { text: '', lines: [] };
+        });
+        cache = { signature, settings, sources, first, last, nextFirst, layers, pages,
+          groups: new Map(), observers: [], dirty: false, created: Date.now(), nodes: [], targetKey: null };
+        for (const layout of pages) for (const line of layout.lines) for (const node of line.nodes) cache.groups.set(node, line);
+        geometryChanged = true;
         // Text-layer updates can replace middle spans without changing either endpoint.
         for (const layer of layers) {
           const Observer = layer.ownerDocument.defaultView?.MutationObserver;
@@ -203,15 +254,22 @@ class PdfReadingHighlights {
         }
         this.cached.set(view, cache);
       }
-      for (const node of cache.nodes) if (node.isConnected) next.add(node);
+      const targetKey = `${highlight.index}:${target.speechRange?.start}:${target.speechRange?.end}`;
+      if (cache.targetKey !== targetKey) {
+        cache.nodes = matchPdfChunk(cache.pages, session.chunks[highlight.index], target.speechRange);
+        cache.targetKey = targetKey;
+      }
+      for (const node of cache.nodes) if (node.isConnected) { next.add(node); groups.set(node, cache.groups.get(node)); }
     }
     for (const view of this.cached.keys()) if (!live.has(view)) this.discardCache(view);
     for (const node of this.marked) if (!next.has(node)) node.classList.remove('note-reader-pdf-current');
     for (const node of next) node.classList.add('note-reader-pdf-current');
+    const changed = next.size !== this.marked.size || [...next].some(node => !this.marked.has(node));
     this.marked = next;
-    this.renderOverlays(next);
+    if (geometryChanged || changed || [...this.overlays.values()].some(overlay => !overlay.element.isConnected
+      || overlay.element.children.length !== overlay.count)) this.renderOverlays(next, groups);
   }
   destroy() { this.clear(); this.clearCache(); }
 }
 
-module.exports = { PdfReadingHighlights, pdfPageLines, matchPdfChunk, mergeHighlightRects };
+module.exports = { PdfReadingHighlights, pdfPageLines, pdfSourceLines, pdfReadingPage, matchPdfChunk, mergeHighlightRects };

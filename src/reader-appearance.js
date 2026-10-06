@@ -1,11 +1,12 @@
 'use strict';
 
-const APPEARANCE_DEFAULTS = { highlightColor: '#e5b83d', highlightStrength: 22, readerOpenMode: 'sidebar' };
+const APPEARANCE_DEFAULTS = { highlightColor: '#e5b83d', highlightStrength: 22, readerOpenMode: 'sidebar', noteHighlightBorder: false };
 function normalizeAppearance(settings) {
   settings.highlightColor = /^#[0-9a-f]{6}$/i.test(settings.highlightColor || '') ? settings.highlightColor : APPEARANCE_DEFAULTS.highlightColor;
   const strength = Number(settings.highlightStrength);
   settings.highlightStrength = Number.isFinite(strength) ? Math.max(5, Math.min(60, Math.round(strength))) : APPEARANCE_DEFAULTS.highlightStrength;
   if (!['sidebar', 'toolbar', 'both'].includes(settings.readerOpenMode)) settings.readerOpenMode = 'sidebar';
+  settings.noteHighlightBorder = settings.noteHighlightBorder === true;
   return settings;
 }
 function applyAppearance(plugin) {
@@ -18,12 +19,17 @@ function applyAppearance(plugin) {
     plugin.highlightDocuments.add(doc);
     doc.documentElement.style.setProperty('--note-reader-highlight-color', plugin.settings.highlightColor);
     doc.documentElement.style.setProperty('--note-reader-highlight-strength', `${plugin.settings.highlightStrength}%`);
+    doc.documentElement.style.setProperty('--note-reader-note-highlight-strength', `${Math.max(3, Math.round(plugin.settings.highlightStrength * 0.45))}%`);
+    doc.documentElement.style.setProperty('--note-reader-note-border', plugin.settings.noteHighlightBorder
+      ? 'inset 2px 0 var(--note-reader-highlight-color)' : 'none');
   }
 }
 function clearAppearance(plugin) {
   for (const doc of plugin.highlightDocuments || []) {
     doc.documentElement.style.removeProperty('--note-reader-highlight-color');
     doc.documentElement.style.removeProperty('--note-reader-highlight-strength');
+    doc.documentElement.style.removeProperty('--note-reader-note-highlight-strength');
+    doc.documentElement.style.removeProperty('--note-reader-note-border');
   }
   plugin.highlightDocuments?.clear();
 }

@@ -512,6 +512,7 @@ var require_settings_reset = __commonJS({
         "rapidQuickStart",
         "highlightColor",
         "highlightStrength",
+        "noteHighlightBorder",
         "readerOpenMode",
         "readingHighlight",
         "readingFollow",
@@ -8892,14 +8893,53 @@ var require_reading_highlights = __commonJS({
 var require_markdown_source = __commonJS({
   "src/markdown-source.js"(exports2, module2) {
     "use strict";
+    var { speechPartOffset: speechPartOffset2 } = require_reading_highlights();
     function compact2(text) {
       return String(text || "").replace(/\s/g, "");
+    }
+    var lineIndexes = /* @__PURE__ */ new WeakMap();
+    var literalOffsets = /* @__PURE__ */ new WeakMap();
+    function sourceLineStarts(source) {
+      let starts = lineIndexes.get(source);
+      if (!starts) {
+        starts = [0];
+        for (let i = 0; i < source.text.length; i++) if (source.text[i] === "\n") starts.push(i + 1);
+        lineIndexes.set(source, starts);
+      }
+      return starts;
+    }
+    function markdownReadingHighlight(session, highlight, settings = {}) {
+      const chunk = session?.chunks?.[highlight?.index];
+      if (typeof chunk !== "string") return highlight;
+      const parts = session.audioParts?.[highlight.index] || [chunk], part = session.currentPartIndex || 0;
+      const offset = part < parts.length ? speechPartOffset2(chunk, parts, part) : null;
+      const cue = settings.readingHighlight === "sentence" && highlight.sentence;
+      const validCue = cue && Number.isInteger(cue.start) && Number.isInteger(cue.end) && cue.start >= 0 && cue.end > cue.start && cue.end <= chunk.length;
+      const start = validCue ? cue.start : offset, end = validCue ? cue.end : offset === null ? null : offset + parts[part].length;
+      if (start === null) return { index: highlight.index };
+      const passage = chunk.slice(start, end).trim();
+      return {
+        index: highlight.index,
+        passage,
+        speechRange: { start: compact2(chunk.slice(0, start)).length, end: compact2(chunk.slice(0, end)).length },
+        sentence: validCue ? { ...cue, text: passage } : null
+      };
     }
     function sourceBlocks(text) {
       const blocks = [];
       let start = 0, offset = 0, fence = "", math = false, frontmatter = text.startsWith("---\n") || text.startsWith("---\r\n");
+      let kind = "paragraph";
+      const flush = (end) => {
+        if (end > start) blocks.push({ from: start, to: end, text: text.slice(start, end), kind });
+        start = end;
+        kind = "paragraph";
+      };
       for (const line of text.split(/(?<=\n)/)) {
         const trimmed = line.trim();
+        if (!fence && !math && !frontmatter && /^(?:[ \t]*(?:[-+*]|\d+[.)])\s+|#{1,6}\s+)/.test(line)) {
+          flush(offset);
+          kind = /^\s*(?:[-+*]|\d+[.)])\s+/.test(line) ? "list" : "heading";
+        } else if (!fence && !math && !frontmatter && kind === "heading") flush(offset);
         const marker = trimmed.match(/^(`{3,}|~{3,})/);
         if (marker && !frontmatter) {
           if (!fence) fence = marker[1];
@@ -8908,12 +8948,12 @@ var require_markdown_source = __commonJS({
         if (!fence && trimmed === "$$") math = !math;
         if (frontmatter && offset > 0 && trimmed === "---") frontmatter = false;
         if (!trimmed && !fence && !math && !frontmatter) {
-          if (offset > start) blocks.push({ from: start, to: offset, text: text.slice(start, offset) });
+          flush(offset);
           start = offset + line.length;
         }
         offset += line.length;
       }
-      if (offset > start) blocks.push({ from: start, to: offset, text: text.slice(start, offset) });
+      flush(offset);
       return blocks;
     }
     function buildMarkdownSource2(raw, chunks, clean, options = {}) {
@@ -8965,7 +9005,13 @@ var require_markdown_source = __commonJS({
     function currentSourceRanges(source, highlight) {
       const chunk = (source?.mappingValid || source?.partialMapping) && source.ranges[highlight?.index];
       if (!chunk) return [];
-      const blocks = source.blocks.filter((block) => (source.mappingValid || block.verified) && block.start < chunk.end && block.end > chunk.start);
+      let active = chunk;
+      if (highlight.speechRange) {
+        const { start, end } = highlight.speechRange;
+        if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end <= start || chunk.start + end > chunk.end) return [];
+        active = { start: chunk.start + start, end: chunk.start + end };
+      }
+      const blocks = source.blocks.filter((block) => (source.mappingValid || block.verified) && block.start < active.end && block.end > active.start);
       if (highlight.sentence && blocks.length === 1) {
         const block = blocks[0], sentence = highlight.sentence.text;
         if (sentence) {
@@ -8977,12 +9023,39 @@ var require_markdown_source = __commonJS({
           }];
         }
       }
-      return blocks.map((block) => ({ from: block.from, to: block.to, sentence: false }));
+      if (highlight.passage && blocks.length === 1 && typeof blocks[0].text === "string") {
+        const block = blocks[0], local = block.text.indexOf(highlight.passage);
+        if (local >= 0 && block.text.indexOf(highlight.passage, local + 1) < 0)
+          return [{
+            from: block.from + local,
+            to: block.from + local + highlight.passage.length,
+            sentence: false,
+            partial: active.start > block.start || active.end < block.end
+          }];
+      }
+      return blocks.map((block) => {
+        if (highlight.speechRange && typeof block.text === "string" && compact2(block.text) === block.speech) {
+          let offsets = literalOffsets.get(block);
+          if (!offsets) {
+            offsets = [];
+            for (let i = 0; i < block.text.length; i++) if (!/\s/.test(block.text[i])) offsets.push(i);
+            literalOffsets.set(block, offsets);
+          }
+          const start = Math.max(0, active.start - block.start), end = Math.min(block.speech.length, active.end - block.start);
+          return {
+            from: block.from + offsets[start],
+            to: block.from + offsets[end - 1] + 1,
+            sentence: Boolean(highlight.sentence),
+            partial: start > 0 || end < block.speech.length
+          };
+        }
+        return { from: block.from, to: block.to, sentence: false };
+      });
     }
     function readingMarkdown(text) {
       return String(text || "").replace(/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/, "").replace(/!\[\[[^\]]*\]\]/g, "").replace(/!\[([^\]]*)\]\([^\n]*?\)/g, "$1").replace(/!\[([^\]]*)\](?:\[[^\]]*\])?/g, "$1").replace(/<[^>]*>/g, "").replace(/^(`{3,}|~{3,})([^\r\n]*)$/gm, (line, fence, language) => language.trim() ? `${fence}text` : line);
     }
-    module2.exports = { compact: compact2, sourceBlocks, buildMarkdownSource: buildMarkdownSource2, currentSourceRanges, readingMarkdown };
+    module2.exports = { compact: compact2, sourceBlocks, buildMarkdownSource: buildMarkdownSource2, currentSourceRanges, readingMarkdown, sourceLineStarts, markdownReadingHighlight };
   }
 });
 
@@ -9431,13 +9504,22 @@ var require_accessible_reader = __commonJS({
 var require_note_highlights = __commonJS({
   "src/note-highlights.js"(exports2, module2) {
     "use strict";
-    var { currentSourceRanges } = require_markdown_source();
+    var { compact: compact2, currentSourceRanges, sourceLineStarts, markdownReadingHighlight } = require_markdown_source();
+    var { extractHtmlTreeText } = require_html_text();
     function installNoteHighlights2(plugin) {
-      const { editorInfoField, MarkdownRenderChild } = require("obsidian");
+      const { editorInfoField, MarkdownRenderChild, Notice: Notice2 } = require("obsidian");
       const { StateEffect } = require("@codemirror/state");
       const { Decoration, EditorView, ViewPlugin } = require("@codemirror/view");
       const refresh = StateEffect.define(), editors = /* @__PURE__ */ new Set(), previews = /* @__PURE__ */ new Set();
       let disposed = false;
+      let cachedSource, cachedSession, cachedKey, cachedData;
+      const warnedSessions = /* @__PURE__ */ new WeakSet();
+      function changed(data, path2, text) {
+        const session = plugin.activeSession;
+        if (!data || !session || path2 !== data.source.filePath || typeof text !== "string" || text === data.source.text || warnedSessions.has(session)) return;
+        warnedSessions.add(session);
+        new Notice2(plugin.settings.settingsLanguage === "chinese" ? "\u7B14\u8BB0\u5185\u5BB9\u5DF2\u53D8\u5316\uFF0C\u539F\u6587\u9AD8\u4EAE\u5DF2\u6682\u505C\u3002\u91CD\u65B0\u5F00\u59CB\u6717\u8BFB\u540E\u6062\u590D\uFF1B\u5F53\u524D\u97F3\u9891\u4ECD\u4F7F\u7528\u4FEE\u6539\u524D\u7684\u6587\u672C\u3002" : "The note has changed. Source highlighting is paused until reading restarts; current audio uses the earlier text.", 7e3);
+      }
       const controller = {
         selectionOffsets(view, range) {
           const text = view.editor.getValue();
@@ -9471,15 +9553,23 @@ var require_note_highlights = __commonJS({
           for (const preview of previews) preview.clear();
           previews.clear();
           editors.clear();
+          cachedData = cachedSource = cachedSession = null;
         }
       };
       function current() {
-        const source = plugin.activeSession?.markdownSource;
+        const session = plugin.activeSession, source = session?.markdownSource;
         const highlight = plugin.getCurrentReadingHighlight();
-        if (disposed || !source || !highlight || plugin.settings.readingHighlight === "off") return null;
-        const sentence = plugin.settings.readingHighlight === "sentence" && highlight.sentence;
-        const selected = sentence ? { ...sentence, text: plugin.activeSession.chunks[highlight.index].slice(sentence.start, sentence.end).trim() } : null;
-        return { source, ranges: currentSourceRanges(source, { ...highlight, sentence: selected }) };
+        if (disposed || !source || !highlight || plugin.settings.readingHighlight === "off") {
+          cachedData = cachedSource = cachedSession = null;
+          return null;
+        }
+        const selected = markdownReadingHighlight(session, highlight, plugin.settings);
+        const key = JSON.stringify(selected);
+        if (cachedData && cachedSource === source && cachedSession === session && cachedKey === key) return cachedData;
+        cachedSource = source;
+        cachedSession = session;
+        cachedKey = key;
+        return cachedData = { source, ranges: currentSourceRanges(source, selected) };
       }
       function follow(target, node) {
         if (!node || target.manualScroll || !plugin.settings.readingFollow) return;
@@ -9505,20 +9595,31 @@ var require_note_highlights = __commonJS({
             this.text = this.document.toString();
           }
           const ranges = info?.file?.path === data?.source.filePath && this.text === data?.source.text ? data.ranges : [];
+          changed(data, info?.file?.path, this.text);
           const key = JSON.stringify(ranges);
           if (this.key === key) return;
           this.key = key;
           const effects = [refresh.of(ranges)];
-          if (ranges.length && plugin.settings.readingFollow && !this.manualScroll) effects.push(EditorView.scrollIntoView(ranges[0].from, { y: "center" }));
+          if (ranges.length && plugin.settings.readingFollow && !this.manualScroll) {
+            const bounds = this.view.coordsAtPos?.(ranges[0].from), visible = this.view.scrollDOM?.getBoundingClientRect();
+            if (bounds && visible && (bounds.top < visible.top || bounds.bottom > visible.bottom))
+              effects.push(EditorView.scrollIntoView(ranges[0].from, { y: "center" }));
+          }
           this.view.dispatch({ effects });
         }
         rebuild() {
           const data = current(), info = this.view.state.field(editorInfoField, false);
-          const matches = info?.file?.path === data?.source.filePath && this.view.state.doc.toString() === data?.source.text;
+          if (this.document !== this.view.state.doc) {
+            this.document = this.view.state.doc;
+            this.text = this.document.toString();
+          }
+          const matches = info?.file?.path === data?.source.filePath && this.text === data?.source.text;
+          changed(data, info?.file?.path, this.text);
           const ranges = matches ? data.ranges : [];
           const marks = [], lines = /* @__PURE__ */ new Set();
           for (const range of ranges.filter((range2) => range2.to > range2.from)) {
             marks.push(Decoration.mark({ class: range.sentence ? "note-reader-note-sentence" : "note-reader-note-segment" }).range(range.from, range.to));
+            if (range.sentence || range.partial) continue;
             let line = this.view.state.doc.lineAt(range.from);
             while (line.from < range.to) {
               if (!lines.has(line.from)) {
@@ -9557,6 +9658,7 @@ var require_note_highlights = __commonJS({
         class PreviewHighlight extends MarkdownRenderChild {
           onload() {
             this.context = context;
+            this.marked = /* @__PURE__ */ new Set();
             previews.add(this);
             const scroller = element.closest(".markdown-preview-view");
             for (const event of ["wheel", "touchmove", "pointerdown"]) if (scroller) this.registerDomEvent(scroller, event, () => {
@@ -9565,20 +9667,49 @@ var require_note_highlights = __commonJS({
             this.refresh();
           }
           clear() {
-            element.classList.remove("note-reader-note-segment", "note-reader-note-sentence");
+            for (const node of this.marked) node.classList.remove("note-reader-note-segment", "note-reader-note-sentence");
+            this.marked.clear();
           }
           refresh() {
             const data = current(), section = context.getSectionInfo(element);
             const matches = data && context.sourcePath === data.source.filePath && section?.text === data.source.text;
-            const starts = matches ? [0] : [];
-            if (matches) {
-              for (let index = 0; index < section.text.length; index++) if (section.text[index] === "\n") starts.push(index + 1);
-            }
+            changed(data, context.sourcePath, section?.text);
+            const starts = matches ? sourceLineStarts(data.source) : [];
             const from = starts[section?.lineStart], to = starts[(section?.lineEnd ?? -1) + 1] ?? section?.text.length;
-            const marked = matches && data.ranges.some((range) => range.from < to && range.to > from);
-            const wasMarked = element.classList.contains("note-reader-note-segment");
-            element.classList.toggle("note-reader-note-segment", Boolean(marked));
-            if (marked && !wasMarked) follow(this, element);
+            const nodes = /* @__PURE__ */ new Set();
+            if (matches && data.ranges.some((range) => range.from < to && range.to > from)) {
+              const items = [...element.matches("li") ? [element] : [], ...element.querySelectorAll("li")];
+              if (!items.length) nodes.add(element);
+              else {
+                const blocks = data.source.blocks.filter((block) => block.kind === "list" && block.from >= from && block.to <= to);
+                if (blocks.length === items.length) {
+                  if (this.listSource !== data.source || this.listFrom !== from || this.listTo !== to || items.some((item, i) => this.listItems?.[i] !== item || this.listRaw?.[i] !== item.textContent)) {
+                    this.listSource = data.source;
+                    this.listFrom = from;
+                    this.listTo = to;
+                    this.listItems = items;
+                    this.listRaw = items.map((item) => item.textContent);
+                    this.listText = items.map((item) => compact2(extractHtmlTreeText(item, null, {
+                      omitNode: (node) => node !== item && ["UL", "OL"].includes(node.tagName)
+                    }).text));
+                  }
+                  blocks.forEach((block, i) => {
+                    if (this.listText[i] !== block.speech || !data.ranges.some((range) => range.from < block.to && range.to > block.from)) return;
+                    const item = items[i], ownParagraph = item.querySelector(":scope > p");
+                    if (!item.querySelector("ul,ol")) nodes.add(item);
+                    else if (ownParagraph) nodes.add(ownParagraph);
+                  });
+                }
+              }
+            }
+            let firstNew;
+            for (const node of this.marked) if (!nodes.has(node)) node.classList.remove("note-reader-note-segment");
+            for (const node of nodes) {
+              if (!this.marked.has(node)) firstNew || (firstNew = node);
+              node.classList.add("note-reader-note-segment");
+            }
+            this.marked = nodes;
+            if (firstNew) follow(this, firstNew);
           }
           onunload() {
             this.clear();
@@ -10136,13 +10267,13 @@ var require_pdf_highlights = __commonJS({
   "src/pdf-highlights.js"(exports2, module2) {
     "use strict";
     var { extractPdfTextLayout: extractPdfTextLayout2 } = require_pdf_layout2();
-    var { compact: compact2 } = require_markdown_source();
+    var { compact: compact2, markdownReadingHighlight: readingTarget } = require_markdown_source();
     var { inside } = require_pdf_ancillary();
     function pdfPageLines(page, clean, source = null, footnote = false) {
       const bounds = page.getBoundingClientRect();
       if (!(bounds.width > 0 && bounds.height > 0)) return null;
       const spans = [...page.querySelectorAll(".textLayer span")].filter((span) => !span.querySelector("span") && span.textContent.trim());
-      const positioned = spans.map((span) => ({ span, rect: span.getBoundingClientRect() })).filter((item) => item.rect.width > 0 && item.rect.height > 0);
+      const positioned = spans.map((span, sourceIndex) => ({ span, sourceIndex, rect: span.getBoundingClientRect() })).filter((item) => item.rect.width > 0 && item.rect.height > 0);
       if (!positioned.length) return null;
       let items = positioned.map(({ span, rect }) => ({
         str: span.textContent,
@@ -10151,7 +10282,7 @@ var require_pdf_highlights = __commonJS({
         transform: [rect.height, 0, 0, rect.height, rect.left - bounds.left, bounds.top - rect.top]
       }));
       const original = source?.items?.filter((item) => item.str?.trim());
-      const exact = original?.length === positioned.length && original.every((item, index) => item.str === positioned[index].span.textContent);
+      const exact = original?.length === spans.length && original.every((item, index) => item.str === spans[index].textContent);
       if (exact) items = original;
       const layout = extractPdfTextLayout2(items, { viewport: exact ? source.viewport : { width: bounds.width, height: bounds.height } });
       const heights = items.map((item) => Math.max(1, Math.abs(item.height || 0), Math.abs(item.transform?.[1] || 0), Math.abs(item.transform?.[3] || 0))).sort((a, b) => a - b);
@@ -10159,8 +10290,8 @@ var require_pdf_highlights = __commonJS({
       const medianHeight = heights.length % 2 ? heights[middle] : (heights[middle - 1] + heights[middle]) / 2;
       const tolerance = Math.max(2, medianHeight * 0.5);
       const lineNodes = layout.lines.map(() => []);
-      positioned.forEach(({ span, rect }, i) => {
-        const item = items[i], x = exact ? item.transform[4] : rect.left - bounds.left;
+      positioned.forEach(({ span, rect, sourceIndex }, i) => {
+        const item = items[exact ? sourceIndex : i], x = exact ? item.transform[4] : rect.left - bounds.left;
         const y = exact ? item.transform[5] : bounds.top - rect.top;
         const width = exact ? Math.abs(item.width) : rect.width;
         let nearest = -1, distance = Infinity;
@@ -10173,6 +10304,14 @@ var require_pdf_highlights = __commonJS({
         });
         if (nearest >= 0) lineNodes[nearest].push(span);
       });
+      return finishPageLines(layout, lineNodes, clean, source, footnote, exact);
+    }
+    function pdfSourceLines(source, clean, footnote = false) {
+      if (!source?.items?.length || !source.viewport) return null;
+      const layout = extractPdfTextLayout2(source.items, { viewport: source.viewport });
+      return finishPageLines(layout, layout.lines.map(() => []), clean, source, footnote, true);
+    }
+    function finishPageLines(layout, lineNodes, clean, source, footnote, exact) {
       const ancillaryFilter = source?.omittedRegions?.length || source?.contentScope === "glossary";
       if (exact && (ancillaryFilter || source.footnoteMode && source.footnoteMode !== "inline" && source.footnoteRegions?.length)) {
         const indices = layout.lines.map((line, index) => ({ line, index })).filter(({ line }) => {
@@ -10206,18 +10345,35 @@ var require_pdf_highlights = __commonJS({
       if (!text || !lines.length) return null;
       return { text, lines };
     }
-    function matchPdfChunk(pages, chunk) {
+    function pdfChunkRange(pages, chunk, range) {
       const needle = compact2(chunk), text = pages.map((page) => page.text).join("");
-      if (!needle) return [];
+      if (!needle) return null;
       const start = text.indexOf(needle);
-      if (start < 0 || text.indexOf(needle, start + 1) >= 0) return [];
-      const end = start + needle.length, result = [];
+      if (start < 0 || text.indexOf(needle, start + 1) >= 0) return null;
+      const valid = range && Number.isInteger(range.start) && Number.isInteger(range.end) && range.start >= 0 && range.end > range.start && range.end <= needle.length;
+      return { start: start + (valid ? range.start : 0), end: start + (valid ? range.end : needle.length) };
+    }
+    function matchPdfChunk(pages, chunk, range) {
+      const match = pdfChunkRange(pages, chunk, range);
+      if (!match) return [];
+      const { start, end } = match, result = [];
       let offset = 0;
       for (const page of pages) {
         for (const line of page.lines) if (offset + line.start < end && offset + line.end > start) result.push(...line.nodes);
         offset += page.text.length;
       }
       return [...new Set(result)];
+    }
+    function pdfReadingPage(session, highlight, settings, clean) {
+      const number = session.chunkPageNumbers?.[highlight.index];
+      if (!Number.isInteger(number)) return number;
+      const footnote = Boolean(session.chunkFootnotes?.[highlight.index]);
+      const first = pdfSourceLines(session.pdfHighlightPages?.get(number), clean, footnote);
+      const next = pdfSourceLines(session.pdfHighlightPages?.get(number + 1), clean, footnote);
+      if (!first || !next) return number;
+      const target = readingTarget(session, highlight, settings);
+      const range = pdfChunkRange([first, next], session.chunks[highlight.index], target.speechRange);
+      return range && range.start >= first.text.length ? number + 1 : number;
     }
     function mergeHighlightRects(rects) {
       const rows = [];
@@ -10262,23 +10418,25 @@ var require_pdf_highlights = __commonJS({
         for (const { element } of this.overlays.values()) element.remove();
         this.overlays.clear();
       }
-      renderOverlays(nodes) {
+      renderOverlays(nodes, groups = /* @__PURE__ */ new Map()) {
         const pages = /* @__PURE__ */ new Map();
         for (const node of nodes) {
           const page = node.closest("[data-page-number]");
           if (!page) continue;
-          if (!pages.has(page)) pages.set(page, []);
-          const bounds = page.getBoundingClientRect(), rect = node.getBoundingClientRect();
+          if (!pages.has(page)) pages.set(page, { bounds: page.getBoundingClientRect(), groups: /* @__PURE__ */ new Map() });
+          const data = pages.get(page), bounds = data.bounds, rect = node.getBoundingClientRect();
           if (!(bounds.width > 0 && bounds.height > 0 && rect.width > 0 && rect.height > 0)) continue;
-          pages.get(page).push([rect.left - bounds.left, rect.top - bounds.top, rect.width, rect.height]);
+          const group = groups.get(node) || page;
+          if (!data.groups.has(group)) data.groups.set(group, []);
+          data.groups.get(group).push([rect.left - bounds.left, rect.top - bounds.top, rect.width, rect.height]);
         }
         for (const [page, overlay] of this.overlays) if (!pages.has(page)) {
           overlay.element.remove();
           this.overlays.delete(page);
         }
-        for (const [page, rawRects] of pages) {
-          const bounds = page.getBoundingClientRect();
-          const rects = mergeHighlightRects(rawRects).map(([x, y, w, h]) => [x / bounds.width * 100, y / bounds.height * 100, w / bounds.width * 100, h / bounds.height * 100]);
+        for (const [page, data] of pages) {
+          const bounds = data.bounds;
+          const rects = [...data.groups.values()].flatMap(mergeHighlightRects).map(([x, y, w, h]) => [x / bounds.width * 100, y / bounds.height * 100, w / bounds.width * 100, h / bounds.height * 100]);
           const signature = JSON.stringify(rects);
           let overlay = this.overlays.get(page);
           if (!overlay || !overlay.element.isConnected) {
@@ -10297,6 +10455,7 @@ var require_pdf_highlights = __commonJS({
             return mark;
           }));
           overlay.signature = signature;
+          overlay.count = rects.length;
         }
       }
       update() {
@@ -10312,26 +10471,52 @@ var require_pdf_highlights = __commonJS({
           this.clearCache();
           return;
         }
-        const next = /* @__PURE__ */ new Set(), live = /* @__PURE__ */ new Set();
+        const target = readingTarget(session, highlight, plugin.settings);
+        const settings = session.synthesisSettings || plugin.settings;
+        const clean = (text) => plugin.sanitizeAudioExportText(text, settings);
+        const next = /* @__PURE__ */ new Set(), live = /* @__PURE__ */ new Set(), groups = /* @__PURE__ */ new Map();
+        let geometryChanged = false;
         for (const leaf of plugin.app.workspace.getLeavesOfType("pdf")) {
           const view = leaf.view;
           if (view.file?.path !== session.filePath || session.fileMtime && view.file?.stat?.mtime !== session.fileMtime) continue;
           const root = view.contentEl || view.containerEl;
           const page = root?.querySelector(`[data-page-number="${pageNumber}"]`);
-          if (!page) continue;
+          const following = root?.querySelector(`[data-page-number="${pageNumber + 1}"]`);
+          if (!page && !following) continue;
           live.add(view);
-          const following = root.querySelector(`[data-page-number="${pageNumber + 1}"]`);
-          const signature = `${session.id}:${highlight.index}:${plugin.settings.stripMarkdown}:${plugin.settings.mathReadingLanguage}:${page.getBoundingClientRect().width}:${page.getBoundingClientRect().height}`;
-          const first = page.querySelector(".textLayer span"), last = page.querySelector(".textLayer")?.lastElementChild;
+          const pageBounds = page?.getBoundingClientRect(), nextBounds = following?.getBoundingClientRect();
+          const footnote = Boolean(session.chunkFootnotes?.[highlight.index]);
+          const sources = [session.pdfHighlightPages?.get(pageNumber), session.pdfHighlightPages?.get(pageNumber + 1)];
+          const signature = `${session.id}:${pageNumber}:${footnote}:${pageBounds?.width}:${pageBounds?.height}:${nextBounds?.width}:${nextBounds?.height}`;
+          const first = page?.querySelector(".textLayer span"), last = page?.querySelector(".textLayer")?.lastElementChild;
           const nextFirst = following?.querySelector(".textLayer span");
-          const layers = [page.querySelector(".textLayer"), following?.querySelector(".textLayer")].filter(Boolean);
+          const layers = [page?.querySelector(".textLayer"), following?.querySelector(".textLayer")].filter(Boolean);
           let cache = this.cached.get(view);
-          if (!cache || cache.signature !== signature || cache.first !== first || cache.last !== last || cache.nextFirst !== nextFirst || cache.dirty || cache.layers.length !== layers.length || cache.layers.some((layer, i) => layer !== layers[i]) || cache.observers.some((observer) => observer.takeRecords().length > 0) || cache.nodes.some((node) => !node.isConnected) || !cache.nodes.length && Date.now() - cache.created > 1e3) {
+          if (!cache || cache.signature !== signature || cache.settings !== settings || cache.sources.some((source, i) => source !== sources[i]) || cache.first !== first || cache.last !== last || cache.nextFirst !== nextFirst || cache.dirty || cache.layers.length !== layers.length || cache.layers.some((layer, i) => layer !== layers[i]) || cache.observers.some((observer) => observer.takeRecords().length > 0) || cache.nodes.some((node) => !node.isConnected) || !cache.nodes.length && Date.now() - cache.created > 1e3) {
             this.discardCache(view);
-            const clean = (text) => plugin.sanitizeAudioExportText(text);
-            const currentPage = pdfPageLines(page, clean, session.pdfHighlightPages?.get(pageNumber), Boolean(session.chunkFootnotes?.[highlight.index]));
-            const nextPage = following ? pdfPageLines(following, clean, session.pdfHighlightPages?.get(pageNumber + 1), Boolean(session.chunkFootnotes?.[highlight.index])) : null;
-            cache = { signature, first, last, nextFirst, layers, observers: [], dirty: false, created: Date.now(), nodes: currentPage ? matchPdfChunk(nextPage ? [currentPage, nextPage] : [currentPage], session.chunks[highlight.index]) : [] };
+            const pages = [page, following].map((element, i) => {
+              const rendered = element ? pdfPageLines(element, clean, sources[i], footnote) : null;
+              const original = pdfSourceLines(sources[i], clean, footnote);
+              return original ? { text: original.text, lines: rendered?.text === original.text ? rendered.lines : [] } : rendered || { text: "", lines: [] };
+            });
+            cache = {
+              signature,
+              settings,
+              sources,
+              first,
+              last,
+              nextFirst,
+              layers,
+              pages,
+              groups: /* @__PURE__ */ new Map(),
+              observers: [],
+              dirty: false,
+              created: Date.now(),
+              nodes: [],
+              targetKey: null
+            };
+            for (const layout of pages) for (const line of layout.lines) for (const node of line.nodes) cache.groups.set(node, line);
+            geometryChanged = true;
             for (const layer of layers) {
               const Observer = layer.ownerDocument.defaultView?.MutationObserver;
               if (!Observer) continue;
@@ -10349,20 +10534,29 @@ var require_pdf_highlights = __commonJS({
             }
             this.cached.set(view, cache);
           }
-          for (const node of cache.nodes) if (node.isConnected) next.add(node);
+          const targetKey = `${highlight.index}:${target.speechRange?.start}:${target.speechRange?.end}`;
+          if (cache.targetKey !== targetKey) {
+            cache.nodes = matchPdfChunk(cache.pages, session.chunks[highlight.index], target.speechRange);
+            cache.targetKey = targetKey;
+          }
+          for (const node of cache.nodes) if (node.isConnected) {
+            next.add(node);
+            groups.set(node, cache.groups.get(node));
+          }
         }
         for (const view of this.cached.keys()) if (!live.has(view)) this.discardCache(view);
         for (const node of this.marked) if (!next.has(node)) node.classList.remove("note-reader-pdf-current");
         for (const node of next) node.classList.add("note-reader-pdf-current");
+        const changed = next.size !== this.marked.size || [...next].some((node) => !this.marked.has(node));
         this.marked = next;
-        this.renderOverlays(next);
+        if (geometryChanged || changed || [...this.overlays.values()].some((overlay) => !overlay.element.isConnected || overlay.element.children.length !== overlay.count)) this.renderOverlays(next, groups);
       }
       destroy() {
         this.clear();
         this.clearCache();
       }
     };
-    module2.exports = { PdfReadingHighlights: PdfReadingHighlights2, pdfPageLines, matchPdfChunk, mergeHighlightRects };
+    module2.exports = { PdfReadingHighlights: PdfReadingHighlights2, pdfPageLines, pdfSourceLines, pdfReadingPage, matchPdfChunk, mergeHighlightRects };
   }
 });
 
@@ -11277,12 +11471,13 @@ var require_pdf_chunker = __commonJS({
 var require_reader_appearance = __commonJS({
   "src/reader-appearance.js"(exports2, module2) {
     "use strict";
-    var APPEARANCE_DEFAULTS2 = { highlightColor: "#e5b83d", highlightStrength: 22, readerOpenMode: "sidebar" };
+    var APPEARANCE_DEFAULTS2 = { highlightColor: "#e5b83d", highlightStrength: 22, readerOpenMode: "sidebar", noteHighlightBorder: false };
     function normalizeAppearance2(settings) {
       settings.highlightColor = /^#[0-9a-f]{6}$/i.test(settings.highlightColor || "") ? settings.highlightColor : APPEARANCE_DEFAULTS2.highlightColor;
       const strength = Number(settings.highlightStrength);
       settings.highlightStrength = Number.isFinite(strength) ? Math.max(5, Math.min(60, Math.round(strength))) : APPEARANCE_DEFAULTS2.highlightStrength;
       if (!["sidebar", "toolbar", "both"].includes(settings.readerOpenMode)) settings.readerOpenMode = "sidebar";
+      settings.noteHighlightBorder = settings.noteHighlightBorder === true;
       return settings;
     }
     function applyAppearance2(plugin) {
@@ -11297,12 +11492,16 @@ var require_reader_appearance = __commonJS({
         plugin.highlightDocuments.add(doc);
         doc.documentElement.style.setProperty("--note-reader-highlight-color", plugin.settings.highlightColor);
         doc.documentElement.style.setProperty("--note-reader-highlight-strength", `${plugin.settings.highlightStrength}%`);
+        doc.documentElement.style.setProperty("--note-reader-note-highlight-strength", `${Math.max(3, Math.round(plugin.settings.highlightStrength * 0.45))}%`);
+        doc.documentElement.style.setProperty("--note-reader-note-border", plugin.settings.noteHighlightBorder ? "inset 2px 0 var(--note-reader-highlight-color)" : "none");
       }
     }
     function clearAppearance2(plugin) {
       for (const doc of plugin.highlightDocuments || []) {
         doc.documentElement.style.removeProperty("--note-reader-highlight-color");
         doc.documentElement.style.removeProperty("--note-reader-highlight-strength");
+        doc.documentElement.style.removeProperty("--note-reader-note-highlight-strength");
+        doc.documentElement.style.removeProperty("--note-reader-note-border");
       }
       plugin.highlightDocuments?.clear();
     }
@@ -34063,12 +34262,13 @@ var require_pdf_outline_ui = __commonJS({
 var require_locate_reading = __commonJS({
   "src/locate-reading.js"(exports2, module2) {
     "use strict";
-    var { currentSourceRanges } = require_markdown_source();
+    var { currentSourceRanges, markdownReadingHighlight } = require_markdown_source();
     var { getHtmlReaderDocument: getHtmlReaderDocument2 } = require_html_text();
     var { highlightDocument } = require_dom_highlights();
     var { getWebPageUrl: getWebPageUrl2, updateWebHighlight } = require_web_page();
     var { academicOptions: academicOptions2 } = require_academic_speech();
     var { htmlReadingTarget } = require_html_highlights();
+    var { pdfReadingPage } = require_pdf_highlights();
     async function locateReading2(plugin) {
       const session = plugin.activeSession;
       if (!session || session.kind === "audio-export") return "unavailable";
@@ -34110,7 +34310,8 @@ var require_locate_reading = __commonJS({
       if (type === "markdown") {
         const source = session.markdownSource;
         if (!source || view.editor?.getValue() !== source.text) return "changed";
-        const range = currentSourceRanges(source, { index })[0];
+        const highlight = plugin.getCurrentReadingHighlight?.();
+        const range = currentSourceRanges(source, markdownReadingHighlight(session, highlight?.index === index ? highlight : { index }, plugin.settings))[0];
         if (!range) return "unmatched";
         const from = view.editor.offsetToPos(range.from);
         if (view.getMode?.() === "preview") {
@@ -34136,7 +34337,13 @@ var require_locate_reading = __commonJS({
           }
           if (doc?.body?.textContent?.trim()) return "unmatched";
         } else {
-          const number = session.chunkPageNumbers?.[index];
+          const highlight = plugin.getCurrentReadingHighlight?.();
+          const number = pdfReadingPage(
+            session,
+            highlight?.index === index ? highlight : { index },
+            plugin.settings,
+            (text) => plugin.sanitizeAudioExportText(text, session.synthesisSettings || plugin.settings)
+          );
           if (!Number.isInteger(number)) return "unmatched";
           const page = (view.contentEl || view.containerEl)?.querySelector(`[data-page-number="${number}"]`);
           if (page) {
@@ -38103,8 +38310,8 @@ ${embed}
       }
     }
   }
-  sanitizeAudioExportText(value) {
-    return this.settings.stripMarkdown ? sanitizeTextForSpeech(value, academicOptions(this.settings)) : normalizeLineBreaks(value).trim();
+  sanitizeAudioExportText(value, settings = this.settings) {
+    return settings.stripMarkdown ? sanitizeTextForSpeech(value, academicOptions(settings)) : normalizeLineBreaks(value).trim();
   }
   isAudioExportContextCurrent(context) {
     if (context.documentKind === "web") return this.isWebPageContextCurrent(context);
@@ -41470,10 +41677,16 @@ var CosyVoiceReaderSettingTab = class extends PluginSettingTab {
     })).addButton((button) => button.setButtonText(zhReading ? "\u6062\u590D\u9ED8\u8BA4\u9AD8\u4EAE" : "Reset highlighting").onClick(async () => {
       this.plugin.settings.highlightColor = APPEARANCE_DEFAULTS.highlightColor;
       this.plugin.settings.highlightStrength = APPEARANCE_DEFAULTS.highlightStrength;
+      this.plugin.settings.noteHighlightBorder = APPEARANCE_DEFAULTS.noteHighlightBorder;
       this.plugin.settings.readingHighlight = "sentence";
       await this.plugin.saveSettings();
       this.plugin.renderDocumentViews();
       this.display();
+    }));
+    new Setting(containerEl).setName(zhReading ? "\u7B14\u8BB0\u9AD8\u4EAE\u5DE6\u4FA7\u6807\u7EBF" : "Note highlight side marker").setDesc(zhReading ? "\u9ED8\u8BA4\u5173\u95ED\u3002\u9700\u8981\u66F4\u660E\u663E\u7684\u4F4D\u7F6E\u63D0\u793A\u65F6\uFF0C\u4E3A\u7B14\u8BB0\u9AD8\u4EAE\u589E\u52A0\u5DE6\u4FA7\u7EC6\u7EBF\u3002" : "Off by default. Add a thin side marker for a more visible reading position in notes.").addToggle((toggle) => toggle.setValue(this.plugin.settings.noteHighlightBorder === true).onChange(async (value) => {
+      this.plugin.settings.noteHighlightBorder = value;
+      await this.plugin.saveSettings();
+      this.plugin.renderDocumentViews();
     }));
     new Setting(containerEl).setName(zhReading ? "\u6B63\u6587\u6717\u8BFB\u6807\u8BB0" : "Reading text highlight").setDesc(zhReading ? "\u5728\u539F\u7B14\u8BB0\u3001\u4E13\u6CE8\u6717\u8BFB\u548C PDF \u6587\u5B57\u5C42\u4E2D\u6DE1\u8272\u6807\u8BB0\u5F53\u524D\u6BB5\u3002Windows \u5E38\u89C4\u97F3\u8272\u6709\u53EF\u9760\u65F6\u95F4\u4FE1\u606F\u4E14\u5BF9\u5E94\u539F\u6587\u65F6\uFF0C\u53EF\u5728\u7F16\u8F91\u5668\u6807\u8BB0\u53E5\u5B50\u3002PDF \u4EC5\u6807\u8BB0\u80FD\u51C6\u786E\u5339\u914D\u7684\u5DF2\u6E32\u67D3\u6587\u5B57\uFF1B\u626B\u63CF\u9875\u3001\u590D\u6742\u516C\u5F0F\u6216\u4E0D\u786E\u5B9A\u4F4D\u7F6E\u4E0D\u5F3A\u884C\u6807\u8BB0\u3002\u4E0D\u589E\u52A0 API \u8BF7\u6C42\u3002" : "Subtle marks in original notes, Focus reading and rendered PDF text layers. Editor sentence marks require verified Windows timing and exact source text. PDF marks require a reliable text match; scanned pages and uncertain formulas/layouts are left unmarked. No extra API requests.").addDropdown((dropdown) => dropdown.addOption("off", zhReading ? "\u5173\u95ED" : "Off").addOption("segment", zhReading ? "\u5F53\u524D\u6BB5" : "Current segment").addOption("sentence", zhReading ? "\u5F53\u524D\u53E5\u5B50\uFF08\u5982\u652F\u6301\uFF0C\u5426\u5219\u5F53\u524D\u6BB5\uFF09" : "Sentence if available, otherwise segment").setValue(normalizeReadingHighlight(this.plugin.settings.readingHighlight)).onChange(async (value) => {
       this.plugin.settings.readingHighlight = value;

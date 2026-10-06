@@ -4070,9 +4070,9 @@ class CosyVoiceReaderPlugin extends Plugin {
     }
   }
 
-  sanitizeAudioExportText(value) {
-    return this.settings.stripMarkdown
-      ? sanitizeTextForSpeech(value, academicOptions(this.settings))
+  sanitizeAudioExportText(value, settings = this.settings) {
+    return settings.stripMarkdown
+      ? sanitizeTextForSpeech(value, academicOptions(settings))
       : normalizeLineBreaks(value).trim();
   }
 
@@ -7958,8 +7958,15 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
       .addButton(button => button.setButtonText(zhReading ? '恢复默认高亮' : 'Reset highlighting').onClick(async () => {
         this.plugin.settings.highlightColor = APPEARANCE_DEFAULTS.highlightColor;
         this.plugin.settings.highlightStrength = APPEARANCE_DEFAULTS.highlightStrength;
+        this.plugin.settings.noteHighlightBorder = APPEARANCE_DEFAULTS.noteHighlightBorder;
         this.plugin.settings.readingHighlight = 'sentence';
         await this.plugin.saveSettings(); this.plugin.renderDocumentViews(); this.display();
+      }));
+    new Setting(containerEl).setName(zhReading ? '笔记高亮左侧标线' : 'Note highlight side marker')
+      .setDesc(zhReading ? '默认关闭。需要更明显的位置提示时，为笔记高亮增加左侧细线。'
+        : 'Off by default. Add a thin side marker for a more visible reading position in notes.')
+      .addToggle(toggle => toggle.setValue(this.plugin.settings.noteHighlightBorder === true).onChange(async value => {
+        this.plugin.settings.noteHighlightBorder = value; await this.plugin.saveSettings(); this.plugin.renderDocumentViews();
       }));
     new Setting(containerEl)
       .setName(zhReading ? '正文朗读标记' : 'Reading text highlight')

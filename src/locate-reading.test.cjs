@@ -137,3 +137,23 @@ test('PDF locate uses the matching page and paragraph; closed web pages do not r
   assert.equal(await locateReading(plugin), 'changed');
   dom.window.close();
 });
+
+test('PDF locate follows the audio part on the next page instead of returning to the chunk start', async () => {
+  const { plugin, view } = fixture();
+  Object.assign(plugin.activeSession, { sourceKind: 'pdf', chunkPageNumbers: [1],
+    chunks: ['First. Second.'], audioParts: { 0: ['First.', 'Second.'] }, currentPartIndex: 1,
+    pdfHighlightPages: new Map([1, 2].map(number => [number, {
+      viewport: { width: 600, height: 800 }, items: (number === 1 ? ['Earlier.', 'First.'] : ['Second.', 'Later.'])
+        .map((str, i) => ({ str, width: 220, height: 12, transform: [12,0,0,12,40,700 - i * 20] })),
+    }])),
+  });
+  plugin.sanitizeAudioExportText = text => text;
+  const dom = new JSDOM('<div data-page-number="1"></div><div data-page-number="2"><span class="note-reader-pdf-current">Second.</span></div>');
+  view.contentEl = dom.window.document.body;
+  const scrolled = [];
+  dom.window.HTMLElement.prototype.scrollIntoView = function() { scrolled.push(this); };
+  assert.equal(await locateReading(plugin), 'located');
+  assert.ok(scrolled.every(node => node.closest('[data-page-number]').dataset.pageNumber === '2'));
+  assert.equal(plugin.activeSession.currentPartIndex, 1);
+  dom.window.close();
+});

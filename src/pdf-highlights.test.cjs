@@ -3,6 +3,160 @@ const assert = require('node:assert/strict');
 const { JSDOM } = require('jsdom');
 const { pdfPageLines, matchPdfChunk, PdfReadingHighlights, mergeHighlightRects } = require('./pdf-highlights');
 
+function sourceRows(rows) {
+  return { viewport: { width: 600, height: 800 }, items: rows.map(([str, x, y, width = 220]) =>
+    ({ str, width, height: 12, transform: [12, 0, 0, 12, x, 800 - y] })) };
+}
+
+function playbackFixture(rows, chunk) {
+  const dom = new JSDOM(''), doc = dom.window.document;
+  const page = pdfPage(doc, 1, rows);
+  const view = { contentEl: doc.body, file: { path: 'public.pdf', stat: { mtime: 1 } } };
+  const plugin = { settings: { readingHighlight: 'segment' }, activeSession: {
+    id: 1, sourceKind: 'pdf', filePath: 'public.pdf', fileMtime: 1, chunkPageNumbers: [1],
+    chunks: [chunk], currentChunkIndex: 0, currentPartIndex: 0,
+    synthesisSettings: { stripMarkdown: true }, pdfHighlightPages: new Map([[1, sourceRows(rows)]]),
+  }, getCurrentReadingHighlight: () => ({ index: 0 }), sanitizeAudioExportText: text => text,
+  app: { workspace: { getLeavesOfType: () => [{ view }] } } };
+  const highlighter = new PdfReadingHighlights(plugin);
+  return { dom, doc, page, view, plugin, highlighter, session: plugin.activeSession,
+    marked: () => [...doc.querySelectorAll('.note-reader-pdf-current')].map(node => node.textContent) };
+}
+
+test('PDF follows prepared audio parts using the full chunk to disambiguate repeated short phrases', () => {
+  const f = playbackFixture([['Again.',40,100], ['Middle.',40,120], ['Again.',40,140]], 'Again. Middle. Again.');
+  f.session.audioParts = { 0: ['Again.', 'Middle.', 'Again.'] };
+  f.highlighter.update(); assert.deepEqual(f.marked(), ['Again.']);
+  assert.equal(f.page.querySelector('.note-reader-pdf-current'), f.page.querySelector('span'));
+  const cache = f.highlighter.cached.get(f.view);
+  f.session.currentPartIndex = 2;
+  f.highlighter.update(); assert.deepEqual(f.marked(), ['Again.']);
+  assert.equal(f.page.querySelector('.note-reader-pdf-current'), f.page.querySelectorAll('.textLayer span')[2]);
+  assert.equal(f.highlighter.cached.get(f.view), cache);
+  assert.equal(f.session.currentChunkIndex, 0);
+  f.highlighter.destroy(); f.dom.window.close();
+});
+
+test('PDF zero-width formula accents preserve source correspondence and later prose highlighting', () => {
+  const f = playbackFixture([['R',40,100,8], ['\u0304',44,100,0], ['Equation.',55,100,90],
+    ['A public explanation.',40,130], ['Continued discussion.',40,150]], 'A public explanation. Continued discussion.');
+  // Header/footnote filtering also requires exact correspondence with source items.
+  f.session.pdfHighlightPages.get(1).omittedRegions = [{xMin:0,xMax:5,yMin:790,yMax:800}];
+  f.highlighter.update();
+  assert.deepEqual(f.marked(), ['A public explanation.', 'Continued discussion.']);
+  const page = f.highlighter.cached.get(f.view).pages[0];
+  assert.ok(page.text.includes('\u0304'));
+  assert.equal(page.lines.flatMap(line => line.nodes).some(node => node.textContent === '\u0304'), false);
+  assert.equal(f.page.querySelectorAll('.note-reader-pdf-rectangle').length, 2);
+  f.highlighter.destroy(); f.dom.window.close();
+});
+
+test('PDF accents do not hide an actual text mismatch or shift later words into the other column', () => {
+  const rows = [['Left first.',40,100], ['Right first.',330,100], ['R',40,120,8], ['\u0304',44,120,0],
+    ['Left next.',55,120,200], ['Right next.',330,120], ['Left last.',40,140], ['Right last.',330,140]];
+  const f = playbackFixture(rows, 'Right next. Right last.');
+  f.highlighter.update(); assert.deepEqual(f.marked(), ['Right next.', 'Right last.']);
+  f.page.querySelectorAll('.textLayer span')[5].textContent = 'Changed prose.';
+  f.highlighter.update(); assert.deepEqual(f.marked(), []);
+  f.highlighter.destroy(); f.dom.window.close();
+});
+
+test('PDF uses valid sentence cues only in sentence mode and otherwise follows audio parts', () => {
+  const f = playbackFixture([['First.',40,100], ['Second.',40,120]], 'First. Second.');
+  f.plugin.settings.readingHighlight = 'sentence';
+  f.plugin.getCurrentReadingHighlight = () => ({ index: 0, sentence: { start: 7, end: 14 } });
+  f.highlighter.update(); assert.deepEqual(f.marked(), ['Second.']);
+  f.plugin.settings.readingHighlight = 'segment';
+  f.highlighter.update(); assert.deepEqual(f.marked(), ['First.', 'Second.']);
+  f.plugin.settings.readingHighlight = 'sentence';
+  f.plugin.getCurrentReadingHighlight = () => ({ index: 0, sentence: { start: -1, end: 999 } });
+  f.highlighter.update(); assert.deepEqual(f.marked(), ['First.', 'Second.']);
+  f.highlighter.destroy(); f.dom.window.close();
+});
+
+test('PDF anchors across unmounted pages and follows the next part when only the next page is mounted', () => {
+  const f = playbackFixture([['Earlier.',40,100], ['Page ending.',40,120]], 'Page ending. Next first.');
+  const rows = [['Next first.',40,100], ['Next last.',40,120]];
+  f.session.pdfHighlightPages.set(2, sourceRows(rows));
+  f.highlighter.update(); assert.deepEqual(f.marked(), ['Page ending.']);
+  f.session.audioParts = { 0: ['Page ending.', 'Next first.'] };
+  f.session.currentPartIndex = 1;
+  f.highlighter.update(); assert.deepEqual(f.marked(), []);
+  const nextPage = pdfPage(f.doc, 2, rows);
+  f.highlighter.update(); assert.deepEqual(f.marked(), ['Next first.']);
+  f.page.remove(); f.highlighter.update(); assert.deepEqual(f.marked(), ['Next first.']);
+  nextPage.querySelector('.textLayer span').textContent = 'Different.';
+  f.highlighter.update(); assert.deepEqual(f.marked(), []);
+  f.highlighter.destroy(); f.dom.window.close();
+});
+
+test('PDF snapshot cleaning stays aligned after live academic settings change', () => {
+  const f = playbackFixture([['First.',40,100], ['Last.',40,120]], 'First.');
+  const used = [];
+  f.plugin.sanitizeAudioExportText = (text, settings) => { used.push(settings); return settings.stripMarkdown ? text : 'Different.'; };
+  f.highlighter.update(); assert.deepEqual(f.marked(), ['First.']);
+  f.plugin.settings.stripMarkdown = false;
+  f.plugin.settings.academicMathMode = 'skip';
+  f.page.querySelector('span').style.fontWeight = 'bold';
+  f.highlighter.update(); assert.deepEqual(f.marked(), ['First.']);
+  assert.ok(used.length > 0 && used.every(settings => settings === f.session.synthesisSettings));
+  f.highlighter.destroy(); f.dom.window.close();
+});
+
+test('PDF unchanged playback avoids text geometry reads and rebuilds on text-layer style changes', () => {
+  const f = playbackFixture([['First.',40,100], ['Last.',40,120]], 'First.');
+  const span = f.page.querySelector('span'), getRect = span.getBoundingClientRect;
+  let reads = 0;
+  span.getBoundingClientRect = () => { reads++; return getRect(); };
+  f.highlighter.update(); assert.ok(reads > 0); assert.deepEqual(f.marked(), ['First.']);
+  const cache = f.highlighter.cached.get(f.view);
+  reads = 0; f.highlighter.update(); f.highlighter.update();
+  assert.equal(reads, 0);
+  span.style.fontSize = '14px'; f.highlighter.update();
+  assert.ok(reads > 0); assert.notEqual(f.highlighter.cached.get(f.view), cache);
+  f.highlighter.destroy(); f.dom.window.close();
+});
+
+test('PDF layout cache survives logical chunk changes on the same page', () => {
+  const f = playbackFixture([['First.',40,100], ['Second.',40,120]], 'First.');
+  f.session.chunks.push('Second.'); f.session.chunkPageNumbers.push(1);
+  f.highlighter.update(); const cache = f.highlighter.cached.get(f.view);
+  f.plugin.getCurrentReadingHighlight = () => ({ index: 1 });
+  f.highlighter.update(); assert.deepEqual(f.marked(), ['Second.']);
+  assert.equal(f.highlighter.cached.get(f.view), cache);
+  f.highlighter.destroy(); f.dom.window.close();
+});
+
+test('PDF refreshes next-page geometry after zoom and clears cached observers when highlighting is disabled', () => {
+  const f = playbackFixture([['Earlier.',40,100], ['Page ending.',40,120]], 'Page ending. Next first.');
+  const rows = [['Next first.',40,100], ['Next last.',40,120]];
+  f.session.pdfHighlightPages.set(2, sourceRows(rows));
+  const nextPage = pdfPage(f.doc, 2, rows);
+  f.highlighter.update(); const cache = f.highlighter.cached.get(f.view);
+  nextPage.getBoundingClientRect = () => ({ left: 0, top: 0, width: 1200, height: 1600 });
+  for (const span of nextPage.querySelectorAll('span')) {
+    const rect = span.getBoundingClientRect();
+    span.getBoundingClientRect = () => Object.fromEntries(Object.entries(rect).map(([key, value]) => [key, value * 2]));
+  }
+  f.highlighter.update();
+  assert.notEqual(f.highlighter.cached.get(f.view), cache);
+  assert.deepEqual(f.marked(), ['Page ending.', 'Next first.']);
+  assert.equal(nextPage.querySelector('.note-reader-pdf-rectangle').style.top, '12.5%');
+  f.plugin.settings.readingHighlight = 'off'; f.highlighter.update();
+  assert.equal(f.highlighter.cached.size, 0);
+  assert.equal(f.doc.querySelectorAll('.note-reader-pdf-overlay').length, 0);
+  assert.deepEqual(f.marked(), []);
+  f.highlighter.destroy(); f.dom.window.close();
+});
+
+test('PDF overlays never merge separate layout lines across a narrow gutter', () => {
+  const f = playbackFixture([['Left.',40,100,100], ['Right.',145,100,100]], 'Left. Right.');
+  const nodes = [...f.page.querySelectorAll('span')];
+  f.highlighter.renderOverlays(new Set(nodes), new Map(nodes.map(node => [node, {}])));
+  assert.equal(f.page.querySelectorAll('.note-reader-pdf-rectangle').length, 2);
+  f.highlighter.destroy(); f.dom.window.close();
+});
+
 test('highlight rectangles join word spaces without bridging rows or column gutters at any zoom', () => {
   const input = [[40,100,30,12], [75,100,45,12], [330,100,30,12], [365,100,45,12], [40,120,30,12]];
   for (const scale of [0.5, 1, 2]) {

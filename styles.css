@@ -547,31 +547,22 @@
 .note-reader-document-body ::selection { background: var(--text-selection); }
 
 .note-reader-document-markdown .is-current-segment,
-.note-reader-note-segment {
-  background-color: color-mix(in srgb, var(--interactive-accent) 5%, transparent);
-}
-
-.note-reader-note-sentence {
-  background-color: color-mix(in srgb, var(--interactive-accent) 9%, transparent);
-}
-
-.cm-line.note-reader-note-line {
-  background-color: color-mix(in srgb, var(--interactive-accent) 10%, transparent);
-  box-shadow: inset 2px 0 color-mix(in srgb, var(--interactive-accent) 45%, transparent);
-}
-
-.note-reader-note-segment,
-.note-reader-note-sentence,
-.cm-line.note-reader-note-line,
 .note-reader-document .is-current-segment,
 .note-reader-document .is-current-sentence,
 .note-reader-pdf-rectangle {
   background-color: color-mix(in srgb, var(--note-reader-highlight-color, #e5b83d) var(--note-reader-highlight-strength, 22%), transparent) !important;
 }
+.note-reader-note-segment,
+.note-reader-note-sentence,
 .cm-line.note-reader-note-line {
-  box-shadow: inset 2px 0 var(--note-reader-highlight-color, #e5b83d);
+  background-color: color-mix(in srgb, var(--note-reader-highlight-color, #e5b83d) var(--note-reader-note-highlight-strength, 10%), transparent);
 }
-.cm-line.note-reader-note-line .note-reader-note-segment { background-color: transparent !important; }
+.cm-line.note-reader-note-line,
+.markdown-preview-view .note-reader-note-segment {
+  box-shadow: var(--note-reader-note-border, none);
+}
+.cm-line.note-reader-note-line .note-reader-note-segment,
+.cm-line.note-reader-note-line .note-reader-note-sentence { background-color: transparent; }
 
 .note-reader-sidebar-outline, .note-reader-sidebar-extra {
   border-top: 1px solid var(--background-modifier-border);
