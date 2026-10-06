@@ -142,6 +142,8 @@
   "Appearance": ["Darstellung","Apparence","Оформление","모양","外観","Apariencia","Aspetto"],
   "PDF content": ["PDF-Inhalt","Contenu PDF","Содержимое PDF","PDF 내용","PDF の内容","Contenido PDF","Contenuto PDF"],
   "Smart quick start": ["Intelligenter Schnellstart","Démarrage rapide intelligent","Умный быстрый запуск","스마트 빠른 시작","スマートクイックスタート","Inicio rápido inteligente","Avvio rapido intelligente"],
+  "Standard quick start": ["Standard-Schnellstart","Démarrage standard","Стандартный запуск","표준 시작","標準起動","Inicio estándar","Avvio standard"],
+  "Rapid quick start": ["Extra-Schnellstart","Démarrage accéléré","Ускоренный запуск","초고속 시작","高速起動","Inicio acelerado","Avvio accelerato"],
   "This session only": ["Nur diese Sitzung","Cette session uniquement","Только этот сеанс","현재 세션만","このセッションのみ","Solo esta sesión","Solo questa sessione"],
   "Keep across restarts": ["Nach Neustarts behalten","Conserver après redémarrage","Сохранять после перезапуска","재시작 후에도 유지","再起動後も保持","Conservar tras reiniciar","Mantieni dopo il riavvio"],
   "Restore this page defaults": ["Diese Seite zurücksetzen","Réinitialiser cette page","Сбросить настройки этой страницы","이 페이지 기본값 복원","このページの設定を初期化","Restablecer esta página","Ripristina questa pagina"],

@@ -34,6 +34,7 @@ const { SidebarOutline } = require('./sidebar-outline');
 const { PdfOutlineModal, addPdfOutlineSettings } = require('./pdf-outline-ui');
 const { readerRange } = require('./reader-selection');
 const { getSpeechParts, planSpeechParts, adjacentSpeechPart, getSpeechPartTiming } = require('./speech-parts');
+const { preparationStatusText } = require('./preparation-status');
 const { MIMO_ENDPOINT, MIMO_DEFAULTS, MIMO_VOICES, MIMO_MAX_CHUNK_CHARS, normalizeMimoSettings, buildMimoRequestBody, decodeMimoAudio } = require('./mimo-tts');
 const {
   MAX_EXPORTED_AUDIO_BYTES,
@@ -1640,6 +1641,7 @@ function createDefaultSettings() {
     readingPositions: normalizeReadingPositions(DEFAULT_SETTINGS.readingPositions),
     readingHistoryMode: 'session',
     smartQuickStart: true,
+    rapidQuickStart: false,
     rememberReadingPosition: DEFAULT_SETTINGS.rememberReadingPosition,
     diagnosticLogging: DEFAULT_SETTINGS.diagnosticLogging,
     edgeTtsConsent: DEFAULT_SETTINGS.edgeTtsConsent,
@@ -1699,6 +1701,7 @@ function normalizeReaderState(state) {
     isPaused: Boolean(state.isPaused),
     label: String(state.label || 'CosyVoice idle'),
     phase: String(state.phase || 'idle'),
+    preparationStatus: String(state.preparationStatus || ''),
     progress: clampProgress(state.progress),
     source: String(state.source || ''),
     status: String(state.status || 'idle'),
@@ -2814,6 +2817,7 @@ class CosyVoiceReaderPlugin extends Plugin {
     this.settings = selectKnownSettings(createDefaultSettings(), this.settings);
     this.settings.readingHistoryMode = historyMode(this.settings);
     this.settings.smartQuickStart = this.settings.smartQuickStart !== false;
+    this.settings.rapidQuickStart = this.settings.rapidQuickStart === true;
     normalizeCopilotSettings(this.settings);
     this.settings.playbackSpeed = normalizeSpeed(this.settings.playbackSpeed);
     this.settings.playbackVolume = normalizeVolume(this.settings.playbackVolume);
@@ -4711,6 +4715,7 @@ class CosyVoiceReaderPlugin extends Plugin {
       markdownSource: options.markdownSource || null,
       speechEngine: configuration.speechEngine,
       smartQuickStart: this.settings.smartQuickStart !== false,
+      rapidQuickStart: this.settings.rapidQuickStart === true,
       synthesisSettings: { ...this.settings, readingPositions: {} },
       systemVoice: configuration.systemVoice || '',
       systemSpeechControllers: new Set(),
@@ -4749,19 +4754,21 @@ class CosyVoiceReaderPlugin extends Plugin {
     for (const wake of Array.from(session?.operationWaiters || [])) wake();
   }
 
-  async waitForSessionOperation(session, operation) {
+  async waitForSessionOperation(session, operation, target = null) {
     // Navigation interrupts the wait, not the cached synthesis request.
     session.operationWaiters ||= new Set();
+    const navigationPending = () => Number.isInteger(session.requestedChunkIndex)
+      && (!target || session.requestedChunkIndex !== target.index || (session.requestedPartIndex || 0) !== target.part);
     let wake;
     const interrupted = new Promise((resolve) => {
       wake = () => resolve(null);
       session.operationWaiters.add(wake);
     });
     try {
-      if (!this.isActive(session) || Number.isInteger(session.requestedChunkIndex)) wake();
+      if (!this.isActive(session) || navigationPending()) wake();
       return await Promise.race([interrupted, operation]);
     } catch (error) {
-      if (!this.isActive(session) || Number.isInteger(session.requestedChunkIndex)) return null;
+      if (!this.isActive(session) || navigationPending()) return null;
       throw error;
     } finally {
       session.operationWaiters.delete(wake);
@@ -5357,6 +5364,7 @@ class CosyVoiceReaderPlugin extends Plugin {
 
   async runSpeechSession(session) {
     const preparedChunks = new Map();
+    const readyChunks = new Set();
     const getPreparedChunk = (index, part = 0, foreground = false) => {
       planSpeechParts(session, index, foreground && !session.seekTarget);
       const key = `${index}:${part}`;
@@ -5364,6 +5372,7 @@ class CosyVoiceReaderPlugin extends Plugin {
         const preparing = this.queuePrepareChunk(getSpeechParts(session, index)[part], index, session, part);
         preparing.catch(() => {});
         preparedChunks.set(key, preparing);
+        preparing.then(() => readyChunks.add(key), () => {});
       }
 
       return preparedChunks.get(key);
@@ -5424,7 +5433,19 @@ class CosyVoiceReaderPlugin extends Plugin {
         session.currentChunkIndex = index;
         session.currentPartIndex = part;
         if (session.lastCompletedChunkIndex === index) session.lastCompletedChunkIndex = null;
-        const prepared = await this.waitForSessionOperation(session, getPreparedChunk(index, part, true));
+        const key = `${index}:${part}`;
+        const reused = preparedChunks.has(key);
+        const preparation = getPreparedChunk(index, part, true);
+        this.updateStatus(`${session.engineLabel} preparing ${index + 1}/${session.totalChunks}`, {
+          preparationStatus: readyChunks.has(key) ? 'loading' : reused ? 'waiting' : 'synthesizing',
+          phase: 'synthesizing',
+          currentChunk: index + 1,
+          totalChunks: session.totalChunks,
+          ...getChunkNavigationState(index + 1, session.totalChunks),
+          canPause: true, canStop: true, canSeek: false,
+          progress: session.totalChunks ? (index + this.getSegmentTiming(session, index, part, 0).fraction) / session.totalChunks : 0,
+        });
+        const prepared = await this.waitForSessionOperation(session, preparation);
         if (!this.isActive(session)) {
           break;
         }
@@ -5524,7 +5545,7 @@ class CosyVoiceReaderPlugin extends Plugin {
       !isAudioExport && Number.isInteger(session.currentChunkIndex)
       && (index !== session.currentChunkIndex || part !== (session.currentPartIndex || 0))
     );
-    if (!isBackgroundPrefetch) {
+    if (!isBackgroundPrefetch && this.isActive(session) && !Number.isInteger(session.requestedChunkIndex)) {
       this.updateStatus(`${engineLabel} synth ${index + 1}/${session.totalChunks || 0}`, {
         canPause: !isAudioExport,
         ...(isAudioExport
@@ -6124,7 +6145,14 @@ class CosyVoiceReaderPlugin extends Plugin {
       return;
     }
 
-    const source = await this.createPlayableAudioSource(prepared);
+    this.updateStatus(`${session.engineLabel} loading audio`, { preparationStatus: 'loading' });
+    const loadingSource = this.createPlayableAudioSource(prepared);
+    const source = await this.waitForSessionOperation(session, loadingSource, { index, part });
+    if (!source) {
+      // Navigation must not wait for an obsolete file load, but its URL still needs cleanup.
+      loadingSource.then(value => value.release(), () => {}).catch(() => {});
+      return;
+    }
     if (!this.isActive(session) || (Number.isInteger(session.requestedChunkIndex)
       && (session.requestedChunkIndex !== index || (session.requestedPartIndex || 0) !== part))) {
       source.release();
@@ -6243,6 +6271,7 @@ class CosyVoiceReaderPlugin extends Plugin {
           currentText: previewText(Array.isArray(session.chunks) ? session.chunks[index] : ''),
           isPaused: false,
           phase: 'playing',
+          preparationStatus: '',
           progress: (index + this.getSegmentTiming(session, index, part, 0).fraction) / playbackTotal,
           status: 'running',
           totalChunks: playbackTotal,
@@ -6531,6 +6560,7 @@ class CosyVoiceReaderPlugin extends Plugin {
       currentText: previewText(session.chunks?.[targetIndex] || ''),
       isPaused: false,
       phase: 'queued',
+      preparationStatus: '',
       progress: total ? targetIndex / total : 0,
       status: 'running',
       totalChunks: total,
@@ -6821,7 +6851,9 @@ class CosyVoiceReaderView extends ItemView {
     const progressInput = progressTrack.createEl('input', {
       cls: 'note-reader-cosyvoice-progress-input',
       attr: {
-        'aria-label': this.translate('Reading progress'),
+        'aria-label': `${this.translate('Reading progress')} - ${this.plugin.settings?.settingsLanguage === 'chinese'
+          ? '跳转到指定分段的开头；未合成的分段需要等待合成。'
+          : 'Jump to the start of a segment; unprepared segments require synthesis.'}`,
         max: '1000',
         min: '0',
         step: '1',
@@ -6977,7 +7009,7 @@ class CosyVoiceReaderView extends ItemView {
 
     const details = extra.createDiv({ cls: 'note-reader-cosyvoice-details' });
     details.createDiv({ cls: 'note-reader-cosyvoice-detail-label', text: this.translate('Phase') });
-    details.createDiv({ cls: 'note-reader-cosyvoice-detail-value', text: state.phase });
+    details.createDiv({ cls: 'note-reader-cosyvoice-detail-value', text: preparationStatusText(state, this.plugin.settings.settingsLanguage) || state.phase });
     details.createDiv({ cls: 'note-reader-cosyvoice-detail-label', text: this.translate('Source') });
     details.createDiv({ cls: 'note-reader-cosyvoice-detail-value', text: state.source || '-' });
 
@@ -7790,10 +7822,17 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName(translateInterface(settingsLanguage, 'Smart quick start', '智能快速起读'))
       .setDesc(translateInterface(settingsLanguage,
-        'Split unprepared playback targets at complete sentences after 20 and 40 characters. Reuse existing requests; exports keep normal segments. Applies to the next reading session.',
-        '尚未合成的播放目标按完整句子累加到20、40字，再合成剩余内容；复用已有请求，导出保持常规分段。下次朗读生效。'))
-      .addToggle(toggle => toggle.setValue(this.plugin.settings.smartQuickStart !== false).onChange(async value => {
-        this.plugin.settings.smartQuickStart = value; await this.plugin.saveSettings();
+        'Standard uses complete sentences at 20 then 40 characters. Rapid lets a complete first sentence of 5–19 non-whitespace characters play sooner, then uses 40; otherwise it follows Standard. No extra prefetch or splitting of existing requests. Exports are unchanged. Applies to the next reading session; latency varies by provider.',
+        '标准模式按整句累加至20字，再从余文累加40字。极速模式允许5～19字的首个完整短句提前播放，随后仍用40字门槛；不符合时沿用标准规则（不计空白）。不增加预合成数量、不拆分已有请求，导出不变。下次朗读生效，实际提速取决于服务商。'))
+      .addDropdown(dropdown => dropdown
+        .addOption('off', translateInterface(settingsLanguage, 'Off', '关闭'))
+        .addOption('standard', translateInterface(settingsLanguage, 'Standard quick start', '标准起读'))
+        .addOption('rapid', translateInterface(settingsLanguage, 'Rapid quick start', '极速起读'))
+        .setValue(this.plugin.settings.smartQuickStart === false ? 'off' : this.plugin.settings.rapidQuickStart === true ? 'rapid' : 'standard')
+        .onChange(async value => {
+        this.plugin.settings.smartQuickStart = value !== 'off';
+        this.plugin.settings.rapidQuickStart = value === 'rapid';
+        await this.plugin.saveSettings();
       }));
     if (selectedSpeechEngine !== 'system-tts') new Setting(containerEl)
       .setName(ui.speedName)

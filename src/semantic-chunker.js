@@ -18,10 +18,16 @@ function openingSentenceCut(text, threshold) {
   return text.length;
 }
 
-function splitOpeningAudioParts(text) {
+function splitOpeningAudioParts(text, rapid = false) {
   let remaining = core.normalizeChunkText(text);
   const parts = [];
-  for (const threshold of [20, 40]) {
+  const firstEnd = rapid ? openingSentenceCut(remaining, 1) : 0;
+  const firstSentence = remaining.slice(0, firstEnd).trim();
+  const firstLength = Array.from(firstSentence.replace(/\s/g, '')).length;
+  // Numbered headings are not useful standalone opening audio.
+  const hasWords = /\p{L}/u.test(firstSentence) && !/^[IVXLCDM]+[.)]$/i.test(firstSentence);
+  const firstThreshold = rapid && hasWords && firstLength >= 5 && firstLength < 20 ? firstLength : 20;
+  for (const threshold of [firstThreshold, 40]) {
     if (!remaining) break;
     const cut = openingSentenceCut(remaining, threshold);
     parts.push(remaining.slice(0, cut).trim());

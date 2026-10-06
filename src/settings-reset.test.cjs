@@ -3,6 +3,26 @@ const assert = require('node:assert/strict');
 const { PAGE_KEYS, resetPageSettings } = require('./settings-reset');
 const { settingsFixture } = require('./test-helpers/settings-fixture.cjs');
 
+test('quick start defaults to standard, saves all three modes and resets rapid mode', async () => {
+  const { dom, plugin, rows } = settingsFixture();
+  const row = rows.find(row => row.nameEl.textContent === 'Smart quick start');
+  assert.equal(row.controlEl.querySelector('select').value, 'standard');
+  assert.equal(plugin.settings.rapidQuickStart, false);
+  await row.change('rapid');
+  assert.equal(plugin.settings.smartQuickStart, true);
+  assert.equal(plugin.settings.rapidQuickStart, true);
+  const reset = resetPageSettings(plugin.settings, { smartQuickStart: true, rapidQuickStart: false }, 'playback');
+  assert.equal(reset.rapidQuickStart, false);
+  await row.change('off');
+  assert.equal(plugin.settings.smartQuickStart, false);
+  assert.equal(plugin.settings.rapidQuickStart, false);
+  await row.change('standard');
+  assert.equal(plugin.settings.smartQuickStart, true);
+  assert.equal(plugin.settings.rapidQuickStart, false);
+  assert.equal(plugin.saves, 3);
+  dom.window.close();
+});
+
 test('page reset has explicit ownership including hidden engines and preserves sensitive configuration', () => {
   const { dom, plugin } = settingsFixture();
   const defaults = plugin.settings;

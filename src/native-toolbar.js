@@ -7,6 +7,7 @@ const { currentSourceRanges } = require('./markdown-source');
 const { estimatePlayback, formatDuration } = require('./playback-estimate');
 const { getHtmlReaderDocument } = require('./html-text');
 const { captureHtmlOutline, htmlSectionText } = require('./html-outline');
+const { preparationStatusText } = require('./preparation-status');
 
 function node(parent, tag, className = '') {
   const element = parent.ownerDocument.createElement(tag);
@@ -48,13 +49,32 @@ class NativeReaderToolbar {
     this.back.setAttribute('aria-keyshortcuts', 'ArrowLeft'); this.forward.setAttribute('aria-keyshortcuts', 'ArrowRight');
     const progress = node(controls, 'div', 'note-reader-native-progress');
     this.progress = node(progress, 'input'); this.progress.type = 'range'; this.progress.min = '0'; this.progress.max = '1000'; this.progress.step = '1';
-    this.progress.addEventListener('pointerdown', () => { this.scrubbing = true; });
-    this.progress.addEventListener('input', () => { this.scrubbing = true; });
-    this.progress.addEventListener('pointerup', () => { this.scrubbing = false; });
-    this.progress.addEventListener('change', () => {
-      const value = Number(this.progress.value) / 1000; this.scrubbing = false; this.seek(value);
+    this.progress.addEventListener('pointerdown', () => {
+      this.scrubbing = true;
+      this.scrubSession = this.plugin.activeSession;
+      this.scrubValue = null;
     });
-    for (const event of ['blur', 'pointercancel']) this.progress.addEventListener(event, () => { this.scrubbing = false; this.render(); });
+    this.progress.addEventListener('input', () => {
+      if (!this.scrubbing) this.scrubSession = this.plugin.activeSession;
+      this.scrubbing = true;
+      this.scrubValue = Number(this.progress.value) / 1000;
+    });
+    this.progress.addEventListener('pointerup', () => {
+      // Keep the chosen value protected until change commits it.
+      if (this.scrubValue === null) {
+        this.scrubbing = false; this.scrubSession = null; this.render();
+      }
+    });
+    this.progress.addEventListener('change', () => {
+      const value = this.scrubValue ?? Number(this.progress.value) / 1000;
+      const session = this.scrubSession;
+      this.scrubbing = false; this.scrubValue = null; this.scrubSession = null;
+      if (!session || session === this.plugin.activeSession) this.seek(value);
+      this.render();
+    });
+    for (const event of ['blur', 'pointercancel']) this.progress.addEventListener(event, () => {
+      this.scrubbing = false; this.scrubValue = null; this.scrubSession = null; this.render();
+    });
     this.time = node(progress, 'span', 'note-reader-native-time');
     this.speed = node(controls, 'select', 'note-reader-native-speed');
     for (const value of [0.5, 0.75, 1, 1.1, 1.2, 1.25, 1.3, 1.4, 1.5, 1.75, 2, 2.5, 3]) {
@@ -207,12 +227,7 @@ class NativeReaderToolbar {
     });
   }
   seek(progress) {
-    const session = this.plugin.activeSession, count = session?.chunks?.length;
-    if (!count || session.kind === 'audio-export') return;
-    const target = Math.min(count - 1, Math.max(0, Math.floor(progress * count)));
-    const current = Math.max(0, (this.plugin.readerState.currentChunk || 1) - 1);
-    if (target !== current) this.plugin.jumpToAdjacentChunk(target - current);
-    else this.plugin.seekCurrentSegmentToTime(0);
+    return this.plugin.seekToProgress(progress);
   }
   render() {
     const state = this.plugin.readerState || {}, session = this.plugin.activeSession;
@@ -236,8 +251,11 @@ class NativeReaderToolbar {
     this.back.disabled = this.forward.disabled = (!state.canSeek && !session?.seekTarget) || exporting;
     this.progress.disabled = !(state.canSeek || state.canNextChunk || state.canPreviousChunk) || exporting;
     if (!this.scrubbing) this.progress.value = String(Math.round((state.progress || 0) * 1000));
-    this.progress.setAttribute('aria-description', this.t('Jump to a segment; unprepared audio requires synthesis.', '跳转到分段；未准备的音频需要等待合成。'));
-    this.progress.setAttribute('aria-label', this.t('Overall progress', '整体进度'));
+    const progressHint = this.t('Within the current segment: seek to the selected position. Across segments: jump to the target segment start. Unprepared audio requires synthesis.',
+      '当前段内：跳到所选位置；跨段：跳到目标段开头。未合成的音频需要等待合成。');
+    this.progress.setAttribute('aria-description', progressHint);
+    this.progress.removeAttribute('title');
+    this.progress.setAttribute('aria-label', `${this.t('Overall progress', '整体进度')} - ${progressHint}`);
     this.speed.setAttribute('aria-label', this.t('Playback speed', '播放倍速'));
     if (this.root.ownerDocument.activeElement !== this.speed) {
       const value = String(this.plugin.settings.playbackSpeed || 1);
@@ -266,7 +284,7 @@ class NativeReaderToolbar {
     const source = session?.markdownSource, ranges = source && source.filePath === this.view.file?.path
       ? currentSourceRanges(source, { index: session.currentChunkIndex }) : [];
     const current = ranges.length ? [...(this.entries || [])].reverse().find(heading => heading.from <= ranges[0].from) : null;
-    this.status.textContent = state.error || (session ? [session.sourceLabel, current?.title, `${state.currentChunk || 0} / ${state.totalChunks || 0}`].filter(Boolean).join(' · ') : '');
+    this.status.textContent = state.error || (session ? [preparationStatusText(state, this.plugin.settings.settingsLanguage), session.sourceLabel, current?.title, `${state.currentChunk || 0} / ${state.totalChunks || 0}`].filter(Boolean).join(' · ') : '');
     this.status.hidden = !this.status.textContent;
   }
   destroy() {

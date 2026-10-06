@@ -76,6 +76,18 @@ function keyboardFixture() {
   } };
 }
 
+test('progress hover label explains seek boundaries in both languages without duplicate native tooltip', () => {
+  const { dom, toolbar, plugin, manager } = fixture();
+  assert.match(toolbar.progress.getAttribute('aria-label'), /Across segments: jump to the target segment start/);
+  assert.match(toolbar.progress.getAttribute('aria-description'), /Unprepared audio requires synthesis/);
+  assert.equal(toolbar.progress.hasAttribute('title'), false);
+  plugin.settings.settingsLanguage = 'chinese'; toolbar.render();
+  assert.match(toolbar.progress.getAttribute('aria-label'), /当前段内：跳到所选位置；跨段：跳到目标段开头/);
+  assert.match(toolbar.progress.getAttribute('aria-description'), /需要等待合成/);
+  assert.equal(toolbar.progress.hasAttribute('title'), false);
+  manager.destroy(); dom.window.close();
+});
+
 test('chat toolbar entry passes its source file and respects language, opt-out and active exports', async () => {
   const f = fixture(), calls = [];
   f.plugin.openCopilotChat = file => calls.push(file);
@@ -204,9 +216,57 @@ test('progress drag waits for commit and keeps its value during playback updates
   plugin.activeSession = { id: 1, chunks: ['One.', 'Two.', 'Three.'], currentChunkIndex: 0 };
   plugin.readerState = { currentChunk: 1, totalChunks: 3, canNextChunk: true, progress: 0 };
   plugin.jumpToAdjacentChunk = value => jumps.push(value);
+  plugin.isActive = session => session === plugin.activeSession;
+  plugin.seekToProgress = PluginClass.prototype.seekToProgress;
   toolbar.progress.value = '800'; toolbar.progress.dispatchEvent(new dom.window.Event('input')); toolbar.render();
   assert.equal(toolbar.progress.value, '800'); assert.deepEqual(jumps, []);
+  toolbar.progress.dispatchEvent(new dom.window.Event('pointerup'));
+  toolbar.render(); assert.equal(toolbar.progress.value, '800');
   toolbar.progress.dispatchEvent(new dom.window.Event('change')); assert.deepEqual(jumps, [2]);
+  toolbar.destroy(); dom.window.close();
+});
+
+test('toolbar progress seeks within the current segment instead of restarting it', () => {
+  const { dom, toolbar, plugin, manager } = fixture(), times = [];
+  plugin.activeSession = { chunks: Array(10).fill('Public text.') };
+  plugin.readerState = { currentChunk: 3, totalChunks: 10, canSeek: true, progress: 0.21 };
+  plugin.currentAudio = { duration: 100 };
+  plugin.getSegmentTiming = () => ({ duration: 100, current: 10 });
+  plugin.isActive = session => session === plugin.activeSession;
+  plugin.seekToProgress = PluginClass.prototype.seekToProgress;
+  plugin.seekCurrentSegmentToTime = value => { times.push(value); return true; };
+  plugin.jumpToAdjacentChunk = () => assert.fail('Same segment must not jump');
+  toolbar.render();
+  toolbar.progress.dispatchEvent(new dom.window.Event('pointerdown'));
+  toolbar.progress.value = '280';
+  toolbar.progress.dispatchEvent(new dom.window.Event('input'));
+  toolbar.progress.dispatchEvent(new dom.window.Event('pointerup'));
+  plugin.readerState.progress = 0.22; toolbar.render();
+  assert.equal(toolbar.progress.value, '280');
+  toolbar.progress.dispatchEvent(new dom.window.Event('change'));
+  assert.equal(times.length, 1); assert.ok(Math.abs(times[0] - 80) < 0.001);
+  toolbar.progress.value = '250';
+  toolbar.progress.dispatchEvent(new dom.window.Event('input'));
+  toolbar.progress.dispatchEvent(new dom.window.Event('change'));
+  assert.ok(Math.abs(times[1] - 50) < 0.001);
+  manager.destroy(); dom.window.close();
+});
+
+test('toolbar discards an uncommitted progress selection when the reading session changes', () => {
+  const { dom, toolbar, plugin, manager } = fixture(), seeks = [];
+  plugin.activeSession = { chunks: ['One.', 'Two.'] };
+  plugin.seekToProgress = value => seeks.push(value);
+  toolbar.progress.dispatchEvent(new dom.window.Event('pointerdown'));
+  toolbar.progress.value = '700'; toolbar.progress.dispatchEvent(new dom.window.Event('input'));
+  plugin.activeSession = { chunks: ['Another document.'] };
+  toolbar.progress.dispatchEvent(new dom.window.Event('change'));
+  assert.deepEqual(seeks, []);
+  toolbar.progress.dispatchEvent(new dom.window.Event('pointerdown'));
+  toolbar.progress.value = '500'; toolbar.progress.dispatchEvent(new dom.window.Event('input'));
+  toolbar.progress.dispatchEvent(new dom.window.Event('pointercancel'));
+  assert.equal(toolbar.scrubbing, false); assert.equal(toolbar.scrubValue, null);
+  assert.deepEqual(seeks, []);
+  manager.destroy(); dom.window.close();
 });
 
 test('PDF toolbar reuses playback and scope actions without changing PDF content or invoking Markdown', async () => {

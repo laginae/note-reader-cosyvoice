@@ -205,7 +205,7 @@ const testVaultPath = path.resolve('test-vault');
 const testAudioPath = path.join(testVaultPath, '.obsidian', 'plugins', 'note-reader-cosyvoice', 'cache', 'a.wav');
 assert.strictEqual(manifest.id, 'note-reader-cosyvoice');
 assert.strictEqual(manifest.name, 'Note and PDF Voice Reader');
-assert.strictEqual(manifest.version, '0.9.0');
+assert.strictEqual(manifest.version, '0.9.1');
 assert.strictEqual(
   moduleObject.exports.__test.sanitizeTextForSpeech('第一段的结尾。\n\n## 第二节标题\n\n下一节的正文。'),
   '第一段的结尾。\n第二节标题\n下一节的正文。'
@@ -280,6 +280,7 @@ assert.deepStrictEqual(moduleObject.exports.__test.createReaderState(), {
   label: 'CosyVoice idle',
   canSeek: false,
   phase: 'idle',
+  preparationStatus: '',
   progress: 0,
   source: '',
   status: 'idle',
@@ -330,6 +331,7 @@ assert.deepStrictEqual(moduleObject.exports.__test.createDefaultSettings(), {
   rememberReadingPosition: false,
   readingHistoryMode: 'session',
   smartQuickStart: true,
+  rapidQuickStart: false,
   diagnosticLogging: false,
   edgeTtsConsent: false,
   edgeTtsExecutable: 'edge-tts',
@@ -1195,7 +1197,7 @@ const buttonArrowEvent = createKeyboardEvent({
 root.dispatchEvent(buttonArrowEvent);
 assert.deepStrictEqual(seekBySecondsCalls, [-5, 5, 5]);
 
-const progressInput = findElementByAriaLabel(root, 'Reading progress');
+const progressInput = findElementByAriaLabel(root, 'Reading progress - Jump to the start of a segment; unprepared segments require synthesis.');
 assert.ok(progressInput);
 const progressArrowEvent = createKeyboardEvent({
   code: 'ArrowLeft',

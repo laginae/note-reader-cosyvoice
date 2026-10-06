@@ -9,7 +9,7 @@ function getSpeechParts(session, index) {
   session.audioParts ||= {};
   if (!session.audioParts[index]) {
     session.audioParts[index] = index === 0 && session.smartQuickStart !== false && session.kind !== 'audio-export'
-      ? splitOpeningAudioParts(text) : [text];
+      ? splitOpeningAudioParts(text, session.rapidQuickStart === true) : [text];
   }
   return session.audioParts[index];
 }
@@ -22,7 +22,7 @@ function planSpeechParts(session, index, foreground = false) {
     session.audioParts ||= {};
     const text = session.chunks[index];
     session.audioParts[index] = foreground && session.smartQuickStart !== false && session.kind !== 'audio-export'
-      ? splitOpeningAudioParts(text) : [text];
+      ? splitOpeningAudioParts(text, session.rapidQuickStart === true) : [text];
     session.plannedAudioParts.add(index);
   }
   return getSpeechParts(session, index);

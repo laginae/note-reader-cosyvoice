@@ -20,6 +20,7 @@ test('later unprepared target uses a short first request without waiting for sta
   const run = plugin.runSpeechSession(session); await tick();
   session.requestedChunkIndex = 1; plugin.notifySessionNavigation(session); await tick();
   assert.equal(session.audioParts[1].length, 3);
+  assert.equal(plugin.readerState.preparationStatus, 'synthesizing');
   assert.ok(requests.has('1:0')); assert.equal(requests.size, 2);
   requests.get('1:0').resolve({}); await run;
   requests.get('0:0').resolve({});
@@ -116,6 +117,7 @@ test('returning to a skipped segment reuses its in-flight synthesis instead of a
   plugin.jumpToAdjacentChunk(-1);
   await tick();
   assert.deepEqual(events, ['prepare:0:0', 'prepare:1:0']);
+  assert.equal(plugin.readerState.preparationStatus, 'waiting');
   requests.get('0:0').resolve({});
   await run;
   requests.get('1:0').resolve({});
@@ -199,9 +201,12 @@ test('navigation during audio-file loading releases the old source without playi
   plugin.createPlayableAudioSource = () => loading.promise;
   const play = PluginClass.prototype.playPreparedAudio.call(plugin, {}, session, 0, 4);
   await tick();
+  assert.equal(plugin.readerState.preparationStatus, 'loading');
   plugin.jumpToAdjacentChunk(1);
-  loading.resolve({ release() { released = true; } });
   await play;
+  assert.equal(released, false);
+  loading.resolve({ release() { released = true; } });
+  await tick();
   assert.equal(released, true);
   assert.equal(plugin.currentAudio, null);
 });

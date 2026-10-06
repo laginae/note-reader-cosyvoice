@@ -169,6 +169,8 @@ var require_common = __commonJS({
       Appearance: ["Darstellung", "Apparence", "\u041E\u0444\u043E\u0440\u043C\u043B\u0435\u043D\u0438\u0435", "\uBAA8\uC591", "\u5916\u89B3", "Apariencia", "Aspetto"],
       "PDF content": ["PDF-Inhalt", "Contenu PDF", "\u0421\u043E\u0434\u0435\u0440\u0436\u0438\u043C\u043E\u0435 PDF", "PDF \uB0B4\uC6A9", "PDF \u306E\u5185\u5BB9", "Contenido PDF", "Contenuto PDF"],
       "Smart quick start": ["Intelligenter Schnellstart", "D\xE9marrage rapide intelligent", "\u0423\u043C\u043D\u044B\u0439 \u0431\u044B\u0441\u0442\u0440\u044B\u0439 \u0437\u0430\u043F\u0443\u0441\u043A", "\uC2A4\uB9C8\uD2B8 \uBE60\uB978 \uC2DC\uC791", "\u30B9\u30DE\u30FC\u30C8\u30AF\u30A4\u30C3\u30AF\u30B9\u30BF\u30FC\u30C8", "Inicio r\xE1pido inteligente", "Avvio rapido intelligente"],
+      "Standard quick start": ["Standard-Schnellstart", "D\xE9marrage standard", "\u0421\u0442\u0430\u043D\u0434\u0430\u0440\u0442\u043D\u044B\u0439 \u0437\u0430\u043F\u0443\u0441\u043A", "\uD45C\uC900 \uC2DC\uC791", "\u6A19\u6E96\u8D77\u52D5", "Inicio est\xE1ndar", "Avvio standard"],
+      "Rapid quick start": ["Extra-Schnellstart", "D\xE9marrage acc\xE9l\xE9r\xE9", "\u0423\u0441\u043A\u043E\u0440\u0435\u043D\u043D\u044B\u0439 \u0437\u0430\u043F\u0443\u0441\u043A", "\uCD08\uACE0\uC18D \uC2DC\uC791", "\u9AD8\u901F\u8D77\u52D5", "Inicio acelerado", "Avvio accelerato"],
       "This session only": ["Nur diese Sitzung", "Cette session uniquement", "\u0422\u043E\u043B\u044C\u043A\u043E \u044D\u0442\u043E\u0442 \u0441\u0435\u0430\u043D\u0441", "\uD604\uC7AC \uC138\uC158\uB9CC", "\u3053\u306E\u30BB\u30C3\u30B7\u30E7\u30F3\u306E\u307F", "Solo esta sesi\xF3n", "Solo questa sessione"],
       "Keep across restarts": ["Nach Neustarts behalten", "Conserver apr\xE8s red\xE9marrage", "\u0421\u043E\u0445\u0440\u0430\u043D\u044F\u0442\u044C \u043F\u043E\u0441\u043B\u0435 \u043F\u0435\u0440\u0435\u0437\u0430\u043F\u0443\u0441\u043A\u0430", "\uC7AC\uC2DC\uC791 \uD6C4\uC5D0\uB3C4 \uC720\uC9C0", "\u518D\u8D77\u52D5\u5F8C\u3082\u4FDD\u6301", "Conservar tras reiniciar", "Mantieni dopo il riavvio"],
       "Restore this page defaults": ["Diese Seite zur\xFCcksetzen", "R\xE9initialiser cette page", "\u0421\u0431\u0440\u043E\u0441\u0438\u0442\u044C \u043D\u0430\u0441\u0442\u0440\u043E\u0439\u043A\u0438 \u044D\u0442\u043E\u0439 \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u044B", "\uC774 \uD398\uC774\uC9C0 \uAE30\uBCF8\uAC12 \uBCF5\uC6D0", "\u3053\u306E\u30DA\u30FC\u30B8\u306E\u8A2D\u5B9A\u3092\u521D\u671F\u5316", "Restablecer esta p\xE1gina", "Ripristina questa pagina"],
@@ -324,6 +326,8 @@ var require_pt = __commonJS({
       Appearance: "Apar\xEAncia",
       "PDF content": "Conte\xFAdo do PDF",
       "Smart quick start": "In\xEDcio r\xE1pido inteligente",
+      "Standard quick start": "In\xEDcio padr\xE3o",
+      "Rapid quick start": "In\xEDcio acelerado",
       "This session only": "Somente nesta sess\xE3o",
       "Keep across restarts": "Manter ap\xF3s reiniciar",
       "Restore this page defaults": "Restaurar padr\xF5es desta p\xE1gina",
@@ -505,6 +509,7 @@ var require_settings_reset = __commonJS({
         "onlineChunkLimits",
         "onlinePrefetchChunks",
         "smartQuickStart",
+        "rapidQuickStart",
         "highlightColor",
         "highlightStrength",
         "readerOpenMode",
@@ -9545,6 +9550,25 @@ var require_html_outline = __commonJS({
   }
 });
 
+// src/preparation-status.js
+var require_preparation_status = __commonJS({
+  "src/preparation-status.js"(exports2, module2) {
+    "use strict";
+    var { translate } = require_i18n();
+    function preparationStatusText2(state, language) {
+      if (!["queued", "synthesizing"].includes(state?.phase)) return "";
+      const labels = {
+        synthesizing: ["Synthesizing target segment", "\u6B63\u5728\u5408\u6210\u76EE\u6807\u6BB5"],
+        waiting: ["Waiting for existing synthesis (no duplicate request)", "\u7B49\u5F85\u5DF2\u6709\u5408\u6210\u5B8C\u6210\uFF08\u4E0D\u91CD\u590D\u8BF7\u6C42\uFF09"],
+        loading: ["Loading audio", "\u6B63\u5728\u52A0\u8F7D\u97F3\u9891"]
+      };
+      const label = labels[state.preparationStatus];
+      return label ? translate(language, ...label) : "";
+    }
+    module2.exports = { preparationStatusText: preparationStatusText2 };
+  }
+});
+
 // src/native-toolbar.js
 var require_native_toolbar = __commonJS({
   "src/native-toolbar.js"(exports2, module2) {
@@ -9556,6 +9580,7 @@ var require_native_toolbar = __commonJS({
     var { estimatePlayback: estimatePlayback2, formatDuration: formatDuration2 } = require_playback_estimate();
     var { getHtmlReaderDocument: getHtmlReaderDocument2 } = require_html_text();
     var { captureHtmlOutline, htmlSectionText } = require_html_outline();
+    var { preparationStatusText: preparationStatusText2 } = require_preparation_status();
     function node(parent, tag, className = "") {
       const element = parent.ownerDocument.createElement(tag);
       element.className = className;
@@ -9607,20 +9632,34 @@ var require_native_toolbar = __commonJS({
         this.progress.step = "1";
         this.progress.addEventListener("pointerdown", () => {
           this.scrubbing = true;
+          this.scrubSession = this.plugin.activeSession;
+          this.scrubValue = null;
         });
         this.progress.addEventListener("input", () => {
+          if (!this.scrubbing) this.scrubSession = this.plugin.activeSession;
           this.scrubbing = true;
+          this.scrubValue = Number(this.progress.value) / 1e3;
         });
         this.progress.addEventListener("pointerup", () => {
-          this.scrubbing = false;
+          if (this.scrubValue === null) {
+            this.scrubbing = false;
+            this.scrubSession = null;
+            this.render();
+          }
         });
         this.progress.addEventListener("change", () => {
-          const value = Number(this.progress.value) / 1e3;
+          const value = this.scrubValue ?? Number(this.progress.value) / 1e3;
+          const session = this.scrubSession;
           this.scrubbing = false;
-          this.seek(value);
+          this.scrubValue = null;
+          this.scrubSession = null;
+          if (!session || session === this.plugin.activeSession) this.seek(value);
+          this.render();
         });
         for (const event of ["blur", "pointercancel"]) this.progress.addEventListener(event, () => {
           this.scrubbing = false;
+          this.scrubValue = null;
+          this.scrubSession = null;
           this.render();
         });
         this.time = node(progress, "span", "note-reader-native-time");
@@ -9831,12 +9870,7 @@ var require_native_toolbar = __commonJS({
         });
       }
       seek(progress) {
-        const session = this.plugin.activeSession, count = session?.chunks?.length;
-        if (!count || session.kind === "audio-export") return;
-        const target = Math.min(count - 1, Math.max(0, Math.floor(progress * count)));
-        const current = Math.max(0, (this.plugin.readerState.currentChunk || 1) - 1);
-        if (target !== current) this.plugin.jumpToAdjacentChunk(target - current);
-        else this.plugin.seekCurrentSegmentToTime(0);
+        return this.plugin.seekToProgress(progress);
       }
       render() {
         const state = this.plugin.readerState || {}, session = this.plugin.activeSession;
@@ -9866,8 +9900,13 @@ var require_native_toolbar = __commonJS({
         this.back.disabled = this.forward.disabled = !state.canSeek && !session?.seekTarget || exporting;
         this.progress.disabled = !(state.canSeek || state.canNextChunk || state.canPreviousChunk) || exporting;
         if (!this.scrubbing) this.progress.value = String(Math.round((state.progress || 0) * 1e3));
-        this.progress.setAttribute("aria-description", this.t("Jump to a segment; unprepared audio requires synthesis.", "\u8DF3\u8F6C\u5230\u5206\u6BB5\uFF1B\u672A\u51C6\u5907\u7684\u97F3\u9891\u9700\u8981\u7B49\u5F85\u5408\u6210\u3002"));
-        this.progress.setAttribute("aria-label", this.t("Overall progress", "\u6574\u4F53\u8FDB\u5EA6"));
+        const progressHint = this.t(
+          "Within the current segment: seek to the selected position. Across segments: jump to the target segment start. Unprepared audio requires synthesis.",
+          "\u5F53\u524D\u6BB5\u5185\uFF1A\u8DF3\u5230\u6240\u9009\u4F4D\u7F6E\uFF1B\u8DE8\u6BB5\uFF1A\u8DF3\u5230\u76EE\u6807\u6BB5\u5F00\u5934\u3002\u672A\u5408\u6210\u7684\u97F3\u9891\u9700\u8981\u7B49\u5F85\u5408\u6210\u3002"
+        );
+        this.progress.setAttribute("aria-description", progressHint);
+        this.progress.removeAttribute("title");
+        this.progress.setAttribute("aria-label", `${this.t("Overall progress", "\u6574\u4F53\u8FDB\u5EA6")} - ${progressHint}`);
         this.speed.setAttribute("aria-label", this.t("Playback speed", "\u64AD\u653E\u500D\u901F"));
         if (this.root.ownerDocument.activeElement !== this.speed) {
           const value = String(this.plugin.settings.playbackSpeed || 1);
@@ -9900,7 +9939,7 @@ var require_native_toolbar = __commonJS({
         this.time.textContent = estimate ? `${this.t("Remaining ~", "\u5269\u4F59\u7EA6 ")}${formatDuration2(estimate.remaining)}` : `${state.currentChunk || 0} / ${state.totalChunks || 0}`;
         const source = session?.markdownSource, ranges = source && source.filePath === this.view.file?.path ? currentSourceRanges(source, { index: session.currentChunkIndex }) : [];
         const current = ranges.length ? [...this.entries || []].reverse().find((heading) => heading.from <= ranges[0].from) : null;
-        this.status.textContent = state.error || (session ? [session.sourceLabel, current?.title, `${state.currentChunk || 0} / ${state.totalChunks || 0}`].filter(Boolean).join(" \xB7 ") : "");
+        this.status.textContent = state.error || (session ? [preparationStatusText2(state, this.plugin.settings.settingsLanguage), session.sourceLabel, current?.title, `${state.currentChunk || 0} / ${state.totalChunks || 0}`].filter(Boolean).join(" \xB7 ") : "");
         this.status.hidden = !this.status.textContent;
       }
       destroy() {
@@ -10965,10 +11004,15 @@ var require_semantic_chunker2 = __commonJS({
       }
       return text.length;
     }
-    function splitOpeningAudioParts(text) {
+    function splitOpeningAudioParts(text, rapid = false) {
       let remaining = core.normalizeChunkText(text);
       const parts = [];
-      for (const threshold of [20, 40]) {
+      const firstEnd = rapid ? openingSentenceCut(remaining, 1) : 0;
+      const firstSentence = remaining.slice(0, firstEnd).trim();
+      const firstLength = Array.from(firstSentence.replace(/\s/g, "")).length;
+      const hasWords = /\p{L}/u.test(firstSentence) && !/^[IVXLCDM]+[.)]$/i.test(firstSentence);
+      const firstThreshold = rapid && hasWords && firstLength >= 5 && firstLength < 20 ? firstLength : 20;
+      for (const threshold of [firstThreshold, 40]) {
         if (!remaining) break;
         const cut = openingSentenceCut(remaining, threshold);
         parts.push(remaining.slice(0, cut).trim());
@@ -33843,7 +33887,7 @@ var require_speech_parts = __commonJS({
       if (typeof text !== "string") return [];
       session.audioParts || (session.audioParts = {});
       if (!session.audioParts[index]) {
-        session.audioParts[index] = index === 0 && session.smartQuickStart !== false && session.kind !== "audio-export" ? splitOpeningAudioParts(text) : [text];
+        session.audioParts[index] = index === 0 && session.smartQuickStart !== false && session.kind !== "audio-export" ? splitOpeningAudioParts(text, session.rapidQuickStart === true) : [text];
       }
       return session.audioParts[index];
     }
@@ -33852,7 +33896,7 @@ var require_speech_parts = __commonJS({
       if (!session.plannedAudioParts.has(index)) {
         session.audioParts || (session.audioParts = {});
         const text = session.chunks[index];
-        session.audioParts[index] = foreground && session.smartQuickStart !== false && session.kind !== "audio-export" ? splitOpeningAudioParts(text) : [text];
+        session.audioParts[index] = foreground && session.smartQuickStart !== false && session.kind !== "audio-export" ? splitOpeningAudioParts(text, session.rapidQuickStart === true) : [text];
         session.plannedAudioParts.add(index);
       }
       return getSpeechParts2(session, index);
@@ -34254,6 +34298,7 @@ var { SidebarOutline } = require_sidebar_outline();
 var { PdfOutlineModal, addPdfOutlineSettings } = require_pdf_outline_ui();
 var { readerRange } = require_reader_selection();
 var { getSpeechParts, planSpeechParts, adjacentSpeechPart, getSpeechPartTiming } = require_speech_parts();
+var { preparationStatusText } = require_preparation_status();
 var { MIMO_ENDPOINT, MIMO_DEFAULTS, MIMO_VOICES, MIMO_MAX_CHUNK_CHARS, normalizeMimoSettings, buildMimoRequestBody, decodeMimoAudio } = require_mimo_tts();
 var {
   MAX_EXPORTED_AUDIO_BYTES,
@@ -35644,6 +35689,7 @@ function createDefaultSettings() {
     readingPositions: normalizeReadingPositions(DEFAULT_SETTINGS.readingPositions),
     readingHistoryMode: "session",
     smartQuickStart: true,
+    rapidQuickStart: false,
     rememberReadingPosition: DEFAULT_SETTINGS.rememberReadingPosition,
     diagnosticLogging: DEFAULT_SETTINGS.diagnosticLogging,
     edgeTtsConsent: DEFAULT_SETTINGS.edgeTtsConsent,
@@ -35700,6 +35746,7 @@ function normalizeReaderState(state) {
     isPaused: Boolean(state.isPaused),
     label: String(state.label || "CosyVoice idle"),
     phase: String(state.phase || "idle"),
+    preparationStatus: String(state.preparationStatus || ""),
     progress: clampProgress(state.progress),
     source: String(state.source || ""),
     status: String(state.status || "idle"),
@@ -36652,6 +36699,7 @@ var CosyVoiceReaderPlugin = class extends Plugin {
     this.settings = selectKnownSettings(createDefaultSettings(), this.settings);
     this.settings.readingHistoryMode = historyMode(this.settings);
     this.settings.smartQuickStart = this.settings.smartQuickStart !== false;
+    this.settings.rapidQuickStart = this.settings.rapidQuickStart === true;
     normalizeCopilotSettings(this.settings);
     this.settings.playbackSpeed = normalizeSpeed(this.settings.playbackSpeed);
     this.settings.playbackVolume = normalizeVolume(this.settings.playbackVolume);
@@ -38412,6 +38460,7 @@ ${embed}
       markdownSource: options.markdownSource || null,
       speechEngine: configuration.speechEngine,
       smartQuickStart: this.settings.smartQuickStart !== false,
+      rapidQuickStart: this.settings.rapidQuickStart === true,
       synthesisSettings: { ...this.settings, readingPositions: {} },
       systemVoice: configuration.systemVoice || "",
       systemSpeechControllers: /* @__PURE__ */ new Set(),
@@ -38446,18 +38495,19 @@ ${embed}
     this.notifySessionChunkWaiters(session);
     for (const wake of Array.from(session?.operationWaiters || [])) wake();
   }
-  async waitForSessionOperation(session, operation) {
+  async waitForSessionOperation(session, operation, target = null) {
     session.operationWaiters || (session.operationWaiters = /* @__PURE__ */ new Set());
+    const navigationPending = () => Number.isInteger(session.requestedChunkIndex) && (!target || session.requestedChunkIndex !== target.index || (session.requestedPartIndex || 0) !== target.part);
     let wake;
     const interrupted = new Promise((resolve) => {
       wake = () => resolve(null);
       session.operationWaiters.add(wake);
     });
     try {
-      if (!this.isActive(session) || Number.isInteger(session.requestedChunkIndex)) wake();
+      if (!this.isActive(session) || navigationPending()) wake();
       return await Promise.race([interrupted, operation]);
     } catch (error) {
-      if (!this.isActive(session) || Number.isInteger(session.requestedChunkIndex)) return null;
+      if (!this.isActive(session) || navigationPending()) return null;
       throw error;
     } finally {
       session.operationWaiters.delete(wake);
@@ -38991,6 +39041,7 @@ ${embed}
   }
   async runSpeechSession(session) {
     const preparedChunks = /* @__PURE__ */ new Map();
+    const readyChunks = /* @__PURE__ */ new Set();
     const getPreparedChunk = (index, part = 0, foreground = false) => {
       planSpeechParts(session, index, foreground && !session.seekTarget);
       const key = `${index}:${part}`;
@@ -38999,6 +39050,8 @@ ${embed}
         preparing.catch(() => {
         });
         preparedChunks.set(key, preparing);
+        preparing.then(() => readyChunks.add(key), () => {
+        });
       }
       return preparedChunks.get(key);
     };
@@ -39049,7 +39102,21 @@ ${embed}
         session.currentChunkIndex = index;
         session.currentPartIndex = part;
         if (session.lastCompletedChunkIndex === index) session.lastCompletedChunkIndex = null;
-        const prepared = await this.waitForSessionOperation(session, getPreparedChunk(index, part, true));
+        const key = `${index}:${part}`;
+        const reused = preparedChunks.has(key);
+        const preparation = getPreparedChunk(index, part, true);
+        this.updateStatus(`${session.engineLabel} preparing ${index + 1}/${session.totalChunks}`, {
+          preparationStatus: readyChunks.has(key) ? "loading" : reused ? "waiting" : "synthesizing",
+          phase: "synthesizing",
+          currentChunk: index + 1,
+          totalChunks: session.totalChunks,
+          ...getChunkNavigationState(index + 1, session.totalChunks),
+          canPause: true,
+          canStop: true,
+          canSeek: false,
+          progress: session.totalChunks ? (index + this.getSegmentTiming(session, index, part, 0).fraction) / session.totalChunks : 0
+        });
+        const prepared = await this.waitForSessionOperation(session, preparation);
         if (!this.isActive(session)) {
           break;
         }
@@ -39138,7 +39205,7 @@ ${embed}
     const isBackgroundPrefetch = Boolean(
       !isAudioExport && Number.isInteger(session.currentChunkIndex) && (index !== session.currentChunkIndex || part !== (session.currentPartIndex || 0))
     );
-    if (!isBackgroundPrefetch) {
+    if (!isBackgroundPrefetch && this.isActive(session) && !Number.isInteger(session.requestedChunkIndex)) {
       this.updateStatus(`${engineLabel} synth ${index + 1}/${session.totalChunks || 0}`, {
         canPause: !isAudioExport,
         ...isAudioExport ? { canNextChunk: false, canPreviousChunk: false } : getChunkNavigationState(index + 1, session.totalChunks),
@@ -39668,7 +39735,15 @@ ${embed}
     if (!this.isActive(session) || Number.isInteger(session.requestedChunkIndex) && (session.requestedChunkIndex !== index || (session.requestedPartIndex || 0) !== part)) {
       return;
     }
-    const source = await this.createPlayableAudioSource(prepared);
+    this.updateStatus(`${session.engineLabel} loading audio`, { preparationStatus: "loading" });
+    const loadingSource = this.createPlayableAudioSource(prepared);
+    const source = await this.waitForSessionOperation(session, loadingSource, { index, part });
+    if (!source) {
+      loadingSource.then((value) => value.release(), () => {
+      }).catch(() => {
+      });
+      return;
+    }
     if (!this.isActive(session) || Number.isInteger(session.requestedChunkIndex) && (session.requestedChunkIndex !== index || (session.requestedPartIndex || 0) !== part)) {
       source.release();
       return;
@@ -39785,6 +39860,7 @@ ${embed}
           currentText: previewText(Array.isArray(session.chunks) ? session.chunks[index] : ""),
           isPaused: false,
           phase: "playing",
+          preparationStatus: "",
           progress: (index + this.getSegmentTiming(session, index, part, 0).fraction) / playbackTotal,
           status: "running",
           totalChunks: playbackTotal
@@ -40035,6 +40111,7 @@ ${embed}
       currentText: previewText(session.chunks?.[targetIndex] || ""),
       isPaused: false,
       phase: "queued",
+      preparationStatus: "",
       progress: total ? targetIndex / total : 0,
       status: "running",
       totalChunks: total
@@ -40300,7 +40377,7 @@ var CosyVoiceReaderView = class extends ItemView {
     const progressInput = progressTrack.createEl("input", {
       cls: "note-reader-cosyvoice-progress-input",
       attr: {
-        "aria-label": this.translate("Reading progress"),
+        "aria-label": `${this.translate("Reading progress")} - ${this.plugin.settings?.settingsLanguage === "chinese" ? "\u8DF3\u8F6C\u5230\u6307\u5B9A\u5206\u6BB5\u7684\u5F00\u5934\uFF1B\u672A\u5408\u6210\u7684\u5206\u6BB5\u9700\u8981\u7B49\u5F85\u5408\u6210\u3002" : "Jump to the start of a segment; unprepared segments require synthesis."}`,
         max: "1000",
         min: "0",
         step: "1",
@@ -40446,7 +40523,7 @@ var CosyVoiceReaderView = class extends ItemView {
     );
     const details = extra.createDiv({ cls: "note-reader-cosyvoice-details" });
     details.createDiv({ cls: "note-reader-cosyvoice-detail-label", text: this.translate("Phase") });
-    details.createDiv({ cls: "note-reader-cosyvoice-detail-value", text: state.phase });
+    details.createDiv({ cls: "note-reader-cosyvoice-detail-value", text: preparationStatusText(state, this.plugin.settings.settingsLanguage) || state.phase });
     details.createDiv({ cls: "note-reader-cosyvoice-detail-label", text: this.translate("Source") });
     details.createDiv({ cls: "note-reader-cosyvoice-detail-value", text: state.source || "-" });
     if (state.error) {
@@ -41064,10 +41141,11 @@ var CosyVoiceReaderSettingTab = class extends PluginSettingTab {
     containerEl.createEl("h3", { text: translateInterface(settingsLanguage, "Playback", "\u64AD\u653E") });
     new Setting(containerEl).setName(translateInterface(settingsLanguage, "Smart quick start", "\u667A\u80FD\u5FEB\u901F\u8D77\u8BFB")).setDesc(translateInterface(
       settingsLanguage,
-      "Split unprepared playback targets at complete sentences after 20 and 40 characters. Reuse existing requests; exports keep normal segments. Applies to the next reading session.",
-      "\u5C1A\u672A\u5408\u6210\u7684\u64AD\u653E\u76EE\u6807\u6309\u5B8C\u6574\u53E5\u5B50\u7D2F\u52A0\u523020\u300140\u5B57\uFF0C\u518D\u5408\u6210\u5269\u4F59\u5185\u5BB9\uFF1B\u590D\u7528\u5DF2\u6709\u8BF7\u6C42\uFF0C\u5BFC\u51FA\u4FDD\u6301\u5E38\u89C4\u5206\u6BB5\u3002\u4E0B\u6B21\u6717\u8BFB\u751F\u6548\u3002"
-    )).addToggle((toggle) => toggle.setValue(this.plugin.settings.smartQuickStart !== false).onChange(async (value) => {
-      this.plugin.settings.smartQuickStart = value;
+      "Standard uses complete sentences at 20 then 40 characters. Rapid lets a complete first sentence of 5\u201319 non-whitespace characters play sooner, then uses 40; otherwise it follows Standard. No extra prefetch or splitting of existing requests. Exports are unchanged. Applies to the next reading session; latency varies by provider.",
+      "\u6807\u51C6\u6A21\u5F0F\u6309\u6574\u53E5\u7D2F\u52A0\u81F320\u5B57\uFF0C\u518D\u4ECE\u4F59\u6587\u7D2F\u52A040\u5B57\u3002\u6781\u901F\u6A21\u5F0F\u5141\u8BB85\uFF5E19\u5B57\u7684\u9996\u4E2A\u5B8C\u6574\u77ED\u53E5\u63D0\u524D\u64AD\u653E\uFF0C\u968F\u540E\u4ECD\u752840\u5B57\u95E8\u69DB\uFF1B\u4E0D\u7B26\u5408\u65F6\u6CBF\u7528\u6807\u51C6\u89C4\u5219\uFF08\u4E0D\u8BA1\u7A7A\u767D\uFF09\u3002\u4E0D\u589E\u52A0\u9884\u5408\u6210\u6570\u91CF\u3001\u4E0D\u62C6\u5206\u5DF2\u6709\u8BF7\u6C42\uFF0C\u5BFC\u51FA\u4E0D\u53D8\u3002\u4E0B\u6B21\u6717\u8BFB\u751F\u6548\uFF0C\u5B9E\u9645\u63D0\u901F\u53D6\u51B3\u4E8E\u670D\u52A1\u5546\u3002"
+    )).addDropdown((dropdown) => dropdown.addOption("off", translateInterface(settingsLanguage, "Off", "\u5173\u95ED")).addOption("standard", translateInterface(settingsLanguage, "Standard quick start", "\u6807\u51C6\u8D77\u8BFB")).addOption("rapid", translateInterface(settingsLanguage, "Rapid quick start", "\u6781\u901F\u8D77\u8BFB")).setValue(this.plugin.settings.smartQuickStart === false ? "off" : this.plugin.settings.rapidQuickStart === true ? "rapid" : "standard").onChange(async (value) => {
+      this.plugin.settings.smartQuickStart = value !== "off";
+      this.plugin.settings.rapidQuickStart = value === "rapid";
       await this.plugin.saveSettings();
     }));
     if (selectedSpeechEngine !== "system-tts") new Setting(containerEl).setName(ui.speedName).setDesc(ui.speedDesc).addSlider((slider) => {
