@@ -777,6 +777,30 @@
   display: none;
 }
 
+.note-reader-byok-consent .setting-item-description {
+  white-space: pre-line;
+}
+
+.note-reader-byok-consent details {
+  margin: 0 0 16px;
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.note-reader-byok-consent summary {
+  cursor: pointer;
+}
+
+.note-reader-byok-privacy-link {
+  margin-bottom: 16px;
+  max-width: 100%;
+  height: auto;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
 .note-reader-settings-panel .setting-item {
   flex-wrap: wrap;
   gap: 8px;

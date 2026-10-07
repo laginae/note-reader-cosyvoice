@@ -37,6 +37,8 @@ const { getSpeechParts, planSpeechParts, adjacentSpeechPart, getSpeechPartTiming
 const { preparationStatusText } = require('./preparation-status');
 const { locateReading } = require('./locate-reading');
 const { MIMO_ENDPOINT, MIMO_DEFAULTS, MIMO_VOICES, MIMO_MAX_CHUNK_CHARS, normalizeMimoSettings, buildMimoRequestBody, decodeMimoAudio } = require('./mimo-tts');
+const { BYOK_DEFAULTS, normalizeByokSettings, getByokProfile, getByokConfigurationError, assertByokAuthorized, buildByokRequest, safeByokRequestError } = require('./byok-tts');
+const { displayByokSettings } = require('./byok-settings');
 const {
   MAX_EXPORTED_AUDIO_BYTES,
   bufferToArrayBuffer,
@@ -87,7 +89,7 @@ const SETTINGS_LANGUAGES = Object.keys(LANGUAGES);
 const AUDIO_EXPORT_LOCATIONS = ['obsidian-attachment', 'note-folder', 'custom-folder'];
 const AUDIO_EXPORT_SCOPES = ['entire', 'selection', 'from-selection'];
 const CREDENTIAL_SOURCES = ['obsidian-secret', 'key-file'];
-const SPEECH_ENGINES = ['local-cosyvoice', 'system-tts', 'edge-tts', 'azure-speech', 'openrouter-tts', 'mimo-tts'];
+const SPEECH_ENGINES = ['local-cosyvoice', 'system-tts', 'edge-tts', 'azure-speech', 'openrouter-tts', 'mimo-tts', 'byok-tts'];
 const AZURE_SPEECH_CLOUDS = ['public', 'china'];
 const REMOTE_TTS_MAX_AUDIO_BYTES = 20 * 1024 * 1024;
 const REMOTE_TTS_MAX_ATTEMPTS = 3;
@@ -247,7 +249,7 @@ const SETTINGS_UI_TEXT = {
     settingsLanguageEnglish: 'English',
     settingsLanguageChinese: '中文',
     speechEngineName: 'Speech engine',
-    speechEngineDesc: 'Choose local CosyVoice, installed system speech (Windows/macOS), or opt-in Edge, Azure, OpenRouter or MiMo online TTS.',
+    speechEngineDesc: 'Choose local CosyVoice, installed system speech (Windows/macOS), or opt-in Edge, Azure, OpenRouter, MiMo or a custom speech API (BYOK).',
     speechEngineLocal: 'Local CosyVoice',
     speechEngineSystem: 'System local speech (Windows/macOS)',
     speechEngineEdge: 'Microsoft Edge online voice',
@@ -361,7 +363,6 @@ const SETTINGS_UI_TEXT = {
     feedbackDesc: 'Open GitHub Issues to report a problem, request a feature, or follow existing reports. Do not include API keys or private note text.',
     feedbackButton: 'Open GitHub Issues',
     feedbackTooltip: 'Open the feedback page in your browser',
-    commandsFooter: 'Commands also include resume the current file, seek backward or forward 5 seconds, and move to the previous or next reading chunk.',
   },
   chinese: {
     settingsLanguageName: '设置界面语言',
@@ -369,7 +370,7 @@ const SETTINGS_UI_TEXT = {
     settingsLanguageEnglish: 'English',
     settingsLanguageChinese: '中文',
     speechEngineName: '语音引擎',
-    speechEngineDesc: '选择本地 CosyVoice、已安装的系统语音（Windows/macOS），或主动授权 Edge、Azure、OpenRouter、MiMo 在线语音。',
+    speechEngineDesc: '选择本地 CosyVoice、已安装的系统语音（Windows/macOS），或主动授权 Edge、Azure、OpenRouter、MiMo、自定义语音 API（BYOK）。',
     speechEngineLocal: '本地 CosyVoice',
     speechEngineSystem: '系统本地语音（Windows/macOS）',
     speechEngineEdge: 'Microsoft Edge 在线语音',
@@ -483,7 +484,6 @@ const SETTINGS_UI_TEXT = {
     feedbackDesc: '打开 GitHub Issues 报告问题、提出功能建议或查看现有反馈。请勿提交 API 密钥或私密笔记正文。',
     feedbackButton: '打开 GitHub Issues',
     feedbackTooltip: '在浏览器中打开反馈页面',
-    commandsFooter: '命令还包括从当前文件保存的位置继续朗读、后退或前进 5 秒，以及跳到上一个或下一个朗读分段。',
   },
 };
 const LATEX_COMMAND_REPLACEMENTS = {
@@ -1282,6 +1282,7 @@ function normalizeOnlinePrefetchChunks(value) {
 function getChunkLimitsForSpeechEngine(settings, speechEngine = normalizeSpeechEngine(settings && settings.speechEngine)) {
   if (isOnlineSpeechEngine(speechEngine)) {
     const limits = parseChunkLimits(settings && settings.onlineChunkLimits, DEFAULT_ONLINE_CHUNK_LIMITS);
+    if (speechEngine === 'byok-tts') return limits.map(limit => Math.min(limit, getByokProfile(settings)?.chunkLimit || 800));
     const mimoLimit = Math.max(50, Math.min(2000, Math.floor(Number(settings && settings.mimoChunkLimit) || MIMO_MAX_CHUNK_CHARS)));
     return speechEngine === 'mimo-tts' ? limits.map(limit => Math.min(limit, mimoLimit)) : limits;
   }
@@ -1579,6 +1580,7 @@ function getSpeechEngineLabel(settings = {}) {
   const speechEngine = normalizeSpeechEngine(settings.speechEngine);
   if (speechEngine === 'system-tts') return settings.settingsLanguage === 'chinese' ? '系统本地语音' : 'System local speech';
   if (speechEngine === 'mimo-tts') return 'Xiaomi MiMo TTS';
+  if (speechEngine === 'byok-tts') return 'BYOK TTS';
   if (speechEngine === 'edge-tts') {
     return 'Edge TTS';
   }
@@ -1612,6 +1614,8 @@ function createDefaultSettings() {
     ...ACADEMIC_DEFAULTS,
     ...COPILOT_DEFAULTS,
     ...MIMO_DEFAULTS,
+    ...BYOK_DEFAULTS,
+    byokProfiles: [],
     ...APPEARANCE_DEFAULTS,
     readingHighlight: 'sentence',
     webReadingHighlight: true,
@@ -2767,6 +2771,7 @@ class CosyVoiceReaderPlugin extends Plugin {
     this.settings.readingFollow = this.settings.readingFollow === true;
     this.settings.playbackSpeed = normalizeSpeed(this.settings.playbackSpeed);
     normalizeMimoSettings(this.settings);
+    normalizeByokSettings(this.settings);
     this.settings.audioExportFolder = normalizeAudioExportFolder(this.settings.audioExportFolder);
     this.settings.audioExportLocation = normalizeAudioExportLocation(this.settings.audioExportLocation);
     this.settings.speed = normalizeSpeed(this.settings.speed);
@@ -2823,6 +2828,7 @@ class CosyVoiceReaderPlugin extends Plugin {
     this.settings.playbackSpeed = normalizeSpeed(this.settings.playbackSpeed);
     this.settings.playbackVolume = normalizeVolume(this.settings.playbackVolume);
     normalizeMimoSettings(this.settings);
+    normalizeByokSettings(this.settings);
     this.settings.audioExportFolder = normalizeAudioExportFolder(this.settings.audioExportFolder);
     this.settings.audioExportLocation = normalizeAudioExportLocation(this.settings.audioExportLocation);
     this.settings.speed = normalizeSpeed(this.settings.speed);
@@ -2861,6 +2867,7 @@ class CosyVoiceReaderPlugin extends Plugin {
 
   async resetSettingsToDefaults(page = 'all') {
     this.settings = resetPageSettings(this.settings, createDefaultSettings(), page);
+    if (['engine', 'all'].includes(page) && this.activeSession?.speechEngine === 'byok-tts') await this.stopReading({ silent: true });
     if (this.currentAudio) {
       this.currentAudio.volume = this.settings.playbackVolume;
       this.currentAudio.playbackRate = this.settings.playbackSpeed;
@@ -4628,6 +4635,12 @@ class CosyVoiceReaderPlugin extends Plugin {
     const speechEngine = normalizeSpeechEngine(this.settings.speechEngine);
     const engineLabel = getSpeechEngineLabel(this.settings);
     const scriptPath = String(this.settings.scriptPath || '').trim();
+    if (speechEngine === 'byok-tts') {
+      const profile = getByokProfile(this.settings);
+      const error = getByokConfigurationError(profile)
+        || getRemoteCredentialConfigurationError(profile, this.vaultBasePath, this.app, 'BYOK API');
+      if (error) { new Notice(error, 10000); return null; }
+    }
     if (speechEngine === 'system-tts' && !['win32', 'darwin'].includes(os.platform())) {
       new Notice(this.settings.settingsLanguage === 'chinese'
         ? '系统本地语音目前仅支持 Windows 和 macOS。' : systemSpeechError('unavailable').message, 8000);
@@ -4681,6 +4694,7 @@ class CosyVoiceReaderPlugin extends Plugin {
 
     return {
       chunkLimits: getChunkLimitsForSpeechEngine(this.settings, speechEngine),
+      byokProfile: speechEngine === 'byok-tts' ? { ...getByokProfile(this.settings) } : null,
       engineLabel,
       prefetchChunks: getSynthesisPrefetchCount(this.settings, speechEngine),
       speechEngine,
@@ -4689,6 +4703,7 @@ class CosyVoiceReaderPlugin extends Plugin {
   }
 
   createSpeechSession(chunks, sourceLabel, configuration, options = {}) {
+    if (configuration.byokProfile) assertByokAuthorized(configuration.byokProfile, this.settings);
     const initialChunks = Array.isArray(chunks) ? chunks.slice() : [];
     const id = ++this.sequence;
     return {
@@ -4717,7 +4732,8 @@ class CosyVoiceReaderPlugin extends Plugin {
       speechEngine: configuration.speechEngine,
       smartQuickStart: this.settings.smartQuickStart !== false,
       rapidQuickStart: this.settings.rapidQuickStart === true,
-      synthesisSettings: { ...this.settings, readingPositions: {} },
+      synthesisSettings: { ...this.settings, byokProfiles: configuration.byokProfile
+        ? [{ ...configuration.byokProfile }] : (this.settings.byokProfiles || []).map(profile => ({ ...profile })), readingPositions: {} },
       systemVoice: configuration.systemVoice || '',
       systemSpeechControllers: new Set(),
       speechStarted: false,
@@ -5531,7 +5547,7 @@ class CosyVoiceReaderPlugin extends Plugin {
     session.speechStarted = true;
     session.synthesisSpeeds = session.synthesisSpeeds || {};
     const speechEngine = normalizeSpeechEngine(session.speechEngine || this.settings.speechEngine);
-    session.synthesisSpeeds[index] = speechEngine === 'system-tts' ? 1 : normalizeSpeed((session.synthesisSettings || this.settings).speed);
+    session.synthesisSpeeds[index] = ['system-tts', 'byok-tts'].includes(speechEngine) ? 1 : normalizeSpeed((session.synthesisSettings || this.settings).speed);
     const engineLabel = session.engineLabel || getSpeechEngineLabel(this.settings);
     const outputExtension = getAudioExportExtension(speechEngine);
     const basename = `${Date.now()}-${session.id}-${index}-${part}`;
@@ -5608,6 +5624,7 @@ class CosyVoiceReaderPlugin extends Plugin {
   }
 
   runSpeechEngine(inputPath, outputPath, session, speechEngine = normalizeSpeechEngine(this.settings.speechEngine)) {
+    if (speechEngine === 'byok-tts') return this.runByokTts(inputPath, outputPath, session);
     if (speechEngine === 'system-tts') return this.runSystemTts(inputPath, outputPath, session);
     if (speechEngine === 'edge-tts') {
       return this.runEdgeTts(inputPath, outputPath, session);
@@ -6053,6 +6070,29 @@ class CosyVoiceReaderPlugin extends Plugin {
     });
   }
 
+  async runByokTts(inputPath, outputPath, session) {
+    const profile = getByokProfile(session.synthesisSettings || this.settings);
+    assertByokAuthorized(profile, this.settings);
+    const apiKey = profile.credentialSource === 'obsidian-secret'
+      ? await this.readObsidianSecret(profile.secretName, 'BYOK API')
+      : await this.readSecretFileOutsideVault(profile.keyPath, 'BYOK API');
+    const text = await fs.promises.readFile(inputPath, 'utf8');
+    assertByokAuthorized(profile, this.settings);
+    if (!this.isActive(session)) throw new Error('Reading stopped.');
+    const request = buildByokRequest(profile, text, apiKey);
+    try {
+      await this.requestRemoteAudio({ ...request, outputPath, session,
+        decodeAudio: bytes => {
+          assertByokAuthorized(profile, this.settings);
+          return request.decodeAudio(bytes);
+        },
+      });
+    } catch (error) {
+      // Do not surface server bodies, custom endpoint paths or echoed credentials.
+      throw safeByokRequestError(error);
+    }
+  }
+
   async runMimoTts(inputPath, outputPath, session) {
     const settings = session.synthesisSettings || this.settings;
     if (settings.mimoConsent !== true) throw new Error('MiMo online processing consent is required.');
@@ -6130,7 +6170,7 @@ class CosyVoiceReaderPlugin extends Plugin {
   getSegmentTiming(session = this.activeSession, index = Math.max(0, (this.readerState.currentChunk || 1) - 1),
     part = session?.currentPartIndex || 0, time = this.currentAudio?.currentTime || 0) {
     const timing = session?.chunks?.[index] !== undefined
-      ? getSpeechPartTiming(session, index, part, time, session.speechEngine === 'system-tts' ? 1 : normalizeSpeed(this.settings.speed))
+      ? getSpeechPartTiming(session, index, part, time, ['system-tts', 'byok-tts'].includes(session.speechEngine) ? 1 : normalizeSpeed(this.settings.speed))
       : { duration: Number(this.currentAudio?.duration) || 0, current: time, offset: 0 };
     return { ...timing, fraction: timing.duration > 0 ? Math.min(1, timing.current / timing.duration) : 0 };
   }
@@ -6911,7 +6951,7 @@ class CosyVoiceReaderView extends ItemView {
 
     const estimate = estimatePlayback(this.plugin.activeSession,
       Math.max(0, (state.currentChunk || 1) - 1),
-      this.plugin.getSegmentTiming().current, this.plugin.activeSession?.speechEngine === 'system-tts' ? 1 : this.plugin.settings.speed,
+      this.plugin.getSegmentTiming().current, ['system-tts', 'byok-tts'].includes(this.plugin.activeSession?.speechEngine) ? 1 : this.plugin.settings.speed,
       normalizeSpeed(this.plugin.settings.playbackSpeed));
     if (estimate) {
       const zh = this.plugin.settings.settingsLanguage === 'chinese';
@@ -7370,6 +7410,16 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
     });
 
     const pages = createSettingsPages(containerEl, settingsLanguage, this.settingsPage, page => { this.settingsPage = page; });
+    new Setting(pages.privacy)
+      .setName(translateInterface(settingsLanguage, 'General privacy (all speech engines)', '通用隐私说明（适用于所有语音模式）'))
+      .setDesc(translateInterface(settingsLanguage,
+        'The plugin provides no developer-operated relay for reading text or API keys and has no built-in usage telemetry. Online reading sends text to your selected speech service or configured endpoint. Local wrappers and third-party programs control their own network behavior.',
+        '插件不提供用于中转朗读正文或 API 密钥的开发者服务器，也不内置使用情况遥测。在线朗读文本发送给你选择或配置的语音服务；本地包装脚本、第三方程序的网络行为由它们自身决定。'));
+    new Setting(pages.privacy)
+      .setName(translateInterface(settingsLanguage, 'What may be stored locally', '哪些数据可能保存在本地'))
+      .setDesc(translateInterface(settingsLanguage,
+        'Reading may create temporary text and audio, removed according to cleanup settings. Configuration, exported audio, optional reading history and diagnostic logs may remain locally. Provider training and retention policies are separate; see the notice for each speech mode. Revoking permission cannot recall data already sent.',
+        '朗读可能生成临时文本和音频，按清理设置删除。配置、导出音频、可选续读记录及诊断日志可能保存在本地。服务商的训练和留存政策需另行核实，请查看各语音模式的说明；撤销授权不能收回已经发送的数据。'));
     if (!['english','chinese'].includes(settingsLanguage)) new Setting(pages.privacy)
       .setDesc(translateInterface(settingsLanguage, 'Some advanced help remains in English. Interface language does not change the speech voice.'));
     containerEl = pages.engine;
@@ -7384,6 +7434,7 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
           .addOption('azure-speech', ui.speechEngineAzure)
           .addOption('openrouter-tts', ui.speechEngineOpenRouter)
           .addOption('mimo-tts', 'Xiaomi MiMo TTS')
+          .addOption('byok-tts', settingsLanguage === 'chinese' ? '自定义语音 API（BYOK）' : 'Custom speech API (BYOK)')
           .setValue(selectedSpeechEngine)
           .onChange(async (value) => {
             this.plugin.settings.speechEngine = normalizeSpeechEngine(value);
@@ -7393,6 +7444,16 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
       });
 
     if (selectedSpeechEngine === 'system-tts') this.displaySystemSpeechSettings(containerEl, settingsLanguage);
+    if (selectedSpeechEngine === 'byok-tts') displayByokSettings(this, containerEl, {
+      canUseSecrets: hasObsidianSecretStorageUi(this.app),
+      credentialError: profile => getRemoteCredentialConfigurationError(profile, this.plugin.vaultBasePath, this.app, 'BYOK API'),
+      openPrivacy: () => {
+        const button = this.containerEl.ownerDocument.getElementById(pages.privacy.getAttribute('aria-labelledby'));
+        button?.click();
+        button?.focus();
+        button?.scrollIntoView?.({ block: 'nearest' });
+      },
+    });
 
     if (selectedSpeechEngine === 'mimo-tts') {
       const zh = settingsLanguage === 'chinese';
@@ -7855,7 +7916,7 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
         this.plugin.settings.rapidQuickStart = value === 'rapid';
         await this.plugin.saveSettings();
       }));
-    if (selectedSpeechEngine !== 'system-tts') new Setting(containerEl)
+    if (!['system-tts', 'byok-tts'].includes(selectedSpeechEngine)) new Setting(containerEl)
       .setName(ui.speedName)
       .setDesc(ui.speedDesc)
       .addSlider((slider) => {
@@ -8144,19 +8205,17 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
           });
       });
 
-    containerEl.createEl('p', {
-      cls: 'note-reader-cosyvoice-muted',
-      text: ui.commandsFooter,
-    });
     const resetDescription = translateInterface(settingsLanguage,
       'Credentials, service configuration, interface language and reading records are preserved; no files are deleted. Synthesis changes apply to the next reading session. Resetting history mode to session-only removes its disk copy but keeps records in memory until exit.',
       '保留密钥引用、服务配置、界面语言和朗读记录，不删除文件。合成相关修改在下次朗读生效。历史模式恢复为仅本次运行时移除磁盘副本，内存记录保留至退出。');
     for (const [id, en, zh] of PAGES) {
       const title = translateInterface(settingsLanguage, 'Restore this page defaults', '恢复本页默认设置');
-      new Setting(pages[id]).setName(title).setDesc(translateInterface(settingsLanguage,
-        'Reset this category only. Credentials and records are preserved.', '仅恢复当前分类；保留密钥引用和朗读记录。'))
+      const pageResetDescription = id === 'privacy'
+        ? translateInterface(settingsLanguage, 'Turn off diagnostic logging. Other pages are unchanged.', '关闭诊断日志，不影响其他页面设置。')
+        : translateInterface(settingsLanguage, 'Reset this category only. Credentials and records are preserved.', '仅恢复当前分类；保留密钥引用和朗读记录。');
+      new Setting(pages[id]).setName(title).setDesc(pageResetDescription)
         .addButton(button => button.setButtonText(title).onClick(() => {
-          new SettingsConfirmModal(this.plugin, `${title}: ${translateInterface(settingsLanguage, en, zh)}`, resetDescription, async () => {
+          new SettingsConfirmModal(this.plugin, `${title}: ${translateInterface(settingsLanguage, en, zh)}`, id === 'privacy' ? pageResetDescription : resetDescription, async () => {
             await this.plugin.resetSettingsToDefaults(id); this.display(); new Notice(ui.settingsRestoredNotice);
           }).open();
         }));

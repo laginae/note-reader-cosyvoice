@@ -51,12 +51,16 @@ test('actual settings retain all groups and place global reset last without chan
 });
 
 test('all languages and engine branches render five panels with unchanged setting values',()=>{
-  for(const language of Object.keys(LANGUAGES)) for(const engine of ['local-cosyvoice','system-tts','edge-tts','azure-speech','openrouter-tts','mimo-tts']){
+  for(const language of Object.keys(LANGUAGES)) for(const engine of ['local-cosyvoice','system-tts','edge-tts','azure-speech','openrouter-tts','mimo-tts','byok-tts']){
     const {dom,doc,plugin}=settingsFixture(language,engine);
     assert.equal(doc.querySelectorAll('[role=tab]').length,PAGES.length,`${language}/${engine}`);
     assert.equal(doc.querySelectorAll('[role=tabpanel]:not([hidden])').length,1);
     assert.equal(plugin.settings.speechEngine,engine);assert.equal(plugin.settings.settingsLanguage,language);
     assert.equal(plugin.saves,0);
+    const privacy = doc.querySelector('[data-settings-page=privacy]');
+    assert.equal(privacy.firstElementChild.querySelector('.setting-item-name').textContent,
+      language === 'chinese' ? '通用隐私说明（适用于所有语音模式）' : 'General privacy (all speech engines)');
+    assert.match(privacy.firstElementChild.textContent, language === 'chinese' ? /遥测/ : /telemetry/);
     dom.window.close();
   }
 });
@@ -92,4 +96,22 @@ test('settings tabs stay in normal scroll flow instead of overlaying content; he
   assert.equal(dom.window.getComputedStyle(doc.querySelector('.note-reader-settings-header')).flexWrap,'wrap');
   assert.equal(doc.querySelectorAll('.note-reader-settings-header').length,1);
   dom.window.close();
+});
+
+test('privacy page omits editorial and playback clutter and describes only its own reset', async () => {
+  const { dom, doc, plugin, rows, modals } = settingsFixture('chinese');
+  try {
+    const panel = doc.querySelector('[data-settings-page=privacy]');
+    assert.doesNotMatch(panel.textContent, /不能宣称|命令还包括/);
+    const reset = rows.find(row => row.nameEl.textContent === '恢复本页默认设置' && row.settingEl.closest('[role=tabpanel]') === panel);
+    assert.equal(reset.descEl.textContent, '关闭诊断日志，不影响其他页面设置。');
+    plugin.runUserAction = async (_title, action) => action();
+    const changes = [];
+    plugin.resetSettingsToDefaults = async page => changes.push(page);
+    reset.click();
+    assert.match(modals.at(-1).contentEl.textContent, /关闭诊断日志，不影响其他页面设置/);
+    assert.doesNotMatch(modals.at(-1).contentEl.textContent, /历史模式|合成相关/);
+    await rows.at(-1).click();
+    assert.deepEqual(changes, ['privacy']);
+  } finally { dom.window.close(); }
 });

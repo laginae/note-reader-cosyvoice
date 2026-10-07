@@ -28,7 +28,8 @@ test('page reset has explicit ownership including hidden engines and preserves s
   const defaults = plugin.settings;
   const protectedKeys = ['settingsLanguage','readingPositions','scriptPath','edgeTtsExecutable','copilotChatFolder',
     'azureSpeechCloud','azureSpeechRegion','azureSpeechCredentialSource','azureSpeechKeyPath','azureSpeechSecretName',
-    'openRouterCredentialSource','openRouterKeyPath','openRouterSecretName','mimoCredentialSource','mimoKeyPath','mimoSecretName'];
+    'openRouterCredentialSource','openRouterKeyPath','openRouterSecretName','mimoCredentialSource','mimoKeyPath','mimoSecretName',
+    'byokProfiles','byokActiveProfileId'];
   assert.deepEqual(Object.keys(defaults).filter(k => !Object.values(PAGE_KEYS).flat().includes(k)).sort(), protectedKeys.sort());
   for (const page of Object.keys(PAGE_KEYS)) {
     const source = Object.fromEntries(Object.keys(defaults).map(key => [key, `changed:${key}`]));

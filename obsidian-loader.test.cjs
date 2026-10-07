@@ -205,7 +205,7 @@ const testVaultPath = path.resolve('test-vault');
 const testAudioPath = path.join(testVaultPath, '.obsidian', 'plugins', 'note-reader-cosyvoice', 'cache', 'a.wav');
 assert.strictEqual(manifest.id, 'note-reader-cosyvoice');
 assert.strictEqual(manifest.name, 'Note and PDF Voice Reader');
-assert.strictEqual(manifest.version, '0.9.3');
+assert.strictEqual(manifest.version, '0.9.4');
 assert.strictEqual(
   moduleObject.exports.__test.sanitizeTextForSpeech('第一段的结尾。\n\n## 第二节标题\n\n下一节的正文。'),
   '第一段的结尾。\n第二节标题\n下一节的正文。'
@@ -315,6 +315,8 @@ assert.deepStrictEqual(moduleObject.exports.__test.createDefaultSettings(), {
   mimoSecretName: '',
   mimoKeyPath: '',
   mimoVoice: '白桦',
+  byokProfiles: [],
+  byokActiveProfileId: '',
   audioExportFolder: '',
   audioExportLocation: 'obsidian-attachment',
   azureSpeechCloud: 'public',

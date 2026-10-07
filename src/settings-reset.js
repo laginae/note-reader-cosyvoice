@@ -18,6 +18,10 @@ function resetPageSettings(settings, defaults, page) {
   if (!keys) throw new Error('Unknown settings page');
   const next = { ...settings };
   for (const key of keys) if (Object.hasOwn(defaults, key)) next[key] = defaults[key];
+  // Preserve saved profiles and secret references, but require renewed permission.
+  if (['engine', 'all'].includes(page) && Array.isArray(next.byokProfiles)) {
+    next.byokProfiles = next.byokProfiles.map(profile => ({ ...profile, consent: '' }));
+  }
   return next;
 }
 

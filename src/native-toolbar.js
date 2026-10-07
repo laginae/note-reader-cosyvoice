@@ -281,7 +281,7 @@ class NativeReaderToolbar {
     this.chatButton.disabled = Boolean(exporting);
     const timing = this.plugin.getSegmentTiming?.() || { current: 0 };
     const estimate = estimatePlayback(session, Math.max(0, (state.currentChunk || 1) - 1), timing.current,
-      session?.speechEngine === 'system-tts' ? 1 : this.plugin.settings.speed, this.plugin.settings.playbackSpeed);
+      ['system-tts', 'byok-tts'].includes(session?.speechEngine) ? 1 : this.plugin.settings.speed, this.plugin.settings.playbackSpeed);
     this.time.textContent = estimate ? `${this.t('Remaining ~', '剩余约 ')}${formatDuration(estimate.remaining)}` : `${state.currentChunk || 0} / ${state.totalChunks || 0}`;
     const source = session?.markdownSource, ranges = source && source.filePath === this.view.file?.path
       ? currentSourceRanges(source, { index: session.currentChunkIndex }) : [];

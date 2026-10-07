@@ -81,6 +81,21 @@ With compatible offline voices, no speech text is sent to a TTS provider. **Wind
 
 The plugin always requests ZDR and denies provider data collection; it does not relax these settings if a route is unavailable. Text still passes through OpenRouter and an eligible provider. Voices and prices differ by model.
 
+### 5. Bring your own speech API (BYOK)
+
+Select **Custom speech API (BYOK)**, add a profile, then choose **OpenAI-compatible**, **ElevenLabs** or **MiniMax**. Profiles keep their own model, voice ID and credential reference. OpenAI-compatible services must implement the speech endpoint, not just a chat API; enter the complete HTTPS speech URL. ElevenLabs uses its official endpoint; MiniMax offers international and mainland China endpoints, which require the matching account/key.
+
+1. Enter the model and an available voice ID. The documentation button opens the provider's official API reference.
+2. Choose an Obsidian SecretStorage secret, or a one-line key file outside the vault. Never paste a key into the address or model fields.
+3. Review the endpoint and enable **Allow this configuration to process text**. The confirmation covers transmission, possible charges, training and retention risks. It is **not a ZDR or no-training certification** and does not enforce OpenRouter's ZDR routing policy.
+4. Use **Preview** for a fixed short sample before reading sensitive material. It consumes provider quota and replaces current playback.
+
+Changing the API type/address clears credential references; changing the model, voice or credential selection requires renewed consent. Revoking permission stops an active BYOK task. Profiles use MP3 for playback and export, local playback-speed control, and the existing online chunk/prefetch settings, with an additional configurable 800-character default cap. Failed BYOK requests are **not automatically retried**. Google Cloud, AWS Polly, arbitrary request scripts, voice cloning and non-speech OpenAI-compatible APIs are not included.
+
+Protocol references: [OpenAI speech](https://developers.openai.com/api/docs/guides/text-to-speech), [ElevenLabs speech](https://elevenlabs.io/docs/api-reference/text-to-speech/convert), [MiniMax speech](https://platform.minimax.io/docs/api-reference/speech-t2a-http).
+
+The authorization switch sits directly below profile selection, with the current permission status and destination. Expand **BYOK processing and billing risks** for this mode's notice, or use **View general privacy information** to open **Privacy and help**. The common disclosure there applies to every speech engine, not just BYOK. Default profile names follow the API type; manually named profiles keep their name and display the type alongside it.
+
 ### Start reading
 
 Open a note, text PDF, local HTML file or a loaded Web viewer page. Open the reader sidebar or toolbar, choose **whole document**, **selection**, or **from selection**, then start playback.
@@ -253,6 +268,10 @@ For Markdown and HTML, smart table filtering requires at least 8 data rows or 48
 Interface language, voice and formula language are independent. Formula conversion currently supports English and Chinese. The eight additional READMEs are concise translated guides; the full configuration reference remains in English and Chinese.
 
 ## Privacy
+
+**Applies to all speech engines:** the plugin provides no developer-operated relay for reading text or API keys and has no built-in usage telemetry. Online text goes to the selected speech service or configured endpoint; local wrappers and third-party programs control their own network behavior. Temporary text/audio, configuration, exports, optional reading history and diagnostic logs may exist locally. Temporary files follow your cleanup settings. Provider retention/training policies are separate, and revoking authorization cannot recall data already sent. The same general notice appears at the top of **Privacy and help** in settings.
+
+**BYOK:** text and the selected credential are sent directly to the configured HTTPS endpoint, which may forward text to upstream services. Review the provider, intermediary and account policies yourself. This plugin cannot verify or enforce no-training or zero data retention for BYOK. Consent is configuration-specific and off by default; HTTP redirects are not followed. API keys are read from SecretStorage or a file outside the vault, not stored in profile data. Export still requires its separate confirmation; failed BYOK synthesis requests are not automatically retried.
 
 By default, the plugin uses local TTS. In `Local CosyVoice` mode, the plugin itself does not send note or extracted PDF text to Microsoft, OpenAI, or another remote TTS service. The configured wrapper remains part of your trust boundary and may make its own network requests.
 

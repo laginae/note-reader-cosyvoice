@@ -542,6 +542,9 @@ var require_settings_reset = __commonJS({
       if (!keys) throw new Error("Unknown settings page");
       const next = { ...settings };
       for (const key of keys) if (Object.hasOwn(defaults, key)) next[key] = defaults[key];
+      if (["engine", "all"].includes(page) && Array.isArray(next.byokProfiles)) {
+        next.byokProfiles = next.byokProfiles.map((profile) => ({ ...profile, consent: "" }));
+      }
       return next;
     }
     module2.exports = { PAGE_KEYS, resetPageSettings: resetPageSettings2 };
@@ -10181,7 +10184,7 @@ var require_native_toolbar = __commonJS({
           session,
           Math.max(0, (state.currentChunk || 1) - 1),
           timing.current,
-          session?.speechEngine === "system-tts" ? 1 : this.plugin.settings.speed,
+          ["system-tts", "byok-tts"].includes(session?.speechEngine) ? 1 : this.plugin.settings.speed,
           this.plugin.settings.playbackSpeed
         );
         this.time.textContent = estimate ? `${this.t("Remaining ~", "\u5269\u4F59\u7EA6 ")}${formatDuration2(estimate.remaining)}` : `${state.currentChunk || 0} / ${state.totalChunks || 0}`;
@@ -34447,6 +34450,451 @@ var require_mimo_tts = __commonJS({
   }
 });
 
+// src/byok-tts.js
+var require_byok_tts = __commonJS({
+  "src/byok-tts.js"(exports2, module2) {
+    "use strict";
+    var { createHash, randomUUID } = require("crypto");
+    var { extractMp3Frames } = require_audio_export();
+    var BYOK_DEFAULTS2 = { byokProfiles: [], byokActiveProfileId: "" };
+    var BYOK_PROVIDERS = {
+      "openai-compatible": { name: "OpenAI-compatible", endpoint: "https://api.openai.com/v1/audio/speech", model: "gpt-4o-mini-tts", voice: "onyx", docs: "https://developers.openai.com/api/docs/guides/text-to-speech" },
+      elevenlabs: { name: "ElevenLabs", endpoint: "https://api.elevenlabs.io/v1/text-to-speech", model: "eleven_multilingual_v2", voice: "", docs: "https://elevenlabs.io/docs/api-reference/text-to-speech/convert" },
+      minimax: { name: "MiniMax", endpoint: "https://api.minimax.io/v1/t2a_v2", model: "speech-2.8-hd", voice: "", docs: "https://platform.minimax.io/docs/api-reference/speech-t2a-http" }
+    };
+    var MAX_BYOK_PROFILES = 20;
+    var clean = (value, max = 256) => typeof value === "string" ? value.trim().slice(0, max) : "";
+    function byokError(message) {
+      const error = new Error(`BYOK: ${message}`);
+      error.byokSafe = true;
+      return error;
+    }
+    function createByokProfile(provider = "openai-compatible") {
+      if (!Object.hasOwn(BYOK_PROVIDERS, provider)) provider = "openai-compatible";
+      const preset = BYOK_PROVIDERS[provider];
+      return normalizeProfile({ id: randomUUID(), name: preset.name, provider, ...preset });
+    }
+    function normalizeProfile(value = {}) {
+      const provider = clean(value.provider, 32);
+      const preset = Object.hasOwn(BYOK_PROVIDERS, provider) ? BYOK_PROVIDERS[provider] : null;
+      const name = clean(value.name, 80) || "BYOK";
+      const autoName = typeof value.autoName === "boolean" ? value.autoName : Object.values(BYOK_PROVIDERS).some((item) => item.name === name);
+      return {
+        id: clean(value.id, 80),
+        name: autoName && preset ? preset.name : name,
+        autoName,
+        provider,
+        endpoint: clean(value.endpoint, 2048),
+        model: clean(value.model),
+        voice: clean(value.voice),
+        credentialSource: value.credentialSource === "key-file" ? "key-file" : "obsidian-secret",
+        secretName: clean(value.secretName),
+        keyPath: clean(value.keyPath, 2048),
+        chunkLimit: Math.max(50, Math.min(2e3, Math.floor(Number(value.chunkLimit) || 800))),
+        consent: /^[a-f0-9]{64}$/.test(value.consent || "") ? value.consent : ""
+      };
+    }
+    function normalizeByokSettings2(settings) {
+      const ids = /* @__PURE__ */ new Set();
+      settings.byokProfiles = (Array.isArray(settings.byokProfiles) ? settings.byokProfiles : []).filter((value) => value && typeof value === "object").slice(0, MAX_BYOK_PROFILES).map(normalizeProfile).filter((profile) => {
+        if (!profile.id || ids.has(profile.id)) return false;
+        ids.add(profile.id);
+        return true;
+      });
+      settings.byokActiveProfileId = ids.has(settings.byokActiveProfileId) ? settings.byokActiveProfileId : "";
+    }
+    function getByokProfile2(settings) {
+      return settings?.byokProfiles?.find((profile) => profile.id === settings.byokActiveProfileId) || null;
+    }
+    function validateByokEndpoint(profile) {
+      let url;
+      try {
+        url = new URL(profile.endpoint);
+      } catch {
+        throw byokError("Enter a complete HTTPS speech endpoint. / \u8BF7\u586B\u5199\u5B8C\u6574 HTTPS \u8BED\u97F3\u63A5\u53E3\u5730\u5740\u3002");
+      }
+      if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash || /[\s\\]/.test(profile.endpoint)) {
+        throw byokError("Only HTTPS addresses without embedded credentials, query parameters or fragments are allowed. / \u5730\u5740\u987B\u4E3A HTTPS\uFF0C\u4E0D\u80FD\u542B\u5BC6\u94A5\u3001\u67E5\u8BE2\u53C2\u6570\u6216\u7247\u6BB5\u3002");
+      }
+      if (!Object.hasOwn(BYOK_PROVIDERS, profile.provider)) throw byokError("Choose a supported API type. / \u8BF7\u9009\u62E9\u652F\u6301\u7684\u63A5\u53E3\u7C7B\u578B\u3002");
+      if (profile.provider === "elevenlabs" && url.href !== BYOK_PROVIDERS.elevenlabs.endpoint) {
+        throw byokError("Use the ElevenLabs text-to-speech endpoint shown in the preset. / \u8BF7\u4F7F\u7528\u9884\u8BBE\u7684 ElevenLabs \u8BED\u97F3\u63A5\u53E3\u3002");
+      }
+      if (profile.provider === "minimax" && !["https://api.minimax.io/v1/t2a_v2", "https://api.minimaxi.com/v1/t2a_v2"].includes(url.href)) {
+        throw byokError("Use the MiniMax international or mainland China speech endpoint. / \u8BF7\u4F7F\u7528 MiniMax \u56FD\u9645\u7AD9\u6216\u56FD\u5185\u7AD9\u8BED\u97F3\u63A5\u53E3\u3002");
+      }
+      return url.href;
+    }
+    function byokConsentFingerprint(profile) {
+      if (!profile) return "";
+      try {
+        return createHash("sha256").update(JSON.stringify([
+          "byok-consent-v1",
+          profile.provider,
+          validateByokEndpoint(profile),
+          profile.model,
+          profile.voice,
+          profile.credentialSource,
+          profile.credentialSource === "key-file" ? profile.keyPath : profile.secretName
+        ])).digest("hex");
+      } catch {
+        return "";
+      }
+    }
+    function hasByokConsent(profile) {
+      const fingerprint = byokConsentFingerprint(profile);
+      return Boolean(fingerprint && profile.consent === fingerprint);
+    }
+    function getByokConfigurationError2(profile, requireConsent = true) {
+      if (!profile) return "BYOK: add and select an API profile. / \u8BF7\u6DFB\u52A0\u5E76\u9009\u62E9\u63A5\u53E3\u914D\u7F6E\u3002";
+      try {
+        validateByokEndpoint(profile);
+      } catch (error) {
+        return error.message;
+      }
+      if (!profile.model || !profile.voice || /[\r\n]/.test(profile.model + profile.voice)) return "BYOK: enter a model and voice ID. / \u8BF7\u586B\u5199\u6A21\u578B\u548C\u97F3\u8272 ID\u3002";
+      if (requireConsent && !hasByokConsent(profile)) return "BYOK: confirm data processing and billing risks for this configuration in settings. / \u8BF7\u5728\u8BBE\u7F6E\u4E2D\u786E\u8BA4\u5F53\u524D\u914D\u7F6E\u7684\u6570\u636E\u5904\u7406\u4E0E\u8D39\u7528\u98CE\u9669\u3002";
+      return null;
+    }
+    function updateByokProfile(profile, patch) {
+      const next = normalizeProfile({
+        ...profile,
+        ...patch,
+        ...Object.hasOwn(patch, "name") ? { autoName: false } : {},
+        id: profile.id
+      });
+      if (next.endpoint !== profile.endpoint || next.provider !== profile.provider) {
+        next.secretName = "";
+        next.keyPath = "";
+        next.consent = "";
+      }
+      if (byokConsentFingerprint(next) !== byokConsentFingerprint(profile)) next.consent = "";
+      return next;
+    }
+    function assertByokAuthorized2(profile, settings) {
+      const error = getByokConfigurationError2(profile);
+      if (error) throw byokError(error.replace(/^BYOK: /, ""));
+      const live = settings?.byokProfiles?.find((item) => item.id === profile.id);
+      if (!hasByokConsent(live) || byokConsentFingerprint(live) !== byokConsentFingerprint(profile) || live.chunkLimit !== profile.chunkLimit || settings.byokActiveProfileId !== profile.id || settings.speechEngine && settings.speechEngine !== "byok-tts") {
+        throw byokError("Authorization changed or was revoked; reading stopped. / \u6388\u6743\u5DF2\u66F4\u6539\u6216\u64A4\u9500\uFF0C\u6717\u8BFB\u5DF2\u505C\u6B62\u3002");
+      }
+    }
+    function decodeByokMp3(bytes) {
+      try {
+        extractMp3Frames(bytes);
+      } catch {
+        throw byokError("The service did not return valid MP3 audio. / \u670D\u52A1\u672A\u8FD4\u56DE\u6709\u6548 MP3 \u97F3\u9891\u3002");
+      }
+      return bytes;
+    }
+    function decodeMinimaxAudio(bytes) {
+      let response;
+      try {
+        response = JSON.parse(bytes.toString("utf8"));
+      } catch {
+        throw byokError("Invalid MiniMax response. / MiniMax \u54CD\u5E94\u683C\u5F0F\u65E0\u6548\u3002");
+      }
+      const code = response?.base_resp?.status_code;
+      if (code !== 0) {
+        const detail = code === 1008 ? "Insufficient balance. / \u4F59\u989D\u4E0D\u8DB3\u3002" : code === 1002 ? "Rate limit reached. / \u8BF7\u6C42\u9891\u7387\u8D85\u9650\u3002" : code === 1004 ? "Authentication failed. / \u5BC6\u94A5\u8BA4\u8BC1\u5931\u8D25\u3002" : "Check the model, voice, account and service status. / \u8BF7\u68C0\u67E5\u6A21\u578B\u3001\u97F3\u8272\u3001\u8D26\u6237\u548C\u670D\u52A1\u72B6\u6001\u3002";
+        throw byokError(`MiniMax ${Number.isInteger(code) ? code : "error"}: ${detail}`);
+      }
+      const audio = response?.data?.audio;
+      if (response?.data?.status !== 2 || typeof audio !== "string" || !audio.length || audio.length % 2 || !/^[a-f0-9]+$/i.test(audio)) {
+        throw byokError("MiniMax did not return complete inline audio. / MiniMax \u672A\u8FD4\u56DE\u5B8C\u6574\u7684\u5185\u5D4C\u97F3\u9891\u3002");
+      }
+      return decodeByokMp3(Buffer.from(audio, "hex"));
+    }
+    function buildByokRequest2(profile, text, apiKey) {
+      const error = getByokConfigurationError2(profile);
+      if (error) throw byokError(error.replace(/^BYOK: /, ""));
+      if (typeof apiKey !== "string" || !apiKey.trim() || /[\r\n]/.test(apiKey)) throw byokError("Invalid API credential. / API \u5BC6\u94A5\u65E0\u6548\u3002");
+      if (typeof text !== "string" || !text.trim() || text.length > profile.chunkLimit) throw byokError("Empty text or segment exceeds the profile limit. / \u6587\u672C\u4E3A\u7A7A\u6216\u8D85\u51FA\u5F53\u524D\u914D\u7F6E\u7684\u5206\u6BB5\u4E0A\u9650\u3002");
+      let endpoint = validateByokEndpoint(profile);
+      const headers = { "Content-Type": "application/json", Accept: profile.provider === "minimax" ? "application/json" : "audio/mpeg" };
+      let body;
+      if (profile.provider === "elevenlabs") {
+        endpoint += `/${encodeURIComponent(profile.voice)}?output_format=mp3_44100_128`;
+        headers["xi-api-key"] = apiKey;
+        body = { text, model_id: profile.model };
+      } else {
+        headers.Authorization = `Bearer ${apiKey}`;
+        body = profile.provider === "minimax" ? { model: profile.model, text, stream: false, voice_setting: { voice_id: profile.voice, speed: 1 }, audio_setting: { format: "mp3", sample_rate: 32e3, bitrate: 128e3, channel: 1 }, output_format: "hex" } : { model: profile.model, input: text, voice: profile.voice, response_format: "mp3", speed: 1 };
+      }
+      return {
+        endpoint,
+        headers,
+        body: JSON.stringify(body),
+        serviceLabel: "BYOK TTS",
+        decodeAudio: profile.provider === "minimax" ? decodeMinimaxAudio : decodeByokMp3,
+        retryTemporaryFailures: false
+      };
+    }
+    function safeByokRequestError2(error) {
+      if (error?.byokSafe) return error;
+      const status = Number(error?.statusCode);
+      const detail = status === 401 || status === 403 ? "Check the API key and account permissions. / \u8BF7\u68C0\u67E5\u5BC6\u94A5\u548C\u8D26\u6237\u6743\u9650\u3002" : status === 402 ? "Insufficient balance or billing quota. / \u4F59\u989D\u4E0D\u8DB3\u6216\u8BA1\u8D39\u989D\u5EA6\u5DF2\u7528\u5C3D\u3002" : status === 429 ? "Rate or quota limit reached. / \u8BF7\u6C42\u9891\u7387\u6216\u989D\u5EA6\u8D85\u9650\u3002" : status >= 300 && status < 400 ? "Redirects are not followed; check the endpoint. / \u4E0D\u4F1A\u8DDF\u968F\u91CD\u5B9A\u5411\uFF0C\u8BF7\u68C0\u67E5\u63A5\u53E3\u5730\u5740\u3002" : "Check connectivity, HTTPS endpoint, speech model, voice and account. / \u8BF7\u68C0\u67E5\u7F51\u7EDC\u3001HTTPS \u63A5\u53E3\u3001\u8BED\u97F3\u6A21\u578B\u3001\u97F3\u8272\u548C\u8D26\u6237\u3002";
+      return byokError(`${Number.isInteger(status) && status >= 100 && status <= 599 ? `HTTP ${status}. ` : ""}${detail} No automatic retry. / \u672A\u81EA\u52A8\u91CD\u8BD5\u3002`);
+    }
+    module2.exports = {
+      BYOK_DEFAULTS: BYOK_DEFAULTS2,
+      BYOK_PROVIDERS,
+      MAX_BYOK_PROFILES,
+      createByokProfile,
+      normalizeByokSettings: normalizeByokSettings2,
+      getByokProfile: getByokProfile2,
+      validateByokEndpoint,
+      byokConsentFingerprint,
+      hasByokConsent,
+      getByokConfigurationError: getByokConfigurationError2,
+      updateByokProfile,
+      assertByokAuthorized: assertByokAuthorized2,
+      buildByokRequest: buildByokRequest2,
+      decodeByokMp3,
+      decodeMinimaxAudio,
+      safeByokRequestError: safeByokRequestError2
+    };
+  }
+});
+
+// src/byok-settings.js
+var require_byok_settings = __commonJS({
+  "src/byok-settings.js"(exports2, module2) {
+    "use strict";
+    var { Modal: Modal2, Setting, SecretComponent: SecretComponent2, Notice: Notice2 } = require("obsidian");
+    var { translate } = require_i18n();
+    var {
+      BYOK_PROVIDERS,
+      MAX_BYOK_PROFILES,
+      createByokProfile,
+      getByokProfile: getByokProfile2,
+      updateByokProfile,
+      getByokConfigurationError: getByokConfigurationError2,
+      byokConsentFingerprint,
+      hasByokConsent
+    } = require_byok_tts();
+    var ByokConfirmModal = class extends Modal2 {
+      constructor(plugin, title, description, action, closed = () => {
+      }) {
+        super(plugin.app);
+        Object.assign(this, { plugin, title, description, action, afterByokClose: closed });
+      }
+      onOpen() {
+        const t = (en, zh) => translate(this.plugin.settings.settingsLanguage, en, zh);
+        this.contentEl.createEl("h2", { text: this.title });
+        this.contentEl.createEl("p", { text: this.description });
+        new Setting(this.contentEl).addButton((button) => button.setButtonText(t("Cancel", "\u53D6\u6D88")).onClick(() => this.close())).addButton((button) => button.setButtonText(t("Confirm", "\u786E\u8BA4")).onClick(async () => {
+          button.setDisabled(true);
+          try {
+            await this.plugin.runUserAction(this.title, this.action);
+            this.close();
+          } finally {
+            button.setDisabled(false);
+          }
+        }));
+      }
+      onClose() {
+        this.contentEl.empty();
+        this.afterByokClose();
+      }
+    };
+    function displayByokSettings2(tab, containerEl, { canUseSecrets, credentialError, openPrivacy }) {
+      const plugin = tab.plugin;
+      const t = (en, zh) => translate(plugin.settings.settingsLanguage, en, zh);
+      const profile = getByokProfile2(plugin.settings);
+      const find = () => plugin.settings.byokProfiles.find((item) => item.id === profile?.id);
+      const stop = async () => {
+        if (plugin.activeSession?.speechEngine === "byok-tts") await plugin.stopReading({ silent: true });
+      };
+      let refresh = () => {
+      }, secretControl, profileDropdown;
+      const profileLabel = (item) => {
+        const type = BYOK_PROVIDERS[item.provider]?.name;
+        return type && item.name !== type ? `${item.name} (${type})` : item.name;
+      };
+      const update = async (patch, redraw = false) => {
+        const current = find();
+        if (!current) return;
+        const next = updateByokProfile(current, patch);
+        plugin.settings.byokProfiles = plugin.settings.byokProfiles.map((item) => item.id === current.id ? next : item);
+        if (next.endpoint !== current.endpoint || next.provider !== current.provider) secretControl?.setValue("");
+        refresh();
+        if (current.consent !== next.consent || current.chunkLimit !== next.chunkLimit) await stop();
+        await plugin.saveSettings();
+        if (redraw) tab.display();
+      };
+      new Setting(containerEl).setName(t("Custom speech API (BYOK)", "\u81EA\u5B9A\u4E49\u8BED\u97F3 API\uFF08BYOK\uFF09")).setDesc(t(
+        "OpenAI-compatible speech, ElevenLabs and MiniMax. HTTPS only; MP3 output. Chat-only compatibility is not enough. Credentials are sent directly to the configured service.",
+        "\u652F\u6301 OpenAI \u517C\u5BB9\u8BED\u97F3\u63A5\u53E3\u3001ElevenLabs\u3001MiniMax\u3002\u4EC5\u9650 HTTPS \u548C MP3 \u8F93\u51FA\uFF1B\u4EC5\u517C\u5BB9\u804A\u5929\u63A5\u53E3\u4E0D\u80FD\u7528\u4E8E\u6717\u8BFB\u3002\u5BC6\u94A5\u76F4\u63A5\u53D1\u9001\u5230\u914D\u7F6E\u7684\u670D\u52A1\u3002"
+      ));
+      new Setting(containerEl).setName(t("API profile", "\u63A5\u53E3\u914D\u7F6E")).addDropdown((dropdown) => {
+        profileDropdown = dropdown;
+        dropdown.addOption("", t("Select a profile", "\u8BF7\u9009\u62E9\u914D\u7F6E"));
+        for (const item of plugin.settings.byokProfiles) dropdown.addOption(item.id, profileLabel(item));
+        dropdown.setValue(profile?.id || "").onChange(async (id) => {
+          await stop();
+          plugin.settings.byokActiveProfileId = id;
+          await plugin.saveSettings();
+          tab.display();
+        });
+      }).addExtraButton((button) => button.setIcon("plus").setTooltip(t("Add API profile", "\u6DFB\u52A0\u63A5\u53E3\u914D\u7F6E")).onClick(async () => {
+        if (plugin.settings.byokProfiles.length >= MAX_BYOK_PROFILES) {
+          new Notice2(t("Maximum 20 API profiles.", "\u6700\u591A\u4FDD\u5B58 20 \u4E2A\u63A5\u53E3\u914D\u7F6E\u3002"));
+          return;
+        }
+        await stop();
+        const next = createByokProfile();
+        plugin.settings.byokProfiles = [...plugin.settings.byokProfiles, next];
+        plugin.settings.byokActiveProfileId = next.id;
+        await plugin.saveSettings();
+        tab.display();
+      }));
+      if (!profile) return;
+      const consentHost = containerEl.createDiv({ cls: "note-reader-byok-consent" });
+      new Setting(containerEl).setName(t("Profile name", "\u914D\u7F6E\u540D\u79F0")).setDesc(t("Default names follow the API type. A name you enter is kept.", "\u9ED8\u8BA4\u540D\u79F0\u968F\u63A5\u53E3\u7C7B\u578B\u66F4\u65B0\uFF1B\u624B\u52A8\u547D\u540D\u540E\u4FDD\u7559\u81EA\u5B9A\u4E49\u540D\u79F0\u3002")).addText((text) => text.setValue(profile.name).onChange((value) => update({ name: value }))).addExtraButton((button) => button.setIcon("trash-2").setTooltip(t("Delete profile", "\u5220\u9664\u914D\u7F6E")).onClick(() => {
+        new ByokConfirmModal(
+          plugin,
+          t("Delete API profile", "\u5220\u9664\u63A5\u53E3\u914D\u7F6E"),
+          t("Delete this profile? Stored secrets and external key files will not be deleted.", "\u5220\u9664\u6B64\u914D\u7F6E\uFF1F\u4E0D\u4F1A\u5220\u9664\u79D8\u5BC6\u5B58\u50A8\u4E2D\u7684\u5BC6\u94A5\u6216\u5916\u90E8\u5BC6\u94A5\u6587\u4EF6\u3002"),
+          async () => {
+            await stop();
+            plugin.settings.byokProfiles = plugin.settings.byokProfiles.filter((item) => item.id !== profile.id);
+            if (plugin.settings.byokActiveProfileId === profile.id) plugin.settings.byokActiveProfileId = "";
+            await plugin.saveSettings();
+            tab.display();
+          }
+        ).open();
+      }));
+      new Setting(containerEl).setName(t("API type", "\u63A5\u53E3\u7C7B\u578B")).addDropdown((dropdown) => {
+        for (const [id, preset] of Object.entries(BYOK_PROVIDERS)) dropdown.addOption(id, preset.name);
+        dropdown.setValue(profile.provider).onChange((provider) => {
+          const preset = BYOK_PROVIDERS[provider];
+          return update({ provider, endpoint: preset.endpoint, model: preset.model, voice: preset.voice }, true);
+        });
+      });
+      const endpointSetting = new Setting(containerEl).setName(t("Speech endpoint", "\u8BED\u97F3\u63A5\u53E3\u5730\u5740")).setDesc(t(
+        "Changing this address clears credential references and requires new consent. Stored secrets are not deleted.",
+        "\u4FEE\u6539\u5730\u5740\u4F1A\u6E05\u9664\u5BC6\u94A5\u5173\u8054\u5E76\u8981\u6C42\u91CD\u65B0\u786E\u8BA4\uFF1B\u5DF2\u4FDD\u5B58\u7684\u79D8\u5BC6\u4E0D\u4F1A\u88AB\u5220\u9664\u3002"
+      ));
+      if (profile.provider === "openai-compatible") {
+        endpointSetting.addText((text) => text.setValue(profile.endpoint).setPlaceholder("https://api.example.com/v1/audio/speech").onChange((value) => update({ endpoint: value }, false)));
+      } else {
+        endpointSetting.addDropdown((dropdown) => {
+          if (profile.provider === "minimax") dropdown.addOption("https://api.minimax.io/v1/t2a_v2", t("International", "\u56FD\u9645\u7AD9")).addOption("https://api.minimaxi.com/v1/t2a_v2", t("Mainland China", "\u56FD\u5185\u7AD9"));
+          else dropdown.addOption(BYOK_PROVIDERS.elevenlabs.endpoint, "api.elevenlabs.io");
+          dropdown.setValue(profile.endpoint).onChange((endpoint) => update({ endpoint }, true));
+        });
+      }
+      new Setting(containerEl).setName(t("Model ID", "\u6A21\u578B ID")).addText((text) => text.setValue(profile.model).onChange((value) => update({ model: value })));
+      new Setting(containerEl).setName(t("Voice ID", "\u97F3\u8272 ID")).setDesc(t(
+        "Use a voice ID available to your account; a display name may not work. This voice is AI-generated.",
+        "\u586B\u5199\u5F53\u524D\u8D26\u6237\u53EF\u7528\u7684\u97F3\u8272 ID\uFF0C\u4E0D\u4E00\u5B9A\u662F\u97F3\u8272\u663E\u793A\u540D\u79F0\u3002\u6B64\u97F3\u8272\u4E3A AI \u5408\u6210\u3002"
+      )).addText((text) => text.setValue(profile.voice).onChange((value) => update({ voice: value }))).addExtraButton((button) => button.setIcon("external-link").setTooltip(t("Official API documentation", "\u5B98\u65B9\u63A5\u53E3\u6587\u6863")).onClick(() => window.open(BYOK_PROVIDERS[profile.provider]?.docs || BYOK_PROVIDERS["openai-compatible"].docs, "_blank", "noopener,noreferrer")));
+      new Setting(containerEl).setName(t("Credential source", "\u5BC6\u94A5\u6765\u6E90")).addDropdown((dropdown) => dropdown.addOption("obsidian-secret", t("Obsidian secret storage", "Obsidian \u79D8\u5BC6\u5B58\u50A8")).addOption("key-file", t("Key file outside vault", "\u5E93\u5916\u5BC6\u94A5\u6587\u4EF6")).setValue(profile.credentialSource).onChange((value) => update({ credentialSource: value }, true)));
+      if (profile.credentialSource === "obsidian-secret") {
+        const setting = new Setting(containerEl).setName(t("API secret", "API \u79D8\u5BC6")).setDesc(t(
+          "Only the secret name is saved in plugin settings, never the key. Re-select a secret after changing the endpoint.",
+          "\u63D2\u4EF6\u8BBE\u7F6E\u53EA\u4FDD\u5B58\u79D8\u5BC6\u540D\u79F0\uFF0C\u4E0D\u4FDD\u5B58\u5BC6\u94A5\u3002\u66F4\u6362\u63A5\u53E3\u5730\u5740\u540E\u9700\u91CD\u65B0\u9009\u62E9\u79D8\u5BC6\u3002"
+        ));
+        if (canUseSecrets) setting.addComponent((element) => {
+          secretControl = new SecretComponent2(plugin.app, element).setValue(profile.secretName).onChange((value) => update({ secretName: value }));
+          return secretControl;
+        });
+        else setting.setDesc(t(
+          "Requires Obsidian 1.11.4+ secret storage. Alternatively choose a key file outside the vault.",
+          "\u9700\u8981 Obsidian 1.11.4+ \u7684\u79D8\u5BC6\u5B58\u50A8\uFF1B\u4E5F\u53EF\u4EE5\u9009\u62E9\u5E93\u5916\u5BC6\u94A5\u6587\u4EF6\u3002"
+        ));
+      } else {
+        new Setting(containerEl).setName(t("API key file", "API \u5BC6\u94A5\u6587\u4EF6")).setDesc(t("Absolute path to a one-line key file outside the vault. Do not paste a key here.", "\u5E93\u5916\u5355\u884C\u5BC6\u94A5\u6587\u4EF6\u7684\u7EDD\u5BF9\u8DEF\u5F84\uFF0C\u4E0D\u8981\u5728\u8FD9\u91CC\u7C98\u8D34\u5BC6\u94A5\u3002")).addText((text) => {
+          secretControl = text;
+          text.setValue(profile.keyPath).onChange((value) => update({ keyPath: value }));
+        });
+      }
+      new Setting(containerEl).setName(t("Maximum characters per chunk", "\u6BCF\u6BB5\u5B57\u7B26\u4E0A\u9650")).setDesc(t(
+        "50-2000, default 800. Also capped by online chunk settings; reduce for services with lower limits. Playback speed is adjusted locally.",
+        "50\u20132000\uFF0C\u9ED8\u8BA4 800\u3002\u4E0E\u5728\u7EBF\u5206\u6BB5\u8BBE\u7F6E\u53D6\u8F83\u5C0F\u503C\uFF1B\u670D\u52A1\u9650\u5236\u66F4\u4F4E\u65F6\u8BF7\u8C03\u5C0F\u3002\u64AD\u653E\u500D\u901F\u5728\u672C\u5730\u8C03\u6574\u3002"
+      )).addText((text) => text.setValue(String(profile.chunkLimit)).onChange((value) => {
+        if (/^\d+$/.test(value) && Number(value) >= 50 && Number(value) <= 2e3) return update({ chunkLimit: Number(value) });
+      }));
+      let consentToggle, previewButton;
+      const consentSetting = new Setting(consentHost).setName(t("Allow this configuration to process text", "\u5141\u8BB8\u6B64\u914D\u7F6E\u5904\u7406\u6717\u8BFB\u6587\u672C"));
+      const riskText = t(
+        "Reading text and credentials go to the endpoint you configure, which may forward text to upstream providers. Requests, including previews, may cost money. No-training and zero data retention (ZDR) are NOT verified or enforced by this plugin for BYOK. Review the destination, service, intermediary and account policies yourself. This permission authorizes synthesis, not model training. Revoking permission cannot recall data already sent.",
+        "\u6717\u8BFB\u6587\u672C\u53CA\u5BC6\u94A5\u5C06\u53D1\u9001\u5230\u4F60\u914D\u7F6E\u7684\u63A5\u53E3\uFF0C\u670D\u52A1\u53EF\u80FD\u7EE7\u7EED\u8F6C\u53D1\u6587\u672C\u7ED9\u4E0A\u6E38\u3002\u5305\u62EC\u8BD5\u542C\u5728\u5185\u7684\u8BF7\u6C42\u53EF\u80FD\u4EA7\u751F\u8D39\u7528\u3002\u5BF9\u4E8E BYOK\uFF0C\u63D2\u4EF6\u65E0\u6CD5\u6838\u5B9E\u6216\u5F3A\u5236\u201C\u4E0D\u7528\u4E8E\u8BAD\u7EC3\u201D\u548C\u201C\u96F6\u6570\u636E\u4FDD\u7559\uFF08ZDR\uFF09\u201D\uFF1B\u8BF7\u81EA\u884C\u6838\u5BF9\u76EE\u6807\u5730\u5740\u3001\u670D\u52A1\u5546\u3001\u4E2D\u8F6C\u670D\u52A1\u53CA\u8D26\u6237\u653F\u7B56\u3002\u6B64\u6388\u6743\u4EC5\u7528\u4E8E\u5408\u6210\uFF0C\u4E0D\u4EE3\u8868\u540C\u610F\u6A21\u578B\u8BAD\u7EC3\u3002\u64A4\u9500\u6388\u6743\u4E0D\u80FD\u6536\u56DE\u5DF2\u7ECF\u53D1\u9001\u7684\u6570\u636E\u3002"
+      );
+      const details = consentHost.createEl("details");
+      details.createEl("summary", { text: t("BYOK processing and billing risks", "BYOK \u6570\u636E\u5904\u7406\u4E0E\u8D39\u7528\u98CE\u9669") });
+      details.createEl("p", { text: riskText });
+      const privacyLink = consentHost.createEl("button", {
+        text: t("View general privacy information", "\u67E5\u770B\u901A\u7528\u9690\u79C1\u8BF4\u660E"),
+        cls: "note-reader-byok-privacy-link",
+        attr: { type: "button" }
+      });
+      privacyLink.addEventListener("click", () => openPrivacy());
+      consentSetting.addToggle((toggle) => {
+        consentToggle = toggle;
+        toggle.setValue(hasByokConsent(profile)).onChange((value) => {
+          if (!value) return update({ consent: "" });
+          toggle.setValue(false);
+          const current = find();
+          const error = getByokConfigurationError2(current, false) || credentialError(current);
+          if (error) {
+            new Notice2(error, 1e4);
+            return;
+          }
+          const fingerprint = byokConsentFingerprint(current);
+          new ByokConfirmModal(
+            plugin,
+            t("Confirm BYOK privacy and billing risks", "\u786E\u8BA4 BYOK \u9690\u79C1\u4E0E\u8D39\u7528\u98CE\u9669"),
+            `${current.endpoint}
+${current.model} / ${current.voice}
+
+${riskText}`,
+            async () => {
+              if (byokConsentFingerprint(find()) !== fingerprint) throw new Error(t("Configuration changed; review it again.", "\u914D\u7F6E\u5DF2\u53D8\u66F4\uFF0C\u8BF7\u91CD\u65B0\u786E\u8BA4\u3002"));
+              await update({ consent: fingerprint });
+            },
+            () => refresh()
+          ).open();
+        });
+      });
+      new Setting(containerEl).setName(t("Voice preview", "\u97F3\u8272\u8BD5\u542C")).setDesc(t(
+        'Sends only: "This is an AI-generated voice preview." Uses account quota and replaces current playback. Failed requests are not automatically retried.',
+        "\u4EC5\u53D1\u9001\u56FA\u5B9A\u77ED\u53E5\u201CThis is an AI-generated voice preview.\u201D\uFF0C\u4F1A\u4F7F\u7528\u8D26\u6237\u989D\u5EA6\u5E76\u66FF\u6362\u5F53\u524D\u64AD\u653E\u3002\u4E0D\u81EA\u52A8\u91CD\u8BD5\u5931\u8D25\u7684\u8BF7\u6C42\u3002"
+      )).addButton((button) => {
+        previewButton = button;
+        button.setIcon("play").setButtonText(t("Preview", "\u8BD5\u542C")).onClick(async () => {
+          if (plugin.settings.speechEngine !== "byok-tts" || plugin.settings.byokActiveProfileId !== profile.id || !hasByokConsent(find())) return;
+          button.setDisabled(true);
+          try {
+            await plugin.runUserAction(t("BYOK preview", "BYOK \u8BD5\u542C"), () => plugin.startReading(
+              "This is an AI-generated voice preview.",
+              "BYOK voice preview",
+              { plainText: true, skipReadingPosition: true }
+            ));
+          } finally {
+            refresh();
+          }
+        });
+      });
+      refresh = () => {
+        const current = find();
+        const allowed = hasByokConsent(current);
+        consentToggle?.setValue(allowed);
+        previewButton?.setDisabled(!allowed);
+        const state = allowed ? t("Authorized for this configuration.", "\u5DF2\u6388\u6743\u6B64\u914D\u7F6E\u3002") : t("Not authorized. Complete the API settings below, then enable here.", "\u5C1A\u672A\u6388\u6743\u3002\u8BF7\u5148\u5B8C\u5584\u4E0B\u65B9\u63A5\u53E3\u8BBE\u7F6E\uFF0C\u518D\u5728\u6B64\u5F00\u542F\u3002");
+        consentSetting.setDesc(`${state}
+${current?.endpoint || ""}
+${t("Online processing may incur charges; no-training and ZDR are not guaranteed.", "\u5728\u7EBF\u5904\u7406\u53EF\u80FD\u4EA7\u751F\u8D39\u7528\uFF1B\u4E0D\u4FDD\u8BC1\u4E0D\u7528\u4E8E\u8BAD\u7EC3\u6216 ZDR\u3002")}`);
+        const option = Array.from(profileDropdown.selectEl.options).find((item) => item.value === current?.id);
+        if (option && current) option.textContent = profileLabel(current);
+      };
+      refresh();
+    }
+    module2.exports = { displayByokSettings: displayByokSettings2, ByokConfirmModal };
+  }
+});
+
 // node_modules/@laginae/note-reader-core/src/reading-position.js
 var require_reading_position = __commonJS({
   "node_modules/@laginae/note-reader-core/src/reading-position.js"(exports2, module2) {
@@ -34741,6 +35189,8 @@ var { getSpeechParts, planSpeechParts, adjacentSpeechPart, getSpeechPartTiming }
 var { preparationStatusText } = require_preparation_status();
 var { locateReading } = require_locate_reading();
 var { MIMO_ENDPOINT, MIMO_DEFAULTS, MIMO_VOICES, MIMO_MAX_CHUNK_CHARS, normalizeMimoSettings, buildMimoRequestBody, decodeMimoAudio } = require_mimo_tts();
+var { BYOK_DEFAULTS, normalizeByokSettings, getByokProfile, getByokConfigurationError, assertByokAuthorized, buildByokRequest, safeByokRequestError } = require_byok_tts();
+var { displayByokSettings } = require_byok_settings();
 var {
   MAX_EXPORTED_AUDIO_BYTES,
   bufferToArrayBuffer,
@@ -34790,7 +35240,7 @@ var SETTINGS_LANGUAGES = Object.keys(LANGUAGES);
 var AUDIO_EXPORT_LOCATIONS = ["obsidian-attachment", "note-folder", "custom-folder"];
 var AUDIO_EXPORT_SCOPES = ["entire", "selection", "from-selection"];
 var CREDENTIAL_SOURCES = ["obsidian-secret", "key-file"];
-var SPEECH_ENGINES = ["local-cosyvoice", "system-tts", "edge-tts", "azure-speech", "openrouter-tts", "mimo-tts"];
+var SPEECH_ENGINES = ["local-cosyvoice", "system-tts", "edge-tts", "azure-speech", "openrouter-tts", "mimo-tts", "byok-tts"];
 var AZURE_SPEECH_CLOUDS = ["public", "china"];
 var REMOTE_TTS_MAX_AUDIO_BYTES = 20 * 1024 * 1024;
 var REMOTE_TTS_MAX_ATTEMPTS = 3;
@@ -34946,7 +35396,7 @@ var SETTINGS_UI_TEXT = {
     settingsLanguageEnglish: "English",
     settingsLanguageChinese: "\u4E2D\u6587",
     speechEngineName: "Speech engine",
-    speechEngineDesc: "Choose local CosyVoice, installed system speech (Windows/macOS), or opt-in Edge, Azure, OpenRouter or MiMo online TTS.",
+    speechEngineDesc: "Choose local CosyVoice, installed system speech (Windows/macOS), or opt-in Edge, Azure, OpenRouter, MiMo or a custom speech API (BYOK).",
     speechEngineLocal: "Local CosyVoice",
     speechEngineSystem: "System local speech (Windows/macOS)",
     speechEngineEdge: "Microsoft Edge online voice",
@@ -35059,8 +35509,7 @@ var SETTINGS_UI_TEXT = {
     feedbackName: "Feedback and bug reports",
     feedbackDesc: "Open GitHub Issues to report a problem, request a feature, or follow existing reports. Do not include API keys or private note text.",
     feedbackButton: "Open GitHub Issues",
-    feedbackTooltip: "Open the feedback page in your browser",
-    commandsFooter: "Commands also include resume the current file, seek backward or forward 5 seconds, and move to the previous or next reading chunk."
+    feedbackTooltip: "Open the feedback page in your browser"
   },
   chinese: {
     settingsLanguageName: "\u8BBE\u7F6E\u754C\u9762\u8BED\u8A00",
@@ -35068,7 +35517,7 @@ var SETTINGS_UI_TEXT = {
     settingsLanguageEnglish: "English",
     settingsLanguageChinese: "\u4E2D\u6587",
     speechEngineName: "\u8BED\u97F3\u5F15\u64CE",
-    speechEngineDesc: "\u9009\u62E9\u672C\u5730 CosyVoice\u3001\u5DF2\u5B89\u88C5\u7684\u7CFB\u7EDF\u8BED\u97F3\uFF08Windows/macOS\uFF09\uFF0C\u6216\u4E3B\u52A8\u6388\u6743 Edge\u3001Azure\u3001OpenRouter\u3001MiMo \u5728\u7EBF\u8BED\u97F3\u3002",
+    speechEngineDesc: "\u9009\u62E9\u672C\u5730 CosyVoice\u3001\u5DF2\u5B89\u88C5\u7684\u7CFB\u7EDF\u8BED\u97F3\uFF08Windows/macOS\uFF09\uFF0C\u6216\u4E3B\u52A8\u6388\u6743 Edge\u3001Azure\u3001OpenRouter\u3001MiMo\u3001\u81EA\u5B9A\u4E49\u8BED\u97F3 API\uFF08BYOK\uFF09\u3002",
     speechEngineLocal: "\u672C\u5730 CosyVoice",
     speechEngineSystem: "\u7CFB\u7EDF\u672C\u5730\u8BED\u97F3\uFF08Windows/macOS\uFF09",
     speechEngineEdge: "Microsoft Edge \u5728\u7EBF\u8BED\u97F3",
@@ -35181,8 +35630,7 @@ var SETTINGS_UI_TEXT = {
     feedbackName: "\u53CD\u9988\u4E0E\u95EE\u9898\u62A5\u544A",
     feedbackDesc: "\u6253\u5F00 GitHub Issues \u62A5\u544A\u95EE\u9898\u3001\u63D0\u51FA\u529F\u80FD\u5EFA\u8BAE\u6216\u67E5\u770B\u73B0\u6709\u53CD\u9988\u3002\u8BF7\u52FF\u63D0\u4EA4 API \u5BC6\u94A5\u6216\u79C1\u5BC6\u7B14\u8BB0\u6B63\u6587\u3002",
     feedbackButton: "\u6253\u5F00 GitHub Issues",
-    feedbackTooltip: "\u5728\u6D4F\u89C8\u5668\u4E2D\u6253\u5F00\u53CD\u9988\u9875\u9762",
-    commandsFooter: "\u547D\u4EE4\u8FD8\u5305\u62EC\u4ECE\u5F53\u524D\u6587\u4EF6\u4FDD\u5B58\u7684\u4F4D\u7F6E\u7EE7\u7EED\u6717\u8BFB\u3001\u540E\u9000\u6216\u524D\u8FDB 5 \u79D2\uFF0C\u4EE5\u53CA\u8DF3\u5230\u4E0A\u4E00\u4E2A\u6216\u4E0B\u4E00\u4E2A\u6717\u8BFB\u5206\u6BB5\u3002"
+    feedbackTooltip: "\u5728\u6D4F\u89C8\u5668\u4E2D\u6253\u5F00\u53CD\u9988\u9875\u9762"
   }
 };
 var LATEX_COMMAND_REPLACEMENTS = {
@@ -35829,6 +36277,7 @@ function normalizeOnlinePrefetchChunks(value) {
 function getChunkLimitsForSpeechEngine(settings, speechEngine = normalizeSpeechEngine(settings && settings.speechEngine)) {
   if (isOnlineSpeechEngine(speechEngine)) {
     const limits = parseChunkLimits(settings && settings.onlineChunkLimits, DEFAULT_ONLINE_CHUNK_LIMITS);
+    if (speechEngine === "byok-tts") return limits.map((limit) => Math.min(limit, getByokProfile(settings)?.chunkLimit || 800));
     const mimoLimit = Math.max(50, Math.min(2e3, Math.floor(Number(settings && settings.mimoChunkLimit) || MIMO_MAX_CHUNK_CHARS)));
     return speechEngine === "mimo-tts" ? limits.map((limit) => Math.min(limit, mimoLimit)) : limits;
   }
@@ -36071,6 +36520,7 @@ function getSpeechEngineLabel(settings = {}) {
   const speechEngine = normalizeSpeechEngine(settings.speechEngine);
   if (speechEngine === "system-tts") return settings.settingsLanguage === "chinese" ? "\u7CFB\u7EDF\u672C\u5730\u8BED\u97F3" : "System local speech";
   if (speechEngine === "mimo-tts") return "Xiaomi MiMo TTS";
+  if (speechEngine === "byok-tts") return "BYOK TTS";
   if (speechEngine === "edge-tts") {
     return "Edge TTS";
   }
@@ -36100,6 +36550,8 @@ function createDefaultSettings() {
     ...ACADEMIC_DEFAULTS,
     ...COPILOT_DEFAULTS,
     ...MIMO_DEFAULTS,
+    ...BYOK_DEFAULTS,
+    byokProfiles: [],
     ...APPEARANCE_DEFAULTS,
     readingHighlight: "sentence",
     webReadingHighlight: true,
@@ -37095,6 +37547,7 @@ var CosyVoiceReaderPlugin = class extends Plugin {
     this.settings.readingFollow = this.settings.readingFollow === true;
     this.settings.playbackSpeed = normalizeSpeed(this.settings.playbackSpeed);
     normalizeMimoSettings(this.settings);
+    normalizeByokSettings(this.settings);
     this.settings.audioExportFolder = normalizeAudioExportFolder(this.settings.audioExportFolder);
     this.settings.audioExportLocation = normalizeAudioExportLocation(this.settings.audioExportLocation);
     this.settings.speed = normalizeSpeed(this.settings.speed);
@@ -37145,6 +37598,7 @@ var CosyVoiceReaderPlugin = class extends Plugin {
     this.settings.playbackSpeed = normalizeSpeed(this.settings.playbackSpeed);
     this.settings.playbackVolume = normalizeVolume(this.settings.playbackVolume);
     normalizeMimoSettings(this.settings);
+    normalizeByokSettings(this.settings);
     this.settings.audioExportFolder = normalizeAudioExportFolder(this.settings.audioExportFolder);
     this.settings.audioExportLocation = normalizeAudioExportLocation(this.settings.audioExportLocation);
     this.settings.speed = normalizeSpeed(this.settings.speed);
@@ -37182,6 +37636,7 @@ var CosyVoiceReaderPlugin = class extends Plugin {
   }
   async resetSettingsToDefaults(page = "all") {
     this.settings = resetPageSettings(this.settings, createDefaultSettings(), page);
+    if (["engine", "all"].includes(page) && this.activeSession?.speechEngine === "byok-tts") await this.stopReading({ silent: true });
     if (this.currentAudio) {
       this.currentAudio.volume = this.settings.playbackVolume;
       this.currentAudio.playbackRate = this.settings.playbackSpeed;
@@ -38816,6 +39271,14 @@ ${embed}
     const speechEngine = normalizeSpeechEngine(this.settings.speechEngine);
     const engineLabel = getSpeechEngineLabel(this.settings);
     const scriptPath = String(this.settings.scriptPath || "").trim();
+    if (speechEngine === "byok-tts") {
+      const profile = getByokProfile(this.settings);
+      const error = getByokConfigurationError(profile) || getRemoteCredentialConfigurationError(profile, this.vaultBasePath, this.app, "BYOK API");
+      if (error) {
+        new Notice(error, 1e4);
+        return null;
+      }
+    }
     if (speechEngine === "system-tts" && !["win32", "darwin"].includes(os.platform())) {
       new Notice(this.settings.settingsLanguage === "chinese" ? "\u7CFB\u7EDF\u672C\u5730\u8BED\u97F3\u76EE\u524D\u4EC5\u652F\u6301 Windows \u548C macOS\u3002" : systemSpeechError("unavailable").message, 8e3);
       return null;
@@ -38867,6 +39330,7 @@ ${embed}
     }
     return {
       chunkLimits: getChunkLimitsForSpeechEngine(this.settings, speechEngine),
+      byokProfile: speechEngine === "byok-tts" ? { ...getByokProfile(this.settings) } : null,
       engineLabel,
       prefetchChunks: getSynthesisPrefetchCount(this.settings, speechEngine),
       speechEngine,
@@ -38874,6 +39338,7 @@ ${embed}
     };
   }
   createSpeechSession(chunks, sourceLabel, configuration, options = {}) {
+    if (configuration.byokProfile) assertByokAuthorized(configuration.byokProfile, this.settings);
     const initialChunks = Array.isArray(chunks) ? chunks.slice() : [];
     const id = ++this.sequence;
     return {
@@ -38902,7 +39367,7 @@ ${embed}
       speechEngine: configuration.speechEngine,
       smartQuickStart: this.settings.smartQuickStart !== false,
       rapidQuickStart: this.settings.rapidQuickStart === true,
-      synthesisSettings: { ...this.settings, readingPositions: {} },
+      synthesisSettings: { ...this.settings, byokProfiles: configuration.byokProfile ? [{ ...configuration.byokProfile }] : (this.settings.byokProfiles || []).map((profile) => ({ ...profile })), readingPositions: {} },
       systemVoice: configuration.systemVoice || "",
       systemSpeechControllers: /* @__PURE__ */ new Set(),
       speechStarted: false,
@@ -39634,7 +40099,7 @@ ${embed}
     session.speechStarted = true;
     session.synthesisSpeeds = session.synthesisSpeeds || {};
     const speechEngine = normalizeSpeechEngine(session.speechEngine || this.settings.speechEngine);
-    session.synthesisSpeeds[index] = speechEngine === "system-tts" ? 1 : normalizeSpeed((session.synthesisSettings || this.settings).speed);
+    session.synthesisSpeeds[index] = ["system-tts", "byok-tts"].includes(speechEngine) ? 1 : normalizeSpeed((session.synthesisSettings || this.settings).speed);
     const engineLabel = session.engineLabel || getSpeechEngineLabel(this.settings);
     const outputExtension = getAudioExportExtension(speechEngine);
     const basename = `${Date.now()}-${session.id}-${index}-${part}`;
@@ -39701,6 +40166,7 @@ ${embed}
     return promise;
   }
   runSpeechEngine(inputPath, outputPath, session, speechEngine = normalizeSpeechEngine(this.settings.speechEngine)) {
+    if (speechEngine === "byok-tts") return this.runByokTts(inputPath, outputPath, session);
     if (speechEngine === "system-tts") return this.runSystemTts(inputPath, outputPath, session);
     if (speechEngine === "edge-tts") {
       return this.runEdgeTts(inputPath, outputPath, session);
@@ -40095,6 +40561,28 @@ ${embed}
       failureHint: "Check the selected API credential, cloud, region, voice, resource status, and quota."
     });
   }
+  async runByokTts(inputPath, outputPath, session) {
+    const profile = getByokProfile(session.synthesisSettings || this.settings);
+    assertByokAuthorized(profile, this.settings);
+    const apiKey = profile.credentialSource === "obsidian-secret" ? await this.readObsidianSecret(profile.secretName, "BYOK API") : await this.readSecretFileOutsideVault(profile.keyPath, "BYOK API");
+    const text = await fs.promises.readFile(inputPath, "utf8");
+    assertByokAuthorized(profile, this.settings);
+    if (!this.isActive(session)) throw new Error("Reading stopped.");
+    const request = buildByokRequest(profile, text, apiKey);
+    try {
+      await this.requestRemoteAudio({
+        ...request,
+        outputPath,
+        session,
+        decodeAudio: (bytes) => {
+          assertByokAuthorized(profile, this.settings);
+          return request.decodeAudio(bytes);
+        }
+      });
+    } catch (error) {
+      throw safeByokRequestError(error);
+    }
+  }
   async runMimoTts(inputPath, outputPath, session) {
     const settings = session.synthesisSettings || this.settings;
     if (settings.mimoConsent !== true) throw new Error("MiMo online processing consent is required.");
@@ -40165,7 +40653,7 @@ ${embed}
     release();
   }
   getSegmentTiming(session = this.activeSession, index = Math.max(0, (this.readerState.currentChunk || 1) - 1), part = session?.currentPartIndex || 0, time = this.currentAudio?.currentTime || 0) {
-    const timing = session?.chunks?.[index] !== void 0 ? getSpeechPartTiming(session, index, part, time, session.speechEngine === "system-tts" ? 1 : normalizeSpeed(this.settings.speed)) : { duration: Number(this.currentAudio?.duration) || 0, current: time, offset: 0 };
+    const timing = session?.chunks?.[index] !== void 0 ? getSpeechPartTiming(session, index, part, time, ["system-tts", "byok-tts"].includes(session.speechEngine) ? 1 : normalizeSpeed(this.settings.speed)) : { duration: Number(this.currentAudio?.duration) || 0, current: time, offset: 0 };
     return { ...timing, fraction: timing.duration > 0 ? Math.min(1, timing.current / timing.duration) : 0 };
   }
   async playPreparedAudio(prepared, session, index, total, part = 0) {
@@ -40879,7 +41367,7 @@ var CosyVoiceReaderView = class extends ItemView {
       this.plugin.activeSession,
       Math.max(0, (state.currentChunk || 1) - 1),
       this.plugin.getSegmentTiming().current,
-      this.plugin.activeSession?.speechEngine === "system-tts" ? 1 : this.plugin.settings.speed,
+      ["system-tts", "byok-tts"].includes(this.plugin.activeSession?.speechEngine) ? 1 : this.plugin.settings.speed,
       normalizeSpeed(this.plugin.settings.playbackSpeed)
     );
     if (estimate) {
@@ -41320,16 +41808,36 @@ var CosyVoiceReaderSettingTab = class extends PluginSettingTab {
     const pages = createSettingsPages(containerEl, settingsLanguage, this.settingsPage, (page) => {
       this.settingsPage = page;
     });
+    new Setting(pages.privacy).setName(translateInterface(settingsLanguage, "General privacy (all speech engines)", "\u901A\u7528\u9690\u79C1\u8BF4\u660E\uFF08\u9002\u7528\u4E8E\u6240\u6709\u8BED\u97F3\u6A21\u5F0F\uFF09")).setDesc(translateInterface(
+      settingsLanguage,
+      "The plugin provides no developer-operated relay for reading text or API keys and has no built-in usage telemetry. Online reading sends text to your selected speech service or configured endpoint. Local wrappers and third-party programs control their own network behavior.",
+      "\u63D2\u4EF6\u4E0D\u63D0\u4F9B\u7528\u4E8E\u4E2D\u8F6C\u6717\u8BFB\u6B63\u6587\u6216 API \u5BC6\u94A5\u7684\u5F00\u53D1\u8005\u670D\u52A1\u5668\uFF0C\u4E5F\u4E0D\u5185\u7F6E\u4F7F\u7528\u60C5\u51B5\u9065\u6D4B\u3002\u5728\u7EBF\u6717\u8BFB\u6587\u672C\u53D1\u9001\u7ED9\u4F60\u9009\u62E9\u6216\u914D\u7F6E\u7684\u8BED\u97F3\u670D\u52A1\uFF1B\u672C\u5730\u5305\u88C5\u811A\u672C\u3001\u7B2C\u4E09\u65B9\u7A0B\u5E8F\u7684\u7F51\u7EDC\u884C\u4E3A\u7531\u5B83\u4EEC\u81EA\u8EAB\u51B3\u5B9A\u3002"
+    ));
+    new Setting(pages.privacy).setName(translateInterface(settingsLanguage, "What may be stored locally", "\u54EA\u4E9B\u6570\u636E\u53EF\u80FD\u4FDD\u5B58\u5728\u672C\u5730")).setDesc(translateInterface(
+      settingsLanguage,
+      "Reading may create temporary text and audio, removed according to cleanup settings. Configuration, exported audio, optional reading history and diagnostic logs may remain locally. Provider training and retention policies are separate; see the notice for each speech mode. Revoking permission cannot recall data already sent.",
+      "\u6717\u8BFB\u53EF\u80FD\u751F\u6210\u4E34\u65F6\u6587\u672C\u548C\u97F3\u9891\uFF0C\u6309\u6E05\u7406\u8BBE\u7F6E\u5220\u9664\u3002\u914D\u7F6E\u3001\u5BFC\u51FA\u97F3\u9891\u3001\u53EF\u9009\u7EED\u8BFB\u8BB0\u5F55\u53CA\u8BCA\u65AD\u65E5\u5FD7\u53EF\u80FD\u4FDD\u5B58\u5728\u672C\u5730\u3002\u670D\u52A1\u5546\u7684\u8BAD\u7EC3\u548C\u7559\u5B58\u653F\u7B56\u9700\u53E6\u884C\u6838\u5B9E\uFF0C\u8BF7\u67E5\u770B\u5404\u8BED\u97F3\u6A21\u5F0F\u7684\u8BF4\u660E\uFF1B\u64A4\u9500\u6388\u6743\u4E0D\u80FD\u6536\u56DE\u5DF2\u7ECF\u53D1\u9001\u7684\u6570\u636E\u3002"
+    ));
     if (!["english", "chinese"].includes(settingsLanguage)) new Setting(pages.privacy).setDesc(translateInterface(settingsLanguage, "Some advanced help remains in English. Interface language does not change the speech voice."));
     containerEl = pages.engine;
     new Setting(containerEl).setName(ui.speechEngineName).setDesc(ui.speechEngineDesc).addDropdown((dropdown) => {
-      dropdown.addOption("local-cosyvoice", ui.speechEngineLocal).addOption("system-tts", ui.speechEngineSystem).addOption("edge-tts", ui.speechEngineEdge).addOption("azure-speech", ui.speechEngineAzure).addOption("openrouter-tts", ui.speechEngineOpenRouter).addOption("mimo-tts", "Xiaomi MiMo TTS").setValue(selectedSpeechEngine).onChange(async (value) => {
+      dropdown.addOption("local-cosyvoice", ui.speechEngineLocal).addOption("system-tts", ui.speechEngineSystem).addOption("edge-tts", ui.speechEngineEdge).addOption("azure-speech", ui.speechEngineAzure).addOption("openrouter-tts", ui.speechEngineOpenRouter).addOption("mimo-tts", "Xiaomi MiMo TTS").addOption("byok-tts", settingsLanguage === "chinese" ? "\u81EA\u5B9A\u4E49\u8BED\u97F3 API\uFF08BYOK\uFF09" : "Custom speech API (BYOK)").setValue(selectedSpeechEngine).onChange(async (value) => {
         this.plugin.settings.speechEngine = normalizeSpeechEngine(value);
         await this.plugin.saveSettings();
         this.display();
       });
     });
     if (selectedSpeechEngine === "system-tts") this.displaySystemSpeechSettings(containerEl, settingsLanguage);
+    if (selectedSpeechEngine === "byok-tts") displayByokSettings(this, containerEl, {
+      canUseSecrets: hasObsidianSecretStorageUi(this.app),
+      credentialError: (profile) => getRemoteCredentialConfigurationError(profile, this.plugin.vaultBasePath, this.app, "BYOK API"),
+      openPrivacy: () => {
+        const button = this.containerEl.ownerDocument.getElementById(pages.privacy.getAttribute("aria-labelledby"));
+        button?.click();
+        button?.focus();
+        button?.scrollIntoView?.({ block: "nearest" });
+      }
+    });
     if (selectedSpeechEngine === "mimo-tts") {
       const zh = settingsLanguage === "chinese";
       const label = (en, cn) => zh ? cn : en;
@@ -41615,7 +42123,7 @@ var CosyVoiceReaderSettingTab = class extends PluginSettingTab {
       this.plugin.settings.rapidQuickStart = value === "rapid";
       await this.plugin.saveSettings();
     }));
-    if (selectedSpeechEngine !== "system-tts") new Setting(containerEl).setName(ui.speedName).setDesc(ui.speedDesc).addSlider((slider) => {
+    if (!["system-tts", "byok-tts"].includes(selectedSpeechEngine)) new Setting(containerEl).setName(ui.speedName).setDesc(ui.speedDesc).addSlider((slider) => {
       slider.setLimits(0.5, 2, 0.05).setValue(this.plugin.settings.speed).setDynamicTooltip().onChange(async (value) => {
         this.plugin.settings.speed = normalizeSpeed(value);
         await this.plugin.saveSettings();
@@ -41796,10 +42304,6 @@ var CosyVoiceReaderSettingTab = class extends PluginSettingTab {
         }
       });
     });
-    containerEl.createEl("p", {
-      cls: "note-reader-cosyvoice-muted",
-      text: ui.commandsFooter
-    });
     const resetDescription = translateInterface(
       settingsLanguage,
       "Credentials, service configuration, interface language and reading records are preserved; no files are deleted. Synthesis changes apply to the next reading session. Resetting history mode to session-only removes its disk copy but keeps records in memory until exit.",
@@ -41807,12 +42311,9 @@ var CosyVoiceReaderSettingTab = class extends PluginSettingTab {
     );
     for (const [id, en, zh] of PAGES) {
       const title = translateInterface(settingsLanguage, "Restore this page defaults", "\u6062\u590D\u672C\u9875\u9ED8\u8BA4\u8BBE\u7F6E");
-      new Setting(pages[id]).setName(title).setDesc(translateInterface(
-        settingsLanguage,
-        "Reset this category only. Credentials and records are preserved.",
-        "\u4EC5\u6062\u590D\u5F53\u524D\u5206\u7C7B\uFF1B\u4FDD\u7559\u5BC6\u94A5\u5F15\u7528\u548C\u6717\u8BFB\u8BB0\u5F55\u3002"
-      )).addButton((button) => button.setButtonText(title).onClick(() => {
-        new SettingsConfirmModal(this.plugin, `${title}: ${translateInterface(settingsLanguage, en, zh)}`, resetDescription, async () => {
+      const pageResetDescription = id === "privacy" ? translateInterface(settingsLanguage, "Turn off diagnostic logging. Other pages are unchanged.", "\u5173\u95ED\u8BCA\u65AD\u65E5\u5FD7\uFF0C\u4E0D\u5F71\u54CD\u5176\u4ED6\u9875\u9762\u8BBE\u7F6E\u3002") : translateInterface(settingsLanguage, "Reset this category only. Credentials and records are preserved.", "\u4EC5\u6062\u590D\u5F53\u524D\u5206\u7C7B\uFF1B\u4FDD\u7559\u5BC6\u94A5\u5F15\u7528\u548C\u6717\u8BFB\u8BB0\u5F55\u3002");
+      new Setting(pages[id]).setName(title).setDesc(pageResetDescription).addButton((button) => button.setButtonText(title).onClick(() => {
+        new SettingsConfirmModal(this.plugin, `${title}: ${translateInterface(settingsLanguage, en, zh)}`, id === "privacy" ? pageResetDescription : resetDescription, async () => {
           await this.plugin.resetSettingsToDefaults(id);
           this.display();
           new Notice(ui.settingsRestoredNotice);
