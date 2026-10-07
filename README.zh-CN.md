@@ -1,5 +1,7 @@
 # Note and PDF Voice Reader
 
+简单公式如 `$z_{\mathrm d}$` 会读作“z sub d”。字体和排版空白不会使简单公式被误判为复杂公式；仍尊重主动跳过公式的设置，并保留复杂公式保护。
+
 **语言：** [English](README.md) | 简体中文 | [Deutsch](README.de.md) | [Français](README.fr.md) | [Русский](README.ru.md) | [한국어](README.ko.md) | [日本語](README.ja.md) | [Español](README.es.md) | [Italiano](README.it.md) | [Português](README.pt.md)
 
 在 Obsidian 中朗读 **笔记、PDF、HTML 文件和网页**。一边听，一边在原文中跟读；也可以按章节跳转，或导出音频稍后收听。

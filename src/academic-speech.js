@@ -38,10 +38,33 @@ function citations(text) {
     return zh ? ` 文献${list} ` : ` ${values.length > 1 || / to /.test(list) ? 'references' : 'reference'} ${list} `;
   });
 }
+// Normalize presentation only; keep mathematical operators and unknown commands intact.
+function normalizeMathPresentation(content) {
+  let value = String(content || '').trim();
+  if (value.length > 4096) return null;
+  let depth = 0;
+  for (const char of value) {
+    if (char === '{' && ++depth > 16) return null;
+    if (char === '}' && --depth < 0) return null;
+  }
+  if (depth) return null;
+  value = value.replace(/\\(?:mathrm|mathbf|mathit|mathsf|mathtt|mathnormal|boldsymbol|rm|bf|it)\b/g, '')
+    .replace(/\\(?:displaystyle|textstyle|scriptstyle|scriptscriptstyle)\b/g, '')
+    .replace(/\\[,;:! ]|\\(?:quad|qquad|enspace|thinspace)\b/g, ' ')
+    .replace(/\\_/g, '_');
+  // Flatten redundant groups around a single atom, not fractions or compound expressions.
+  for (let pass = 0; pass < 16; pass++) {
+    const next = value.replace(/\{\s*\{\s*([A-Za-z0-9]+|\\[A-Za-z]+)\s*\}\s*\}/g, '{$1}');
+    if (next === value) break;
+    value = next;
+  }
+  return value.replace(/([_^])\s*(\\(?:alpha|beta|gamma|delta|epsilon|theta|lambda|mu|pi|sigma|omega|rho|tau|phi|eta|nu|xi|zeta|Gamma|Delta|Theta|Lambda|Sigma|Omega|Phi|Pi|Psi|psi))\b/g, '$1{$2}');
+}
 function mathSpeech(content, inputOptions = {}) {
   const options = academicOptions(inputOptions), zh = options.mathReadingLanguage === 'chinese', brief = options.academicMathStyle === 'concise';
   if (options.mathReadingLanguage === 'skip' || options.academicMathMode === 'skip') return omission('formula', options);
-  let value = String(content).replace(/\\_/g, '_').replace(/([_^])\s*(\\[A-Za-z]+)/g, '$1{$2}').trim();
+  let value = normalizeMathPresentation(content);
+  if (value === null) return omission('formula', options);
   const commands = value.match(/\\[A-Za-z]+/g) || [];
   const semantic = value.replace(/\\[A-Za-z]+/g,'x').replace(/[{}\s]/g,'');
   const limit = options.academicMathMode === 'all' ? 100 : 32;
