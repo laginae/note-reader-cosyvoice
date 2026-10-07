@@ -1,7 +1,5 @@
 # Note and PDF Voice Reader
 
-简单公式如 `$z_{\mathrm d}$` 会读作“z sub d”。字体和排版空白不会使简单公式被误判为复杂公式；仍尊重主动跳过公式的设置，并保留复杂公式保护。
-
 **语言：** [English](README.md) | 简体中文 | [Deutsch](README.de.md) | [Français](README.fr.md) | [Русский](README.ru.md) | [한국어](README.ko.md) | [日本語](README.ja.md) | [Español](README.es.md) | [Italiano](README.it.md) | [Português](README.pt.md)
 
 在 Obsidian 中朗读 **笔记、PDF、HTML 文件和网页**。一边听，一边在原文中跟读；也可以按章节跳转，或导出音频稍后收听。
@@ -249,6 +247,8 @@ MiMo 默认每段最多 200 字符，可在设置中调整（客户端保守措�
 - 设置页提供 [GitHub Issues](https://github.com/laginae/note-reader-cosyvoice/issues) 反馈入口，用于报告问题和提出功能建议。
 
 ## 学术阅读
+
+简单公式如 `$z_{\mathrm d}$` 会读作“z sub d”。字体和排版空白不会使简单公式被误判为复杂公式；仍尊重主动跳过公式的设置，并保留复杂公式保护。
 
 设置页按 **语音引擎、播放与界面、学术阅读、导出与存储、隐私与帮助** 五个分类分页显示。紧凑语言选择位于标题旁，窄窗口自动换行；标题和分类栏随页面正常滚动，避免吸顶时露字或遮挡正文。切换分类不会改动设置；更改选项触发刷新后仍停留在当前分类。在线授权和密钥紧邻对应引擎，“恢复全部默认设置”放在隐私与帮助页底部。
 

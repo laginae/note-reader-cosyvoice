@@ -1,7 +1,5 @@
 # Note and PDF Voice Reader
 
-Simple formulas such as `$z_{\mathrm d}$` are read as "z sub d". Font and spacing commands do not make a short formula complex; explicit skip settings and complex-formula safeguards still apply.
-
 **Language:** English | [简体中文](README.zh-CN.md) | [Deutsch](README.de.md) | [Français](README.fr.md) | [Русский](README.ru.md) | [한국어](README.ko.md) | [日本語](README.ja.md) | [Español](README.es.md) | [Italiano](README.it.md) | [Português](README.pt.md)
 
 Read aloud your **notes, PDFs, HTML files and web pages** in Obsidian. Listen while following the original document, jump between sections, or export audio for later.
@@ -249,6 +247,8 @@ MiMo defaults to a configurable 200-character chunk cap (a conservative client s
 - Provides a settings-page link to [GitHub Issues](https://github.com/laginae/note-reader-cosyvoice/issues) for feedback and bug reports.
 
 ## Academic reading
+
+Simple formulas such as `$z_{\mathrm d}$` are read as "z sub d". Font and spacing commands do not make a short formula complex; explicit skip settings and complex-formula safeguards still apply.
 
 Settings are organized into five pages: **Speech engine**, **Playback and interface**, **Academic reading**, **Export and storage**, and **Privacy and help**. A compact language selector sits beside the title and wraps on narrow windows. The header and category tabs scroll normally with the page, avoiding overlapping text. Page changes do not alter preferences; changing a setting that redraws the page preserves the selected category. Online consent and credentials stay next to the selected engine, while resetting all settings remains at the bottom of Privacy and help.
 
