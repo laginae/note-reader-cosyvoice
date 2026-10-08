@@ -10,6 +10,8 @@ Read aloud your **notes, PDFs, HTML files and web pages** in Obsidian. Listen wh
 
 English demo with public sample text, rendered from the plugin's interface code; appearance varies by theme.
 
+In Markdown Live Preview or Source mode, the editor context menu offers **Read aloud from here** and, when text is selected, **Read selected text**. Other document views retain their toolbar actions. In **Playback and interface**, independently toggle the context menu and the optional **Editing Toolbar** speaker icon. The icon reads selected text by default, or can read from the selection to the document end. It requires a selection; reselect text after changing toolbar options.
+
 ## Why use it?
 
 - **Privacy under your control.** Document text is extracted locally. Online speech requires explicit consent; installed offline system voices and local CosyVoice keep synthesis on your device.
@@ -45,7 +47,9 @@ MiMo's [official pricing](https://mimo.mi.com/docs/zh-CN/price/pay-as-you-go) li
 
 On **Obsidian desktop**, install and enable [Note and PDF Voice Reader](https://community.obsidian.md/plugins/note-reader-cosyvoice), then open its settings. Manual installation is covered in [INSTALL.md](INSTALL.md).
 
-The initial engine is local CosyVoice, which needs configuration. **Choose one of the following engines before your first reading.** Online consent applies only to the service you enable.
+The initial engine is local CosyVoice, which needs configuration. In **Quick start**, select **Use system speech** for a first test without an API key. Existing users keep their selected engine and saved provider settings.
+
+Settings now separate **Reading method** (System speech / Online speech / Local model) from the online **Speech service**. Configure a service's secret and voice, review its processing permission, then press **Test voice**. This uses only the displayed fixed sample, not your note; online tests may incur charges. Stop the current reading or export first, and use **Stop test** to cancel. Advanced engine fields and playback chunk/prefetch controls are collapsed by default. Choosing a custom model or voice opens the advanced fields.
 
 ### 1. Xiaomi MiMo: a convenient first try for Chinese
 

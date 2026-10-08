@@ -1,6 +1,7 @@
 'use strict';
 const { Setting } = require('obsidian');
 const { parseTerms, supportsSpeechContext } = require('./speech-options');
+const { disclosure } = require('./engine-setup');
 
 function addSpeechContextSetting(container, plugin) {
   if (!supportsSpeechContext(plugin.settings.openRouterModel)) return;
@@ -16,6 +17,7 @@ function addSpeechContextSetting(container, plugin) {
 }
 function addSpeechTermsSettings(container, plugin) {
   const zh = plugin.settings.settingsLanguage === 'chinese';
+  container = disclosure(container, zh ? '发音词典（高级）' : 'Pronunciation dictionary (advanced)');
   new Setting(container).setName(zh ? '本地术语读法' : 'Local term pronunciations')
     .setDesc(zh ? '适用于所有语音引擎。只替换合成文本，不修改原文；规则保存在本地，下次朗读生效。在线引擎仍会收到替换后的文本。'
       : 'For all speech engines. Changes synthesis text, not the document. Rules stay local and apply next session; online engines still receive the substituted text.')

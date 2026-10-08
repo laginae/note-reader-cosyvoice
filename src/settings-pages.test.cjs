@@ -30,7 +30,7 @@ test('actual settings retain all groups and place global reset last without chan
   const {dom,doc,plugin,tab,rows}=settingsFixture();
   const group=name=>rows.find(row=>row.nameEl.textContent===name)?.settingEl.closest('[role=tabpanel]')?.dataset.settingsPage;
   assert.equal(group('Settings language'),undefined);
-  for(const [name,page] of [ ['Speech engine','engine'],['Allow MiMo online processing','engine'],
+  for(const [name,page] of [ ['Reading method','engine'],['Allow MiMo online processing','engine'],
     ['Online synthesis prefetch','playback'],['Highlight color','playback'],['Copilot chat reading','playback'],
     ['Formula reading','academic'],['PDF footnote reading','academic'],['Overwrite original PDF for bookmarks by default','academic'],
     ['Audio export save location','storage'],['Clean temporary audio','storage'],['Clear temporary data','storage'],

@@ -5,6 +5,8 @@ const { PAGES, createSettingsPages, createSettingsHeader } = require('./settings
 const { resetPageSettings } = require('./settings-reset');
 const { ELEVENLABS_MODELS, ELEVENLABS_VOICES, isElevenLabsModel } = require('./openrouter-elevenlabs');
 const { getOpenRouterPricing } = require('./openrouter-pricing');
+const { disclosure, renderEngineChoice, renderPreview } = require('./engine-setup');
+const { registerReadingMenu, syncEditingToolbar, addReadingMenuSettings } = require('./reading-menu');
 const { normalizedTerms, applyTerms, fitSpeechParts, contextOptions, adjacentContext } = require('./speech-options');
 const { addSpeechContextSetting, addSpeechTermsSettings } = require('./speech-options-settings');
 const { SettingsConfirmModal } = require('./settings-confirm');
@@ -1640,6 +1642,9 @@ function selectKnownSettings(defaults, candidate) {
 
 function createDefaultSettings() {
   return {
+    readingContextMenu: true,
+    readingFloatingToolbar: false,
+    readingFloatingAction: 'selection',
     ...ACADEMIC_DEFAULTS,
     ...COPILOT_DEFAULTS,
     ...MIMO_DEFAULTS,
@@ -2454,6 +2459,11 @@ class CosyVoiceReaderPlugin extends Plugin {
     this.statusBar = this.addStatusBarItem();
 
     await this.loadSettings();
+    registerReadingMenu(this, snapshot => this.runUserAction('Read context', () => this.startReading(
+      snapshot.text, snapshot.file.basename || snapshot.file.name, {
+        file: snapshot.file, sourceKind: 'markdown', sourceText: snapshot.sourceText,
+        sourceOffset: snapshot.start, skipReadingPosition: snapshot.selection,
+      })), message => new Notice(message));
     await this.ensureCacheDir();
 
     this.registerView(VIEW_TYPE, (leaf) => new CosyVoiceReaderView(leaf, this));
@@ -2668,6 +2678,7 @@ class CosyVoiceReaderPlugin extends Plugin {
     this.addCommand({
       id: 'read-selection',
       name: 'Read selection aloud',
+      icon: 'volume-2',
       callback: () => {
         void this.runUserAction('Read selection', () => this.readSelection());
       },
@@ -2676,6 +2687,7 @@ class CosyVoiceReaderPlugin extends Plugin {
     this.addCommand({
       id: 'read-from-selection',
       name: 'Read from selection aloud',
+      icon: 'list-start',
       callback: () => {
         void this.runUserAction('Read from selection', () => this.readFromSelection());
       },
@@ -2908,6 +2920,7 @@ class CosyVoiceReaderPlugin extends Plugin {
     this.settings.readingPositions = normalizeReadingPositions(this.settings.readingPositions);
     this.settings.rememberReadingPosition = this.settings.rememberReadingPosition === true;
     await this.saveData(settingsForStorage(this.settings));
+    await syncEditingToolbar(this);
   }
 
   async resetSettingsToDefaults(page = 'all') {
@@ -5372,6 +5385,23 @@ class CosyVoiceReaderPlugin extends Plugin {
     this.copilotChatModal.open();
   }
 
+  isSettingsPreviewBusy() {
+    return Boolean(this.activeSession);
+  }
+
+  async runSettingsPreview(sample, token) {
+    if (this.activeSession || token.cancelled) return 'cancelled';
+    if (!this.getSpeechConfiguration()) return 'Configuration incomplete';
+    const result = await this.startReading(sample, 'Voice test', {
+      plainText: true, skipReadingPosition: true, settingsPreview: token,
+    });
+    return result || 'Configuration incomplete';
+  }
+
+  stopSettingsPreview(token) {
+    if (this.activeSession?.settingsPreview === token) void this.stopReading({ silent: true });
+  }
+
   async startReading(rawText, sourceLabel, options = {}) {
     const preparationStarted = (this.playbackTimings ||= new PlaybackTimings()).now();
     const text = options.plainText || options.sourceKind === 'html' ? this.prepareHtmlSpeechText(rawText)
@@ -5390,6 +5420,7 @@ class CosyVoiceReaderPlugin extends Plugin {
     }
 
     await this.stopReading({ silent: true });
+    if (options.settingsPreview && (options.settingsPreview.cancelled || this.activeSession)) return 'cancelled';
     this.pauseRequested = false;
 
     const chunks = options.readingChunks || splitTextForSpeechChunks(text, configuration.chunkLimits);
@@ -5411,6 +5442,15 @@ class CosyVoiceReaderPlugin extends Plugin {
 
     session.webContext = options.webContext;
     session.skipReadingPosition = options.skipReadingPosition === true;
+    if (options.settingsPreview) {
+      if (options.settingsPreview.cancelled) return 'cancelled';
+      session.settingsPreview = options.settingsPreview;
+      session.previewResult = 'cancelled';
+      session.smartQuickStart = false;
+      session.prefetchChunks = 0;
+      session.synthesisSettings.speechTermsEnabled = false;
+      session.synthesisSettings.openRouterContext = false;
+    }
 
     this.activeSession = session;
     this.updateStatus(`${configuration.engineLabel} 0/${chunks.length}`, {
@@ -5439,6 +5479,7 @@ class CosyVoiceReaderPlugin extends Plugin {
 
     this.playbackTimings.record('textPreparation', this.playbackTimings.now() - preparationStarted);
     await this.runSpeechSession(session);
+    return session.previewResult;
   }
 
   async runSpeechSession(session) {
@@ -5556,6 +5597,7 @@ class CosyVoiceReaderPlugin extends Plugin {
       }
 
       if (this.isActive(session)) {
+        session.previewResult = 'complete';
         this.updateStatus(`${session.engineLabel} complete`, {
           canPause: false,
           canNextChunk: false,
@@ -5575,6 +5617,7 @@ class CosyVoiceReaderPlugin extends Plugin {
         const message = session.kind === 'pdf-progressive'
           ? getPdfExtractionErrorMessage(error)
           : messageFromError(error);
+        session.previewResult = message;
         this.updateStatus(`${session.engineLabel} error`, {
           canPause: false,
           canNextChunk: false,
@@ -7442,7 +7485,7 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
       if (sequence === this.displaySequence && !plugin.systemSpeechUnloaded
         && plugin.settings.speechEngine === 'system-tts') this.display();
     };
-    new Setting(containerEl).setName(label('Local speech privacy', '系统本地语音与隐私'))
+    new Setting(this.systemHelp || containerEl).setName(label('Local speech privacy', '系统本地语音与隐私'))
       .setDesc(label(
         'Uses installed Windows SAPI or macOS say voices. No API key, local model, automatic download or cloud fallback. Offline voices keep reading text on this computer, like local CosyVoice. Downloads need internet; exported audio and vault sync have separate privacy implications.',
         '调用已安装的 Windows SAPI 或 macOS say 音色，无需 API 密钥或本地模型，不自动下载，也不回退到云端。离线音色与本地 CosyVoice 一样让朗读正文留在本机。下载需要联网；导出音频和库同步的隐私需另外考虑。'));
@@ -7475,20 +7518,8 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
           try { await plugin.loadSystemSpeechVoices(true); }
           catch { new Notice(label('Could not load installed voices. See the system voice help below.', '无法加载已安装音色，请查看下方系统音色帮助。'), 8000); }
           finally { redraw(); }
-        }))
-      .addButton(button => button.setButtonText(label('Preview', '试听')).setDisabled(!supported || !voices.length || Boolean(plugin.systemVoicesError))
-        .onClick(() => {
-          if (plugin.settings.speechEngine !== 'system-tts') return;
-          if (plugin.activeSession) {
-            new Notice(label('Stop the current reading or export before previewing.', '请先停止当前朗读或导出，再试听音色。'));
-            return;
-          }
-          const currentVoice = normalizeSystemVoice(plugin.settings[key]);
-          const voice = voices.find(item => item.id === currentVoice) || (!currentVoice ? voices[0] : null);
-          const sample = /^zh/i.test(voice?.language || '')
-            ? '这是系统本地语音试听。朗读文本在本机处理。' : 'This is a local system voice preview. Reading text stays on this computer.';
-          void plugin.runUserAction(label('System voice preview', '系统音色试听'), () => plugin.startReading(sample, 'system voice preview', { plainText: true }));
         }));
+    containerEl = this.systemHelp || containerEl;
     new Setting(containerEl).setName(label('Playback speed', '播放倍速'))
       .setDesc(label('System speech is synthesized at its normal pace. Use the reader panel playback rate and volume controls; exported WAV audio remains at normal pace.',
         '系统语音按正常语速合成。使用朗读面板调节播放倍速和音量；导出的 WAV 音频保持正常语速。'));
@@ -7550,25 +7581,15 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
     if (!['english','chinese'].includes(settingsLanguage)) new Setting(pages.privacy)
       .setDesc(translateInterface(settingsLanguage, 'Some advanced help remains in English. Interface language does not change the speech voice.'));
     containerEl = pages.engine;
-    new Setting(containerEl)
-      .setName(ui.speechEngineName)
-      .setDesc(ui.speechEngineDesc)
-      .addDropdown((dropdown) => {
-        dropdown
-          .addOption('local-cosyvoice', ui.speechEngineLocal)
-          .addOption('system-tts', ui.speechEngineSystem)
-          .addOption('edge-tts', ui.speechEngineEdge)
-          .addOption('azure-speech', ui.speechEngineAzure)
-          .addOption('openrouter-tts', ui.speechEngineOpenRouter)
-          .addOption('mimo-tts', 'Xiaomi MiMo TTS')
-          .addOption('byok-tts', settingsLanguage === 'chinese' ? '自定义语音 API（BYOK）' : 'Custom speech API (BYOK)')
-          .setValue(selectedSpeechEngine)
-          .onChange(async (value) => {
-            this.plugin.settings.speechEngine = normalizeSpeechEngine(value);
-            await this.plugin.saveSettings();
-            this.display();
-          });
-      });
+    renderEngineChoice(containerEl, this, Setting, false, {
+      system: ui.speechEngineSystem, local: ui.speechEngineLocal, edge: ui.speechEngineEdge,
+      localReady: Boolean(this.plugin.settings.scriptPath && fs.existsSync(this.plugin.settings.scriptPath)),
+      byok: settingsLanguage === 'chinese' ? '其他接口（BYOK）' : 'Other APIs (BYOK)',
+    });
+    const advancedTitle = translateInterface(settingsLanguage, 'Advanced options', '高级选项');
+    const engineAdvanced = disclosure(containerEl, advancedTitle, this.engineAdvancedOpen === true);
+    engineAdvanced.addEventListener('toggle', () => { this.engineAdvancedOpen = engineAdvanced.open; });
+    this.systemHelp = engineAdvanced;
 
     if (selectedSpeechEngine === 'system-tts') this.displaySystemSpeechSettings(containerEl, settingsLanguage);
     if (selectedSpeechEngine === 'byok-tts') displayByokSettings(this, containerEl, {
@@ -7600,10 +7621,10 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
           '使用 mimo-v2.5-tts 官方预置音色。2026-09-27 官方列为限时免费，额度及价格可能变化。合成语速通过自然语言指令控制，不保证精确倍率。'))
         .addButton(button => button.setButtonText(label('Pricing', '官方价格')).onClick(() => window.open('https://mimo.mi.com/docs/zh-CN/price/pay-as-you-go')))
         .addButton(button => button.setButtonText(label('Privacy', '隐私政策')).onClick(() => window.open('https://privacy.mi.com/XiaomiMiMoPlatform/zh_CN/')));
-      new Setting(containerEl).setName(label('MiMo completeness protection', 'MiMo 完整性保护'))
+      new Setting(engineAdvanced).setName(label('MiMo completeness protection', 'MiMo 完整性保护'))
         .setDesc(label('Abnormal completion stops reading without automatic resynthesis. Normal completion does not prove every word was spoken.',
           '异常结束会停止朗读，不自动重新合成。正常结束标记仍不能证明每个字都已读出。'));
-      new Setting(containerEl).setName(label('MiMo chunk character cap', 'MiMo 每段字符上限'))
+      new Setting(engineAdvanced).setName(label('MiMo chunk character cap', 'MiMo 每段字符上限'))
         .setDesc(label('Client precaution, not an API limit. Default 200; adjustable 50-2000. Effective size is the smaller of this cap and online chunk limits. Smaller chunks increase request count.',
           '客户端保守值，不是接口上限。默认 200，可调 50–2000；与在线分段设置取较小值。较小的分段会增加请求次数。'))
         .addText(text => text.setValue(String(this.plugin.settings.mimoChunkLimit || 200)).onChange(async value => {
@@ -7612,7 +7633,7 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
           await this.plugin.saveSettings();
         }));
       const credentialSource = normalizeCredentialSource(this.plugin.settings.mimoCredentialSource);
-      new Setting(containerEl).setName(ui.credentialSourceName).setDesc(ui.credentialSourceDesc)
+      new Setting(engineAdvanced).setName(ui.credentialSourceName).setDesc(ui.credentialSourceDesc)
         .addDropdown(dropdown => dropdown.addOption('obsidian-secret', ui.credentialSourceSecret)
           .addOption('key-file', ui.credentialSourceFile).setValue(credentialSource).onChange(async value => {
             this.plugin.settings.mimoCredentialSource = normalizeCredentialSource(value);
@@ -7706,16 +7727,14 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
             .addOption('__custom__', ui.customVoiceOption)
             .setValue(commonVoiceIds.has(currentEdgeVoice) ? currentEdgeVoice : '__custom__')
             .onChange(async (value) => {
-              if (value === '__custom__') {
-                return;
-              }
+              if (value === '__custom__') { engineAdvanced.open = true; engineAdvanced.querySelector('input')?.focus(); return; }
               this.plugin.settings.edgeTtsVoice = value;
               await this.plugin.saveSettings();
               this.display();
             });
         });
 
-      new Setting(containerEl)
+      new Setting(engineAdvanced)
         .setName(ui.edgeVoiceName)
         .setDesc(ui.edgeVoiceDesc)
         .addText((text) => {
@@ -7782,7 +7801,7 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
         });
 
       const azureCredentialSource = normalizeCredentialSource(this.plugin.settings.azureSpeechCredentialSource);
-      new Setting(containerEl)
+      new Setting(engineAdvanced)
         .setName(ui.credentialSourceName)
         .setDesc(ui.credentialSourceDesc)
         .addDropdown((dropdown) => {
@@ -7841,16 +7860,14 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
             .addOption('__custom__', ui.customVoiceOption)
             .setValue(commonVoiceIds.has(currentAzureVoice) ? currentAzureVoice : '__custom__')
             .onChange(async (value) => {
-              if (value === '__custom__') {
-                return;
-              }
+              if (value === '__custom__') { engineAdvanced.open = true; engineAdvanced.querySelector('input')?.focus(); return; }
               this.plugin.settings.azureSpeechVoice = value;
               await this.plugin.saveSettings();
               this.display();
             });
         });
 
-      new Setting(containerEl)
+      new Setting(engineAdvanced)
         .setName(ui.azureVoiceName)
         .setDesc(ui.azureVoiceDesc)
         .addText((text) => {
@@ -7876,7 +7893,7 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
         });
 
       const openRouterCredentialSource = normalizeCredentialSource(this.plugin.settings.openRouterCredentialSource);
-      new Setting(containerEl)
+      new Setting(engineAdvanced)
         .setName(ui.credentialSourceName)
         .setDesc(ui.credentialSourceDesc)
         .addDropdown((dropdown) => {
@@ -7939,9 +7956,7 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
             .addOption('__custom__', ui.customModelOption)
             .setValue(selectedOpenRouterModel ? currentOpenRouterModel : '__custom__')
             .onChange(async (value) => {
-              if (value === '__custom__') {
-                return;
-              }
+              if (value === '__custom__') { engineAdvanced.open = true; engineAdvanced.querySelector('input')?.focus(); return; }
               this.plugin.settings.openRouterModel = value;
               this.plugin.settings.openRouterVoice = getDefaultOpenRouterVoiceForModel(value);
               await this.plugin.saveSettings();
@@ -7949,7 +7964,7 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
             });
         });
 
-      new Setting(containerEl)
+      new Setting(engineAdvanced)
         .setName(ui.openRouterModelName)
         .setDesc(ui.openRouterModelDesc)
         .addText((text) => {
@@ -7980,7 +7995,7 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
       const openRouterVoicePresets = getOpenRouterTtsVoicePresets(currentOpenRouterModel, settingsLanguage);
       const voiceHelpFamily = currentOpenRouterModel.startsWith('microsoft/mai-voice-')
         ? 'Mai' : isElevenLabsModel(currentOpenRouterModel) ? 'ElevenLabs' : '';
-      addSpeechContextSetting(containerEl, this.plugin);
+      addSpeechContextSetting(engineAdvanced, this.plugin);
       const openRouterVoiceIds = new Set(openRouterVoicePresets.map(([, voice]) => voice));
       new Setting(containerEl)
         .setName(ui.openRouterVoicesName)
@@ -7993,16 +8008,14 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
             .addOption('__custom__', ui.customVoiceOption)
             .setValue(openRouterVoiceIds.has(currentOpenRouterVoice) ? currentOpenRouterVoice : '__custom__')
             .onChange(async (value) => {
-              if (value === '__custom__') {
-                return;
-              }
+              if (value === '__custom__') { engineAdvanced.open = true; engineAdvanced.querySelector('input')?.focus(); return; }
               this.plugin.settings.openRouterVoice = value;
               await this.plugin.saveSettings();
               this.display();
             });
         });
 
-      new Setting(containerEl)
+      new Setting(engineAdvanced)
         .setName(ui.openRouterVoiceName)
         .setDesc(ui.openRouterVoiceDesc)
         .addText((text) => {
@@ -8015,7 +8028,7 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
             });
         });
 
-      new Setting(containerEl)
+      new Setting(engineAdvanced)
         .setName(ui.openRouterVoiceHelpName)
         .setDesc(ui[`openRouter${voiceHelpFamily}VoiceHelpDesc`])
         .addButton((button) => {
@@ -8040,7 +8053,16 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
         .setDesc(ui.openRouterPrivacyDesc);
     }
 
+    const consentNames = new Set([ui.mimoConsentName, ui.edgeConsentName, ui.azureConsentName, ui.openRouterConsentName,
+      settingsLanguage === 'chinese' ? '允许 MiMo 在线处理' : 'Allow MiMo online processing'].filter(Boolean).map(name => translateInterface(settingsLanguage, name)));
+    for (const row of Array.from(pages.engine.children)) {
+      if (consentNames.has(row.querySelector('.setting-item-name')?.textContent) || row.classList.contains('note-reader-byok-consent')) pages.engine.append(row);
+    }
+    renderPreview(pages.engine, this, setIcon);
+    pages.engine.append(engineAdvanced);
+    if (engineAdvanced.children.length === 1) engineAdvanced.hidden = true;
     containerEl = pages.playback;
+    addReadingMenuSettings(containerEl, this.plugin, Setting);
     containerEl.createEl('h3', { text: translateInterface(settingsLanguage, 'Playback', '播放') });
     new Setting(containerEl)
       .setName(translateInterface(settingsLanguage, 'Smart quick start', '智能快速起读'))
@@ -8071,7 +8093,8 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
           });
       });
 
-    new Setting(containerEl)
+    const playbackAdvanced = disclosure(containerEl, advancedTitle);
+    new Setting(playbackAdvanced)
       .setName(ui.chunkLimitsName)
       .setDesc(ui.chunkLimitsDesc)
       .addText((text) => {
@@ -8081,7 +8104,7 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
         });
       });
 
-    new Setting(containerEl)
+    new Setting(playbackAdvanced)
       .setName(ui.onlineChunkLimitsName)
       .setDesc(ui.onlineChunkLimitsDesc)
       .addText((text) => {
@@ -8094,7 +8117,7 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
         });
       });
 
-    new Setting(containerEl)
+    new Setting(playbackAdvanced)
       .setName(ui.onlinePrefetchName)
       .setDesc(ui.onlinePrefetchDesc)
       .addDropdown((dropdown) => {

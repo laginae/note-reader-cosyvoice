@@ -2,6 +2,7 @@
 
 const { Modal, Setting, SecretComponent, Notice } = require('obsidian');
 const { translate } = require('./i18n');
+const { disclosure } = require('./engine-setup');
 const { BYOK_PROVIDERS, MAX_BYOK_PROFILES, createByokProfile, getByokProfile, updateByokProfile,
   getByokConfigurationError, byokConsentFingerprint, hasByokConsent } = require('./byok-tts');
 
@@ -137,14 +138,15 @@ function displayByokSettings(tab, containerEl, { canUseSecrets, credentialError,
       .setDesc(t('Absolute path to a one-line key file outside the vault. Do not paste a key here.', '库外单行密钥文件的绝对路径，不要在这里粘贴密钥。'))
       .addText(text => { secretControl = text; text.setValue(profile.keyPath).onChange(value => update({ keyPath: value })); });
   }
-  new Setting(containerEl).setName(t('Maximum characters per chunk', '每段字符上限'))
+  const advanced = disclosure(containerEl, t('API advanced options', '接口高级选项'));
+  new Setting(advanced).setName(t('Maximum characters per chunk', '每段字符上限'))
     .setDesc(t('50-2000, default 800. Also capped by online chunk settings; reduce for services with lower limits. Playback speed is adjusted locally.',
       '50–2000，默认 800。与在线分段设置取较小值；服务限制更低时请调小。播放倍速在本地调整。'))
     .addText(text => text.setValue(String(profile.chunkLimit)).onChange(value => {
       if (/^\d+$/.test(value) && Number(value) >= 50 && Number(value) <= 2000) return update({ chunkLimit: Number(value) });
     }));
 
-  let consentToggle, previewButton;
+  let consentToggle;
   const consentSetting = new Setting(consentHost).setName(t('Allow this configuration to process text', '允许此配置处理朗读文本'));
   const riskText = t(
     'Reading text and credentials go to the endpoint you configure, which may forward text to upstream providers. Requests, including previews, may cost money. No-training and zero data retention (ZDR) are NOT verified or enforced by this plugin for BYOK. Review the destination, service, intermediary and account policies yourself. This permission authorizes synthesis, not model training. Revoking permission cannot recall data already sent.',
@@ -173,26 +175,12 @@ function displayByokSettings(tab, containerEl, { canUseSecrets, credentialError,
         }, () => refresh()).open();
     });
   });
-  new Setting(containerEl).setName(t('Voice preview', '音色试听'))
-    .setDesc(t('Sends only: "This is an AI-generated voice preview." Uses account quota and replaces current playback. Failed requests are not automatically retried.',
-      '仅发送固定短句“This is an AI-generated voice preview.”，会使用账户额度并替换当前播放。不自动重试失败的请求。'))
-    .addButton(button => {
-      previewButton = button;
-      button.setIcon('play').setButtonText(t('Preview', '试听')).onClick(async () => {
-        if (plugin.settings.speechEngine !== 'byok-tts' || plugin.settings.byokActiveProfileId !== profile.id || !hasByokConsent(find())) return;
-        button.setDisabled(true);
-        try {
-          await plugin.runUserAction(t('BYOK preview', 'BYOK 试听'), () => plugin.startReading(
-            'This is an AI-generated voice preview.', 'BYOK voice preview', { plainText: true, skipReadingPosition: true }));
-        } finally { refresh(); }
-      });
-    });
   refresh = () => {
     const current = find();
     const allowed = hasByokConsent(current);
-    consentToggle?.setValue(allowed); previewButton?.setDisabled(!allowed);
+    consentToggle?.setValue(allowed);
     const state = allowed ? t('Authorized for this configuration.', '已授权此配置。')
-      : t('Not authorized. Complete the API settings below, then enable here.', '尚未授权。请先完善下方接口设置，再在此开启。');
+      : t('Not authorized. Complete the API configuration before enabling.', '尚未授权。请先完善接口配置，再开启授权。');
     consentSetting.setDesc(`${state}\n${current?.endpoint || ''}\n${t('Online processing may incur charges; no-training and ZDR are not guaranteed.', '在线处理可能产生费用；不保证不用于训练或 ZDR。')}`);
     const option = Array.from(profileDropdown.selectEl.options).find(item => item.value === current?.id);
     if (option && current) option.textContent = profileLabel(current);

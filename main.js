@@ -694,6 +694,9 @@ var require_settings_reset = __commonJS({
         "openRouterContext"
       ],
       playback: [
+        "readingContextMenu",
+        "readingFloatingToolbar",
+        "readingFloatingAction",
         "speed",
         "playbackSpeed",
         "playbackVolume",
@@ -858,6 +861,265 @@ var require_openrouter_pricing = __commonJS({
   }
 });
 
+// src/engine-setup.js
+var require_engine_setup = __commonJS({
+  "src/engine-setup.js"(exports2, module2) {
+    "use strict";
+    function methodFor(engine, mobile = false) {
+      if (engine === (mobile ? "system" : "system-tts")) return "system";
+      if (engine === (mobile ? "remote-cosyvoice" : "local-cosyvoice")) return "local";
+      return "online";
+    }
+    function disclosure2(parent, title, open = false) {
+      const details = parent.createEl("details", { cls: "reader-setup-details" });
+      details.open = open;
+      details.createEl("summary", { text: title });
+      return details;
+    }
+    function renderEngineChoice2(parent, tab, Setting, mobile, labels) {
+      const plugin = tab.plugin, engine = plugin.settings.speechEngine;
+      const t = (en, zh) => plugin.settings.settingsLanguage === "chinese" ? zh : en;
+      const method = methodFor(engine, mobile);
+      tab.engineChoiceControls = [];
+      const control = (component) => {
+        tab.engineChoiceControls.push(component);
+        component.setDisabled?.(Boolean(plugin.settingsPreview));
+        return component;
+      };
+      tab.engineChoices || (tab.engineChoices = {});
+      tab.engineChoices[method] = engine;
+      const groups = {
+        system: [[mobile ? "system" : "system-tts", labels.system]],
+        local: [[mobile ? "remote-cosyvoice" : "local-cosyvoice", labels.local]],
+        online: mobile ? [["mimo", "Xiaomi MiMo"], ["openrouter", "OpenRouter"], ["azure", "Microsoft Azure"], ["byok", labels.byok]] : [["mimo-tts", "Xiaomi MiMo"], ["openrouter-tts", "OpenRouter"], ["azure-speech", "Microsoft Azure"], ["byok-tts", labels.byok], ["edge-tts", labels.edge]]
+      };
+      const change = async (value) => {
+        if (plugin.settingsPreview) return;
+        tab.setupCompleted = false;
+        tab.previewMessage = "";
+        plugin.settings.speechEngine = value;
+        await plugin.saveSettings();
+        tab.display();
+      };
+      const settings = plugin.settings;
+      const onlineReady = mobile ? Boolean(engine === "byok" ? settings.byokProfile?.consent : settings[engine + "Consent"] && settings[engine + "SecretName"]) : Boolean({
+        "mimo-tts": settings.mimoConsent && (settings.mimoSecretName || settings.mimoKeyPath),
+        "openrouter-tts": settings.openRouterConsent && (settings.openRouterSecretName || settings.openRouterKeyPath),
+        "azure-speech": settings.azureSpeechConsent && (settings.azureSpeechSecretName || settings.azureSpeechKeyPath),
+        "edge-tts": settings.edgeTtsConsent,
+        "byok-tts": settings.byokProfiles?.find((p) => p.id === settings.byokActiveProfileId)?.consent
+      }[engine]);
+      const localReady = mobile ? settings.remoteConsent && settings.remoteEndpoint : labels.localReady;
+      const ready = method === "system" || (method === "local" ? localReady : onlineReady);
+      const start = disclosure2(parent, t("Quick start", "\u5FEB\u901F\u5F00\u59CB"), !tab.setupCompleted && !ready);
+      tab.quickStart = start;
+      new Setting(start).setName(t("System speech", "\u7CFB\u7EDF\u8BED\u97F3")).setDesc(t("No API key required. Uses available device voices; voice quality and availability vary.", "\u65E0\u9700 API \u5BC6\u94A5\uFF0C\u4F7F\u7528\u8BBE\u5907\u53EF\u7528\u97F3\u8272\uFF1B\u97F3\u8D28\u548C\u53EF\u7528\u6027\u56E0\u8BBE\u5907\u800C\u5F02\u3002")).addButton((button) => control(button).setButtonText(t("Use system speech", "\u4F7F\u7528\u7CFB\u7EDF\u8BED\u97F3")).onClick(() => change(mobile ? "system" : "system-tts")));
+      new Setting(parent).setName(t("Reading method", "\u6717\u8BFB\u65B9\u5F0F")).setDesc(method === "system" ? t("No API key required. Voices depend on your device.", "\u65E0\u9700 API \u5BC6\u94A5\uFF0C\u53EF\u7528\u97F3\u8272\u53D6\u51B3\u4E8E\u8BBE\u5907\u3002") : method === "local" ? mobile ? t("Connect to your own HTTPS speech service; text leaves this device.", "\u8FDE\u63A5\u81EA\u5EFA HTTPS \u8BED\u97F3\u670D\u52A1\uFF0C\u6587\u672C\u4F1A\u79BB\u5F00\u6B64\u8BBE\u5907\u3002") : t("Requires a configured local speech model and wrapper.", "\u9700\u8981\u5DF2\u914D\u7F6E\u7684\u672C\u5730\u8BED\u97F3\u6A21\u578B\u548C\u5305\u88C5\u811A\u672C\u3002") : t("Uses your service account. Text is sent to the selected provider; charges may apply.", "\u4F7F\u7528\u4F60\u7684\u670D\u52A1\u5546\u8D26\u53F7\uFF1B\u6587\u672C\u53D1\u9001\u7ED9\u6240\u9009\u670D\u52A1\uFF0C\u53EF\u80FD\u8BA1\u8D39\u3002")).addDropdown((dropdown) => control(dropdown).addOption("system", t("System speech", "\u7CFB\u7EDF\u8BED\u97F3")).addOption("online", t("Online speech", "\u5728\u7EBF\u8BED\u97F3")).addOption("local", mobile ? t("Self-hosted service", "\u81EA\u5EFA\u670D\u52A1") : t("Local model", "\u672C\u5730\u6A21\u578B")).setValue(method).onChange((value) => {
+        if (groups[value]) return change(tab.engineChoices[value] || groups[value][0][0]);
+      }));
+      if (method === "online") new Setting(parent).setName(t("Speech service", "\u8BED\u97F3\u670D\u52A1")).addDropdown((dropdown) => {
+        control(dropdown);
+        for (const [id, label] of groups.online) dropdown.addOption(id, label);
+        dropdown.setValue(engine).onChange((value) => {
+          if (groups.online.some(([id]) => id === value)) return change(value);
+        });
+      });
+      return method;
+    }
+    function previewError(error, chinese) {
+      const text = String(error?.message || error || "");
+      const t = (en, zh) => chinese ? zh : en;
+      if (/configuration incomplete/i.test(text)) return t("Configuration incomplete. Check the authorization, required fields and API secret.", "\u914D\u7F6E\u5C1A\u672A\u5B8C\u6210\uFF0C\u8BF7\u68C0\u67E5\u5728\u7EBF\u6388\u6743\u3001\u5FC5\u586B\u9879\u548C API \u79D8\u5BC6\u3002");
+      if (/consent|permission|授权|允许.*处理/i.test(text)) return t("Allow online processing for this configuration before testing.", "\u8BF7\u5148\u5141\u8BB8\u5F53\u524D\u914D\u7F6E\u8FDB\u884C\u5728\u7EBF\u5904\u7406\uFF0C\u518D\u6D4B\u8BD5\u3002");
+      if (/secret|credential|key|401|密钥|秘密/i.test(text)) return t("Check the selected API secret and its validity.", "\u8BF7\u68C0\u67E5\u6240\u9009 API \u79D8\u5BC6\u53CA\u5BC6\u94A5\u662F\u5426\u6709\u6548\u3002");
+      if (/429|quota|balance|credit|额度|余额/i.test(text)) return t("Check account balance or request limits, then try again later.", "\u8BF7\u68C0\u67E5\u8D26\u53F7\u4F59\u989D\u6216\u8BF7\u6C42\u9650\u989D\uFF0C\u7A0D\u540E\u518D\u8BD5\u3002");
+      if (/voice|model|音色|模型/i.test(text)) return t("Check that the selected voice and model are available.", "\u8BF7\u68C0\u67E5\u6240\u9009\u97F3\u8272\u4E0E\u6A21\u578B\u662F\u5426\u53EF\u7528\u3002");
+      if (/system|installed|speech.*unavailable|系统/i.test(text)) return t("Check installed system voices and refresh the voice list.", "\u8BF7\u68C0\u67E5\u5DF2\u5B89\u88C5\u7684\u7CFB\u7EDF\u97F3\u8272\uFF0C\u5E76\u5237\u65B0\u97F3\u8272\u5217\u8868\u3002");
+      return t(
+        "Test failed. Check connection, service address and privacy-route availability. No settings were reset.",
+        "\u6D4B\u8BD5\u5931\u8D25\u3002\u8BF7\u68C0\u67E5\u7F51\u7EDC\u3001\u670D\u52A1\u5730\u5740\u53CA\u9690\u79C1\u8DEF\u7531\u662F\u5426\u53EF\u7528\uFF1B\u672A\u91CD\u7F6E\u4EFB\u4F55\u8BBE\u7F6E\u3002"
+      );
+    }
+    function renderPreview2(parent, tab, setIcon2) {
+      const plugin = tab.plugin, zh = plugin.settings.settingsLanguage === "chinese";
+      const t = (en, cn) => zh ? cn : en;
+      const sample = zh ? "\u4F60\u597D\uFF0C\u8FD9\u662F\u8BED\u97F3\u6D4B\u8BD5\uFF0C\u795D\u4F60\u9605\u8BFB\u6109\u5FEB\u3002" : "Hello, this is a short voice test.";
+      const box = parent.createDiv({ cls: "reader-setup-preview" });
+      if (!["system", "system-tts"].includes(plugin.settings.speechEngine)) {
+        box.createEl("p", { cls: "setting-item-description", text: t("Only the sample below is used. Online services may charge for this test; your notes are not read.", "\u4EC5\u4F7F\u7528\u4E0B\u65B9\u6D4B\u8BD5\u77ED\u53E5\uFF0C\u5728\u7EBF\u670D\u52A1\u53EF\u80FD\u8BA1\u8D39\uFF1B\u4E0D\u4F1A\u8BFB\u53D6\u7B14\u8BB0\u3002") });
+      }
+      box.createEl("p", { text: sample, cls: "reader-setup-sample" });
+      const actions = box.createDiv({ cls: "reader-setup-actions" });
+      const play = actions.createEl("button");
+      const icon = play.createSpan();
+      setIcon2?.(icon, "play");
+      play.createSpan({ text: t("Test voice", "\u6D4B\u8BD5\u6717\u8BFB") });
+      const stop = actions.createEl("button");
+      const stopIcon = stop.createSpan();
+      setIcon2?.(stopIcon, "square");
+      stop.createSpan({ text: t("Stop test", "\u505C\u6B62\u6D4B\u8BD5") });
+      play.type = stop.type = "button";
+      const status = box.createEl("p", { cls: "setting-item-description" });
+      status.setAttribute("role", "status");
+      status.setAttribute("aria-live", "polite");
+      const update = () => {
+        play.disabled = Boolean(plugin.settingsPreview);
+        stop.disabled = !plugin.settingsPreview;
+        for (const component of tab.engineChoiceControls || []) component.setDisabled?.(Boolean(plugin.settingsPreview));
+        status.textContent = plugin.settingsPreview?.message || tab.previewMessage || "";
+      };
+      const current = plugin.settingsPreview;
+      if (current) {
+        current.update = update;
+        status.textContent = t("Test in progress...", "\u6B63\u5728\u6D4B\u8BD5\u2026\u2026");
+      }
+      update();
+      play.addEventListener("click", async () => {
+        if (plugin.settingsPreview) return;
+        if (plugin.isSettingsPreviewBusy()) {
+          status.textContent = t("Stop the current reading or export before testing.", "\u8BF7\u5148\u505C\u6B62\u5F53\u524D\u6717\u8BFB\u6216\u5BFC\u51FA\uFF0C\u518D\u6D4B\u8BD5\u3002");
+          return;
+        }
+        const token = { update, cancelled: false, message: t("Preparing the sample...", "\u6B63\u5728\u51C6\u5907\u6D4B\u8BD5\u77ED\u53E5\u2026\u2026") };
+        plugin.settingsPreview = token;
+        update();
+        status.textContent = t("Preparing the sample...", "\u6B63\u5728\u51C6\u5907\u6D4B\u8BD5\u77ED\u53E5\u2026\u2026");
+        try {
+          const result = await plugin.runSettingsPreview(sample, token);
+          if (!token.cancelled && result === "complete") {
+            tab.setupCompleted = true;
+            if (tab.quickStart) tab.quickStart.open = false;
+          }
+          status.textContent = token.cancelled || result === "cancelled" ? t("Test stopped.", "\u6D4B\u8BD5\u5DF2\u505C\u6B62\u3002") : result === "complete" ? t("Test complete.", "\u6D4B\u8BD5\u5B8C\u6210\u3002") : previewError(result, zh);
+        } catch (error) {
+          status.textContent = token.cancelled ? t("Test stopped.", "\u6D4B\u8BD5\u5DF2\u505C\u6B62\u3002") : previewError(error, zh);
+        } finally {
+          tab.previewMessage = status.textContent;
+          if (plugin.settingsPreview === token) plugin.settingsPreview = null;
+          token.update();
+          update();
+        }
+      });
+      stop.addEventListener("click", () => {
+        const token = plugin.settingsPreview;
+        if (token) {
+          token.cancelled = true;
+          token.message = t("Stopping the test...", "\u6B63\u5728\u505C\u6B62\u6D4B\u8BD5\u2026\u2026");
+          token.update();
+          plugin.stopSettingsPreview(token);
+        }
+      });
+      return box;
+    }
+    module2.exports = { methodFor, disclosure: disclosure2, renderEngineChoice: renderEngineChoice2, renderPreview: renderPreview2, previewError };
+  }
+});
+
+// src/reading-menu.js
+var require_reading_menu = __commonJS({
+  "src/reading-menu.js"(exports2, module2) {
+    "use strict";
+    function registerReadingMenu2(plugin, read, notify) {
+      plugin.addCommand?.({
+        id: "read-toolbar-selection",
+        name: "Read selected text (floating toolbar)",
+        icon: "volume-2",
+        editorCallback(editor, view) {
+          if (!view?.file || !["md", "markdown"].includes(String(view.file.extension).toLowerCase())) return;
+          const sourceText = editor.getValue(), start = editor.posToOffset(editor.getCursor("from"));
+          const end = editor.posToOffset(editor.getCursor("to"));
+          if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end <= start || end > sourceText.length || !sourceText.slice(start, end).trim()) {
+            notify(plugin.settings.settingsLanguage === "chinese" ? "\u8BF7\u5148\u9009\u4E2D\u6587\u5B57\u3002" : "Select text first.");
+            return;
+          }
+          const selection = plugin.settings.readingFloatingAction !== "from-selection";
+          return read({ file: view.file, sourceText, start, text: sourceText.slice(start, selection ? end : void 0), selection });
+        }
+      });
+      plugin.app.workspace.onLayoutReady?.(() => {
+        void syncEditingToolbar2(plugin).catch(() => notify("Unable to update Editing Toolbar."));
+      });
+      plugin.registerEvent(plugin.app.workspace.on("editor-menu", (menu, editor, view) => {
+        if (plugin.settings.readingContextMenu === false) return;
+        const file = view?.file;
+        if (!file || !["md", "markdown"].includes(String(file.extension).toLowerCase())) return;
+        if (view.getMode?.() === "preview") return;
+        const sourceText = editor.getValue();
+        const start = editor.posToOffset(editor.getCursor("from"));
+        const end = editor.posToOffset(editor.getCursor("to"));
+        if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end < start || end > sourceText.length) return;
+        const zh = plugin.settings.settingsLanguage === "chinese";
+        const add = (selection) => menu.addItem((item) => item.setTitle(selection ? zh ? "\u6717\u8BFB\u9009\u4E2D\u5185\u5BB9" : "Read selected text" : zh ? "\u4ECE\u6B64\u5904\u5F00\u59CB\u6717\u8BFB" : "Read aloud from here").setIcon(selection ? "text-select" : "list-start").onClick(() => {
+          if (view.file !== file || editor.getValue() !== sourceText) {
+            notify(zh ? "\u539F\u6587\u5DF2\u53D8\u5316\uFF0C\u8BF7\u91CD\u65B0\u6253\u5F00\u53F3\u952E\u83DC\u5355\u3002" : "The document changed. Open the context menu again.");
+            return;
+          }
+          return read({ file, sourceText, start, text: sourceText.slice(start, selection ? end : void 0), selection });
+        }));
+        if (sourceText.slice(start).trim()) add(false);
+        if (sourceText.slice(start, end).trim()) add(true);
+      }));
+    }
+    async function syncEditingToolbar2(plugin) {
+      const toolbar = plugin.app?.plugins?.plugins?.["editing-toolbar"];
+      if (!toolbar?.settings || typeof toolbar.saveSettings !== "function" || !plugin.manifest?.id) return;
+      const id = `${plugin.manifest.id}:read-toolbar-selection`;
+      const activeKey = toolbar.settings.enableMultipleConfig ? "followingCommands" : "menuCommands";
+      const from = plugin.settings.readingFloatingAction === "from-selection";
+      const name = plugin.settings.settingsLanguage === "chinese" ? from ? "\u4ECE\u9009\u4E2D\u4F4D\u7F6E\u5F00\u59CB\u6717\u8BFB" : "\u6717\u8BFB\u9009\u4E2D\u5185\u5BB9" : from ? "Read from selection" : "Read selected text";
+      let changed = false;
+      for (const key of ["menuCommands", "followingCommands", "topCommands", "fixedCommands", "mobileCommands"]) {
+        const entries = toolbar.settings[key];
+        if (!Array.isArray(entries)) continue;
+        const desired = plugin.settings.readingFloatingToolbar === true && key === activeKey;
+        if (!desired) {
+          const kept = entries.filter((entry) => entry.id !== id);
+          if (kept.length !== entries.length) {
+            toolbar.settings[key] = kept;
+            changed = true;
+          }
+        } else if (!entries.some((entry) => entry.id === id)) {
+          const at = entries.findIndex((entry) => entry.id === "editing-toolbar:ai-tools");
+          entries.splice(at < 0 ? 0 : at + 1, 0, { id, name, icon: "lucide-volume-2" });
+          changed = true;
+        } else {
+          const entry = entries.find((entry2) => entry2.id === id);
+          if (entry.name !== name) {
+            entry.name = name;
+            changed = true;
+          }
+        }
+      }
+      if (changed) {
+        await toolbar.saveSettings();
+        toolbar.clearToolbarCache?.();
+      }
+    }
+    function addReadingMenuSettings2(container, plugin, Setting) {
+      const zh = plugin.settings.settingsLanguage === "chinese";
+      new Setting(container).setName(zh ? "\u663E\u793A\u6717\u8BFB\u53F3\u952E\u83DC\u5355" : "Reading context menu").setDesc(zh ? "\u5728 Markdown \u7F16\u8F91\u5668\u83DC\u5355\u4E2D\u663E\u793A\u4ECE\u6B64\u5904\u6717\u8BFB\u548C\u6717\u8BFB\u9009\u4E2D\u5185\u5BB9\u3002" : "Show read-from-here and selection actions in the Markdown editor menu.").addToggle((toggle) => toggle.setValue(plugin.settings.readingContextMenu !== false).onChange(async (value) => {
+        plugin.settings.readingContextMenu = value;
+        await plugin.saveSettings();
+      }));
+      const installed = Boolean(plugin.app.plugins?.plugins?.["editing-toolbar"]);
+      let actionControl;
+      new Setting(container).setName(zh ? "\u60AC\u6D6E\u5DE5\u5177\u680F\u6717\u8BFB\u56FE\u6807" : "Floating toolbar reading icon").setDesc(zh ? "\u9700\u542F\u7528 Editing Toolbar\u3002\u5173\u95ED\u53EA\u79FB\u9664\u672C\u63D2\u4EF6\u7684\u4E13\u7528\u56FE\u6807\u3002\u91CD\u65B0\u9009\u4E2D\u6587\u5B57\u540E\u5237\u65B0\u3002" : "Requires Editing Toolbar. Disabling removes only this plugin's dedicated icon. Reselect text to refresh.").addToggle((toggle) => toggle.setValue(plugin.settings.readingFloatingToolbar === true).setDisabled(!installed).onChange(async (value) => {
+        plugin.settings.readingFloatingToolbar = value;
+        await plugin.saveSettings();
+        actionControl?.setDisabled(!installed || !value);
+      }));
+      new Setting(container).setName(zh ? "\u60AC\u6D6E\u56FE\u6807\u9ED8\u8BA4\u52A8\u4F5C" : "Floating icon action").setDesc(zh ? "\u4EC5\u5728\u9009\u4E2D\u6587\u5B57\u65F6\u6267\u884C\uFF0C\u4E0D\u4F1A\u5728\u6CA1\u6709\u9009\u533A\u65F6\u81EA\u52A8\u6717\u8BFB\u3002" : "Requires selected text; never starts without a selection.").addDropdown((dropdown) => {
+        actionControl = dropdown;
+        return dropdown.addOption("selection", zh ? "\u6717\u8BFB\u9009\u4E2D\u5185\u5BB9" : "Read selected text").addOption("from-selection", zh ? "\u4ECE\u9009\u4E2D\u4F4D\u7F6E\u5F00\u59CB\u6717\u8BFB" : "Read from selection").setValue(plugin.settings.readingFloatingAction === "from-selection" ? "from-selection" : "selection").setDisabled(!installed || plugin.settings.readingFloatingToolbar !== true).onChange(async (value) => {
+          plugin.settings.readingFloatingAction = value;
+          await plugin.saveSettings();
+        });
+      });
+    }
+    module2.exports = { registerReadingMenu: registerReadingMenu2, syncEditingToolbar: syncEditingToolbar2, addReadingMenuSettings: addReadingMenuSettings2 };
+  }
+});
+
 // src/speech-options.js
 var require_speech_options = __commonJS({
   "src/speech-options.js"(exports2, module2) {
@@ -950,6 +1212,7 @@ var require_speech_options_settings = __commonJS({
     "use strict";
     var { Setting } = require("obsidian");
     var { parseTerms, supportsSpeechContext } = require_speech_options();
+    var { disclosure: disclosure2 } = require_engine_setup();
     function addSpeechContextSetting2(container, plugin) {
       if (!supportsSpeechContext(plugin.settings.openRouterModel)) return;
       const zh = plugin.settings.settingsLanguage === "chinese";
@@ -962,6 +1225,7 @@ var require_speech_options_settings = __commonJS({
     }
     function addSpeechTermsSettings2(container, plugin) {
       const zh = plugin.settings.settingsLanguage === "chinese";
+      container = disclosure2(container, zh ? "\u53D1\u97F3\u8BCD\u5178\uFF08\u9AD8\u7EA7\uFF09" : "Pronunciation dictionary (advanced)");
       new Setting(container).setName(zh ? "\u672C\u5730\u672F\u8BED\u8BFB\u6CD5" : "Local term pronunciations").setDesc(zh ? "\u9002\u7528\u4E8E\u6240\u6709\u8BED\u97F3\u5F15\u64CE\u3002\u53EA\u66FF\u6362\u5408\u6210\u6587\u672C\uFF0C\u4E0D\u4FEE\u6539\u539F\u6587\uFF1B\u89C4\u5219\u4FDD\u5B58\u5728\u672C\u5730\uFF0C\u4E0B\u6B21\u6717\u8BFB\u751F\u6548\u3002\u5728\u7EBF\u5F15\u64CE\u4ECD\u4F1A\u6536\u5230\u66FF\u6362\u540E\u7684\u6587\u672C\u3002" : "For all speech engines. Changes synthesis text, not the document. Rules stay local and apply next session; online engines still receive the substituted text.").addToggle((toggle) => toggle.setValue(plugin.settings.speechTermsEnabled === true).onChange(async (value) => {
         plugin.settings.speechTermsEnabled = value;
         await plugin.saveSettings();
@@ -35148,6 +35412,7 @@ var require_byok_settings = __commonJS({
     "use strict";
     var { Modal: Modal2, Setting, SecretComponent: SecretComponent2, Notice: Notice2 } = require("obsidian");
     var { translate } = require_i18n();
+    var { disclosure: disclosure2 } = require_engine_setup();
     var {
       BYOK_PROVIDERS,
       MAX_BYOK_PROFILES,
@@ -35295,13 +35560,14 @@ var require_byok_settings = __commonJS({
           text.setValue(profile.keyPath).onChange((value) => update({ keyPath: value }));
         });
       }
-      new Setting(containerEl).setName(t("Maximum characters per chunk", "\u6BCF\u6BB5\u5B57\u7B26\u4E0A\u9650")).setDesc(t(
+      const advanced = disclosure2(containerEl, t("API advanced options", "\u63A5\u53E3\u9AD8\u7EA7\u9009\u9879"));
+      new Setting(advanced).setName(t("Maximum characters per chunk", "\u6BCF\u6BB5\u5B57\u7B26\u4E0A\u9650")).setDesc(t(
         "50-2000, default 800. Also capped by online chunk settings; reduce for services with lower limits. Playback speed is adjusted locally.",
         "50\u20132000\uFF0C\u9ED8\u8BA4 800\u3002\u4E0E\u5728\u7EBF\u5206\u6BB5\u8BBE\u7F6E\u53D6\u8F83\u5C0F\u503C\uFF1B\u670D\u52A1\u9650\u5236\u66F4\u4F4E\u65F6\u8BF7\u8C03\u5C0F\u3002\u64AD\u653E\u500D\u901F\u5728\u672C\u5730\u8C03\u6574\u3002"
       )).addText((text) => text.setValue(String(profile.chunkLimit)).onChange((value) => {
         if (/^\d+$/.test(value) && Number(value) >= 50 && Number(value) <= 2e3) return update({ chunkLimit: Number(value) });
       }));
-      let consentToggle, previewButton;
+      let consentToggle;
       const consentSetting = new Setting(consentHost).setName(t("Allow this configuration to process text", "\u5141\u8BB8\u6B64\u914D\u7F6E\u5904\u7406\u6717\u8BFB\u6587\u672C"));
       const riskText = t(
         "Reading text and credentials go to the endpoint you configure, which may forward text to upstream providers. Requests, including previews, may cost money. No-training and zero data retention (ZDR) are NOT verified or enforced by this plugin for BYOK. Review the destination, service, intermediary and account policies yourself. This permission authorizes synthesis, not model training. Revoking permission cannot recall data already sent.",
@@ -35343,31 +35609,11 @@ ${riskText}`,
           ).open();
         });
       });
-      new Setting(containerEl).setName(t("Voice preview", "\u97F3\u8272\u8BD5\u542C")).setDesc(t(
-        'Sends only: "This is an AI-generated voice preview." Uses account quota and replaces current playback. Failed requests are not automatically retried.',
-        "\u4EC5\u53D1\u9001\u56FA\u5B9A\u77ED\u53E5\u201CThis is an AI-generated voice preview.\u201D\uFF0C\u4F1A\u4F7F\u7528\u8D26\u6237\u989D\u5EA6\u5E76\u66FF\u6362\u5F53\u524D\u64AD\u653E\u3002\u4E0D\u81EA\u52A8\u91CD\u8BD5\u5931\u8D25\u7684\u8BF7\u6C42\u3002"
-      )).addButton((button) => {
-        previewButton = button;
-        button.setIcon("play").setButtonText(t("Preview", "\u8BD5\u542C")).onClick(async () => {
-          if (plugin.settings.speechEngine !== "byok-tts" || plugin.settings.byokActiveProfileId !== profile.id || !hasByokConsent(find())) return;
-          button.setDisabled(true);
-          try {
-            await plugin.runUserAction(t("BYOK preview", "BYOK \u8BD5\u542C"), () => plugin.startReading(
-              "This is an AI-generated voice preview.",
-              "BYOK voice preview",
-              { plainText: true, skipReadingPosition: true }
-            ));
-          } finally {
-            refresh();
-          }
-        });
-      });
       refresh = () => {
         const current = find();
         const allowed = hasByokConsent(current);
         consentToggle?.setValue(allowed);
-        previewButton?.setDisabled(!allowed);
-        const state = allowed ? t("Authorized for this configuration.", "\u5DF2\u6388\u6743\u6B64\u914D\u7F6E\u3002") : t("Not authorized. Complete the API settings below, then enable here.", "\u5C1A\u672A\u6388\u6743\u3002\u8BF7\u5148\u5B8C\u5584\u4E0B\u65B9\u63A5\u53E3\u8BBE\u7F6E\uFF0C\u518D\u5728\u6B64\u5F00\u542F\u3002");
+        const state = allowed ? t("Authorized for this configuration.", "\u5DF2\u6388\u6743\u6B64\u914D\u7F6E\u3002") : t("Not authorized. Complete the API configuration before enabling.", "\u5C1A\u672A\u6388\u6743\u3002\u8BF7\u5148\u5B8C\u5584\u63A5\u53E3\u914D\u7F6E\uFF0C\u518D\u5F00\u542F\u6388\u6743\u3002");
         consentSetting.setDesc(`${state}
 ${current?.endpoint || ""}
 ${t("Online processing may incur charges; no-training and ZDR are not guaranteed.", "\u5728\u7EBF\u5904\u7406\u53EF\u80FD\u4EA7\u751F\u8D39\u7528\uFF1B\u4E0D\u4FDD\u8BC1\u4E0D\u7528\u4E8E\u8BAD\u7EC3\u6216 ZDR\u3002")}`);
@@ -35642,6 +35888,8 @@ var { PAGES, createSettingsPages, createSettingsHeader } = require_settings_page
 var { resetPageSettings } = require_settings_reset();
 var { ELEVENLABS_MODELS, ELEVENLABS_VOICES, isElevenLabsModel } = require_openrouter_elevenlabs();
 var { getOpenRouterPricing } = require_openrouter_pricing();
+var { disclosure, renderEngineChoice, renderPreview } = require_engine_setup();
+var { registerReadingMenu, syncEditingToolbar, addReadingMenuSettings } = require_reading_menu();
 var { normalizedTerms, applyTerms, fitSpeechParts, contextOptions, adjacentContext } = require_speech_options();
 var { addSpeechContextSetting, addSpeechTermsSettings } = require_speech_options_settings();
 var { SettingsConfirmModal } = require_settings_confirm();
@@ -37058,6 +37306,9 @@ function selectKnownSettings(defaults, candidate) {
 }
 function createDefaultSettings() {
   return {
+    readingContextMenu: true,
+    readingFloatingToolbar: false,
+    readingFloatingAction: "selection",
     ...ACADEMIC_DEFAULTS,
     ...COPILOT_DEFAULTS,
     ...MIMO_DEFAULTS,
@@ -37731,6 +37982,17 @@ var CosyVoiceReaderPlugin = class extends Plugin {
     this.logPath = null;
     this.statusBar = this.addStatusBarItem();
     await this.loadSettings();
+    registerReadingMenu(this, (snapshot) => this.runUserAction("Read context", () => this.startReading(
+      snapshot.text,
+      snapshot.file.basename || snapshot.file.name,
+      {
+        file: snapshot.file,
+        sourceKind: "markdown",
+        sourceText: snapshot.sourceText,
+        sourceOffset: snapshot.start,
+        skipReadingPosition: snapshot.selection
+      }
+    )), (message) => new Notice(message));
     await this.ensureCacheDir();
     this.registerView(VIEW_TYPE, (leaf) => new CosyVoiceReaderView(leaf, this));
     this.registerView(DOCUMENT_VIEW_TYPE, (leaf) => new AccessibleReaderView(leaf, this));
@@ -37937,6 +38199,7 @@ var CosyVoiceReaderPlugin = class extends Plugin {
     this.addCommand({
       id: "read-selection",
       name: "Read selection aloud",
+      icon: "volume-2",
       callback: () => {
         void this.runUserAction("Read selection", () => this.readSelection());
       }
@@ -37944,6 +38207,7 @@ var CosyVoiceReaderPlugin = class extends Plugin {
     this.addCommand({
       id: "read-from-selection",
       name: "Read from selection aloud",
+      icon: "list-start",
       callback: () => {
         void this.runUserAction("Read from selection", () => this.readFromSelection());
       }
@@ -38161,6 +38425,7 @@ var CosyVoiceReaderPlugin = class extends Plugin {
     this.settings.readingPositions = normalizeReadingPositions(this.settings.readingPositions);
     this.settings.rememberReadingPosition = this.settings.rememberReadingPosition === true;
     await this.saveData(settingsForStorage(this.settings));
+    await syncEditingToolbar(this);
   }
   async resetSettingsToDefaults(page = "all") {
     this.settings = resetPageSettings(this.settings, createDefaultSettings(), page);
@@ -40425,6 +40690,22 @@ ${embed}
     this.copilotChatModal = new CopilotChatModal(this, file);
     this.copilotChatModal.open();
   }
+  isSettingsPreviewBusy() {
+    return Boolean(this.activeSession);
+  }
+  async runSettingsPreview(sample, token) {
+    if (this.activeSession || token.cancelled) return "cancelled";
+    if (!this.getSpeechConfiguration()) return "Configuration incomplete";
+    const result = await this.startReading(sample, "Voice test", {
+      plainText: true,
+      skipReadingPosition: true,
+      settingsPreview: token
+    });
+    return result || "Configuration incomplete";
+  }
+  stopSettingsPreview(token) {
+    if (this.activeSession?.settingsPreview === token) void this.stopReading({ silent: true });
+  }
   async startReading(rawText, sourceLabel, options = {}) {
     const preparationStarted = (this.playbackTimings || (this.playbackTimings = new PlaybackTimings())).now();
     const text = options.plainText || options.sourceKind === "html" ? this.prepareHtmlSpeechText(rawText) : this.settings.stripMarkdown ? sanitizeTextForSpeech(rawText, academicOptions(this.settings)) : normalizeLineBreaks(rawText).trim();
@@ -40437,6 +40718,7 @@ ${embed}
       return;
     }
     await this.stopReading({ silent: true });
+    if (options.settingsPreview && (options.settingsPreview.cancelled || this.activeSession)) return "cancelled";
     this.pauseRequested = false;
     const chunks = options.readingChunks || splitTextForSpeechChunks(text, configuration.chunkLimits);
     let markdownSource = options.markdownSource || (options.sourceKind === "markdown" && !options.plainText ? buildMarkdownSource(rawText, chunks, (value) => this.settings.stripMarkdown ? sanitizeTextForSpeech(value, academicOptions(this.settings)) : normalizeLineBreaks(value).trim(), { sourceText: options.sourceText, sourceOffset: options.sourceOffset, filePath: options.file?.path }) : null);
@@ -40462,6 +40744,15 @@ ${embed}
     });
     session.webContext = options.webContext;
     session.skipReadingPosition = options.skipReadingPosition === true;
+    if (options.settingsPreview) {
+      if (options.settingsPreview.cancelled) return "cancelled";
+      session.settingsPreview = options.settingsPreview;
+      session.previewResult = "cancelled";
+      session.smartQuickStart = false;
+      session.prefetchChunks = 0;
+      session.synthesisSettings.speechTermsEnabled = false;
+      session.synthesisSettings.openRouterContext = false;
+    }
     this.activeSession = session;
     this.updateStatus(`${configuration.engineLabel} 0/${chunks.length}`, {
       canPause: false,
@@ -40488,6 +40779,7 @@ ${embed}
     new Notice(`${configuration.engineLabel}: reading ${sourceLabel}. First synthesis may take a while.`, 6e3);
     this.playbackTimings.record("textPreparation", this.playbackTimings.now() - preparationStarted);
     await this.runSpeechSession(session);
+    return session.previewResult;
   }
   async runSpeechSession(session) {
     const timings = this.playbackTimings || (this.playbackTimings = new PlaybackTimings());
@@ -40594,6 +40886,7 @@ ${embed}
         }
       }
       if (this.isActive(session)) {
+        session.previewResult = "complete";
         this.updateStatus(`${session.engineLabel} complete`, {
           canPause: false,
           canNextChunk: false,
@@ -40611,6 +40904,7 @@ ${embed}
     } catch (error) {
       if (this.isActive(session)) {
         const message = session.kind === "pdf-progressive" ? getPdfExtractionErrorMessage(error) : messageFromError(error);
+        session.previewResult = message;
         this.updateStatus(`${session.engineLabel} error`, {
           canPause: false,
           canNextChunk: false,
@@ -42329,7 +42623,7 @@ var CosyVoiceReaderSettingTab = class extends PluginSettingTab {
     const redraw = () => {
       if (sequence === this.displaySequence && !plugin.systemSpeechUnloaded && plugin.settings.speechEngine === "system-tts") this.display();
     };
-    new Setting(containerEl).setName(label("Local speech privacy", "\u7CFB\u7EDF\u672C\u5730\u8BED\u97F3\u4E0E\u9690\u79C1")).setDesc(label(
+    new Setting(this.systemHelp || containerEl).setName(label("Local speech privacy", "\u7CFB\u7EDF\u672C\u5730\u8BED\u97F3\u4E0E\u9690\u79C1")).setDesc(label(
       "Uses installed Windows SAPI or macOS say voices. No API key, local model, automatic download or cloud fallback. Offline voices keep reading text on this computer, like local CosyVoice. Downloads need internet; exported audio and vault sync have separate privacy implications.",
       "\u8C03\u7528\u5DF2\u5B89\u88C5\u7684 Windows SAPI \u6216 macOS say \u97F3\u8272\uFF0C\u65E0\u9700 API \u5BC6\u94A5\u6216\u672C\u5730\u6A21\u578B\uFF0C\u4E0D\u81EA\u52A8\u4E0B\u8F7D\uFF0C\u4E5F\u4E0D\u56DE\u9000\u5230\u4E91\u7AEF\u3002\u79BB\u7EBF\u97F3\u8272\u4E0E\u672C\u5730 CosyVoice \u4E00\u6837\u8BA9\u6717\u8BFB\u6B63\u6587\u7559\u5728\u672C\u673A\u3002\u4E0B\u8F7D\u9700\u8981\u8054\u7F51\uFF1B\u5BFC\u51FA\u97F3\u9891\u548C\u5E93\u540C\u6B65\u7684\u9690\u79C1\u9700\u53E6\u5916\u8003\u8651\u3002"
     ));
@@ -42359,17 +42653,8 @@ var CosyVoiceReaderSettingTab = class extends PluginSettingTab {
       } finally {
         redraw();
       }
-    })).addButton((button) => button.setButtonText(label("Preview", "\u8BD5\u542C")).setDisabled(!supported || !voices.length || Boolean(plugin.systemVoicesError)).onClick(() => {
-      if (plugin.settings.speechEngine !== "system-tts") return;
-      if (plugin.activeSession) {
-        new Notice(label("Stop the current reading or export before previewing.", "\u8BF7\u5148\u505C\u6B62\u5F53\u524D\u6717\u8BFB\u6216\u5BFC\u51FA\uFF0C\u518D\u8BD5\u542C\u97F3\u8272\u3002"));
-        return;
-      }
-      const currentVoice = normalizeSystemVoice(plugin.settings[key]);
-      const voice = voices.find((item) => item.id === currentVoice) || (!currentVoice ? voices[0] : null);
-      const sample = /^zh/i.test(voice?.language || "") ? "\u8FD9\u662F\u7CFB\u7EDF\u672C\u5730\u8BED\u97F3\u8BD5\u542C\u3002\u6717\u8BFB\u6587\u672C\u5728\u672C\u673A\u5904\u7406\u3002" : "This is a local system voice preview. Reading text stays on this computer.";
-      void plugin.runUserAction(label("System voice preview", "\u7CFB\u7EDF\u97F3\u8272\u8BD5\u542C"), () => plugin.startReading(sample, "system voice preview", { plainText: true }));
     }));
+    containerEl = this.systemHelp || containerEl;
     new Setting(containerEl).setName(label("Playback speed", "\u64AD\u653E\u500D\u901F")).setDesc(label(
       "System speech is synthesized at its normal pace. Use the reader panel playback rate and volume controls; exported WAV audio remains at normal pace.",
       "\u7CFB\u7EDF\u8BED\u97F3\u6309\u6B63\u5E38\u8BED\u901F\u5408\u6210\u3002\u4F7F\u7528\u6717\u8BFB\u9762\u677F\u8C03\u8282\u64AD\u653E\u500D\u901F\u548C\u97F3\u91CF\uFF1B\u5BFC\u51FA\u7684 WAV \u97F3\u9891\u4FDD\u6301\u6B63\u5E38\u8BED\u901F\u3002"
@@ -42428,13 +42713,19 @@ var CosyVoiceReaderSettingTab = class extends PluginSettingTab {
     ));
     if (!["english", "chinese"].includes(settingsLanguage)) new Setting(pages.privacy).setDesc(translateInterface(settingsLanguage, "Some advanced help remains in English. Interface language does not change the speech voice."));
     containerEl = pages.engine;
-    new Setting(containerEl).setName(ui.speechEngineName).setDesc(ui.speechEngineDesc).addDropdown((dropdown) => {
-      dropdown.addOption("local-cosyvoice", ui.speechEngineLocal).addOption("system-tts", ui.speechEngineSystem).addOption("edge-tts", ui.speechEngineEdge).addOption("azure-speech", ui.speechEngineAzure).addOption("openrouter-tts", ui.speechEngineOpenRouter).addOption("mimo-tts", "Xiaomi MiMo TTS").addOption("byok-tts", settingsLanguage === "chinese" ? "\u81EA\u5B9A\u4E49\u8BED\u97F3 API\uFF08BYOK\uFF09" : "Custom speech API (BYOK)").setValue(selectedSpeechEngine).onChange(async (value) => {
-        this.plugin.settings.speechEngine = normalizeSpeechEngine(value);
-        await this.plugin.saveSettings();
-        this.display();
-      });
+    renderEngineChoice(containerEl, this, Setting, false, {
+      system: ui.speechEngineSystem,
+      local: ui.speechEngineLocal,
+      edge: ui.speechEngineEdge,
+      localReady: Boolean(this.plugin.settings.scriptPath && fs.existsSync(this.plugin.settings.scriptPath)),
+      byok: settingsLanguage === "chinese" ? "\u5176\u4ED6\u63A5\u53E3\uFF08BYOK\uFF09" : "Other APIs (BYOK)"
     });
+    const advancedTitle = translateInterface(settingsLanguage, "Advanced options", "\u9AD8\u7EA7\u9009\u9879");
+    const engineAdvanced = disclosure(containerEl, advancedTitle, this.engineAdvancedOpen === true);
+    engineAdvanced.addEventListener("toggle", () => {
+      this.engineAdvancedOpen = engineAdvanced.open;
+    });
+    this.systemHelp = engineAdvanced;
     if (selectedSpeechEngine === "system-tts") this.displaySystemSpeechSettings(containerEl, settingsLanguage);
     if (selectedSpeechEngine === "byok-tts") displayByokSettings(this, containerEl, {
       canUseSecrets: hasObsidianSecretStorageUi(this.app),
@@ -42460,11 +42751,11 @@ var CosyVoiceReaderSettingTab = class extends PluginSettingTab {
         "mimo-v2.5-tts with built-in voices. Listed as temporarily free on 2026-09-27; limits and pricing may change. Speed is a natural-language instruction, not an exact synthesis rate.",
         "\u4F7F\u7528 mimo-v2.5-tts \u5B98\u65B9\u9884\u7F6E\u97F3\u8272\u30022026-09-27 \u5B98\u65B9\u5217\u4E3A\u9650\u65F6\u514D\u8D39\uFF0C\u989D\u5EA6\u53CA\u4EF7\u683C\u53EF\u80FD\u53D8\u5316\u3002\u5408\u6210\u8BED\u901F\u901A\u8FC7\u81EA\u7136\u8BED\u8A00\u6307\u4EE4\u63A7\u5236\uFF0C\u4E0D\u4FDD\u8BC1\u7CBE\u786E\u500D\u7387\u3002"
       )).addButton((button) => button.setButtonText(label("Pricing", "\u5B98\u65B9\u4EF7\u683C")).onClick(() => window.open("https://mimo.mi.com/docs/zh-CN/price/pay-as-you-go"))).addButton((button) => button.setButtonText(label("Privacy", "\u9690\u79C1\u653F\u7B56")).onClick(() => window.open("https://privacy.mi.com/XiaomiMiMoPlatform/zh_CN/")));
-      new Setting(containerEl).setName(label("MiMo completeness protection", "MiMo \u5B8C\u6574\u6027\u4FDD\u62A4")).setDesc(label(
+      new Setting(engineAdvanced).setName(label("MiMo completeness protection", "MiMo \u5B8C\u6574\u6027\u4FDD\u62A4")).setDesc(label(
         "Abnormal completion stops reading without automatic resynthesis. Normal completion does not prove every word was spoken.",
         "\u5F02\u5E38\u7ED3\u675F\u4F1A\u505C\u6B62\u6717\u8BFB\uFF0C\u4E0D\u81EA\u52A8\u91CD\u65B0\u5408\u6210\u3002\u6B63\u5E38\u7ED3\u675F\u6807\u8BB0\u4ECD\u4E0D\u80FD\u8BC1\u660E\u6BCF\u4E2A\u5B57\u90FD\u5DF2\u8BFB\u51FA\u3002"
       ));
-      new Setting(containerEl).setName(label("MiMo chunk character cap", "MiMo \u6BCF\u6BB5\u5B57\u7B26\u4E0A\u9650")).setDesc(label(
+      new Setting(engineAdvanced).setName(label("MiMo chunk character cap", "MiMo \u6BCF\u6BB5\u5B57\u7B26\u4E0A\u9650")).setDesc(label(
         "Client precaution, not an API limit. Default 200; adjustable 50-2000. Effective size is the smaller of this cap and online chunk limits. Smaller chunks increase request count.",
         "\u5BA2\u6237\u7AEF\u4FDD\u5B88\u503C\uFF0C\u4E0D\u662F\u63A5\u53E3\u4E0A\u9650\u3002\u9ED8\u8BA4 200\uFF0C\u53EF\u8C03 50\u20132000\uFF1B\u4E0E\u5728\u7EBF\u5206\u6BB5\u8BBE\u7F6E\u53D6\u8F83\u5C0F\u503C\u3002\u8F83\u5C0F\u7684\u5206\u6BB5\u4F1A\u589E\u52A0\u8BF7\u6C42\u6B21\u6570\u3002"
       )).addText((text) => text.setValue(String(this.plugin.settings.mimoChunkLimit || 200)).onChange(async (value) => {
@@ -42473,7 +42764,7 @@ var CosyVoiceReaderSettingTab = class extends PluginSettingTab {
         await this.plugin.saveSettings();
       }));
       const credentialSource = normalizeCredentialSource(this.plugin.settings.mimoCredentialSource);
-      new Setting(containerEl).setName(ui.credentialSourceName).setDesc(ui.credentialSourceDesc).addDropdown((dropdown) => dropdown.addOption("obsidian-secret", ui.credentialSourceSecret).addOption("key-file", ui.credentialSourceFile).setValue(credentialSource).onChange(async (value) => {
+      new Setting(engineAdvanced).setName(ui.credentialSourceName).setDesc(ui.credentialSourceDesc).addDropdown((dropdown) => dropdown.addOption("obsidian-secret", ui.credentialSourceSecret).addOption("key-file", ui.credentialSourceFile).setValue(credentialSource).onChange(async (value) => {
         this.plugin.settings.mimoCredentialSource = normalizeCredentialSource(value);
         await this.plugin.saveSettings();
         this.display();
@@ -42540,6 +42831,8 @@ var CosyVoiceReaderSettingTab = class extends PluginSettingTab {
         }
         dropdown.addOption("__custom__", ui.customVoiceOption).setValue(commonVoiceIds.has(currentEdgeVoice) ? currentEdgeVoice : "__custom__").onChange(async (value) => {
           if (value === "__custom__") {
+            engineAdvanced.open = true;
+            engineAdvanced.querySelector("input")?.focus();
             return;
           }
           this.plugin.settings.edgeTtsVoice = value;
@@ -42547,7 +42840,7 @@ var CosyVoiceReaderSettingTab = class extends PluginSettingTab {
           this.display();
         });
       });
-      new Setting(containerEl).setName(ui.edgeVoiceName).setDesc(ui.edgeVoiceDesc).addText((text) => {
+      new Setting(engineAdvanced).setName(ui.edgeVoiceName).setDesc(ui.edgeVoiceDesc).addText((text) => {
         text.setPlaceholder(DEFAULT_EDGE_TTS_VOICE).setValue(normalizeEdgeTtsVoice(this.plugin.settings.edgeTtsVoice)).onChange(async (value) => {
           this.plugin.settings.edgeTtsVoice = normalizeEdgeTtsVoice(value);
           await this.plugin.saveSettings();
@@ -42581,7 +42874,7 @@ var CosyVoiceReaderSettingTab = class extends PluginSettingTab {
         });
       });
       const azureCredentialSource = normalizeCredentialSource(this.plugin.settings.azureSpeechCredentialSource);
-      new Setting(containerEl).setName(ui.credentialSourceName).setDesc(ui.credentialSourceDesc).addDropdown((dropdown) => {
+      new Setting(engineAdvanced).setName(ui.credentialSourceName).setDesc(ui.credentialSourceDesc).addDropdown((dropdown) => {
         dropdown.addOption("obsidian-secret", ui.credentialSourceSecret).addOption("key-file", ui.credentialSourceFile).setValue(azureCredentialSource).onChange(async (value) => {
           this.plugin.settings.azureSpeechCredentialSource = normalizeCredentialSource(value);
           await this.plugin.saveSettings();
@@ -42613,6 +42906,8 @@ var CosyVoiceReaderSettingTab = class extends PluginSettingTab {
         }
         dropdown.addOption("__custom__", ui.customVoiceOption).setValue(commonVoiceIds.has(currentAzureVoice) ? currentAzureVoice : "__custom__").onChange(async (value) => {
           if (value === "__custom__") {
+            engineAdvanced.open = true;
+            engineAdvanced.querySelector("input")?.focus();
             return;
           }
           this.plugin.settings.azureSpeechVoice = value;
@@ -42620,7 +42915,7 @@ var CosyVoiceReaderSettingTab = class extends PluginSettingTab {
           this.display();
         });
       });
-      new Setting(containerEl).setName(ui.azureVoiceName).setDesc(ui.azureVoiceDesc).addText((text) => {
+      new Setting(engineAdvanced).setName(ui.azureVoiceName).setDesc(ui.azureVoiceDesc).addText((text) => {
         text.setPlaceholder(DEFAULT_AZURE_SPEECH_VOICE).setValue(currentAzureVoice).onChange(async (value) => {
           this.plugin.settings.azureSpeechVoice = normalizeAzureSpeechVoice(value);
           await this.plugin.saveSettings();
@@ -42635,7 +42930,7 @@ var CosyVoiceReaderSettingTab = class extends PluginSettingTab {
         });
       });
       const openRouterCredentialSource = normalizeCredentialSource(this.plugin.settings.openRouterCredentialSource);
-      new Setting(containerEl).setName(ui.credentialSourceName).setDesc(ui.credentialSourceDesc).addDropdown((dropdown) => {
+      new Setting(engineAdvanced).setName(ui.credentialSourceName).setDesc(ui.credentialSourceDesc).addDropdown((dropdown) => {
         dropdown.addOption("obsidian-secret", ui.credentialSourceSecret).addOption("key-file", ui.credentialSourceFile).setValue(openRouterCredentialSource).onChange(async (value) => {
           this.plugin.settings.openRouterCredentialSource = normalizeCredentialSource(value);
           await this.plugin.saveSettings();
@@ -42671,6 +42966,8 @@ var CosyVoiceReaderSettingTab = class extends PluginSettingTab {
         }
         dropdown.addOption("__custom__", ui.customModelOption).setValue(selectedOpenRouterModel ? currentOpenRouterModel : "__custom__").onChange(async (value) => {
           if (value === "__custom__") {
+            engineAdvanced.open = true;
+            engineAdvanced.querySelector("input")?.focus();
             return;
           }
           this.plugin.settings.openRouterModel = value;
@@ -42679,7 +42976,7 @@ var CosyVoiceReaderSettingTab = class extends PluginSettingTab {
           this.display();
         });
       });
-      new Setting(containerEl).setName(ui.openRouterModelName).setDesc(ui.openRouterModelDesc).addText((text) => {
+      new Setting(engineAdvanced).setName(ui.openRouterModelName).setDesc(ui.openRouterModelDesc).addText((text) => {
         text.setPlaceholder(DEFAULT_OPENROUTER_TTS_MODEL).setValue(currentOpenRouterModel).onChange(async (value) => {
           this.plugin.settings.openRouterModel = normalizeOpenRouterModel(value);
           openRouterPriceSetting?.setDesc(getOpenRouterPricing(this.plugin.settings.openRouterModel, settingsLanguage).description);
@@ -42695,7 +42992,7 @@ var CosyVoiceReaderSettingTab = class extends PluginSettingTab {
       }));
       const openRouterVoicePresets = getOpenRouterTtsVoicePresets(currentOpenRouterModel, settingsLanguage);
       const voiceHelpFamily = currentOpenRouterModel.startsWith("microsoft/mai-voice-") ? "Mai" : isElevenLabsModel(currentOpenRouterModel) ? "ElevenLabs" : "";
-      addSpeechContextSetting(containerEl, this.plugin);
+      addSpeechContextSetting(engineAdvanced, this.plugin);
       const openRouterVoiceIds = new Set(openRouterVoicePresets.map(([, voice]) => voice));
       new Setting(containerEl).setName(ui.openRouterVoicesName).setDesc(ui[`openRouter${voiceHelpFamily}VoicesDesc`]).addDropdown((dropdown) => {
         for (const [, voice, label] of openRouterVoicePresets) {
@@ -42703,6 +43000,8 @@ var CosyVoiceReaderSettingTab = class extends PluginSettingTab {
         }
         dropdown.addOption("__custom__", ui.customVoiceOption).setValue(openRouterVoiceIds.has(currentOpenRouterVoice) ? currentOpenRouterVoice : "__custom__").onChange(async (value) => {
           if (value === "__custom__") {
+            engineAdvanced.open = true;
+            engineAdvanced.querySelector("input")?.focus();
             return;
           }
           this.plugin.settings.openRouterVoice = value;
@@ -42710,13 +43009,13 @@ var CosyVoiceReaderSettingTab = class extends PluginSettingTab {
           this.display();
         });
       });
-      new Setting(containerEl).setName(ui.openRouterVoiceName).setDesc(ui.openRouterVoiceDesc).addText((text) => {
+      new Setting(engineAdvanced).setName(ui.openRouterVoiceName).setDesc(ui.openRouterVoiceDesc).addText((text) => {
         text.setPlaceholder(getDefaultOpenRouterVoiceForModel(currentOpenRouterModel)).setValue(currentOpenRouterVoice).onChange(async (value) => {
           this.plugin.settings.openRouterVoice = normalizeOpenRouterVoice(value);
           await this.plugin.saveSettings();
         });
       });
-      new Setting(containerEl).setName(ui.openRouterVoiceHelpName).setDesc(ui[`openRouter${voiceHelpFamily}VoiceHelpDesc`]).addButton((button) => {
+      new Setting(engineAdvanced).setName(ui.openRouterVoiceHelpName).setDesc(ui[`openRouter${voiceHelpFamily}VoiceHelpDesc`]).addButton((button) => {
         button.setButtonText(ui.openRouterModelPageButton).setTooltip(ui.openRouterVoiceHelpTooltip).onClick(() => {
           const url = getOpenRouterVoiceHelpLinks(this.plugin.settings.openRouterModel, settingsLanguage).modelPage;
           if (!openExternalUrl(url)) new Notice(url, 8e3);
@@ -42729,7 +43028,21 @@ var CosyVoiceReaderSettingTab = class extends PluginSettingTab {
       });
       new Setting(pages.privacy).setName(ui.openRouterPrivacyName).setDesc(ui.openRouterPrivacyDesc);
     }
+    const consentNames = new Set([
+      ui.mimoConsentName,
+      ui.edgeConsentName,
+      ui.azureConsentName,
+      ui.openRouterConsentName,
+      settingsLanguage === "chinese" ? "\u5141\u8BB8 MiMo \u5728\u7EBF\u5904\u7406" : "Allow MiMo online processing"
+    ].filter(Boolean).map((name) => translateInterface(settingsLanguage, name)));
+    for (const row of Array.from(pages.engine.children)) {
+      if (consentNames.has(row.querySelector(".setting-item-name")?.textContent) || row.classList.contains("note-reader-byok-consent")) pages.engine.append(row);
+    }
+    renderPreview(pages.engine, this, setIcon);
+    pages.engine.append(engineAdvanced);
+    if (engineAdvanced.children.length === 1) engineAdvanced.hidden = true;
     containerEl = pages.playback;
+    addReadingMenuSettings(containerEl, this.plugin, Setting);
     containerEl.createEl("h3", { text: translateInterface(settingsLanguage, "Playback", "\u64AD\u653E") });
     new Setting(containerEl).setName(translateInterface(settingsLanguage, "Smart quick start", "\u667A\u80FD\u5FEB\u901F\u8D77\u8BFB")).setDesc(translateInterface(
       settingsLanguage,
@@ -42746,13 +43059,14 @@ var CosyVoiceReaderSettingTab = class extends PluginSettingTab {
         await this.plugin.saveSettings();
       });
     });
-    new Setting(containerEl).setName(ui.chunkLimitsName).setDesc(ui.chunkLimitsDesc).addText((text) => {
+    const playbackAdvanced = disclosure(containerEl, advancedTitle);
+    new Setting(playbackAdvanced).setName(ui.chunkLimitsName).setDesc(ui.chunkLimitsDesc).addText((text) => {
       text.setValue(this.plugin.settings.chunkLimits).onChange(async (value) => {
         this.plugin.settings.chunkLimits = parseChunkLimits(value).join(",");
         await this.plugin.saveSettings();
       });
     });
-    new Setting(containerEl).setName(ui.onlineChunkLimitsName).setDesc(ui.onlineChunkLimitsDesc).addText((text) => {
+    new Setting(playbackAdvanced).setName(ui.onlineChunkLimitsName).setDesc(ui.onlineChunkLimitsDesc).addText((text) => {
       text.setValue(this.plugin.settings.onlineChunkLimits).onChange(async (value) => {
         this.plugin.settings.onlineChunkLimits = parseChunkLimits(
           value,
@@ -42761,7 +43075,7 @@ var CosyVoiceReaderSettingTab = class extends PluginSettingTab {
         await this.plugin.saveSettings();
       });
     });
-    new Setting(containerEl).setName(ui.onlinePrefetchName).setDesc(ui.onlinePrefetchDesc).addDropdown((dropdown) => {
+    new Setting(playbackAdvanced).setName(ui.onlinePrefetchName).setDesc(ui.onlinePrefetchDesc).addDropdown((dropdown) => {
       dropdown.addOption("0", ui.onlinePrefetchNone).addOption("1", ui.onlinePrefetchOne).setValue(String(normalizeOnlinePrefetchChunks(this.plugin.settings.onlinePrefetchChunks))).onChange(async (value) => {
         this.plugin.settings.onlinePrefetchChunks = normalizeOnlinePrefetchChunks(value);
         await this.plugin.saveSettings();

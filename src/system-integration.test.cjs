@@ -122,16 +122,7 @@ test('system settings show bilingual optional download steps, availability cavea
     assert.match(content, language === 'chinese' ? /不回退到云端/ : /cloud fallback/);
     assert.equal(rows[1].options['Test voice'].includes('en-GB'), true);
     assert.equal(rows[1].options['Test voice'].includes(language === 'chinese' ? '男声' : 'male'), true);
-    let previewText;
-    plugin.runUserAction = async (_label, action) => action();
-    plugin.startReading = async text => { previewText = text; };
-    await rows[1].buttons.find(button => /Preview|试听/.test(button.text)).click();
-    assert.match(previewText, /local system voice preview/);
-    const before = notices.length;
-    plugin.activeSession = {};
-    rows[1].buttons.find(button => /Preview|试听/.test(button.text)).click();
-    assert.equal(notices.length, before + 1);
-    plugin.activeSession = null;
+    assert.equal(rows[1].buttons.some(button => /Preview|试听/.test(button.text)), false);
   }
 });
 

@@ -69,8 +69,11 @@ function settingsFixture(language = 'english', engine = 'mimo-tts', overrides = 
   const plugin={app,settings:{...api.createDefaultSettings(),settingsLanguage:language,speechEngine:engine,...overrides},
     saveSettings:async()=>{plugin.saves++;},saves:0,renderReaderViews(){},renderDocumentViews(){},
     systemVoicesReady:true,systemVoices:[],documentViews:[]};
+  for (const method of ['isSettingsPreviewBusy','runSettingsPreview','stopSettingsPreview','getSpeechConfiguration','startReading']) {
+    plugin[method] = loaded.exports.default.prototype[method].bind(plugin);
+  }
   const tab=new api.CosyVoiceReaderSettingTab(app,plugin);
   tab.display();
-  return {dom,doc,plugin,tab,rows,modals,pluginClass:loaded.exports.default,api};
+  return {dom,doc,plugin,tab,rows,modals,pluginClass:loaded.exports.default,api,Setting,SecretComponent};
 }
 module.exports={settingsFixture};

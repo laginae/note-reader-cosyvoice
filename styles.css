@@ -827,3 +827,26 @@
 .reader-speech-terms .setting-item-control { width: 100%; }
 .reader-speech-terms textarea { width: 100%; min-width: 0; max-width: 100%; min-height: 100px; resize: vertical; }
 .reader-speech-terms textarea[aria-invalid="true"] { border-color: var(--text-error); }
+.reader-setup-details { letter-spacing: 0; }
+.reader-setup-details { margin-block: 12px; border-top: 1px solid var(--background-modifier-border); }
+.note-reader-settings-panel > .setting-item:first-child,
+.note-reader-settings-panel > .reader-setup-details:first-child {
+  border-top: 0;
+}
+.note-reader-settings-panel > .reader-setup-details:first-child {
+  margin-top: 0;
+}
+.reader-setup-details > summary { cursor: pointer; padding-block: 12px; font-weight: 500; }
+.reader-setup-preview { margin-block: 16px; padding-block: 12px; border-top: 1px solid var(--background-modifier-border); }
+.reader-setup-sample { color: var(--text-muted); line-height: 1.5; overflow-wrap: anywhere; }
+.reader-setup-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.reader-setup-actions button { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; }
+.reader-setup-actions svg { width: 16px; height: 16px; }
+.reader-setup-preview p:empty { display: none; }
+@media (max-width: 600px) {
+  .reader-setup-actions button { min-height: 44px; }
+  .note-reader-settings-panel .setting-item { flex-wrap: wrap; gap: 10px; }
+  .note-reader-settings-panel .setting-item-info { flex: 1 1 100%; margin-right: 0; }
+  .note-reader-settings-panel .setting-item-control { flex-wrap: wrap; min-width: 0; max-width: 100%; }
+  .note-reader-settings-panel select, .note-reader-settings-panel input { max-width: 100%; }
+}

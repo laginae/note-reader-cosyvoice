@@ -19,7 +19,7 @@ test('BYOK consent is explicit, cancellable and bound to the exact configuration
   try {
     const consent = row('Allow this configuration to process text');
     assert.equal(consent.controlEl.querySelector('input').checked, false);
-    assert.equal(row('Voice preview').controlEl.querySelector('button').disabled, true);
+    assert.equal(hasByokConsent(plugin.settings.byokProfiles[0]), false);
     consent.change(true);
     assert.match(modals.at(-1).contentEl.textContent, /api.openai.com\/v1\/audio\/speech/);
     assert.match(modals.at(-1).contentEl.textContent, /NOT verified or enforced/);
@@ -27,7 +27,7 @@ test('BYOK consent is explicit, cancellable and bound to the exact configuration
     modals.at(-1).close(); assert.equal(plugin.settings.byokProfiles[0].consent, '');
     consent.change(true); await rows.at(-1).click();
     assert.ok(hasByokConsent(plugin.settings.byokProfiles[0]));
-    assert.equal(row('Voice preview').controlEl.querySelector('button').disabled, false);
+    assert.equal(hasByokConsent(plugin.settings.byokProfiles[0]), true);
     plugin.activeSession = { speechEngine: 'byok-tts' }; await consent.change(false);
     assert.equal(plugin.stops, 1); assert.equal(plugin.settings.byokProfiles[0].consent, '');
     consent.change(true);
@@ -47,7 +47,7 @@ test('editing an endpoint immediately clears visible and stored secret reference
     assert.equal(row('API secret').controlEl.querySelector('input').value, '');
     assert.equal(plugin.settings.byokProfiles[0].consent, '');
     assert.equal(plugin.stops, 1);
-    assert.equal(row('Voice preview').controlEl.querySelector('button').disabled, true);
+    assert.equal(hasByokConsent(plugin.settings.byokProfiles[0]), false);
     await row('API secret').change('new-test-key');
     assert.equal(plugin.settings.byokProfiles[0].secretName, 'new-test-key');
     assert.equal(hasByokConsent(plugin.settings.byokProfiles[0]), false);
@@ -55,12 +55,13 @@ test('editing an endpoint immediately clears visible and stored secret reference
 });
 
 test('preview sends a fixed non-vault sentence and profile selection/add/delete do not synthesize', async () => {
-  const { dom, plugin, row, modals, rows } = setup(true);
+  const { dom, doc, plugin, row, modals, rows } = setup(true);
   try {
     const calls = []; plugin.startReading = async (...args) => calls.push(args);
-    await row('Voice preview').click();
+    doc.querySelector('.reader-setup-actions button').click();
+    await new Promise(resolve => setImmediate(resolve));
     assert.equal(calls.length, 1);
-    assert.equal(calls[0][0], 'This is an AI-generated voice preview.');
+    assert.equal(calls[0][0], 'Hello, this is a short voice test.');
     assert.equal(calls[0][2].skipReadingPosition, true);
     const firstId = plugin.settings.byokActiveProfileId;
     await row('API profile').click();
@@ -96,8 +97,8 @@ test('consent remains prominent with mode-specific risks, without duplicating th
   try {
     const consent = row('Allow this configuration to process text');
     const host = consent.settingEl.parentElement;
-    assert.equal(row('API profile').settingEl.nextElementSibling, host);
-    assert.equal(host.nextElementSibling, row('Profile name').settingEl);
+    assert.equal(host.nextElementSibling.className, 'reader-setup-preview');
+    assert.equal(host.closest('details'), null);
     assert.match(consent.descEl.textContent, /Not authorized/);
     const details = host.querySelector('details');
     assert.equal(details.open, false);
