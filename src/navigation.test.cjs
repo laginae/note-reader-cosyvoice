@@ -87,6 +87,133 @@ test('Next starts the target before the old synthesis finishes; stale errors do 
   assert.equal(session.operationWaiters.size, 0);
 });
 
+test('prefetch starts alongside foreground but never runs beyond one future part', async () => {
+  const { plugin, session, requests } = fixture(undefined, { prefetch: 1 });
+  const run = plugin.runSpeechSession(session); await tick();
+  assert.deepEqual([...requests.keys()], ['0:0', '1:0']);
+  assert.equal(session.preparationPool.active.size, 2);
+  requests.get('0:0').resolve({}); await run;
+  assert.equal(requests.has('2:0'), false);
+  requests.get('1:0').resolve({});
+});
+
+test('local and Edge subprocess engines do not run speculative processes concurrently', async () => {
+  for (const engine of ['local-cosyvoice', 'system-tts', 'edge-tts']) {
+    const {plugin,session,requests}=fixture(['One.','Two.'],{prefetch:1});
+    session.speechEngine=engine;
+    const run=plugin.runSpeechSession(session); await tick();
+    assert.equal(requests.size,1); assert.equal(session.preparationPool.limit,1);
+    requests.get('0:0').resolve({}); await run;
+    for(const [key,request] of requests) if(key!=='0:0') request.resolve({});
+  }
+});
+
+test('playback event records latency without replacing playback-speed handling', async () => {
+  const {PlaybackTimings}=require('./preparation-pool');
+  const {plugin,session}=fixture(['One.']);
+  plugin.playbackTimings=new PlaybackTimings(); plugin.playbackTimings.begin('sessionToPlaying');
+  plugin.settings.playbackSpeed=1.25;
+  plugin.createPlayableAudioSource=async () => ({url:'test-audio', release(){}});
+  const OriginalAudio=global.Audio; let audio;
+  global.Audio=class {
+    constructor(){audio=this;this.duration=1;this.currentTime=0;}
+    play(){this.onplaying?.();return Promise.resolve();} pause(){} load(){} removeAttribute(){}
+  };
+  try {
+    const play=PluginClass.prototype.playPreparedAudio.call(plugin,{},session,0,1);
+    await tick(); assert.equal(audio.playbackRate,1.25);
+    assert.equal(plugin.playbackTimings.snapshot().timings.sessionToPlaying.count,1);
+    audio.onended(); await play;
+  } finally {global.Audio=OriginalAudio;}
+});
+
+test('resume at the natural end boundary advances instead of restarting the ended audio', async () => {
+  const {plugin}=fixture(['One.','Two.']); let plays=0, ended=0;
+  plugin.currentAudio={paused:true,ended:true,play:async () => {plays++;},onended:() => {ended++;},pause(){}};
+  await plugin.pauseOrResume();
+  assert.equal(plays,0); assert.equal(ended,1);
+});
+
+test('an old resume promise cannot overwrite the paused state or revive replaced audio', async () => {
+  const {plugin}=fixture(); const delayed=deferred(); let paused=0;
+  const old={paused:true,play:() => delayed.promise,pause:() => {paused++;}};
+  plugin.currentAudio=old;
+  const resume=plugin.pauseOrResume();
+  old.paused=false;
+  plugin.runUserAction=async (_name,action) => action();
+  await plugin.pauseOrResume();
+  delayed.resolve(); await resume;
+  assert.equal(plugin.readerState.isPaused,true); assert.ok(paused>=1);
+  const next=deferred(); old.paused=true; old.play=() => next.promise;
+  const second=plugin.pauseOrResume(); plugin.currentAudio={paused:false};
+  plugin.updateStatus('New target',{phase:'synthesizing'});
+  next.resolve(); await second;
+  assert.equal(plugin.readerState.phase,'synthesizing');
+});
+
+test('completed and cancelled players detach handlers and settle pending playback', async () => {
+  const {plugin,session}=fixture(['One.']);
+  plugin.createPlayableAudioSource=async () => ({url:'test-audio',release(){}});
+  const OriginalAudio=global.Audio; const audios=[];
+  global.Audio=class {
+    constructor(){audios.push(this);this.duration=1;this.currentTime=0;this.paused=false;}
+    play(){return Promise.resolve();} pause(){this.paused=true;} load(){} removeAttribute(){}
+  };
+  try {
+    const first=PluginClass.prototype.playPreparedAudio.call(plugin,{},session,0,1); await tick();
+    const old=audios[0]; old.onended(); await first;
+    assert.equal(old.noteReaderFinished,true); assert.equal(old.onplaying,null);
+    assert.equal(old.ontimeupdate,null); assert.equal(old.paused,true);
+    const second=PluginClass.prototype.playPreparedAudio.call(plugin,{},session,0,1); await tick();
+    await plugin.cancelSessionOperations(session); await second;
+    assert.equal(audios[1].noteReaderFinished,true); assert.equal(plugin.currentAudio,null);
+  } finally {global.Audio=OriginalAudio;}
+});
+
+test('a late playing event respects a pause made during audio startup', async () => {
+  const {plugin,session}=fixture(['One.']);
+  plugin.createPlayableAudioSource=async () => ({url:'test-audio',release(){}});
+  const OriginalAudio=global.Audio; let audio;
+  global.Audio=class {
+    constructor(){audio=this;this.duration=1;this.currentTime=0;this.paused=false;}
+    play(){return Promise.resolve();} pause(){this.paused=true;} load(){} removeAttribute(){}
+  };
+  try {
+    const play=PluginClass.prototype.playPreparedAudio.call(plugin,{},session,0,1);await tick();
+    plugin.pauseRequested=true; audio.onplaying(); assert.equal(audio.paused,true);
+    audio.noteReaderCancel(); await play;
+  } finally {global.Audio=OriginalAudio;}
+});
+
+test('rapid jumps remain bounded and discard intermediate queued targets', async () => {
+  const { plugin, session, requests, events } = fixture(['One.', 'Two.', 'Three.', 'Four.', 'Five.']);
+  const run = plugin.runSpeechSession(session); await tick();
+  plugin.jumpToAdjacentChunk(1); await tick();
+  plugin.jumpToAdjacentChunk(1); await tick();
+  assert.equal(requests.size, 2);
+  plugin.jumpToAdjacentChunk(1); await tick();
+  requests.get('0:0').resolve({}); await tick();
+  assert.equal(requests.has('2:0'), false);
+  assert.equal(requests.has('3:0'), true);
+  requests.get('3:0').resolve({}); await run;
+  requests.get('1:0').resolve({});
+  assert.equal(events.filter(event => event.startsWith('play:')).join(','), 'play:3:0');
+});
+
+test('failed speculative audio is retried only when it becomes the foreground target', async () => {
+  const { plugin, session } = fixture(['One.', 'Two.'], {prefetch:1});
+  let attempts = 0; const first = deferred(); const played = [];
+  plugin.queuePrepareChunk = async (_text, index) => {
+    if (index === 0) return first.promise;
+    if (++attempts === 1) throw Error('speculative failure');
+    return {};
+  };
+  plugin.playPreparedAudio = async (_value, active, index) => {played.push(index); if(index===1) active.stopped=true;};
+  const run = plugin.runSpeechSession(session); await tick();
+  assert.equal(attempts,1); first.resolve({}); await run;
+  assert.equal(attempts,2); assert.deepEqual(played,[0,1]);
+});
+
 test('rapid successive Next clicks select the latest target, never replaying stale results', async () => {
   const { plugin, session, events, requests } = fixture();
   const run = plugin.runSpeechSession(session);

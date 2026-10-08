@@ -391,6 +391,197 @@ var require_i18n = __commonJS({
   }
 });
 
+// src/preparation-pool.js
+var require_preparation_pool = __commonJS({
+  "src/preparation-pool.js"(exports2, module2) {
+    "use strict";
+    var PlaybackTimings2 = class {
+      constructor(now = () => globalThis.performance?.now?.() ?? Date.now()) {
+        this.now = now;
+        this.samples = {};
+        this.counts = {};
+      }
+      count(name) {
+        this.counts[name] = (this.counts[name] || 0) + 1;
+      }
+      record(name, milliseconds) {
+        var _a;
+        if (!Number.isFinite(milliseconds) || milliseconds < 0) return;
+        const values = (_a = this.samples)[name] || (_a[name] = []);
+        values.push(Math.round(milliseconds));
+        if (values.length > 128) values.shift();
+      }
+      begin(kind) {
+        this.intent = { kind, time: this.now() };
+        this.endedAt = null;
+      }
+      suspend() {
+        this.intent = null;
+        this.endedAt = null;
+      }
+      ended() {
+        this.endedAt = this.now();
+      }
+      playing(started) {
+        const now = this.now();
+        this.record("audioLoadToPlaying", now - started);
+        if (this.intent) this.record(this.intent.kind, now - this.intent.time);
+        else if (this.endedAt != null) this.record("partGap", now - this.endedAt);
+        this.intent = null;
+        this.endedAt = null;
+      }
+      snapshot() {
+        const timings = {};
+        for (const [name, values] of Object.entries(this.samples)) {
+          const sorted = [...values].sort((a, b) => a - b);
+          timings[name] = {
+            count: sorted.length,
+            p50: sorted[Math.ceil(sorted.length * 0.5) - 1],
+            p95: sorted[Math.ceil(sorted.length * 0.95) - 1]
+          };
+        }
+        return { schema: 1, units: "milliseconds", window: 128, counts: { ...this.counts }, timings };
+      }
+    };
+    function cancelled() {
+      const error = new Error("Audio preparation superseded.");
+      error.name = "AbortError";
+      return error;
+    }
+    var PreparationPool2 = class {
+      constructor({
+        concurrency = 2,
+        maxEntries = 64,
+        maxBytes = 16 * 1024 * 1024,
+        sizeOf = (value) => value?.arrayBuffer?.byteLength || 0,
+        timings = new PlaybackTimings2()
+      } = {}) {
+        this.limit = Math.max(1, Math.min(2, concurrency));
+        this.maxEntries = maxEntries;
+        this.maxBytes = maxBytes;
+        this.sizeOf = sizeOf;
+        this.timings = timings;
+        this.entries = /* @__PURE__ */ new Map();
+        this.active = /* @__PURE__ */ new Set();
+        this.bytes = 0;
+        this.paused = false;
+      }
+      state(key) {
+        return this.entries.get(key)?.state;
+      }
+      select(key) {
+        for (const entry of this.entries.values()) {
+          if (entry.state === "queued" && entry.key !== key) this.drop(entry);
+        }
+      }
+      pause(value) {
+        this.paused = value;
+        if (value) {
+          for (const entry of this.entries.values()) {
+            if (entry.state === "queued" && entry.background) this.drop(entry);
+          }
+        } else this.drain();
+      }
+      drop(entry) {
+        if (this.entries.get(entry.key) !== entry) return;
+        this.entries.delete(entry.key);
+        if (entry.state === "ready") this.bytes -= entry.bytes;
+        if (entry.state === "queued") {
+          entry.reject(cancelled());
+          this.timings.count("discardedQueued");
+        }
+      }
+      clear() {
+        for (const entry of this.entries.values()) this.drop(entry);
+        this.bytes = 0;
+      }
+      get(key, factory, { background = false, valid = () => true } = {}) {
+        const old = this.entries.get(key);
+        if (old) {
+          this.timings.count(old.state === "ready" ? "cacheHit" : "inflightHit");
+          this.entries.delete(key);
+          this.entries.set(key, old);
+          if (!background) {
+            old.background = false;
+            old.valid = valid;
+          }
+          this.drain();
+          return old.promise;
+        }
+        let resolve, reject;
+        const promise = new Promise((ok, fail) => {
+          resolve = ok;
+          reject = fail;
+        });
+        promise.catch(() => {
+        });
+        const entry = {
+          key,
+          factory,
+          background,
+          valid,
+          promise,
+          resolve,
+          reject,
+          state: "queued",
+          queuedAt: this.timings.now(),
+          bytes: 0
+        };
+        this.entries.set(key, entry);
+        this.drain();
+        return promise;
+      }
+      drain() {
+        if (this.paused) return;
+        while (this.active.size < this.limit) {
+          const queued = [...this.entries.values()].filter((entry2) => entry2.state === "queued");
+          const entry = queued.find((entry2) => !entry2.background) || queued.find((entry2) => ![...this.active].some((active) => active.background));
+          if (!entry) return;
+          if (!entry.valid()) {
+            this.drop(entry);
+            continue;
+          }
+          entry.state = "running";
+          this.active.add(entry);
+          const started = this.timings.now();
+          this.timings.record("queueWait", started - entry.queuedAt);
+          this.timings.count("requests");
+          Promise.resolve().then(() => {
+            if (!entry.valid()) throw cancelled();
+            return entry.factory();
+          }).then((value) => {
+            this.timings.record("prepare", this.timings.now() - started);
+            entry.state = "ready";
+            entry.bytes = Math.max(0, Number(this.sizeOf(value)) || 0);
+            if (this.entries.get(entry.key) === entry) {
+              this.bytes += entry.bytes;
+              this.trim();
+            }
+            entry.resolve(value);
+          }, (error) => {
+            if (this.entries.get(entry.key) === entry) this.entries.delete(entry.key);
+            this.timings.count(error?.name === "AbortError" ? "cancelled" : "failed");
+            entry.reject(error);
+          }).finally(() => {
+            this.active.delete(entry);
+            this.drain();
+          });
+        }
+      }
+      trim() {
+        let ready = [...this.entries.values()].filter((entry) => entry.state === "ready");
+        while (ready.length > this.maxEntries || this.bytes > this.maxBytes) {
+          const entry = ready.shift();
+          if (!entry) break;
+          this.drop(entry);
+          this.timings.count("evicted");
+        }
+      }
+    };
+    module2.exports = { PlaybackTimings: PlaybackTimings2, PreparationPool: PreparationPool2 };
+  }
+});
+
 // src/settings-pages.js
 var require_settings_pages = __commonJS({
   "src/settings-pages.js"(exports2, module2) {
@@ -35446,6 +35637,7 @@ var require_task_state2 = __commonJS({
 // src/main.js
 var { ItemView, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, SecretComponent, Setting: ObsidianSetting, loadPdfJs, setIcon } = require("obsidian");
 var { LANGUAGES, translate: translateInterface, localizedSetting } = require_i18n();
+var { PlaybackTimings, PreparationPool } = require_preparation_pool();
 var { PAGES, createSettingsPages, createSettingsHeader } = require_settings_pages();
 var { resetPageSettings } = require_settings_reset();
 var { ELEVENLABS_MODELS, ELEVENLABS_VOICES, isElevenLabsModel } = require_openrouter_elevenlabs();
@@ -37621,6 +37813,14 @@ var CosyVoiceReaderPlugin = class extends Plugin {
       callback: () => this.openCopilotChat()
     });
     this.addCommand({
+      id: "copy-playback-timings",
+      name: "Copy playback waiting-time summary",
+      callback: () => void this.runUserAction("Copy playback timings", async () => {
+        await navigator.clipboard.writeText(JSON.stringify(this.playbackTimings?.snapshot() || {}, null, 2));
+        new Notice(this.settings.settingsLanguage === "chinese" ? "\u5DF2\u590D\u5236\u672C\u5730\u7B49\u5F85\u7EDF\u8BA1\uFF08\u4E0D\u542B\u6B63\u6587\u6216\u5BC6\u94A5\uFF09\u3002" : "Local timing summary copied (no text or keys).");
+      })
+    });
+    this.addCommand({
       id: "pdf-outline-bookmarks",
       name: "PDF outline and bookmarks",
       checkCallback: (checking) => {
@@ -39735,6 +39935,11 @@ ${embed}
     }
   }
   notifySessionNavigation(session) {
+    if (Number.isInteger(session?.requestedChunkIndex)) {
+      this.playbackTimings?.begin("jumpToPlaying");
+      session.preparationPool?.select(`${session.requestedChunkIndex}:${session.requestedPartIndex || 0}`);
+      session.preparationPool?.pause(this.pauseRequested);
+    }
     this.notifySessionChunkWaiters(session);
     for (const wake of Array.from(session?.operationWaiters || [])) wake();
   }
@@ -40221,6 +40426,7 @@ ${embed}
     this.copilotChatModal.open();
   }
   async startReading(rawText, sourceLabel, options = {}) {
+    const preparationStarted = (this.playbackTimings || (this.playbackTimings = new PlaybackTimings())).now();
     const text = options.plainText || options.sourceKind === "html" ? this.prepareHtmlSpeechText(rawText) : this.settings.stripMarkdown ? sanitizeTextForSpeech(rawText, academicOptions(this.settings)) : normalizeLineBreaks(rawText).trim();
     if (!text) {
       new Notice("CosyVoice: nothing readable in this note.");
@@ -40280,23 +40486,25 @@ ${embed}
       textLength: text.length
     });
     new Notice(`${configuration.engineLabel}: reading ${sourceLabel}. First synthesis may take a while.`, 6e3);
+    this.playbackTimings.record("textPreparation", this.playbackTimings.now() - preparationStarted);
     await this.runSpeechSession(session);
   }
   async runSpeechSession(session) {
-    const preparedChunks = /* @__PURE__ */ new Map();
-    const readyChunks = /* @__PURE__ */ new Set();
+    const timings = this.playbackTimings || (this.playbackTimings = new PlaybackTimings());
+    timings.begin("sessionToPlaying");
+    const pool = session.preparationPool = new PreparationPool({
+      concurrency: isOnlineSpeechEngine(session.speechEngine) && session.speechEngine !== "edge-tts" ? 2 : 1,
+      maxEntries: 256,
+      timings
+    });
     const getPreparedChunk = (index, part = 0, foreground = false) => {
       planSpeechParts(session, index, foreground && !session.seekTarget);
       const key = `${index}:${part}`;
-      if (!preparedChunks.has(key)) {
-        const preparing = this.queuePrepareChunk(getSpeechParts(session, index)[part], index, session, part);
-        preparing.catch(() => {
-        });
-        preparedChunks.set(key, preparing);
-        preparing.then(() => readyChunks.add(key), () => {
-        });
-      }
-      return preparedChunks.get(key);
+      if (foreground) pool.select(key);
+      return pool.get(key, () => this.queuePrepareChunk(getSpeechParts(session, index)[part], index, session, part), {
+        background: !foreground,
+        valid: () => this.isActive(session) && (foreground || !this.pauseRequested && !Number.isInteger(session.requestedChunkIndex) && !session.seekTarget)
+      });
     };
     session.prepareAvailableChunks = () => {
       if (!this.isActive(session) || Number.isInteger(session.requestedChunkIndex) || session.seekTarget || this.pauseRequested || !Number.isInteger(session.prefetchBaseIndex)) {
@@ -40306,7 +40514,8 @@ ${embed}
       for (let offset = 1; offset <= session.prefetchChunks; offset += 1) {
         cursor = adjacentSpeechPart(session, cursor.index, cursor.part, 1);
         if (!cursor) break;
-        getPreparedChunk(cursor.index, cursor.part);
+        getPreparedChunk(cursor.index, cursor.part).catch(() => {
+        });
       }
     };
     try {
@@ -40332,7 +40541,9 @@ ${embed}
             status: "running"
           });
         }
+        const sourceWaitStarted = timings.now();
         const chunkText = await this.waitForSessionChunk(session, index);
+        timings.record("sourceWait", timings.now() - sourceWaitStarted);
         if (!this.isActive(session)) {
           break;
         }
@@ -40346,10 +40557,13 @@ ${embed}
         session.currentPartIndex = part;
         if (session.lastCompletedChunkIndex === index) session.lastCompletedChunkIndex = null;
         const key = `${index}:${part}`;
-        const reused = preparedChunks.has(key);
+        const previousState = pool.state(key);
+        const reused = Boolean(previousState);
+        const waitStarted = timings.now();
         const preparation = getPreparedChunk(index, part, true);
+        if (!session.seekTarget) session.prepareAvailableChunks();
         this.updateStatus(`${session.engineLabel} preparing ${index + 1}/${session.totalChunks}`, {
-          preparationStatus: readyChunks.has(key) ? "loading" : reused ? "waiting" : "synthesizing",
+          preparationStatus: previousState === "ready" ? "loading" : reused ? "waiting" : "synthesizing",
           phase: "synthesizing",
           currentChunk: index + 1,
           totalChunks: session.totalChunks,
@@ -40366,7 +40580,7 @@ ${embed}
         if (Number.isInteger(session.requestedChunkIndex)) {
           continue;
         }
-        if (!session.seekTarget) session.prepareAvailableChunks();
+        timings.record("foregroundWait", timings.now() - waitStarted);
         session.requestedChunkIndex = null;
         await this.playPreparedAudio(prepared, session, index, session.totalChunks, part);
         if (Number.isInteger(session.requestedChunkIndex)) {
@@ -40419,6 +40633,7 @@ ${embed}
       }
     } finally {
       session.prepareAvailableChunks = null;
+      pool.clear();
       session.prefetchBaseIndex = null;
       if (session.producerPromise) {
         await session.producerPromise.catch(() => {
@@ -41004,6 +41219,7 @@ ${embed}
       return;
     }
     this.updateStatus(`${session.engineLabel} loading audio`, { preparationStatus: "loading" });
+    const loadingStarted = this.playbackTimings?.now();
     const loadingSource = this.createPlayableAudioSource(prepared);
     const source = await this.waitForSessionOperation(session, loadingSource, { index, part });
     if (!source) {
@@ -41031,6 +41247,13 @@ ${embed}
         }
         settled = true;
         if (seekMetadataTimer) clearTimeout(seekMetadataTimer);
+        if (audio) {
+          audio.noteReaderFinished = true;
+          audio.noteReaderCancel = null;
+          audio.onended = audio.onerror = audio.onplaying = audio.ontimeupdate = null;
+          audio.onloadedmetadata = audio.ondurationchange = null;
+          audio.pause();
+        }
         if (this.currentAudio === audio) {
           this.currentAudio = null;
         }
@@ -41039,6 +41262,9 @@ ${embed}
       };
       try {
         audio = new Audio();
+        audio.loop = false;
+        audio.noteReaderFinished = false;
+        audio.noteReaderCancel = () => finish(resolve);
         audio.volume = normalizeVolume(this.settings.playbackVolume);
         audio.preservesPitch = true;
         audio.defaultPlaybackRate = normalizeSpeed(this.settings.playbackSpeed);
@@ -41053,6 +41279,12 @@ ${embed}
           end: cue.end + partOffset
         }));
         audio.preload = "auto";
+        let measuredPlaying = false;
+        const measurePlaying = () => {
+          if (measuredPlaying || settled || !this.isActive(session) || Number.isInteger(session.requestedChunkIndex)) return;
+          measuredPlaying = true;
+          this.playbackTimings?.playing(loadingStarted);
+        };
         const recordDuration = () => {
           if (this.isActive(session) && Number.isFinite(audio.duration) && audio.duration > 0) {
             session.audioDurations = session.audioDurations || {};
@@ -41114,7 +41346,14 @@ ${embed}
           session.requestedPartIndex = target.part || 0;
           finish(resolve);
         };
-        audio.onplaying = applyPlaybackSpeed;
+        audio.onplaying = () => {
+          if (settled || !this.isActive(session) || this.currentAudio !== audio || this.pauseRequested) {
+            audio.pause();
+            return;
+          }
+          applyPlaybackSpeed();
+          measurePlaying();
+        };
         audio.ondurationchange = recordDuration;
         this.currentAudio = audio;
         const playbackTotal = getPlaybackTotal();
@@ -41156,6 +41395,7 @@ ${embed}
         };
         audio.onended = () => {
           if (settled) return;
+          if (measuredPlaying && !Number.isInteger(session.requestedChunkIndex)) this.playbackTimings?.ended();
           const currentTotal = getPlaybackTotal();
           this.setReaderState({
             canPause: false,
@@ -41181,6 +41421,7 @@ ${embed}
           audio.load();
         } else {
           Promise.resolve(audio.play()).catch((error) => {
+            if (settled || !this.isActive(session) || error?.name === "AbortError" && this.pauseRequested) return;
             finish(reject, error);
           });
         }
@@ -41404,6 +41645,8 @@ ${embed}
     return true;
   }
   async pauseOrResume() {
+    const session = this.activeSession;
+    const action = this.playbackControlRevision = (this.playbackControlRevision || 0) + 1;
     const audio = this.activeSession?.seekTarget ? null : this.currentAudio;
     if (this.activeSession && this.activeSession.kind === "audio-export") {
       new Notice("CosyVoice: audio export can be stopped but not paused.", 6e3);
@@ -41415,6 +41658,8 @@ ${embed}
         return;
       }
       this.pauseRequested = !this.pauseRequested;
+      this.activeSession?.preparationPool?.pause(this.pauseRequested);
+      this.playbackTimings?.suspend();
       this.updateStatus(this.pauseRequested ? "CosyVoice paused" : "CosyVoice waiting", {
         canPause: true,
         ...getChunkNavigationState(this.readerState.currentChunk, this.readerState.totalChunks),
@@ -41426,9 +41671,27 @@ ${embed}
       });
       return;
     }
-    if (audio.paused) {
+    if (audio.noteReaderFinished || audio.ended) {
+      if (audio.ended && !audio.noteReaderFinished) audio.onended?.();
+      return;
+    }
+    if (audio.paused || this.pauseRequested) {
       this.pauseRequested = false;
-      await audio.play();
+      this.activeSession?.preparationPool?.pause(false);
+      try {
+        await audio.play();
+      } catch (error) {
+        if (this.currentAudio !== audio || !this.isActive(session) || audio.noteReaderFinished || action !== this.playbackControlRevision || error?.name === "AbortError" && this.pauseRequested) return;
+        throw error;
+      }
+      if (this.currentAudio !== audio || !this.isActive(session) || audio.noteReaderFinished) {
+        audio.pause();
+        return;
+      }
+      if (action !== this.playbackControlRevision || this.pauseRequested) {
+        if (this.pauseRequested) audio.pause();
+        return;
+      }
       this.updateStatus("CosyVoice playing", {
         canPause: true,
         ...getChunkNavigationState(this.readerState.currentChunk, this.readerState.totalChunks),
@@ -41440,6 +41703,8 @@ ${embed}
       });
     } else {
       this.pauseRequested = true;
+      this.activeSession?.preparationPool?.pause(true);
+      this.playbackTimings?.suspend();
       audio.pause();
       void this.runUserAction("Save reading position", () => this.saveSessionReadingPosition(this.activeSession));
       this.updateStatus("CosyVoice paused", {
@@ -41456,6 +41721,8 @@ ${embed}
   async cancelSessionOperations(session) {
     if (session) {
       session.stopped = true;
+      session.preparationPool?.clear();
+      this.playbackTimings?.suspend();
       for (const controller of session.systemSpeechControllers || []) controller.abort();
       this.notifySessionNavigation(session);
     }
@@ -41478,11 +41745,13 @@ ${embed}
       this.currentRequests.clear();
     }
     if (this.currentAudio) {
-      this.currentAudio.pause();
-      this.releaseAudioSource(this.currentAudio);
-      this.currentAudio.removeAttribute("src");
-      this.currentAudio.load();
-      this.currentAudio = null;
+      const audio = this.currentAudio;
+      audio.noteReaderCancel?.();
+      audio.pause();
+      this.releaseAudioSource(audio);
+      audio.removeAttribute("src");
+      audio.load();
+      if (this.currentAudio === audio) this.currentAudio = null;
     }
   }
   async stopReading(options = {}) {

@@ -1,5 +1,6 @@
 const { ItemView, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, SecretComponent, Setting: ObsidianSetting, loadPdfJs, setIcon } = require('obsidian');
 const { LANGUAGES, translate: translateInterface, localizedSetting } = require('./i18n');
+const { PlaybackTimings, PreparationPool } = require('./preparation-pool');
 const { PAGES, createSettingsPages, createSettingsHeader } = require('./settings-pages');
 const { resetPageSettings } = require('./settings-reset');
 const { ELEVENLABS_MODELS, ELEVENLABS_VOICES, isElevenLabsModel } = require('./openrouter-elevenlabs');
@@ -2530,6 +2531,13 @@ class CosyVoiceReaderPlugin extends Plugin {
       id: 'read-copilot-chat', name: 'Read saved Copilot chat',
       callback: () => this.openCopilotChat(),
     });
+    this.addCommand({
+      id: 'copy-playback-timings', name: 'Copy playback waiting-time summary',
+      callback: () => void this.runUserAction('Copy playback timings', async () => {
+        await navigator.clipboard.writeText(JSON.stringify(this.playbackTimings?.snapshot() || {}, null, 2));
+        new Notice(this.settings.settingsLanguage === 'chinese' ? '已复制本地等待统计（不含正文或密钥）。' : 'Local timing summary copied (no text or keys).');
+      }),
+    });
 
     this.addCommand({
       id: 'pdf-outline-bookmarks', name: 'PDF outline and bookmarks',
@@ -4814,6 +4822,11 @@ class CosyVoiceReaderPlugin extends Plugin {
   }
 
   notifySessionNavigation(session) {
+    if (Number.isInteger(session?.requestedChunkIndex)) {
+      this.playbackTimings?.begin('jumpToPlaying');
+      session.preparationPool?.select(`${session.requestedChunkIndex}:${session.requestedPartIndex || 0}`);
+      session.preparationPool?.pause(this.pauseRequested);
+    }
     this.notifySessionChunkWaiters(session);
     for (const wake of Array.from(session?.operationWaiters || [])) wake();
   }
@@ -5360,6 +5373,7 @@ class CosyVoiceReaderPlugin extends Plugin {
   }
 
   async startReading(rawText, sourceLabel, options = {}) {
+    const preparationStarted = (this.playbackTimings ||= new PlaybackTimings()).now();
     const text = options.plainText || options.sourceKind === 'html' ? this.prepareHtmlSpeechText(rawText)
       : this.settings.stripMarkdown
       ? sanitizeTextForSpeech(rawText, academicOptions(this.settings))
@@ -5423,23 +5437,26 @@ class CosyVoiceReaderPlugin extends Plugin {
     });
     new Notice(`${configuration.engineLabel}: reading ${sourceLabel}. First synthesis may take a while.`, 6000);
 
+    this.playbackTimings.record('textPreparation', this.playbackTimings.now() - preparationStarted);
     await this.runSpeechSession(session);
   }
 
   async runSpeechSession(session) {
-    const preparedChunks = new Map();
-    const readyChunks = new Set();
+    const timings = this.playbackTimings ||= new PlaybackTimings();
+    timings.begin('sessionToPlaying');
+    const pool = session.preparationPool = new PreparationPool({
+      concurrency: isOnlineSpeechEngine(session.speechEngine) && session.speechEngine !== 'edge-tts' ? 2 : 1,
+      maxEntries: 256, timings,
+    });
     const getPreparedChunk = (index, part = 0, foreground = false) => {
       planSpeechParts(session, index, foreground && !session.seekTarget);
       const key = `${index}:${part}`;
-      if (!preparedChunks.has(key)) {
-        const preparing = this.queuePrepareChunk(getSpeechParts(session, index)[part], index, session, part);
-        preparing.catch(() => {});
-        preparedChunks.set(key, preparing);
-        preparing.then(() => readyChunks.add(key), () => {});
-      }
-
-      return preparedChunks.get(key);
+      if (foreground) pool.select(key);
+      return pool.get(key, () => this.queuePrepareChunk(getSpeechParts(session, index)[part], index, session, part), {
+        background: !foreground,
+        valid: () => this.isActive(session) && (foreground || (!this.pauseRequested
+          && !Number.isInteger(session.requestedChunkIndex) && !session.seekTarget)),
+      });
     };
     session.prepareAvailableChunks = () => {
       if (!this.isActive(session) || Number.isInteger(session.requestedChunkIndex)
@@ -5450,7 +5467,7 @@ class CosyVoiceReaderPlugin extends Plugin {
       for (let offset = 1; offset <= session.prefetchChunks; offset += 1) {
         cursor = adjacentSpeechPart(session, cursor.index, cursor.part, 1);
         if (!cursor) break;
-        getPreparedChunk(cursor.index, cursor.part);
+        getPreparedChunk(cursor.index, cursor.part).catch(() => {});
       }
     };
 
@@ -5483,7 +5500,9 @@ class CosyVoiceReaderPlugin extends Plugin {
           });
         }
 
+        const sourceWaitStarted = timings.now();
         const chunkText = await this.waitForSessionChunk(session, index);
+        timings.record('sourceWait', timings.now() - sourceWaitStarted);
         if (!this.isActive(session)) {
           break;
         }
@@ -5498,10 +5517,13 @@ class CosyVoiceReaderPlugin extends Plugin {
         session.currentPartIndex = part;
         if (session.lastCompletedChunkIndex === index) session.lastCompletedChunkIndex = null;
         const key = `${index}:${part}`;
-        const reused = preparedChunks.has(key);
+        const previousState = pool.state(key);
+        const reused = Boolean(previousState);
+        const waitStarted = timings.now();
         const preparation = getPreparedChunk(index, part, true);
+        if (!session.seekTarget) session.prepareAvailableChunks();
         this.updateStatus(`${session.engineLabel} preparing ${index + 1}/${session.totalChunks}`, {
-          preparationStatus: readyChunks.has(key) ? 'loading' : reused ? 'waiting' : 'synthesizing',
+          preparationStatus: previousState === 'ready' ? 'loading' : reused ? 'waiting' : 'synthesizing',
           phase: 'synthesizing',
           currentChunk: index + 1,
           totalChunks: session.totalChunks,
@@ -5518,8 +5540,7 @@ class CosyVoiceReaderPlugin extends Plugin {
           continue;
         }
 
-        if (!session.seekTarget) session.prepareAvailableChunks();
-
+        timings.record('foregroundWait', timings.now() - waitStarted);
         session.requestedChunkIndex = null;
         await this.playPreparedAudio(prepared, session, index, session.totalChunks, part);
 
@@ -5576,6 +5597,7 @@ class CosyVoiceReaderPlugin extends Plugin {
       }
     } finally {
       session.prepareAvailableChunks = null;
+      pool.clear();
       session.prefetchBaseIndex = null;
       if (session.producerPromise) {
         await session.producerPromise.catch(() => {});
@@ -6236,6 +6258,7 @@ class CosyVoiceReaderPlugin extends Plugin {
     }
 
     this.updateStatus(`${session.engineLabel} loading audio`, { preparationStatus: 'loading' });
+    const loadingStarted = this.playbackTimings?.now();
     const loadingSource = this.createPlayableAudioSource(prepared);
     const source = await this.waitForSessionOperation(session, loadingSource, { index, part });
     if (!source) {
@@ -6264,6 +6287,13 @@ class CosyVoiceReaderPlugin extends Plugin {
         }
         settled = true;
         if (seekMetadataTimer) clearTimeout(seekMetadataTimer);
+        if (audio) {
+          audio.noteReaderFinished = true;
+          audio.noteReaderCancel = null;
+          audio.onended = audio.onerror = audio.onplaying = audio.ontimeupdate = null;
+          audio.onloadedmetadata = audio.ondurationchange = null;
+          audio.pause();
+        }
         if (this.currentAudio === audio) {
           this.currentAudio = null;
         }
@@ -6273,6 +6303,9 @@ class CosyVoiceReaderPlugin extends Plugin {
 
       try {
         audio = new Audio();
+        audio.loop = false;
+        audio.noteReaderFinished = false;
+        audio.noteReaderCancel = () => finish(resolve);
         audio.volume = normalizeVolume(this.settings.playbackVolume);
         audio.preservesPitch = true;
         audio.defaultPlaybackRate = normalizeSpeed(this.settings.playbackSpeed);
@@ -6286,6 +6319,12 @@ class CosyVoiceReaderPlugin extends Plugin {
           ...cue, start: cue.start + partOffset, end: cue.end + partOffset,
         }));
         audio.preload = 'auto';
+        let measuredPlaying = false;
+        const measurePlaying = () => {
+          if (measuredPlaying || settled || !this.isActive(session) || Number.isInteger(session.requestedChunkIndex)) return;
+          measuredPlaying = true;
+          this.playbackTimings?.playing(loadingStarted);
+        };
         const recordDuration = () => {
           if (this.isActive(session) && Number.isFinite(audio.duration) && audio.duration > 0) {
             session.audioDurations = session.audioDurations || {};
@@ -6347,7 +6386,13 @@ class CosyVoiceReaderPlugin extends Plugin {
           session.requestedPartIndex = target.part || 0;
           finish(resolve);
         };
-        audio.onplaying = applyPlaybackSpeed;
+        audio.onplaying = () => {
+          if (settled || !this.isActive(session) || this.currentAudio !== audio || this.pauseRequested) {
+            audio.pause();
+            return;
+          }
+          applyPlaybackSpeed(); measurePlaying();
+        };
         audio.ondurationchange = recordDuration;
         this.currentAudio = audio;
         const playbackTotal = getPlaybackTotal();
@@ -6391,6 +6436,7 @@ class CosyVoiceReaderPlugin extends Plugin {
 
         audio.onended = () => {
           if (settled) return;
+          if (measuredPlaying && !Number.isInteger(session.requestedChunkIndex)) this.playbackTimings?.ended();
           const currentTotal = getPlaybackTotal();
           this.setReaderState({
             canPause: false,
@@ -6419,6 +6465,7 @@ class CosyVoiceReaderPlugin extends Plugin {
           audio.load();
         } else {
           Promise.resolve(audio.play()).catch((error) => {
+            if (settled || !this.isActive(session) || (error?.name === 'AbortError' && this.pauseRequested)) return;
             finish(reject, error);
           });
         }
@@ -6676,6 +6723,8 @@ class CosyVoiceReaderPlugin extends Plugin {
   }
 
   async pauseOrResume() {
+    const session = this.activeSession;
+    const action = this.playbackControlRevision = (this.playbackControlRevision || 0) + 1;
     const audio = this.activeSession?.seekTarget ? null : this.currentAudio;
 
     if (this.activeSession && this.activeSession.kind === 'audio-export') {
@@ -6690,6 +6739,8 @@ class CosyVoiceReaderPlugin extends Plugin {
       }
 
       this.pauseRequested = !this.pauseRequested;
+      this.activeSession?.preparationPool?.pause(this.pauseRequested);
+      this.playbackTimings?.suspend();
       this.updateStatus(this.pauseRequested ? 'CosyVoice paused' : 'CosyVoice waiting', {
         canPause: true,
         ...getChunkNavigationState(this.readerState.currentChunk, this.readerState.totalChunks),
@@ -6702,9 +6753,30 @@ class CosyVoiceReaderPlugin extends Plugin {
       return;
     }
 
-    if (audio.paused) {
+    // play() on an ended HTMLMediaElement restarts it from the beginning.
+    // Let the existing queue finish this element instead of replaying it.
+    if (audio.noteReaderFinished || audio.ended) {
+      if (audio.ended && !audio.noteReaderFinished) audio.onended?.();
+      return;
+    }
+    if (audio.paused || this.pauseRequested) {
       this.pauseRequested = false;
-      await audio.play();
+      this.activeSession?.preparationPool?.pause(false);
+      try {
+        await audio.play();
+      } catch (error) {
+        if (this.currentAudio !== audio || !this.isActive(session) || audio.noteReaderFinished
+          || action !== this.playbackControlRevision || (error?.name === 'AbortError' && this.pauseRequested)) return;
+        throw error;
+      }
+      if (this.currentAudio !== audio || !this.isActive(session) || audio.noteReaderFinished) {
+        audio.pause();
+        return;
+      }
+      if (action !== this.playbackControlRevision || this.pauseRequested) {
+        if (this.pauseRequested) audio.pause();
+        return;
+      }
       this.updateStatus('CosyVoice playing', {
         canPause: true,
         ...getChunkNavigationState(this.readerState.currentChunk, this.readerState.totalChunks),
@@ -6716,6 +6788,8 @@ class CosyVoiceReaderPlugin extends Plugin {
       });
     } else {
       this.pauseRequested = true;
+      this.activeSession?.preparationPool?.pause(true);
+      this.playbackTimings?.suspend();
       audio.pause();
       void this.runUserAction('Save reading position', () => this.saveSessionReadingPosition(this.activeSession));
       this.updateStatus('CosyVoice paused', {
@@ -6733,6 +6807,8 @@ class CosyVoiceReaderPlugin extends Plugin {
   async cancelSessionOperations(session) {
     if (session) {
       session.stopped = true;
+      session.preparationPool?.clear();
+      this.playbackTimings?.suspend();
       for (const controller of session.systemSpeechControllers || []) controller.abort();
       this.notifySessionNavigation(session);
     }
@@ -6759,11 +6835,13 @@ class CosyVoiceReaderPlugin extends Plugin {
     }
 
     if (this.currentAudio) {
-      this.currentAudio.pause();
-      this.releaseAudioSource(this.currentAudio);
-      this.currentAudio.removeAttribute('src');
-      this.currentAudio.load();
-      this.currentAudio = null;
+      const audio = this.currentAudio;
+      audio.noteReaderCancel?.();
+      audio.pause();
+      this.releaseAudioSource(audio);
+      audio.removeAttribute('src');
+      audio.load();
+      if (this.currentAudio === audio) this.currentAudio = null;
     }
   }
 
