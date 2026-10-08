@@ -2,14 +2,24 @@
 
 const { splitOpeningAudioParts } = require('./semantic-chunker');
 const { estimateTextSeconds } = require('./playback-estimate');
+const { applyTerms, fitSpeechParts } = require('./speech-options');
+
+function makeParts(session, index, quick) {
+  const text = session.chunks[index], settings = session.synthesisSettings || {};
+  const changed = applyTerms(text, settings) !== text;
+  const opening = quick && !changed ? splitOpeningAudioParts(text, session.rapidQuickStart === true) : [text];
+  const parts = opening.flatMap(value => fitSpeechParts(value, settings, session.speechPartLimit || 100000));
+  session.audioSpeechParts ||= {};
+  session.audioSpeechParts[index] = parts.map(part => part.text);
+  return parts.map(part => part.source);
+}
 
 function getSpeechParts(session, index) {
   const text = session?.chunks?.[index];
   if (typeof text !== 'string') return [];
   session.audioParts ||= {};
   if (!session.audioParts[index]) {
-    session.audioParts[index] = index === 0 && session.smartQuickStart !== false && session.kind !== 'audio-export'
-      ? splitOpeningAudioParts(text, session.rapidQuickStart === true) : [text];
+    session.audioParts[index] = makeParts(session, index, index === 0 && session.smartQuickStart !== false && session.kind !== 'audio-export');
   }
   return session.audioParts[index];
 }
@@ -21,8 +31,7 @@ function planSpeechParts(session, index, foreground = false) {
   if (!session.plannedAudioParts.has(index)) {
     session.audioParts ||= {};
     const text = session.chunks[index];
-    session.audioParts[index] = foreground && session.smartQuickStart !== false && session.kind !== 'audio-export'
-      ? splitOpeningAudioParts(text, session.rapidQuickStart === true) : [text];
+    session.audioParts[index] = makeParts(session, index, foreground && session.smartQuickStart !== false && session.kind !== 'audio-export');
     session.plannedAudioParts.add(index);
   }
   return getSpeechParts(session, index);

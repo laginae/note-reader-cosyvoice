@@ -42,6 +42,7 @@ function settingsFixture(language = 'english', engine = 'mimo-tts', overrides = 
       callback(c); return this;
     }
     addText(fn) { return this.component('input','text',fn); }
+    addTextArea(fn) { return this.component('textarea','',fn); }
     addDropdown(fn) { return this.component('select','',fn); }
     addButton(fn) { return this.component('button','button',fn); }
     addExtraButton(fn) { return this.component('button','button',fn); }

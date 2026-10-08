@@ -62,6 +62,23 @@ function fixture() {
     change: value => { text = value; }, setMode: value => { mode = value; } };
 }
 
+test('ElevenLabs toolbar estimates use the session model and normal synthesis speed', () => {
+  const { plugin, toolbar, manager, dom } = fixture();
+  plugin.settings.speed = 2;
+  plugin.settings.openRouterModel = 'hexgrad/kokoro';
+  plugin.activeSession = {
+    id: 1, speechEngine: 'openrouter-tts', chunks: ['word '.repeat(100)],
+    synthesisSettings: { openRouterModel: 'elevenlabs/eleven-v4', speed: 2 },
+  };
+  plugin.readerState.currentChunk = 1;
+  toolbar.render();
+  assert.equal(toolbar.time.textContent, 'Remaining ~0:39');
+  plugin.settings.playbackSpeed = 2;
+  toolbar.render();
+  assert.equal(toolbar.time.textContent, 'Remaining ~0:20');
+  manager.destroy(); dom.window.close();
+});
+
 function keyboardFixture() {
   const f = fixture(), calls = [];
   f.plugin.activeSession = { id: 1, chunks: ['One.', 'Two.'] };

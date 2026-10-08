@@ -74,6 +74,12 @@ With compatible offline voices, no speech text is sent to a TTS provider. **Wind
 
 ### 4. OpenRouter: model choice with enforced ZDR
 
+**ElevenLabs via OpenRouter:** choose Multilingual v2, Flash v2.5, Eleven v4 or v4 Turbo, with George, Sarah, Daniel, Alice, Brian or Lily. Existing defaults are unchanged. Audio uses MP3 at normal synthesis speed; adjust playback speed in the player. ZDR and denial of data collection remain mandatory; an unavailable route fails without relaxing privacy. The [speech catalog](https://openrouter.ai/api/v1/models?output_modalities=speech) and [ZDR endpoint list](https://openrouter.ai/api/v1/endpoints/zdr) were checked on 2026-10-08. Prices and availability can change.
+
+**Optional continuity:** these four models show an ElevenLabs advanced section with an experimental, default-off continuity toggle. It sends only neighboring sentences within the current reading range, up to 160 characters per side, through `provider.options.elevenlabs`; it never reads outside a selected range or uses request history. Other models hide the option and receive no context parameters, while the saved preference is retained. No cloud pronunciation dictionary or automatic performance tags are added. Source audio tags may affect delivery. Parameter support follows the [OpenRouter announcement](https://openrouter.ai/blog/announcements/elevenlabs-on-openrouter/); paid listening tests have not been performed, so improved sound is not guaranteed.
+
+**Local term pronunciations:** in Academic settings, enable rules such as `BESS = B E S S`, one per line. Rules are case-sensitive literal matches (not regex), longest match first, without recursive replacement. Up to 100 rules are stored locally; each term is limited to 80 characters and each pronunciation to 120. Online engines receive the substituted speech text, not the rule list. Source documents and original reading positions are preserved; expanded requests are split to respect engine limits. These rules also apply to export. Rules take effect next session; edited rules do not change already-prepared audio.
+
 1. Create an [OpenRouter API key](https://openrouter.ai/settings/keys), set a spending limit, and ensure the account has usable credit.
 2. Select **OpenRouter TTS**, store the key in **Obsidian SecretStorage**, and enable **Allow OpenRouter online processing**.
 3. Choose a model and one of its compatible voices. Test a short selection before a long reading or export.
@@ -249,6 +255,8 @@ MiMo defaults to a configurable 200-character chunk cap (a conservative client s
 ## Academic reading
 
 Simple formulas such as `$z_{\mathrm d}$` are read as "z sub d". Font and spacing commands do not make a short formula complex; explicit skip settings and complex-formula safeguards still apply.
+
+Conventional bounds such as `[\ell,u]` and matching `E_{\min}` / `E_{\max}` endpoints use concise "to" phrasing; verbose mode retains "closed interval". Other bracketed pairs keep their brackets. Simply subscripted adjacent factors are separated by "times".
 
 Settings are organized into five pages: **Speech engine**, **Playback and interface**, **Academic reading**, **Export and storage**, and **Privacy and help**. A compact language selector sits beside the title and wraps on narrow windows. The header and category tabs scroll normally with the page, avoiding overlapping text. Page changes do not alter preferences; changing a setting that redraws the page preserves the selected category. Online consent and credentials stay next to the selected engine, while resetting all settings remains at the bottom of Privacy and help.
 

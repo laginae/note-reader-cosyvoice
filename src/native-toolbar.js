@@ -5,6 +5,7 @@ const { translate } = require('./i18n');
 const { outlineSections } = require('./reader-selection');
 const { currentSourceRanges } = require('./markdown-source');
 const { estimatePlayback, formatDuration } = require('./playback-estimate');
+const { isElevenLabsModel } = require('./openrouter-elevenlabs');
 const { getHtmlReaderDocument } = require('./html-text');
 const { captureHtmlOutline, htmlSectionText } = require('./html-outline');
 const { preparationStatusText } = require('./preparation-status');
@@ -281,7 +282,9 @@ class NativeReaderToolbar {
     this.chatButton.disabled = Boolean(exporting);
     const timing = this.plugin.getSegmentTiming?.() || { current: 0 };
     const estimate = estimatePlayback(session, Math.max(0, (state.currentChunk || 1) - 1), timing.current,
-      ['system-tts', 'byok-tts'].includes(session?.speechEngine) ? 1 : this.plugin.settings.speed, this.plugin.settings.playbackSpeed);
+      (['system-tts', 'byok-tts'].includes(session?.speechEngine)
+        || (session?.speechEngine === 'openrouter-tts' && isElevenLabsModel((session.synthesisSettings || this.plugin.settings).openRouterModel)))
+        ? 1 : this.plugin.settings.speed, this.plugin.settings.playbackSpeed);
     this.time.textContent = estimate ? `${this.t('Remaining ~', '剩余约 ')}${formatDuration(estimate.remaining)}` : `${state.currentChunk || 0} / ${state.totalChunks || 0}`;
     const source = session?.markdownSource, ranges = source && source.filePath === this.view.file?.path
       ? currentSourceRanges(source, { index: session.currentChunkIndex }) : [];

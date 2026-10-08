@@ -820,3 +820,10 @@
 .note-reader-settings-panel .setting-item-control input[type="text"] {
   max-width: 100%;
 }
+
+.reader-speech-options { margin-block: 12px; }
+.reader-speech-options > summary { cursor: pointer; padding-block: 8px; }
+.reader-speech-terms { flex-direction: column; align-items: stretch; gap: 8px; }
+.reader-speech-terms .setting-item-control { width: 100%; }
+.reader-speech-terms textarea { width: 100%; min-width: 0; max-width: 100%; min-height: 100px; resize: vertical; }
+.reader-speech-terms textarea[aria-invalid="true"] { border-color: var(--text-error); }

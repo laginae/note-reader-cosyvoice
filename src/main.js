@@ -2,6 +2,9 @@ const { ItemView, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, SecretC
 const { LANGUAGES, translate: translateInterface, localizedSetting } = require('./i18n');
 const { PAGES, createSettingsPages, createSettingsHeader } = require('./settings-pages');
 const { resetPageSettings } = require('./settings-reset');
+const { ELEVENLABS_MODELS, ELEVENLABS_VOICES, isElevenLabsModel } = require('./openrouter-elevenlabs');
+const { normalizedTerms, applyTerms, fitSpeechParts, contextOptions, adjacentContext } = require('./speech-options');
+const { addSpeechContextSetting, addSpeechTermsSettings } = require('./speech-options-settings');
 const { SettingsConfirmModal } = require('./settings-confirm');
 const crypto = require('crypto');
 const fs = require('fs');
@@ -126,6 +129,7 @@ const MICROSOFT_VOICE_PRESETS = [
   ['en-GB-RyanNeural', 'English (UK) - Ryan (male)', '英式英语 - Ryan（男声）'],
 ];
 const OPENROUTER_TTS_MODELS = [
+  ...ELEVENLABS_MODELS,
   [
     'microsoft/mai-voice-2.1-flash',
     'en-GB-Harry:MAI-Voice-2.1-Flash',
@@ -180,6 +184,7 @@ const OPENROUTER_TTS_MODELS = [
 // Fish voice IDs point to public Fish Audio voices powered by S2.1 Pro.
 // MAI compatibility IDs follow Microsoft's official MAI voice catalog on 2026-08-27.
 const OPENROUTER_TTS_PRESETS = [
+  ...ELEVENLABS_MODELS.flatMap(([model]) => ELEVENLABS_VOICES.map(voice => [model, ...voice])),
   // IDs verified in OpenRouter's speech + ZDR catalog on 2026-10-02.
   ['microsoft/mai-voice-2.1-flash', 'en-GB-Harry:MAI-Voice-2.1-Flash', 'Harry (UK English male, default)', 'Harry（英式英语男声，默认）'],
   ['microsoft/mai-voice-2.1-flash', 'en-GB-Emily:MAI-Voice-2.1-Flash', 'Emily (UK English female)', 'Emily（英式英语女声）'],
@@ -554,6 +559,9 @@ const LATEX_COMMAND_REPLACEMENTS = {
 };
 
 const DEFAULT_SETTINGS = {
+  openRouterContext: false,
+  speechTermsEnabled: false,
+  speechTerms: '',
   settingsLanguage: 'english',
   scriptPath: resolveDefaultScriptPath(),
   speechEngine: 'local-cosyvoice',
@@ -1475,16 +1483,27 @@ function getOpenRouterConfigurationError(settings = {}, vaultBasePath = '', app 
   }, vaultBasePath, app, 'OpenRouter API');
 }
 
-function buildOpenRouterTtsRequestBody(text, settings = {}) {
+function usesNormalSynthesisSpeed(settings = {}) {
+  const engine = normalizeSpeechEngine(settings.speechEngine);
+  return ['system-tts', 'byok-tts'].includes(engine)
+    || (engine === 'openrouter-tts' && isElevenLabsModel(settings.openRouterModel));
+}
+
+function effectiveSynthesisSpeed(settings = {}) {
+  return usesNormalSynthesisSpeed(settings) ? 1 : normalizeSpeed(settings.speed);
+}
+
+function buildOpenRouterTtsRequestBody(text, settings = {}, context = {}) {
   return JSON.stringify({
     model: normalizeOpenRouterModel(settings.openRouterModel),
     input: String(text || ''),
     voice: normalizeOpenRouterVoice(settings.openRouterVoice),
     response_format: 'mp3',
-    speed: normalizeSpeed(settings.speed),
+    speed: isElevenLabsModel(settings.openRouterModel) ? 1 : normalizeSpeed(settings.speed),
     provider: {
       data_collection: 'deny',
       zdr: true,
+      ...contextOptions(settings, context),
     },
   });
 }
@@ -1654,6 +1673,9 @@ function createDefaultSettings() {
     edgeTtsVoice: normalizeEdgeTtsVoice(DEFAULT_SETTINGS.edgeTtsVoice),
     mathReadingLanguage: normalizeMathReadingLanguage(DEFAULT_SETTINGS.mathReadingLanguage),
     openRouterConsent: DEFAULT_SETTINGS.openRouterConsent,
+    openRouterContext: false,
+    speechTermsEnabled: false,
+    speechTerms: '',
     openRouterCredentialSource: normalizeCredentialSource(DEFAULT_SETTINGS.openRouterCredentialSource),
     openRouterKeyPath: DEFAULT_SETTINGS.openRouterKeyPath,
     openRouterModel: normalizeOpenRouterModel(DEFAULT_SETTINGS.openRouterModel),
@@ -2761,6 +2783,9 @@ class CosyVoiceReaderPlugin extends Plugin {
     const hadAzureCredentialSource = Object.prototype.hasOwnProperty.call(source, 'azureSpeechCredentialSource');
     const hadOpenRouterCredentialSource = Object.prototype.hasOwnProperty.call(source, 'openRouterCredentialSource');
     this.settings = selectKnownSettings(defaults, source);
+    this.settings.openRouterContext = this.settings.openRouterContext === true;
+    this.settings.speechTermsEnabled = this.settings.speechTermsEnabled === true;
+    this.settings.speechTerms = normalizedTerms(this.settings.speechTerms);
     this.settings.readingHistoryMode = ['off', 'session', 'persistent'].includes(source.readingHistoryMode)
       ? source.readingHistoryMode : source.rememberReadingPosition === true ? 'persistent' : 'session';
     if (this.settings.readingHistoryMode !== 'persistent') this.settings.readingPositions = {};
@@ -2821,6 +2846,9 @@ class CosyVoiceReaderPlugin extends Plugin {
     this.settings.readingHighlight = normalizeReadingHighlight(this.settings.readingHighlight);
     this.settings.readingFollow = this.settings.readingFollow === true;
     this.settings = selectKnownSettings(createDefaultSettings(), this.settings);
+    this.settings.openRouterContext = this.settings.openRouterContext === true;
+    this.settings.speechTermsEnabled = this.settings.speechTermsEnabled === true;
+    this.settings.speechTerms = normalizedTerms(this.settings.speechTerms);
     this.settings.readingHistoryMode = historyMode(this.settings);
     this.settings.smartQuickStart = this.settings.smartQuickStart !== false;
     this.settings.rapidQuickStart = this.settings.rapidQuickStart === true;
@@ -4268,7 +4296,10 @@ class CosyVoiceReaderPlugin extends Plugin {
       }
     }
 
-    const chunks = splitTextForSpeechChunks(text, configuration.chunkLimits);
+    const termSnapshot = { speechTerms: this.settings.speechTerms, speechTermsEnabled: this.settings.speechTermsEnabled };
+    const exportParts = splitTextForSpeechChunks(text, configuration.chunkLimits)
+      .flatMap(value => fitSpeechParts(value, termSnapshot, Math.max(...configuration.chunkLimits)));
+    const chunks = exportParts.map(part => part.source);
     if (!text || !chunks.length) {
       new Notice('CosyVoice: nothing readable in the selected export scope.', 6000);
       return null;
@@ -4282,9 +4313,13 @@ class CosyVoiceReaderPlugin extends Plugin {
       scope,
       speechEngine: configuration.speechEngine,
       targetPath: exportPlan.targetPath,
-      textLength: text.length,
+      textLength: exportParts.reduce((total, part) => total + part.text.length, 0),
     });
     if (!await this.requestAudioExportConfirmation(summary)) {
+      return null;
+    }
+    if (termSnapshot.speechTerms !== this.settings.speechTerms || termSnapshot.speechTermsEnabled !== this.settings.speechTermsEnabled) {
+      new Notice('Term rules changed. Start export again to review the new estimate. / 术语规则已更改，请重新确认导出。');
       return null;
     }
     if (options.actionToken !== this.webActionSequence) return null;
@@ -4303,6 +4338,8 @@ class CosyVoiceReaderPlugin extends Plugin {
       kind: 'audio-export',
       sourceKind: context.documentKind,
     });
+    session.audioParts = Object.fromEntries(exportParts.map((part, index) => [index, [part.source]]));
+    session.audioSpeechParts = Object.fromEntries(exportParts.map((part, index) => [index, [part.text]]));
     this.activeSession = session;
     this.updateStatus(`${configuration.engineLabel} export 0/${chunks.length}`, {
       canPause: false,
@@ -4735,6 +4772,7 @@ class CosyVoiceReaderPlugin extends Plugin {
       synthesisSettings: { ...this.settings, byokProfiles: configuration.byokProfile
         ? [{ ...configuration.byokProfile }] : (this.settings.byokProfiles || []).map(profile => ({ ...profile })), readingPositions: {} },
       systemVoice: configuration.systemVoice || '',
+      speechPartLimit: Math.max(...(configuration.chunkLimits || [800])),
       systemSpeechControllers: new Set(),
       speechStarted: false,
       stopped: false,
@@ -5547,7 +5585,7 @@ class CosyVoiceReaderPlugin extends Plugin {
     session.speechStarted = true;
     session.synthesisSpeeds = session.synthesisSpeeds || {};
     const speechEngine = normalizeSpeechEngine(session.speechEngine || this.settings.speechEngine);
-    session.synthesisSpeeds[index] = ['system-tts', 'byok-tts'].includes(speechEngine) ? 1 : normalizeSpeed((session.synthesisSettings || this.settings).speed);
+    session.synthesisSpeeds[index] = effectiveSynthesisSpeed({ ...(session.synthesisSettings || this.settings), speechEngine });
     const engineLabel = session.engineLabel || getSpeechEngineLabel(this.settings);
     const outputExtension = getAudioExportExtension(speechEngine);
     const basename = `${Date.now()}-${session.id}-${index}-${part}`;
@@ -5555,7 +5593,9 @@ class CosyVoiceReaderPlugin extends Plugin {
     const outputPath = path.join(this.cacheDir, `${basename}.${outputExtension}`);
 
     session.files.push(inputPath, outputPath);
-    await fs.promises.writeFile(inputPath, chunkText, { encoding: 'utf8', mode: 0o600 });
+    const speechText = session.audioSpeechParts?.[index]?.[part] ?? applyTerms(chunkText, session.synthesisSettings || this.settings);
+    const context = adjacentContext(getSpeechParts(session, index), part, session.chunks?.[index - 1] || '', session.chunks?.[index + 1] || '');
+    await fs.promises.writeFile(inputPath, speechText, { encoding: 'utf8', mode: 0o600 });
 
     const isAudioExport = session.kind === 'audio-export';
     const isBackgroundPrefetch = Boolean(
@@ -5581,7 +5621,7 @@ class CosyVoiceReaderPlugin extends Plugin {
     }
     let alignment;
     try {
-      alignment = await this.runSpeechEngine(inputPath, outputPath, session, speechEngine);
+      alignment = await this.runSpeechEngine(inputPath, outputPath, session, speechEngine, context);
     } catch (error) {
       if (speechEngine === 'system-tts' && this.settings.cleanupCache) await this.removeTempFile(outputPath);
       throw error;
@@ -5613,7 +5653,7 @@ class CosyVoiceReaderPlugin extends Plugin {
     return {
       outputPath,
       url,
-      sentenceCues: alignment ? buildSentenceCues(chunkText, alignment.boundaries, alignment.duration) : [],
+      sentenceCues: alignment && speechText === chunkText ? buildSentenceCues(chunkText, alignment.boundaries, alignment.duration) : [],
     };
   }
 
@@ -5623,7 +5663,7 @@ class CosyVoiceReaderPlugin extends Plugin {
     return promise;
   }
 
-  runSpeechEngine(inputPath, outputPath, session, speechEngine = normalizeSpeechEngine(this.settings.speechEngine)) {
+  runSpeechEngine(inputPath, outputPath, session, speechEngine = normalizeSpeechEngine(this.settings.speechEngine), context = {}) {
     if (speechEngine === 'byok-tts') return this.runByokTts(inputPath, outputPath, session);
     if (speechEngine === 'system-tts') return this.runSystemTts(inputPath, outputPath, session);
     if (speechEngine === 'edge-tts') {
@@ -5633,7 +5673,7 @@ class CosyVoiceReaderPlugin extends Plugin {
       return this.runAzureSpeech(inputPath, outputPath, session);
     }
     if (speechEngine === 'openrouter-tts') {
-      return this.runOpenRouterTts(inputPath, outputPath, session);
+      return this.runOpenRouterTts(inputPath, outputPath, session, context);
     }
     if (speechEngine === 'mimo-tts') {
       return this.runMimoTts(inputPath, outputPath, session);
@@ -6114,7 +6154,7 @@ class CosyVoiceReaderPlugin extends Plugin {
     });
   }
 
-  async runOpenRouterTts(inputPath, outputPath, session) {
+  async runOpenRouterTts(inputPath, outputPath, session, context = {}) {
     const settings = session.synthesisSettings || this.settings;
     const [text, apiKey] = await Promise.all([
       fs.promises.readFile(inputPath, 'utf8'),
@@ -6124,7 +6164,7 @@ class CosyVoiceReaderPlugin extends Plugin {
       throw new Error('Reading stopped.');
     }
 
-    const body = buildOpenRouterTtsRequestBody(text, settings);
+    const body = buildOpenRouterTtsRequestBody(text, settings, this.settings.openRouterContext === true ? context : {});
     await this.requestRemoteAudio({
       endpoint: new URL(OPENROUTER_TTS_ENDPOINT),
       headers: {
@@ -6139,7 +6179,7 @@ class CosyVoiceReaderPlugin extends Plugin {
       session,
       serviceLabel: 'OpenRouter TTS',
       expectedContentType: 'audio/mpeg',
-      failureHint: 'Check the selected API credential, model, voice, account balance, and privacy settings.',
+      failureHint: 'Check the selected API credential, model, voice, account balance, and ZDR route availability. Privacy requirements are not relaxed on failure.',
       retryTemporaryFailures: true,
     });
   }
@@ -6170,7 +6210,7 @@ class CosyVoiceReaderPlugin extends Plugin {
   getSegmentTiming(session = this.activeSession, index = Math.max(0, (this.readerState.currentChunk || 1) - 1),
     part = session?.currentPartIndex || 0, time = this.currentAudio?.currentTime || 0) {
     const timing = session?.chunks?.[index] !== undefined
-      ? getSpeechPartTiming(session, index, part, time, ['system-tts', 'byok-tts'].includes(session.speechEngine) ? 1 : normalizeSpeed(this.settings.speed))
+      ? getSpeechPartTiming(session, index, part, time, effectiveSynthesisSpeed({ ...(session.synthesisSettings || this.settings), speechEngine: session.speechEngine }))
       : { duration: Number(this.currentAudio?.duration) || 0, current: time, offset: 0 };
     return { ...timing, fraction: timing.duration > 0 ? Math.min(1, timing.current / timing.duration) : 0 };
   }
@@ -6951,7 +6991,7 @@ class CosyVoiceReaderView extends ItemView {
 
     const estimate = estimatePlayback(this.plugin.activeSession,
       Math.max(0, (state.currentChunk || 1) - 1),
-      this.plugin.getSegmentTiming().current, ['system-tts', 'byok-tts'].includes(this.plugin.activeSession?.speechEngine) ? 1 : this.plugin.settings.speed,
+      this.plugin.getSegmentTiming().current, effectiveSynthesisSpeed({ ...(this.plugin.activeSession?.synthesisSettings || this.plugin.settings), speechEngine: this.plugin.activeSession?.speechEngine || this.plugin.settings.speechEngine }),
       normalizeSpeed(this.plugin.settings.playbackSpeed));
     if (estimate) {
       const zh = this.plugin.settings.settingsLanguage === 'chinese';
@@ -7840,6 +7880,7 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
         .setDesc(selectedOpenRouterModel ? selectedOpenRouterModel[3] : ui.customModelInfo);
 
       const openRouterVoicePresets = getOpenRouterTtsVoicePresets(currentOpenRouterModel, settingsLanguage);
+      addSpeechContextSetting(containerEl, this.plugin);
       const openRouterVoiceIds = new Set(openRouterVoicePresets.map(([, voice]) => voice));
       new Setting(containerEl)
         .setName(ui.openRouterVoicesName)
@@ -7916,7 +7957,7 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
         this.plugin.settings.rapidQuickStart = value === 'rapid';
         await this.plugin.saveSettings();
       }));
-    if (!['system-tts', 'byok-tts'].includes(selectedSpeechEngine)) new Setting(containerEl)
+    if (!usesNormalSynthesisSpeed(this.plugin.settings)) new Setting(containerEl)
       .setName(ui.speedName)
       .setDesc(ui.speedDesc)
       .addSlider((slider) => {
@@ -8078,6 +8119,7 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
     containerEl.createEl('h3', { text: 'Copilot' });
     addCopilotChatSettings(containerEl, this.plugin);
     containerEl = pages.academic;
+    addSpeechTermsSettings(containerEl, this.plugin);
     new Setting(containerEl)
       .setName(ui.stripMarkdownName)
       .setDesc(ui.stripMarkdownDesc)
@@ -8248,6 +8290,8 @@ module.exports = {
     buildAzureSpeechSsml,
     buildEdgeTtsArgs,
     buildOpenRouterTtsRequestBody,
+    effectiveSynthesisSpeed,
+    usesNormalSynthesisSpeed,
     calculateCurrentChunkSeekTime,
     createAudioExportSummary,
     createBlobAudioSource,

@@ -58,7 +58,20 @@ function normalizeMathPresentation(content) {
     if (next === value) break;
     value = next;
   }
-  return value.replace(/([_^])\s*(\\(?:alpha|beta|gamma|delta|epsilon|theta|lambda|mu|pi|sigma|omega|rho|tau|phi|eta|nu|xi|zeta|Gamma|Delta|Theta|Lambda|Sigma|Omega|Phi|Pi|Psi|psi))\b/g, '$1{$2}');
+  // min/max are labels only inside a simple script, not general operator support.
+  value = value.replace(/([_^])\s*\{\s*\\(min|max)\s*\}/g, '$1{$2}');
+  return value.replace(/([_^])\s*(\\(?:alpha|beta|gamma|delta|epsilon|theta|lambda|mu|pi|sigma|omega|rho|tau|phi|eta|nu|xi|zeta|Gamma|Delta|Theta|Lambda|Sigma|Omega|Phi|Pi|Psi|psi|ell|infty))\b/g, '$1{$2}')
+    .replace(/([_^])\s*\\(min|max)\b/g, '$1{$2}');
+}
+// Only conventional lower/upper labels are shortened; arbitrary pairs stay bracketed.
+function namedBounds(value) {
+  const match = value.replace(/\\(?:left|right)\b/g, '').trim().match(/^\[([^\[\],]+),([^\[\],]+)\]$/);
+  if (!match) return null;
+  const lower = match[1].trim(), upper = match[2].trim();
+  if (/^(?:\\ell|l|L)$/.test(lower) && /^[uU]$/.test(upper)) return [lower, upper];
+  const low = lower.match(/^([A-Za-z])_\{\s*min\s*\}(?=\s*(?:[+−-]|$))/);
+  const high = upper.match(/^([A-Za-z])_\{\s*max\s*\}(?=\s*(?:[+−-]|$))/);
+  return low && high && low[1] === high[1] ? [lower, upper] : null;
 }
 function mathSpeech(content, inputOptions = {}) {
   const options = academicOptions(inputOptions), zh = options.mathReadingLanguage === 'chinese', brief = options.academicMathStyle === 'concise';
@@ -69,12 +82,23 @@ function mathSpeech(content, inputOptions = {}) {
   const semantic = value.replace(/\\[A-Za-z]+/g,'x').replace(/[{}\s]/g,'');
   const limit = options.academicMathMode === 'all' ? 100 : 32;
   if (semantic.length > limit || /\\(?:begin|end|sum|prod|int|iint|oint|cases|matrix)\b|\\\\/.test(value)) return omission('formula', options);
-  const symbols = { alpha:'alpha', beta:'beta', gamma:'gamma', delta:'delta', epsilon:'epsilon', theta:'theta', lambda:'lambda', mu:'mu', pi:'pi', sigma:'sigma', omega:'omega', rho:'rho', tau:'tau', phi:'phi', eta:'eta', nu:'nu', xi:'xi', zeta:'zeta' };
+  const symbols = { ell:'ell', alpha:'alpha', beta:'beta', gamma:'gamma', delta:'delta', epsilon:'epsilon', theta:'theta', lambda:'lambda', mu:'mu', pi:'pi', sigma:'sigma', omega:'omega', rho:'rho', tau:'tau', phi:'phi', eta:'eta', nu:'nu', xi:'xi', zeta:'zeta' };
   const known = new Set([...Object.keys(symbols), 'Gamma','Delta','Theta','Lambda','Sigma','Omega','Phi','Pi','Psi','psi','frac','dfrac','tfrac','sqrt','bar','overline','hat','tilde','vec','dot','ddot','text','mathrm','mathbf','mathbb','boldsymbol','operatorname','left','right','lvert','rvert','vert','leq','geq','le','ge','lt','gt','neq','ne','approx','times','cdot','pm','mp','infty','to','rightarrow','leftarrow','in','notin','partial']);
   if (commands.some(c => !known.has(c.slice(1)))) return omission('formula', options);
   let depth = 0, maxDepth = 0;
   for (const c of value) { if (c === '{') maxDepth = Math.max(maxDepth, ++depth); if (c === '}' && --depth < 0) return omission('formula',options); }
-  if (depth || maxDepth > 3) return omission('formula',options);
+  if (depth || maxDepth > 3) return omission('formula', options);
+  const bounds = namedBounds(value);
+  if (bounds) {
+    const endpoints = bounds.map(bound => mathSpeech(bound, { ...options, academicSkipNotice: true }));
+    if (endpoints.some(endpoint => !endpoint || endpoint === omission('formula', { ...options, academicSkipNotice: true }))) {
+      return omission('formula', options);
+    }
+    const range = endpoints.join(zh ? ' 到 ' : ' to ');
+    return brief ? range : (zh ? '闭区间，' : 'closed interval, ') + range;
+  }
+  // Explicitly speak products of adjacent, simply subscripted variables.
+  value = value.replace(/([A-Za-z]_\{\s*(?:\\[A-Za-z]+|[A-Za-z0-9]+)\s*\})\s*(?=[A-Za-z]_\{)/g, '$1 * ');
   value = value.replace(/\\(?:left|right)\b/g,'').replace(/\\(?:lvert|rvert|vert)\b/g,'|');
   const group = (inner) => /[+−=<>-]|\bover\b|分之/.test(inner) ? (zh ? ` 括号 ${inner} 括号结束 ` : ` open parenthesis ${inner} close parenthesis `) : inner;
   for (let pass=0;pass<4;pass++) {

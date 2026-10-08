@@ -205,7 +205,7 @@ const testVaultPath = path.resolve('test-vault');
 const testAudioPath = path.join(testVaultPath, '.obsidian', 'plugins', 'note-reader-cosyvoice', 'cache', 'a.wav');
 assert.strictEqual(manifest.id, 'note-reader-cosyvoice');
 assert.strictEqual(manifest.name, 'Note and PDF Voice Reader');
-assert.strictEqual(manifest.version, '0.9.5');
+assert.strictEqual(manifest.version, '0.9.6');
 assert.strictEqual(
   moduleObject.exports.__test.sanitizeTextForSpeech('第一段的结尾。\n\n## 第二节标题\n\n下一节的正文。'),
   '第一段的结尾。\n第二节标题\n下一节的正文。'
@@ -341,6 +341,9 @@ assert.deepStrictEqual(moduleObject.exports.__test.createDefaultSettings(), {
   edgeTtsVoice: 'en-GB-RyanNeural',
   mathReadingLanguage: 'english',
   openRouterConsent: false,
+  openRouterContext: false,
+  speechTermsEnabled: false,
+  speechTerms: '',
   openRouterCredentialSource: 'obsidian-secret',
   openRouterKeyPath: '',
   openRouterModel: 'fish-audio/s2.1-pro',
@@ -580,6 +583,19 @@ const openRouterBodyWithIgnoredRelaxation = JSON.parse(
 );
 assert.strictEqual(openRouterBodyWithIgnoredRelaxation.provider.zdr, true);
 assert.strictEqual(openRouterBodyWithIgnoredRelaxation.provider.data_collection, 'deny');
+for (const model of ['elevenlabs/eleven-multilingual-v2', 'elevenlabs/eleven-flash-v2.5', 'elevenlabs/eleven-v4', 'elevenlabs/eleven-v4-turbo']) {
+  const settings = {speechEngine:'openrouter-tts', openRouterModel:model, openRouterVoice:'george', speed:2,
+    openRouterZdrOnly:false, provider:{zdr:false}, previous_text:'must not send', next_text:'must not send'};
+  const body = JSON.parse(moduleObject.exports.__test.buildOpenRouterTtsRequestBody('Public text.', settings));
+  assert.deepStrictEqual(body, {model, input:'Public text.', voice:'george', response_format:'mp3', speed:1,
+    provider:{data_collection:'deny', zdr:true}});
+  assert.strictEqual(moduleObject.exports.__test.effectiveSynthesisSpeed(settings), 1);
+  assert.strictEqual(moduleObject.exports.__test.usesNormalSynthesisSpeed(settings), true);
+  assert.strictEqual(moduleObject.exports.__test.getDefaultOpenRouterVoiceForModel(model), 'george');
+  assert.ok(moduleObject.exports.__test.getOpenRouterTtsVoicePresets(model, 'english').some(([,id])=>id==='sarah'));
+}
+assert.strictEqual(moduleObject.exports.__test.effectiveSynthesisSpeed({
+  speechEngine:'openrouter-tts', openRouterModel:'hexgrad/kokoro-82m', speed:1.25}), 1.25);
 assert.strictEqual(moduleObject.exports.__test.isRetryableRemoteError({ statusCode: 502 }), true);
 assert.strictEqual(moduleObject.exports.__test.isRetryableRemoteError({ statusCode: 403 }), false);
 assert.strictEqual(moduleObject.exports.__test.isRetryableRemoteError({ code: 'ECONNRESET' }), true);
@@ -589,6 +605,10 @@ assert.strictEqual(moduleObject.exports.__test.parseRetryAfterMs('120'), 10000);
 assert.strictEqual(moduleObject.exports.__test.parseRetryAfterMs('invalid'), null);
 const openRouterModelIds = moduleObject.exports.__test.getOpenRouterTtsModels().map(([model]) => model);
 assert.deepStrictEqual(openRouterModelIds, [
+  'elevenlabs/eleven-multilingual-v2',
+  'elevenlabs/eleven-flash-v2.5',
+  'elevenlabs/eleven-v4',
+  'elevenlabs/eleven-v4-turbo',
   'microsoft/mai-voice-2.1-flash',
   'microsoft/mai-voice-2-flash',
   'microsoft/mai-voice-2',
