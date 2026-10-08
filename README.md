@@ -8,9 +8,9 @@ Read aloud your **notes, PDFs, HTML files and web pages** in Obsidian. Listen wh
 
 ![Click the audio icon to show and hide the reading toolbar](docs/images/reading-toolbar-demo.gif)
 
-English demo with public sample text, rendered from the plugin's interface code; appearance varies by theme.
+Demo shown in English. Appearance may vary by theme.
 
-In Markdown Live Preview or Source mode, the editor context menu offers **Read aloud from here** and, when text is selected, **Read selected text**. Other document views retain their toolbar actions. In **Playback and interface**, independently toggle the context menu and the optional **Editing Toolbar** speaker icon. The icon reads selected text by default, or can read from the selection to the document end. It requires a selection; reselect text after changing toolbar options.
+Read selected text or start reading from a chosen position in Markdown. Optional Editing Toolbar integration puts reading one click away.
 
 ## Why use it?
 
@@ -117,6 +117,14 @@ Open a note, text PDF, local HTML file or a loaded Web viewer page. Open the rea
 Use pause/resume, playback speed, volume, segment navigation and seeking without starting a new synthesis just to change playback speed. For exports, review the scope, character count and destination before confirming.
 
 **Toolbar shortcuts (0.8.1):** **Space** pauses/resumes, and **Left/Right Arrow** seeks backward/forward five seconds, including across audio parts. In live preview and editing mode, these shortcuts work only while the toolbar or its buttons have focus; click a playback control or the toolbar background to focus it. In Markdown reading mode, they also work in the original reading pane while the toolbar is open. Text fields, sliders, menus and modified key combinations keep their normal keyboard behavior. Hover the pause/resume and seek buttons for shortcut hints.
+
+### Context menu and floating toolbar
+
+In Markdown **Live Preview** or **Source mode**, right-click to **Read aloud from here**; when text is selected, you can also **Read selected text**. PDF, HTML and Markdown Reading view retain their existing reading-toolbar actions.
+
+For a floating speaker icon, separately install and enable the optional **Editing Toolbar** community plugin. Ordinary reading does not require it. In **Playback and interface**, enable **Floating toolbar reading icon** and choose its action: **Read selected text** (default), or **Read from selection** to continue to the document end. Both require a selection.
+
+The context menu and floating icon have independent switches in **Playback and interface**. After changing floating-toolbar options, reselect text to refresh the icon and its tooltip.
 
 ## Interface
 
