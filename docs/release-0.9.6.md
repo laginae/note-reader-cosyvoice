@@ -15,4 +15,3 @@ Automated request, settings, playback, source-preservation and export tests use 
 ## 使用提示
 
 在 OpenRouter 中选择受支持的 ElevenLabs 模型后，展开高级选项，可开启默认关闭的分段衔接实验功能。本地术语读法位于“学术阅读”，例如每行填写 `BESS = B E S S`。术语规则适用于各语音引擎和音频导出，不修改笔记原文；在线引擎仍会收到替换后的文本。
-

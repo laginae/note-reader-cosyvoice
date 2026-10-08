@@ -40,4 +40,3 @@ function addSpeechTermsSettings(container, plugin) {
   });
 }
 module.exports = { addSpeechContextSetting, addSpeechTermsSettings };
-

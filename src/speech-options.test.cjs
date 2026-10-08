@@ -41,4 +41,3 @@ test('context is derived from the current range, not previous playback history',
   assert.deepEqual(adjacentContext(['new document.'], 0), {previous:'', next:''});
   assert.deepEqual(adjacentContext(['A.', 'B.'], 1, 'earlier.', 'later.'), {previous:'A.', next:'later.'});
 });
-

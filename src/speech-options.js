@@ -75,4 +75,3 @@ function adjacentContext(parts, index, previous = '', next = '') {
     next: parts.slice(index + 1).join('') || next };
 }
 module.exports = { parseTerms, normalizedTerms, applyTerms, fitSpeechParts, supportsSpeechContext, contextOptions, adjacentContext };
-
