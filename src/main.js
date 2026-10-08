@@ -3,6 +3,7 @@ const { LANGUAGES, translate: translateInterface, localizedSetting } = require('
 const { PAGES, createSettingsPages, createSettingsHeader } = require('./settings-pages');
 const { resetPageSettings } = require('./settings-reset');
 const { ELEVENLABS_MODELS, ELEVENLABS_VOICES, isElevenLabsModel } = require('./openrouter-elevenlabs');
+const { getOpenRouterPricing } = require('./openrouter-pricing');
 const { normalizedTerms, applyTerms, fitSpeechParts, contextOptions, adjacentContext } = require('./speech-options');
 const { addSpeechContextSetting, addSpeechTermsSettings } = require('./speech-options-settings');
 const { SettingsConfirmModal } = require('./settings-confirm');
@@ -311,11 +312,15 @@ const SETTINGS_UI_TEXT = {
     openRouterModelInfoName: 'Selected model characteristics',
     customModelInfo: 'Custom model: check its language, voice, and speech-output support in OpenRouter. The request fails if no ZDR endpoint is eligible.',
     openRouterVoicesName: 'Common voices for this model',
-    openRouterVoicesDesc: 'Model-specific presets are listed. MAI-Voice-2 also includes Microsoft-published Mandarin IDs that OpenRouter may accept even when its supported_voices metadata omits them; availability can vary by endpoint.',
+    openRouterVoicesDesc: 'Presets for the selected model. Voice availability depends on its OpenRouter endpoint.',
+    openRouterMaiVoicesDesc: 'Presets for the selected MAI model, including Microsoft-published compatibility voices that OpenRouter metadata may omit. Availability depends on the endpoint.',
+    openRouterElevenLabsVoicesDesc: 'Common ElevenLabs voices supported by this OpenRouter model, such as George and Sarah. Use the voice catalog for other accepted IDs.',
     openRouterVoiceName: 'OpenRouter TTS voice',
     openRouterVoiceDesc: 'Voice ID supported by the selected model. Voice catalogs differ between models.',
     openRouterVoiceHelpName: 'Find a custom voice ID',
-    openRouterVoiceHelpDesc: 'Open the model page and voice catalog to find an ID, then select Custom voice and paste it into OpenRouter TTS voice. MAI requires the full model suffix, for example en-GB-Harry:MAI-Voice-2.1-Flash. Confirm the ID is accepted by the selected OpenRouter model; catalogs can include voices not exposed by its endpoint.',
+    openRouterVoiceHelpDesc: 'Find an ID in the voice catalog, then select Custom voice and enter it in OpenRouter TTS voice. Confirm that the selected OpenRouter model accepts it; provider catalogs may include voices unavailable through OpenRouter.',
+    openRouterMaiVoiceHelpDesc: 'Select Custom voice and enter the full MAI voice ID, including its model suffix. Confirm that it is accepted by the selected OpenRouter model; some Microsoft catalog voices may not be available through that endpoint.',
+    openRouterElevenLabsVoiceHelpDesc: 'Select Custom voice and enter an ID accepted by this OpenRouter model, such as george or sarah. The ElevenLabs voice library and account-specific voices are not automatically available through OpenRouter.',
     openRouterModelPageButton: 'Model page',
     openRouterVoiceCatalogButton: 'Voice catalog',
     openRouterVoiceHelpTooltip: 'Open the official reference for the currently selected model',
@@ -432,11 +437,15 @@ const SETTINGS_UI_TEXT = {
     openRouterModelInfoName: '所选模型特点',
     customModelInfo: '自定义模型：请在 OpenRouter 核对其语言、音色和语音输出能力；如果没有符合条件的 ZDR 端点，请求会失败。',
     openRouterVoicesName: '该模型的常用音色',
-    openRouterVoicesDesc: '这里只列出与所选模型对应的预设。MAI-Voice-2 还加入了微软官方发布、但 OpenRouter supported_voices 元数据可能遗漏的普通话音色；实际可用性可能随端点变化。',
+    openRouterVoicesDesc: '所选模型的常用音色预设，实际可用性取决于对应的 OpenRouter 端点。',
+    openRouterMaiVoicesDesc: '所选 MAI 模型的音色预设，包含微软官方发布、但 OpenRouter 元数据可能未列出的兼容音色。实际可用性取决于对应端点。',
+    openRouterElevenLabsVoicesDesc: '当前 OpenRouter 模型支持的常用 ElevenLabs 音色，例如 George、Sarah。其他可用 ID 可在音色目录中查询。',
     openRouterVoiceName: 'OpenRouter TTS 音色',
     openRouterVoiceDesc: '所选模型支持的音色 ID。不同模型的音色目录并不相同。',
     openRouterVoiceHelpName: '查询自定义音色 ID',
-    openRouterVoiceHelpDesc: '打开模型页面和音色目录查询 ID，选择“自定义音色”后填入“OpenRouter TTS 音色”。MAI 必须包含完整模型后缀，例如 en-GB-Harry:MAI-Voice-2.1-Flash。请确认该 ID 可用于所选 OpenRouter 模型；官方目录中的部分音色可能尚未由对应端点开放。',
+    openRouterVoiceHelpDesc: '在音色目录查询 ID，选择“自定义音色”后填入“OpenRouter TTS 音色”。请确认所选 OpenRouter 模型接受该 ID；服务商目录中的部分音色可能尚未开放给 OpenRouter。',
+    openRouterMaiVoiceHelpDesc: '选择“自定义音色”后填入完整的 MAI 音色 ID，包括模型后缀。请确认该 ID 可用于所选 OpenRouter 模型；微软目录中的部分音色可能尚未由对应端点开放。',
+    openRouterElevenLabsVoiceHelpDesc: '选择“自定义音色”后填入当前 OpenRouter 模型接受的 ID，例如 george、sarah。ElevenLabs 音色库及个人账户音色并不自动适用于 OpenRouter。',
     openRouterModelPageButton: '模型页面',
     openRouterVoiceCatalogButton: '音色目录',
     openRouterVoiceHelpTooltip: '打开当前所选模型的官方查询资料',
@@ -7840,6 +7849,7 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
       const currentOpenRouterVoice = normalizeOpenRouterVoice(this.plugin.settings.openRouterVoice);
       const openRouterModels = getOpenRouterTtsModels(settingsLanguage);
       const selectedOpenRouterModel = openRouterModels.find(([model]) => model === currentOpenRouterModel);
+      let openRouterPriceSetting;
       new Setting(containerEl)
         .setName(ui.openRouterModelsName)
         .setDesc(ui.openRouterModelsDesc)
@@ -7870,6 +7880,7 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
             .setValue(currentOpenRouterModel)
             .onChange(async (value) => {
               this.plugin.settings.openRouterModel = normalizeOpenRouterModel(value);
+              openRouterPriceSetting?.setDesc(getOpenRouterPricing(this.plugin.settings.openRouterModel, settingsLanguage).description);
               await this.plugin.saveSettings();
             });
           text.inputEl.addClass('note-reader-cosyvoice-script-input');
@@ -7879,12 +7890,23 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
         .setName(ui.openRouterModelInfoName)
         .setDesc(selectedOpenRouterModel ? selectedOpenRouterModel[3] : ui.customModelInfo);
 
+      const price = getOpenRouterPricing(currentOpenRouterModel, settingsLanguage);
+      openRouterPriceSetting = new Setting(containerEl)
+        .setName(price.name)
+        .setDesc(price.description)
+        .addButton(button => button.setButtonText(price.button).onClick(() => {
+          const url = getOpenRouterPricing(this.plugin.settings.openRouterModel, settingsLanguage).url;
+          if (!openExternalUrl(url)) new Notice(url, 8000);
+        }));
+
       const openRouterVoicePresets = getOpenRouterTtsVoicePresets(currentOpenRouterModel, settingsLanguage);
+      const voiceHelpFamily = currentOpenRouterModel.startsWith('microsoft/mai-voice-')
+        ? 'Mai' : isElevenLabsModel(currentOpenRouterModel) ? 'ElevenLabs' : '';
       addSpeechContextSetting(containerEl, this.plugin);
       const openRouterVoiceIds = new Set(openRouterVoicePresets.map(([, voice]) => voice));
       new Setting(containerEl)
         .setName(ui.openRouterVoicesName)
-        .setDesc(ui.openRouterVoicesDesc)
+        .setDesc(ui[`openRouter${voiceHelpFamily}VoicesDesc`])
         .addDropdown((dropdown) => {
           for (const [, voice, label] of openRouterVoicePresets) {
             dropdown.addOption(voice, label);
@@ -7907,7 +7929,7 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
         .setDesc(ui.openRouterVoiceDesc)
         .addText((text) => {
           text
-            .setPlaceholder(DEFAULT_OPENROUTER_TTS_VOICE)
+            .setPlaceholder(getDefaultOpenRouterVoiceForModel(currentOpenRouterModel))
             .setValue(currentOpenRouterVoice)
             .onChange(async (value) => {
               this.plugin.settings.openRouterVoice = normalizeOpenRouterVoice(value);
@@ -7917,7 +7939,7 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
 
       new Setting(containerEl)
         .setName(ui.openRouterVoiceHelpName)
-        .setDesc(ui.openRouterVoiceHelpDesc)
+        .setDesc(ui[`openRouter${voiceHelpFamily}VoiceHelpDesc`])
         .addButton((button) => {
           button.setButtonText(ui.openRouterModelPageButton)
             .setTooltip(ui.openRouterVoiceHelpTooltip)

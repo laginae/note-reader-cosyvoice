@@ -607,6 +607,66 @@ var require_openrouter_elevenlabs = __commonJS({
   }
 });
 
+// src/openrouter-pricing.js
+var require_openrouter_pricing = __commonJS({
+  "src/openrouter-pricing.js"(exports2, module2) {
+    "use strict";
+    var CHECKED = "2026-10-08";
+    var OFFER_END = Date.parse("2026-10-19T15:00:00Z");
+    var RATES = Object.freeze({
+      "elevenlabs/eleven-multilingual-v2": 80,
+      "elevenlabs/eleven-flash-v2.5": 40,
+      "elevenlabs/eleven-v4": 80,
+      "elevenlabs/eleven-v4-turbo": 40,
+      "microsoft/mai-voice-2.1-flash": 15,
+      "microsoft/mai-voice-2-flash": 15,
+      "microsoft/mai-voice-2": 22
+    });
+    function getOpenRouterPricing2(modelId, language = "english", now = Date.now()) {
+      const model = String(modelId || "").trim();
+      const zh = language === "chinese";
+      const label = (en, cn) => zh ? cn : en;
+      const url = /^[a-z0-9.-]+\/[a-z0-9._:-]+$/i.test(model) ? "https://openrouter.ai/" + model.split("/").map(encodeURIComponent).join("/") : "https://openrouter.ai/models";
+      const result = {
+        name: label("OpenRouter price reference", "OpenRouter \u4EF7\u683C\u53C2\u8003"),
+        button: label("Official pricing", "\u5B98\u65B9\u4EF7\u683C"),
+        url,
+        description: label(
+          "No verified price snapshot for this model. Check its official pricing and billing unit before use.",
+          "\u8BE5\u6A21\u578B\u6682\u65E0\u5DF2\u6838\u5BF9\u7684\u4EF7\u683C\u5FEB\u7167\uFF0C\u4F7F\u7528\u524D\u8BF7\u67E5\u770B\u5B98\u65B9\u4EF7\u683C\u53CA\u8BA1\u8D39\u5355\u4F4D\u3002"
+        )
+      };
+      if (!Object.prototype.hasOwnProperty.call(RATES, model)) return result;
+      const list = RATES[model];
+      const eleven = model.startsWith("elevenlabs/");
+      const offerActive = eleven && now >= Date.parse(CHECKED + "T00:00:00Z") && now < OFFER_END;
+      const rate = offerActive ? list / 2 : list;
+      const estimate = (rate / 100).toFixed(2);
+      let price = label(
+        "Reference: USD $" + rate + "/million characters; about $" + estimate + "/10,000 characters.",
+        "\u53C2\u8003\u4EF7\uFF1A" + rate + " \u7F8E\u5143/\u767E\u4E07\u5B57\u7B26\uFF1B\u7EA6 " + estimate + " \u7F8E\u5143/\u4E00\u4E07\u5B57\u7B26\u3002"
+      );
+      if (offerActive) {
+        price = label(
+          "Launch offer: USD $" + rate + "/million characters (list $" + list + "); about $" + estimate + "/10,000 characters. Ends 2026-10-19 15:00 UTC.",
+          "\u9650\u65F6\u4E94\u6298\uFF1A" + rate + " \u7F8E\u5143/\u767E\u4E07\u5B57\u7B26\uFF08\u539F\u4EF7 " + list + "\uFF09\uFF1B\u7EA6 " + estimate + " \u7F8E\u5143/\u4E00\u4E07\u5B57\u7B26\u3002\u622A\u6B62\u5317\u4EAC\u65F6\u95F4 2026-10-19 23:00\u3002"
+        );
+      } else if (eleven) {
+        price = label(
+          "Last checked list price: USD $" + list + "/million characters. The recorded launch offer is not active; verify the current price.",
+          "\u4E0A\u6B21\u6838\u5BF9\u7684\u539F\u4EF7\uFF1A" + list + " \u7F8E\u5143/\u767E\u4E07\u5B57\u7B26\u3002\u5DF2\u8BB0\u5F55\u7684\u4F18\u60E0\u4E0D\u5728\u6709\u6548\u671F\u5185\uFF0C\u8BF7\u6838\u5BF9\u73B0\u4EF7\u3002"
+        );
+      }
+      result.description = price + " " + label(
+        "Checked " + CHECKED + ", not a live quote. Per character, not per word. Repeat synthesis can add cost; fees and taxes excluded. Final charges follow OpenRouter.",
+        "\u6838\u5BF9\u65E5\u671F " + CHECKED + "\uFF0C\u975E\u5B9E\u65F6\u62A5\u4EF7\u3002\u6309\u5B57\u7B26\u800C\u975E\u82F1\u6587\u5355\u8BCD\u8BA1\u8D39\uFF1B\u91CD\u590D\u5408\u6210\u53EF\u80FD\u589E\u52A0\u8D39\u7528\uFF0C\u4E0D\u542B\u624B\u7EED\u8D39\u53CA\u7A0E\u8D39\uFF0C\u4EE5 OpenRouter \u5B9E\u9645\u8D26\u5355\u4E3A\u51C6\u3002"
+      );
+      return result;
+    }
+    module2.exports = { getOpenRouterPricing: getOpenRouterPricing2 };
+  }
+});
+
 // src/speech-options.js
 var require_speech_options = __commonJS({
   "src/speech-options.js"(exports2, module2) {
@@ -35389,6 +35449,7 @@ var { LANGUAGES, translate: translateInterface, localizedSetting } = require_i18
 var { PAGES, createSettingsPages, createSettingsHeader } = require_settings_pages();
 var { resetPageSettings } = require_settings_reset();
 var { ELEVENLABS_MODELS, ELEVENLABS_VOICES, isElevenLabsModel } = require_openrouter_elevenlabs();
+var { getOpenRouterPricing } = require_openrouter_pricing();
 var { normalizedTerms, applyTerms, fitSpeechParts, contextOptions, adjacentContext } = require_speech_options();
 var { addSpeechContextSetting, addSpeechTermsSettings } = require_speech_options_settings();
 var { SettingsConfirmModal } = require_settings_confirm();
@@ -35692,11 +35753,15 @@ var SETTINGS_UI_TEXT = {
     openRouterModelInfoName: "Selected model characteristics",
     customModelInfo: "Custom model: check its language, voice, and speech-output support in OpenRouter. The request fails if no ZDR endpoint is eligible.",
     openRouterVoicesName: "Common voices for this model",
-    openRouterVoicesDesc: "Model-specific presets are listed. MAI-Voice-2 also includes Microsoft-published Mandarin IDs that OpenRouter may accept even when its supported_voices metadata omits them; availability can vary by endpoint.",
+    openRouterVoicesDesc: "Presets for the selected model. Voice availability depends on its OpenRouter endpoint.",
+    openRouterMaiVoicesDesc: "Presets for the selected MAI model, including Microsoft-published compatibility voices that OpenRouter metadata may omit. Availability depends on the endpoint.",
+    openRouterElevenLabsVoicesDesc: "Common ElevenLabs voices supported by this OpenRouter model, such as George and Sarah. Use the voice catalog for other accepted IDs.",
     openRouterVoiceName: "OpenRouter TTS voice",
     openRouterVoiceDesc: "Voice ID supported by the selected model. Voice catalogs differ between models.",
     openRouterVoiceHelpName: "Find a custom voice ID",
-    openRouterVoiceHelpDesc: "Open the model page and voice catalog to find an ID, then select Custom voice and paste it into OpenRouter TTS voice. MAI requires the full model suffix, for example en-GB-Harry:MAI-Voice-2.1-Flash. Confirm the ID is accepted by the selected OpenRouter model; catalogs can include voices not exposed by its endpoint.",
+    openRouterVoiceHelpDesc: "Find an ID in the voice catalog, then select Custom voice and enter it in OpenRouter TTS voice. Confirm that the selected OpenRouter model accepts it; provider catalogs may include voices unavailable through OpenRouter.",
+    openRouterMaiVoiceHelpDesc: "Select Custom voice and enter the full MAI voice ID, including its model suffix. Confirm that it is accepted by the selected OpenRouter model; some Microsoft catalog voices may not be available through that endpoint.",
+    openRouterElevenLabsVoiceHelpDesc: "Select Custom voice and enter an ID accepted by this OpenRouter model, such as george or sarah. The ElevenLabs voice library and account-specific voices are not automatically available through OpenRouter.",
     openRouterModelPageButton: "Model page",
     openRouterVoiceCatalogButton: "Voice catalog",
     openRouterVoiceHelpTooltip: "Open the official reference for the currently selected model",
@@ -35813,11 +35878,15 @@ var SETTINGS_UI_TEXT = {
     openRouterModelInfoName: "\u6240\u9009\u6A21\u578B\u7279\u70B9",
     customModelInfo: "\u81EA\u5B9A\u4E49\u6A21\u578B\uFF1A\u8BF7\u5728 OpenRouter \u6838\u5BF9\u5176\u8BED\u8A00\u3001\u97F3\u8272\u548C\u8BED\u97F3\u8F93\u51FA\u80FD\u529B\uFF1B\u5982\u679C\u6CA1\u6709\u7B26\u5408\u6761\u4EF6\u7684 ZDR \u7AEF\u70B9\uFF0C\u8BF7\u6C42\u4F1A\u5931\u8D25\u3002",
     openRouterVoicesName: "\u8BE5\u6A21\u578B\u7684\u5E38\u7528\u97F3\u8272",
-    openRouterVoicesDesc: "\u8FD9\u91CC\u53EA\u5217\u51FA\u4E0E\u6240\u9009\u6A21\u578B\u5BF9\u5E94\u7684\u9884\u8BBE\u3002MAI-Voice-2 \u8FD8\u52A0\u5165\u4E86\u5FAE\u8F6F\u5B98\u65B9\u53D1\u5E03\u3001\u4F46 OpenRouter supported_voices \u5143\u6570\u636E\u53EF\u80FD\u9057\u6F0F\u7684\u666E\u901A\u8BDD\u97F3\u8272\uFF1B\u5B9E\u9645\u53EF\u7528\u6027\u53EF\u80FD\u968F\u7AEF\u70B9\u53D8\u5316\u3002",
+    openRouterVoicesDesc: "\u6240\u9009\u6A21\u578B\u7684\u5E38\u7528\u97F3\u8272\u9884\u8BBE\uFF0C\u5B9E\u9645\u53EF\u7528\u6027\u53D6\u51B3\u4E8E\u5BF9\u5E94\u7684 OpenRouter \u7AEF\u70B9\u3002",
+    openRouterMaiVoicesDesc: "\u6240\u9009 MAI \u6A21\u578B\u7684\u97F3\u8272\u9884\u8BBE\uFF0C\u5305\u542B\u5FAE\u8F6F\u5B98\u65B9\u53D1\u5E03\u3001\u4F46 OpenRouter \u5143\u6570\u636E\u53EF\u80FD\u672A\u5217\u51FA\u7684\u517C\u5BB9\u97F3\u8272\u3002\u5B9E\u9645\u53EF\u7528\u6027\u53D6\u51B3\u4E8E\u5BF9\u5E94\u7AEF\u70B9\u3002",
+    openRouterElevenLabsVoicesDesc: "\u5F53\u524D OpenRouter \u6A21\u578B\u652F\u6301\u7684\u5E38\u7528 ElevenLabs \u97F3\u8272\uFF0C\u4F8B\u5982 George\u3001Sarah\u3002\u5176\u4ED6\u53EF\u7528 ID \u53EF\u5728\u97F3\u8272\u76EE\u5F55\u4E2D\u67E5\u8BE2\u3002",
     openRouterVoiceName: "OpenRouter TTS \u97F3\u8272",
     openRouterVoiceDesc: "\u6240\u9009\u6A21\u578B\u652F\u6301\u7684\u97F3\u8272 ID\u3002\u4E0D\u540C\u6A21\u578B\u7684\u97F3\u8272\u76EE\u5F55\u5E76\u4E0D\u76F8\u540C\u3002",
     openRouterVoiceHelpName: "\u67E5\u8BE2\u81EA\u5B9A\u4E49\u97F3\u8272 ID",
-    openRouterVoiceHelpDesc: "\u6253\u5F00\u6A21\u578B\u9875\u9762\u548C\u97F3\u8272\u76EE\u5F55\u67E5\u8BE2 ID\uFF0C\u9009\u62E9\u201C\u81EA\u5B9A\u4E49\u97F3\u8272\u201D\u540E\u586B\u5165\u201COpenRouter TTS \u97F3\u8272\u201D\u3002MAI \u5FC5\u987B\u5305\u542B\u5B8C\u6574\u6A21\u578B\u540E\u7F00\uFF0C\u4F8B\u5982 en-GB-Harry:MAI-Voice-2.1-Flash\u3002\u8BF7\u786E\u8BA4\u8BE5 ID \u53EF\u7528\u4E8E\u6240\u9009 OpenRouter \u6A21\u578B\uFF1B\u5B98\u65B9\u76EE\u5F55\u4E2D\u7684\u90E8\u5206\u97F3\u8272\u53EF\u80FD\u5C1A\u672A\u7531\u5BF9\u5E94\u7AEF\u70B9\u5F00\u653E\u3002",
+    openRouterVoiceHelpDesc: "\u5728\u97F3\u8272\u76EE\u5F55\u67E5\u8BE2 ID\uFF0C\u9009\u62E9\u201C\u81EA\u5B9A\u4E49\u97F3\u8272\u201D\u540E\u586B\u5165\u201COpenRouter TTS \u97F3\u8272\u201D\u3002\u8BF7\u786E\u8BA4\u6240\u9009 OpenRouter \u6A21\u578B\u63A5\u53D7\u8BE5 ID\uFF1B\u670D\u52A1\u5546\u76EE\u5F55\u4E2D\u7684\u90E8\u5206\u97F3\u8272\u53EF\u80FD\u5C1A\u672A\u5F00\u653E\u7ED9 OpenRouter\u3002",
+    openRouterMaiVoiceHelpDesc: "\u9009\u62E9\u201C\u81EA\u5B9A\u4E49\u97F3\u8272\u201D\u540E\u586B\u5165\u5B8C\u6574\u7684 MAI \u97F3\u8272 ID\uFF0C\u5305\u62EC\u6A21\u578B\u540E\u7F00\u3002\u8BF7\u786E\u8BA4\u8BE5 ID \u53EF\u7528\u4E8E\u6240\u9009 OpenRouter \u6A21\u578B\uFF1B\u5FAE\u8F6F\u76EE\u5F55\u4E2D\u7684\u90E8\u5206\u97F3\u8272\u53EF\u80FD\u5C1A\u672A\u7531\u5BF9\u5E94\u7AEF\u70B9\u5F00\u653E\u3002",
+    openRouterElevenLabsVoiceHelpDesc: "\u9009\u62E9\u201C\u81EA\u5B9A\u4E49\u97F3\u8272\u201D\u540E\u586B\u5165\u5F53\u524D OpenRouter \u6A21\u578B\u63A5\u53D7\u7684 ID\uFF0C\u4F8B\u5982 george\u3001sarah\u3002ElevenLabs \u97F3\u8272\u5E93\u53CA\u4E2A\u4EBA\u8D26\u6237\u97F3\u8272\u5E76\u4E0D\u81EA\u52A8\u9002\u7528\u4E8E OpenRouter\u3002",
     openRouterModelPageButton: "\u6A21\u578B\u9875\u9762",
     openRouterVoiceCatalogButton: "\u97F3\u8272\u76EE\u5F55",
     openRouterVoiceHelpTooltip: "\u6253\u5F00\u5F53\u524D\u6240\u9009\u6A21\u578B\u7684\u5B98\u65B9\u67E5\u8BE2\u8D44\u6599",
@@ -42326,6 +42395,7 @@ var CosyVoiceReaderSettingTab = class extends PluginSettingTab {
       const currentOpenRouterVoice = normalizeOpenRouterVoice(this.plugin.settings.openRouterVoice);
       const openRouterModels = getOpenRouterTtsModels(settingsLanguage);
       const selectedOpenRouterModel = openRouterModels.find(([model]) => model === currentOpenRouterModel);
+      let openRouterPriceSetting;
       new Setting(containerEl).setName(ui.openRouterModelsName).setDesc(ui.openRouterModelsDesc).addDropdown((dropdown) => {
         for (const [model, , label] of openRouterModels) {
           dropdown.addOption(model, label);
@@ -42343,15 +42413,22 @@ var CosyVoiceReaderSettingTab = class extends PluginSettingTab {
       new Setting(containerEl).setName(ui.openRouterModelName).setDesc(ui.openRouterModelDesc).addText((text) => {
         text.setPlaceholder(DEFAULT_OPENROUTER_TTS_MODEL).setValue(currentOpenRouterModel).onChange(async (value) => {
           this.plugin.settings.openRouterModel = normalizeOpenRouterModel(value);
+          openRouterPriceSetting?.setDesc(getOpenRouterPricing(this.plugin.settings.openRouterModel, settingsLanguage).description);
           await this.plugin.saveSettings();
         });
         text.inputEl.addClass("note-reader-cosyvoice-script-input");
       });
       new Setting(containerEl).setName(ui.openRouterModelInfoName).setDesc(selectedOpenRouterModel ? selectedOpenRouterModel[3] : ui.customModelInfo);
+      const price = getOpenRouterPricing(currentOpenRouterModel, settingsLanguage);
+      openRouterPriceSetting = new Setting(containerEl).setName(price.name).setDesc(price.description).addButton((button) => button.setButtonText(price.button).onClick(() => {
+        const url = getOpenRouterPricing(this.plugin.settings.openRouterModel, settingsLanguage).url;
+        if (!openExternalUrl(url)) new Notice(url, 8e3);
+      }));
       const openRouterVoicePresets = getOpenRouterTtsVoicePresets(currentOpenRouterModel, settingsLanguage);
+      const voiceHelpFamily = currentOpenRouterModel.startsWith("microsoft/mai-voice-") ? "Mai" : isElevenLabsModel(currentOpenRouterModel) ? "ElevenLabs" : "";
       addSpeechContextSetting(containerEl, this.plugin);
       const openRouterVoiceIds = new Set(openRouterVoicePresets.map(([, voice]) => voice));
-      new Setting(containerEl).setName(ui.openRouterVoicesName).setDesc(ui.openRouterVoicesDesc).addDropdown((dropdown) => {
+      new Setting(containerEl).setName(ui.openRouterVoicesName).setDesc(ui[`openRouter${voiceHelpFamily}VoicesDesc`]).addDropdown((dropdown) => {
         for (const [, voice, label] of openRouterVoicePresets) {
           dropdown.addOption(voice, label);
         }
@@ -42365,12 +42442,12 @@ var CosyVoiceReaderSettingTab = class extends PluginSettingTab {
         });
       });
       new Setting(containerEl).setName(ui.openRouterVoiceName).setDesc(ui.openRouterVoiceDesc).addText((text) => {
-        text.setPlaceholder(DEFAULT_OPENROUTER_TTS_VOICE).setValue(currentOpenRouterVoice).onChange(async (value) => {
+        text.setPlaceholder(getDefaultOpenRouterVoiceForModel(currentOpenRouterModel)).setValue(currentOpenRouterVoice).onChange(async (value) => {
           this.plugin.settings.openRouterVoice = normalizeOpenRouterVoice(value);
           await this.plugin.saveSettings();
         });
       });
-      new Setting(containerEl).setName(ui.openRouterVoiceHelpName).setDesc(ui.openRouterVoiceHelpDesc).addButton((button) => {
+      new Setting(containerEl).setName(ui.openRouterVoiceHelpName).setDesc(ui[`openRouter${voiceHelpFamily}VoiceHelpDesc`]).addButton((button) => {
         button.setButtonText(ui.openRouterModelPageButton).setTooltip(ui.openRouterVoiceHelpTooltip).onClick(() => {
           const url = getOpenRouterVoiceHelpLinks(this.plugin.settings.openRouterModel, settingsLanguage).modelPage;
           if (!openExternalUrl(url)) new Notice(url, 8e3);

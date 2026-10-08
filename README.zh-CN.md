@@ -74,6 +74,8 @@ MiMo 会将文字发送给小米。[隐私政策](https://privacy.mi.com/XiaomiM
 
 ### 4. OpenRouter：不用本地辅助程序，按需选择模型
 
+**价格参考：** 设置中按所选模型显示已核对的 ElevenLabs、MAI 参考价、字符计费单位、一万字符估算及官方价格链接。这是带核对日期的离线快照，不是实时报价。已记录的 ElevenLabs 优惠截止北京时间 2026-10-19 23:00；到期后打开设置，仅显示上次核对的原价并提示核实。未核对价格的模型不显示数值估算。重复合成、手续费及税费可能增加最终费用。
+
 **通过 OpenRouter 使用 ElevenLabs：** 提供 Multilingual v2、Flash v2.5、Eleven v4 和 v4 Turbo，以及 George、Sarah、Daniel、Alice、Brian、Lily 六个音色，原有默认值不变。以 MP3、正常语速合成，收听时在播放器调整倍速。仍强制 ZDR 并禁止数据收集，无可用路由时失败，不降低隐私限制。已于 2026-10-08 核对 [语音目录](https://openrouter.ai/api/v1/models?output_modalities=speech)和 [ZDR 端点列表](https://openrouter.ai/api/v1/endpoints/zdr)，价格与可用性可能变化。
 
 **可选分段衔接：** 选择以上四个模型后，显示“ElevenLabs 高级选项”，其中“改善分段衔接”为默认关闭的实验功能。开启后，通过 `provider.options.elevenlabs` 发送当前朗读范围内的相邻句子，每侧最多 160 字符；不会读取选区外内容，也不使用历史请求。切换到其他模型时隐藏此项、不发送相关参数，但保留偏好。不上传云端发音词典，不自动添加表演标签；原文已有语音标签可能影响语气。参数依据 [OpenRouter 官方公告](https://openrouter.ai/blog/announcements/elevenlabs-on-openrouter/)，尚未进行付费试听，不保证改善效果。
