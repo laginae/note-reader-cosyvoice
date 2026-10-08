@@ -1,19 +1,19 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { parseTerms, normalizedTerms, applyTerms, fitSpeechParts, supportsSpeechContext, contextOptions, adjacentContext } = require('./speech-options');
-const settings = { speechTermsEnabled: true, speechTerms: 'BESS = B E S S\nSOC = state of charge\n荷电状态 = SOC' };
+const settings = { speechTermsEnabled: true, speechTerms: 'AI = artificial intelligence\nCPU = central processing unit\n处理器 = CPU' };
 test('term rules are exact, bounded, longest-first and non-recursive', () => {
-  assert.equal(applyTerms('BESS SOC 荷电状态 bess XBESS BESS2', settings), 'B E S S state of charge SOC bess XBESS BESS2');
-  assert.equal(applyTerms('BESS', { ...settings, speechTermsEnabled:false }), 'BESS');
+  assert.equal(applyTerms('AI CPU 处理器 ai XAI AI2', settings), 'artificial intelligence central processing unit CPU ai XAI AI2');
+  assert.equal(applyTerms('AI', { ...settings, speechTermsEnabled:false }), 'AI');
   assert.equal(applyTerms('A+B and AB', { speechTermsEnabled:true, speechTerms:'A+B = sum' }), 'sum and AB');
   assert.equal(applyTerms('ABC', { speechTermsEnabled:true, speechTerms:'AB = first\nABC = second' }), 'second');
-  for (const invalid of ['BESS', 'BESS =', '= value', 'A = B\nA = C', 'x'.repeat(20001)]) {
+  for (const invalid of ['AI', 'AI =', '= value', 'A = B\nA = C', 'x'.repeat(20001)]) {
     assert.ok(parseTerms(invalid).error); assert.equal(normalizedTerms(invalid), '');
-    assert.equal(applyTerms('BESS', { speechTermsEnabled:true, speechTerms:invalid }), 'BESS');
+    assert.equal(applyTerms('AI', { speechTermsEnabled:true, speechTerms:invalid }), 'AI');
   }
 });
 test('expanded speech fits engine limits while original source offsets remain reconstructable', () => {
-  const source = ('BESS SOC 荷电状态. ').repeat(40) + '😀';
+  const source = ('AI CPU 处理器. ').repeat(40) + '😀';
   const parts = fitSpeechParts(source, settings, 200);
   assert.ok(parts.length > 1);
   assert.equal(parts.map(part => part.source).join(''), source);
@@ -22,14 +22,14 @@ test('expanded speech fits engine limits while original source offsets remain re
   assert.equal(parts.at(-1).text.endsWith('😀'), true);
 });
 test('ElevenLabs context requires explicit consent and an exact supported model', () => {
-  const context = { previous:'First sentence. Previous BESS.', next:'Next SOC. Last sentence.' };
+  const context = { previous:'First sentence. Previous AI.', next:'Next CPU. Last sentence.' };
   for (const model of ['fish-audio/s2.1-pro', 'elevenlabs/unknown', 'elevenlabs/eleven-v4:free']) {
     assert.equal(supportsSpeechContext(model), false);
     assert.deepEqual(contextOptions({openRouterModel:model, openRouterContext:true}, context), {});
   }
   const s = {...settings, openRouterModel:'elevenlabs/eleven-multilingual-v2', openRouterContext:true};
   assert.deepEqual(contextOptions({...s, openRouterContext:false}, context), {});
-  assert.deepEqual(contextOptions(s, context), { options:{ elevenlabs:{previous_text:'Previous B E S S.',next_text:'Next state of charge.'} } });
+  assert.deepEqual(contextOptions(s, context), { options:{ elevenlabs:{previous_text:'Previous artificial intelligence.',next_text:'Next central processing unit.'} } });
   assert.deepEqual(contextOptions(s, {}), {});
   const long = contextOptions(s, {previous:'😀'.repeat(300), next:'x'.repeat(300)}).options.elevenlabs;
   assert.equal(Array.from(long.previous_text).length, 160);

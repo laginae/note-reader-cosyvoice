@@ -22,12 +22,12 @@ function addSpeechTermsSettings(container, plugin) {
     .addToggle(toggle => toggle.setValue(plugin.settings.speechTermsEnabled === true).onChange(async value => {
       plugin.settings.speechTermsEnabled = value; await plugin.saveSettings();
     }));
-  const description = zh ? '每行：术语 = 读法，例如 BESS = B E S S。区分大小写，不支持正则；最多 100 条，术语 80 字符、读法 120 字符。'
-    : 'One rule per line: term = pronunciation, e.g. BESS = B E S S. Case-sensitive, no regex. Up to 100 rules; 80 characters per term, 120 per pronunciation.';
+  const description = zh ? '每行：术语 = 读法，例如 AI = 人工智能。区分大小写，不支持正则；最多 100 条，术语 80 字符、读法 120 字符。'
+    : 'One rule per line: term = pronunciation, e.g. AI = artificial intelligence. Case-sensitive, no regex. Up to 100 rules; 80 characters per term, 120 per pronunciation.';
   const row = new Setting(container).setName(zh ? '术语规则' : 'Term rules').setDesc(description);
   row.settingEl.addClass('reader-speech-terms');
   row.addTextArea(input => {
-    input.setValue(plugin.settings.speechTerms || '').setPlaceholder('BESS = B E S S').onChange(async value => {
+    input.setValue(plugin.settings.speechTerms || '').setPlaceholder(zh ? 'AI = 人工智能' : 'AI = artificial intelligence').onChange(async value => {
       const { error } = parseTerms(value);
       input.inputEl.setAttribute('aria-invalid', String(Boolean(error)));
       row.setDesc(error || description);

@@ -715,11 +715,11 @@ var require_speech_options_settings = __commonJS({
         plugin.settings.speechTermsEnabled = value;
         await plugin.saveSettings();
       }));
-      const description = zh ? "\u6BCF\u884C\uFF1A\u672F\u8BED = \u8BFB\u6CD5\uFF0C\u4F8B\u5982 BESS = B E S S\u3002\u533A\u5206\u5927\u5C0F\u5199\uFF0C\u4E0D\u652F\u6301\u6B63\u5219\uFF1B\u6700\u591A 100 \u6761\uFF0C\u672F\u8BED 80 \u5B57\u7B26\u3001\u8BFB\u6CD5 120 \u5B57\u7B26\u3002" : "One rule per line: term = pronunciation, e.g. BESS = B E S S. Case-sensitive, no regex. Up to 100 rules; 80 characters per term, 120 per pronunciation.";
+      const description = zh ? "\u6BCF\u884C\uFF1A\u672F\u8BED = \u8BFB\u6CD5\uFF0C\u4F8B\u5982 AI = \u4EBA\u5DE5\u667A\u80FD\u3002\u533A\u5206\u5927\u5C0F\u5199\uFF0C\u4E0D\u652F\u6301\u6B63\u5219\uFF1B\u6700\u591A 100 \u6761\uFF0C\u672F\u8BED 80 \u5B57\u7B26\u3001\u8BFB\u6CD5 120 \u5B57\u7B26\u3002" : "One rule per line: term = pronunciation, e.g. AI = artificial intelligence. Case-sensitive, no regex. Up to 100 rules; 80 characters per term, 120 per pronunciation.";
       const row = new Setting(container).setName(zh ? "\u672F\u8BED\u89C4\u5219" : "Term rules").setDesc(description);
       row.settingEl.addClass("reader-speech-terms");
       row.addTextArea((input) => {
-        input.setValue(plugin.settings.speechTerms || "").setPlaceholder("BESS = B E S S").onChange(async (value) => {
+        input.setValue(plugin.settings.speechTerms || "").setPlaceholder(zh ? "AI = \u4EBA\u5DE5\u667A\u80FD" : "AI = artificial intelligence").onChange(async (value) => {
           const { error } = parseTerms(value);
           input.inputEl.setAttribute("aria-invalid", String(Boolean(error)));
           row.setDesc(error || description);
