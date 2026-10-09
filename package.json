@@ -1,6 +1,6 @@
 {
   "name": "note-reader-cosyvoice",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "private": true,
   "description": "Build and test tooling for the Cozy Read Aloud Obsidian plugin.",
   "scripts": {

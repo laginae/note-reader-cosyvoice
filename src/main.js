@@ -7044,7 +7044,12 @@ class CosyVoiceReaderView extends ItemView {
   }
 
   render() {
-    if (this.sidebarOutline?.root.contains(this.sidebarOutline.root.ownerDocument.activeElement)) return;
+    if (this.sidebarOutline?.pointerBusy) return;
+    const outlineFocus = this.sidebarOutline?.root.contains(this.sidebarOutline.root.ownerDocument.activeElement)
+      ? this.sidebarOutline.root.ownerDocument.activeElement : null;
+    const outlineScroll = this.sidebarOutline?.list.scrollTop;
+    const outlinePath = this.sidebarOutline?.path;
+    const outlineCurrent = this.sidebarOutline?.current;
     if (this.volumeInteracting) return;
     if (this.chunkSeekEditing && this.chunkSeekAudio === this.plugin.currentAudio
       && this.plugin.readerState?.canSeek) return;
@@ -7055,6 +7060,7 @@ class CosyVoiceReaderView extends ItemView {
     this.sidebarOutline?.root.remove();
     root.empty();
     root.addClass('note-reader-cosyvoice-view');
+    root.classList.toggle('note-reader-outline-focused', Boolean(this.outlineFocused));
     root.setAttribute('tabindex', '0');
     root.setAttribute('aria-label', this.translate('Voice reader controls'));
     root.addEventListener('keydown', this.handlePanelKeydown);
@@ -7152,6 +7158,7 @@ class CosyVoiceReaderView extends ItemView {
     this.createVolumePanel(playbackOptions);
 
     const actions = root.createDiv({ cls: 'note-reader-cosyvoice-actions' });
+    actions.addClass('note-reader-primary-actions');
     const canExportFile = typeof this.plugin.canExportCurrentFile !== 'function'
       || this.plugin.canExportCurrentFile();
     const canInsertExport = typeof this.plugin.canInsertAudioExportIntoCurrentNote !== 'function'
@@ -7165,8 +7172,13 @@ class CosyVoiceReaderView extends ItemView {
     this.createActionButton(actions, 'file-text', 'Read file', () => {
       this.runPluginAction('Read file', () => this.plugin.readCurrentNote());
     }, false, { triggerOnPointerDown: true });
-    this.sidebarOutline ||= new SidebarOutline(this.plugin, root.ownerDocument);
+    this.sidebarOutline ||= new SidebarOutline(this.plugin, root.ownerDocument, focused => {
+      this.outlineFocused = focused; root.classList.toggle('note-reader-outline-focused', focused);
+    });
     root.appendChild(this.sidebarOutline.root); this.sidebarOutline.refresh();
+    if (outlineScroll !== undefined && outlinePath === this.sidebarOutline.path
+      && (outlineCurrent === this.sidebarOutline.current || !this.sidebarOutline.state?.follow || this.sidebarOutline.state?.manual))
+      this.sidebarOutline.list.scrollTop = outlineScroll;
     const extra = root.createEl('details', { cls: 'note-reader-sidebar-extra' });
     extra.open = Boolean(this.extraOpen);
     extra.createEl('summary', { text: zhControls ? '更多操作' : 'More actions' });
@@ -7254,6 +7266,7 @@ class CosyVoiceReaderView extends ItemView {
       cls: 'note-reader-cosyvoice-preview-text',
       text: state.currentText || '-',
     });
+    if (outlineFocus?.isConnected) outlineFocus.focus({ preventScroll: true });
   }
 
   seekToSegment(progress) {

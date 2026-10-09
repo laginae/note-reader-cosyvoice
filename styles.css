@@ -575,6 +575,25 @@
   padding-block: 4px;
 }
 .note-reader-sidebar-outline select { width: 100%; min-width: 0; margin-block: 8px; }
+.note-reader-outline-header { display: flex; align-items: center; gap: 2px; flex-wrap: wrap; }
+.note-reader-outline-header strong { flex: 1; font-size: var(--font-ui-small); }
+.note-reader-sidebar-outline input[type="search"] { width: 100%; margin-block: 8px; }
+.note-reader-outline-list { position: relative; overflow-y: auto; overscroll-behavior: contain; max-height: 320px; min-height: 0; }
+.note-reader-outline-item { display: grid; grid-template-columns: 24px minmax(0, 1fr) 28px 28px; align-items: start; padding-inline-start: calc(var(--outline-depth) * 10px); border-radius: 4px; }
+.note-reader-outline-item .clickable-icon { min-width: 0; width: 100%; padding: 4px; box-shadow: none; background: transparent; }
+.note-reader-outline-item .note-reader-outline-title { white-space: normal; overflow-wrap: anywhere; text-align: start; justify-content: start; height: auto; line-height: 1.45; }
+.note-reader-outline-item .is-leaf { visibility: hidden; }
+.note-reader-outline-item.is-current { background: var(--background-modifier-hover); box-shadow: inset 2px 0 var(--interactive-accent); }
+.note-reader-outline-header [aria-pressed="true"] { color: var(--text-accent); background: var(--background-modifier-hover); }
+.note-reader-cosyvoice-view.note-reader-outline-focused { height: 100%; overflow: hidden; }
+.note-reader-outline-focused > .note-reader-cosyvoice-playback-options,
+.note-reader-outline-focused > .note-reader-cosyvoice-preview,
+.note-reader-outline-focused > .note-reader-sidebar-extra,
+.note-reader-outline-focused > .note-reader-cosyvoice-chunk-seek { display: none; }
+.note-reader-outline-focused > .note-reader-primary-actions { display: none; }
+.note-reader-outline-focused > .note-reader-sidebar-outline { display: flex; flex-direction: column; flex: 1; min-height: 80px; overflow: hidden; }
+.note-reader-outline-focused .note-reader-outline-list { flex: 1; max-height: none; }
+.note-reader-outline-focused > :not(.note-reader-sidebar-outline) { flex-shrink: 0; }
 .note-reader-sidebar-outline button { min-height: 30px; }
 .note-reader-cosyvoice-view .note-reader-cosyvoice-actions { gap: 6px; }
 

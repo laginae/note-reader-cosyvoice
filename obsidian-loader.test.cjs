@@ -26,6 +26,16 @@ class FakeElement {
     this.attributes = {};
     this.children = [];
     this.classNames = [];
+    this.classList = {
+      add: name => this.addClass(name),
+      toggle: (name, enabled) => {
+        const exists = this.classNames.includes(name);
+        if (enabled === undefined) enabled = !exists;
+        this.classNames = this.classNames.filter(value => value !== name);
+        if (enabled) this.classNames.push(name);
+        return enabled;
+      },
+    };
     this.listeners = {};
     this.style = {};
     this.textContent = '';
@@ -33,7 +43,7 @@ class FakeElement {
     this.disabled = false;
     this.focusCount = 0;
     this.focusOptions = [];
-    this.ownerDocument = { createElement: tag => new FakeElement(tag), activeElement: null };
+    this.ownerDocument = { createElement: tag => new FakeElement(tag), activeElement: null, addEventListener() {}, removeEventListener() {} };
   }
 
   appendChild(child) { child.parentElement = this; this.children.push(child); return child; }
@@ -205,7 +215,7 @@ const testVaultPath = path.resolve('test-vault');
 const testAudioPath = path.join(testVaultPath, '.obsidian', 'plugins', 'note-reader-cosyvoice', 'cache', 'a.wav');
 assert.strictEqual(manifest.id, 'note-reader-cosyvoice');
 assert.strictEqual(manifest.name, 'Cozy Read Aloud');
-assert.strictEqual(manifest.version, '1.0.2');
+assert.strictEqual(manifest.version, '1.0.3');
 assert.strictEqual(
   moduleObject.exports.__test.sanitizeTextForSpeech('第一段的结尾。\n\n## 第二节标题\n\n下一节的正文。'),
   '第一段的结尾。\n第二节标题\n下一节的正文。'

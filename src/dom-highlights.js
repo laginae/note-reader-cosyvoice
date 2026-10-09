@@ -217,4 +217,11 @@ function highlightDocument(doc, options = {}, root = doc.body) {
   }
   return true;
 }
-module.exports={highlightDocument,clearDocumentHighlight,isDocumentHighlightCurrent};
+function currentDocumentHighlightElement(doc, text) {
+  const state = states.get(doc);
+  if (!state || state.text !== text || !isDocumentHighlightCurrent(doc)) return null;
+  const range = [...state.highlight][0];
+  const node = range?.startContainer;
+  return node?.nodeType === 1 ? node : node?.parentElement || null;
+}
+module.exports={highlightDocument,clearDocumentHighlight,isDocumentHighlightCurrent,currentDocumentHighlightElement};
