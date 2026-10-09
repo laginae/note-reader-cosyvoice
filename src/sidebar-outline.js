@@ -46,7 +46,8 @@ class SidebarOutline {
     parent.appendChild(el); return el;
   }
   t(zh, en) { return this.plugin.settings.settingsLanguage === 'chinese' ? zh : en; }
-  label(el, label) { el.title = label; el.setAttribute('aria-label', label); }
+  // Obsidian supplies the tooltip from aria-label; title would add a second native tooltip.
+  label(el, label) { el.setAttribute('aria-label', label); }
   button(parent, icon, action) {
     const button = this.el(parent, 'button', 'clickable-icon'); button.type = 'button'; setIcon(button, icon);
     button.addEventListener('click', event => void this.plugin.runUserAction('Outline', () => action(event)));

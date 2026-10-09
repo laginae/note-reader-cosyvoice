@@ -24,6 +24,16 @@ test('empty workspace is safe', () => {
   const o = new SidebarOutline({ settings: {}, getCurrentReadableFile: () => null }, new JSDOM('').window.document);
   o.refresh(); assert.equal(o.rows.size, 0); o.destroy();
 });
+test('outline controls use one Obsidian tooltip without a duplicate native title', () => {
+  const { outline } = fixture();
+  for (const control of outline.root.querySelectorAll('[aria-label]')) {
+    assert.ok(control.getAttribute('aria-label'));
+    assert.equal(control.hasAttribute('title'), false);
+  }
+  outline.refresh();
+  assert.equal(outline.expand.getAttribute('aria-label'), 'Expand all');
+  assert.equal(outline.root.querySelectorAll('[title]').length, 0);
+});
 test('tree shows two levels, expands all, searches hidden descendants and preserves state', () => {
   const { outline: o, doc } = fixture();
   assert.deepEqual([...o.rows.keys()], [0, 1, 3]);

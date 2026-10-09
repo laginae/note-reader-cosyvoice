@@ -12552,8 +12552,8 @@ var require_sidebar_outline = __commonJS({
       t(zh, en) {
         return this.plugin.settings.settingsLanguage === "chinese" ? zh : en;
       }
+      // Obsidian supplies the tooltip from aria-label; title would add a second native tooltip.
       label(el, label) {
-        el.title = label;
         el.setAttribute("aria-label", label);
       }
       button(parent, icon, action) {
