@@ -862,6 +862,10 @@
 .reader-setup-actions button { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; }
 .reader-setup-actions svg { width: 16px; height: 16px; }
 .reader-setup-preview p:empty { display: none; }
+.note-reader-buffering-hint { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; flex-basis: 100%; width: 100%; min-width: 0; padding-block: 6px; color: var(--text-muted); font-size: var(--font-ui-small); }
+.note-reader-buffering-hint > span { flex: 1 1 240px; overflow-wrap: anywhere; }
+.note-reader-buffering-hint > button { height: auto; min-height: 28px; white-space: normal; box-shadow: none; }
+.note-reader-buffering-hint svg { width: 16px; height: 16px; }
 @media (max-width: 600px) {
   .reader-setup-actions button { min-height: 44px; }
   .note-reader-settings-panel .setting-item { flex-wrap: wrap; gap: 10px; }

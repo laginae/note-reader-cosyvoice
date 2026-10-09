@@ -740,6 +740,7 @@ var require_settings_reset = __commonJS({
         "onlineChunkLimits",
         "onlinePrefetchChunks",
         "continuousListening",
+        "bufferingHints",
         "smartQuickStart",
         "rapidQuickStart",
         "highlightColor",
@@ -10601,6 +10602,115 @@ var require_preparation_status = __commonJS({
   }
 });
 
+// src/buffering-hint.js
+var require_buffering_hint = __commonJS({
+  "src/buffering-hint.js"(exports2, module2) {
+    "use strict";
+    var shownKey = Symbol.for("cozy-read-aloud.buffering-hint-shown");
+    var BufferingHint2 = class {
+      // Browser timers require the global receiver, not the BufferingHint instance.
+      constructor(plugin, {
+        now = () => Date.now(),
+        schedule = (callback, delay) => globalThis.setTimeout(callback, delay),
+        cancel = (timer) => globalThis.clearTimeout(timer)
+      } = {}) {
+        this.plugin = plugin;
+        this.now = now;
+        this.schedule = schedule;
+        this.cancel = cancel;
+      }
+      eligible(session) {
+        const p = this.plugin;
+        return p.activeSession === session && session.bufferMode === "balanced" && session.prefetchChunks > 0 && session.kind !== "audio-export" && session.kind !== "voice-preview" && p.settings.bufferingHints !== false && !(p.app || p)[shownKey];
+      }
+      start(session) {
+        this.stop();
+        const p = this.plugin, timings = p.playbackTimings;
+        if (!this.eligible(session) || timings?.endedAt == null || timings.intent) return;
+        const endedAt = timings.endedAt;
+        const started = this.now();
+        const valid = () => this.eligible(session) && !p.pauseRequested && !session.waitHintError && !session.seekTarget && !Number.isInteger(session.requestedChunkIndex) && timings.endedAt === endedAt && !timings.intent;
+        this.pending = { session, started, valid };
+        this.timer = this.schedule(() => {
+          if (valid()) this.show(session);
+        }, session.waitHintShortCount >= 1 ? 3e3 : 5e3);
+        this.timer?.unref?.();
+      }
+      show(session) {
+        (this.plugin.app || this.plugin)[shownKey] = true;
+        this.visibleSession = session;
+        this.plugin.renderReaderViews?.();
+      }
+      playing() {
+        const pending = this.pending;
+        if (pending?.valid()) {
+          const elapsed = this.now() - pending.started;
+          if (elapsed >= 3e3) pending.session.waitHintShortCount = (pending.session.waitHintShortCount || 0) + 1;
+          if (elapsed >= 5e3 || pending.session.waitHintShortCount >= 2) this.show(pending.session);
+        }
+        this.stop();
+      }
+      stop(session) {
+        if (session && this.pending?.session !== session) return;
+        this.cancel(this.timer);
+        this.timer = null;
+        this.pending = null;
+      }
+      dismiss() {
+        this.visibleSession = null;
+        this.plugin.renderReaderViews?.();
+      }
+    };
+    function renderBufferingHint2(plugin, parent, existing, setIcon2 = () => {
+    }) {
+      const hint = plugin.bufferingHint;
+      const visible = hint?.visibleSession && hint.visibleSession === plugin.activeSession && plugin.settings.bufferingHints !== false && !["error", "complete", "idle"].includes(plugin.readerState?.phase);
+      if (!visible) {
+        existing?.remove();
+        return null;
+      }
+      if (existing) {
+        if (existing.parentNode !== parent) parent.append(existing);
+        return existing;
+      }
+      const doc = parent.ownerDocument, root = doc.createElement("div");
+      root.className = "note-reader-buffering-hint";
+      const zh = plugin.settings.settingsLanguage === "chinese";
+      const text = doc.createElement("span");
+      text.textContent = zh ? "\u6BB5\u95F4\u7B49\u5F85\u8F83\u957F\u3002\u53EF\u5728\u201C\u5728\u7EBF\u64AD\u653E\u7F13\u51B2\u201D\u4E2D\u5207\u6362\u4E3A\u201C\u8FDE\u7EED\u6536\u542C\u201D\uFF0C\u4EE5\u51CF\u5C11\u505C\u987F\u3002\u8BE5\u6A21\u5F0F\u4F1A\u63D0\u524D\u5408\u6210\u66F4\u591A\u6587\u5B57\uFF1B\u82E5\u4F7F\u7528\u6536\u8D39\u63A5\u53E3\uFF0C\u53EF\u80FD\u589E\u52A0\u8D39\u7528\u3002" : "Long pauses between audio parts. In Online playback buffering, switch to Continuous listening to help reduce pauses. This prepares more text ahead; paid services may incur additional charges.";
+      root.append(text);
+      const add = (label, action) => {
+        const button = doc.createElement("button");
+        button.type = "button";
+        button.textContent = label;
+        button.addEventListener("click", action);
+        root.append(button);
+        return button;
+      };
+      add(zh ? "\u67E5\u770B\u7F13\u51B2\u8BBE\u7F6E" : "Buffer settings", () => {
+        const tab = plugin.readerSettingsTab;
+        if (!tab || !plugin.app?.setting?.openTabById) return;
+        tab.settingsPage = "playback";
+        plugin.app.setting.open();
+        plugin.app.setting.openTabById(plugin.manifest.id);
+        tab.display();
+        hint.dismiss();
+      });
+      add(zh ? "\u4E0D\u518D\u63D0\u793A" : "Don't show again", () => {
+        plugin.settings.bufferingHints = false;
+        hint.dismiss();
+        plugin.runUserAction("Save buffering hint preference", () => plugin.saveSettings());
+      });
+      const close = add("", () => hint.dismiss());
+      setIcon2(close, "x");
+      close.setAttribute("aria-label", zh ? "\u5173\u95ED\u63D0\u793A" : "Dismiss suggestion");
+      parent.append(root);
+      return root;
+    }
+    module2.exports = { BufferingHint: BufferingHint2, renderBufferingHint: renderBufferingHint2 };
+  }
+});
+
 // src/native-toolbar.js
 var require_native_toolbar = __commonJS({
   "src/native-toolbar.js"(exports2, module2) {
@@ -10614,6 +10724,7 @@ var require_native_toolbar = __commonJS({
     var { getHtmlReaderDocument: getHtmlReaderDocument2 } = require_html_text();
     var { captureHtmlOutline, htmlSectionText } = require_html_outline();
     var { preparationStatusText: preparationStatusText2 } = require_preparation_status();
+    var { renderBufferingHint: renderBufferingHint2 } = require_buffering_hint();
     function node(parent, tag, className = "") {
       const element = parent.ownerDocument.createElement(tag);
       element.className = className;
@@ -10976,6 +11087,7 @@ var require_native_toolbar = __commonJS({
         const current = ranges.length ? [...this.entries || []].reverse().find((heading) => heading.from <= ranges[0].from) : null;
         this.status.textContent = state.error || (session ? [preparationStatusText2(state, this.plugin.settings.settingsLanguage), session.sourceLabel, current?.title, `${state.currentChunk || 0} / ${state.totalChunks || 0}`].filter(Boolean).join(" \xB7 ") : "");
         this.status.hidden = !this.status.textContent;
+        this.bufferingHintEl = renderBufferingHint2(this.plugin, this.root, this.bufferingHintEl, setIcon2);
       }
       destroy() {
         this.root.ownerDocument.removeEventListener("keydown", this.documentKeydown);
@@ -36325,6 +36437,7 @@ var { readerRange } = require_reader_selection();
 var { getSpeechParts, planSpeechParts, adjacentSpeechPart, getSpeechPartTiming } = require_speech_parts();
 var { preparationStatusText } = require_preparation_status();
 var { listeningMode, planListeningBuffer } = require_listening_buffer();
+var { BufferingHint, renderBufferingHint } = require_buffering_hint();
 var { locateReading } = require_locate_reading();
 var { MIMO_ENDPOINT, MIMO_DEFAULTS, MIMO_VOICES, MIMO_MAX_CHUNK_CHARS, normalizeMimoSettings, buildMimoRequestBody, decodeMimoAudio } = require_mimo_tts();
 var { BYOK_DEFAULTS, normalizeByokSettings, getByokProfile, getByokConfigurationError, assertByokAuthorized, buildByokRequest, safeByokRequestError } = require_byok_tts();
@@ -37743,6 +37856,7 @@ function createDefaultSettings() {
     ).join(","),
     onlinePrefetchChunks: normalizeOnlinePrefetchChunks(DEFAULT_SETTINGS.onlinePrefetchChunks),
     continuousListening: DEFAULT_SETTINGS.continuousListening === true,
+    bufferingHints: true,
     readingPositions: normalizeReadingPositions(DEFAULT_SETTINGS.readingPositions),
     readingHistoryMode: "session",
     smartQuickStart: true,
@@ -38680,13 +38794,15 @@ var CosyVoiceReaderPlugin = class extends Plugin {
         void this.stopReading();
       }
     });
-    this.addSettingTab(new CosyVoiceReaderSettingTab(this.app, this));
+    this.readerSettingsTab = new CosyVoiceReaderSettingTab(this.app, this);
+    this.addSettingTab(this.readerSettingsTab);
     this.register(() => {
       void this.stopReading({ silent: true });
     });
     this.updateStatus("CosyVoice idle");
   }
   async onunload() {
+    this.bufferingHint?.stop();
     this.systemSpeechUnloaded = true;
     this.htmlHighlights?.destroy();
     this.nativeToolbars?.destroy();
@@ -41286,6 +41402,8 @@ ${embed}
           canSeek: false,
           progress: session.totalChunks ? (index + this.getSegmentTiming(session, index, part, 0).fraction) / session.totalChunks : 0
         });
+        this.bufferingHint || (this.bufferingHint = new BufferingHint(this));
+        this.bufferingHint.start(session);
         const prepared = await this.waitForSessionOperation(session, preparation);
         if (!this.isActive(session)) {
           break;
@@ -41296,6 +41414,7 @@ ${embed}
         timings.record("foregroundWait", timings.now() - waitStarted);
         session.requestedChunkIndex = null;
         await this.playPreparedAudio(prepared, session, index, session.totalChunks, part);
+        this.bufferingHint.stop(session);
         if (Number.isInteger(session.requestedChunkIndex)) {
           continue;
         } else if (part + 1 < getSpeechParts(session, index).length) {
@@ -41348,6 +41467,7 @@ ${embed}
       }
     } finally {
       session.prepareAvailableChunks = null;
+      this.bufferingHint?.stop(session);
       pool.clear();
       session.prefetchBaseIndex = null;
       if (session.producerPromise) {
@@ -41687,6 +41807,7 @@ ${embed}
         await this.requestRemoteAudioOnce(options);
         return;
       } catch (error) {
+        session.waitHintError = true;
         if (!this.isActive(session)) {
           throw new Error("Reading stopped.");
         }
@@ -42003,7 +42124,9 @@ ${embed}
         const measurePlaying = () => {
           if (measuredPlaying || settled || !this.isActive(session) || Number.isInteger(session.requestedChunkIndex)) return;
           measuredPlaying = true;
+          this.bufferingHint?.playing();
           this.playbackTimings?.playing(loadingStarted);
+          session.waitHintError = false;
         };
         const recordDuration = () => {
           if (this.isActive(session) && Number.isFinite(audio.duration) && audio.duration > 0) {
@@ -42116,7 +42239,9 @@ ${embed}
         };
         audio.onended = () => {
           if (settled) return;
-          if (measuredPlaying && !Number.isInteger(session.requestedChunkIndex)) this.playbackTimings?.ended();
+          if (measuredPlaying && !Number.isInteger(session.requestedChunkIndex)) {
+            this.playbackTimings?.ended();
+          }
           const currentTotal = getPlaybackTotal();
           this.setReaderState({
             canPause: false,
@@ -42623,6 +42748,7 @@ var CosyVoiceReaderView = class extends ItemView {
   }
   render() {
     if (this.sidebarOutline?.pointerBusy) return;
+    if (this.plugin.bufferingHint?.visibleSession === this.plugin.activeSession && this.bufferingHintEl?.contains(this.bufferingHintEl.ownerDocument.activeElement)) return;
     const outlineFocus = this.sidebarOutline?.root.contains(this.sidebarOutline.root.ownerDocument.activeElement) ? this.sidebarOutline.root.ownerDocument.activeElement : null;
     const outlineScroll = this.sidebarOutline?.list.scrollTop;
     const outlinePath = this.sidebarOutline?.path;
@@ -42633,6 +42759,7 @@ var CosyVoiceReaderView = class extends ItemView {
     const root = this.contentEl || this.containerEl.children[1] || this.containerEl;
     const state = this.plugin.readerState || createReaderState();
     this.sidebarOutline?.root.remove();
+    this.bufferingHintEl?.remove();
     root.empty();
     root.addClass("note-reader-cosyvoice-view");
     root.classList.toggle("note-reader-outline-focused", Boolean(this.outlineFocused));
@@ -42642,6 +42769,7 @@ var CosyVoiceReaderView = class extends ItemView {
     const header = root.createDiv({ cls: "note-reader-cosyvoice-panel-header" });
     header.createEl("h3", { text: this.translate("Voice Reader") });
     header.createDiv({ cls: `note-reader-cosyvoice-state is-${state.status}`, text: state.label });
+    this.bufferingHintEl = renderBufferingHint(this.plugin, header, this.bufferingHintEl, setIcon);
     const progressWrap = root.createDiv({ cls: "note-reader-cosyvoice-progress-wrap" });
     const progressHeading = progressWrap.createDiv({ cls: "note-reader-progress-heading" });
     progressHeading.createDiv({ cls: "note-reader-cosyvoice-section-label", text: this.translate("Overall progress") });
@@ -43522,6 +43650,11 @@ var CosyVoiceReaderSettingTab = class extends PluginSettingTab {
       });
     });
     const bufferDetails = disclosure(containerEl, translateInterface(settingsLanguage, "How buffering works", "\u5206\u6BB5\u4E0E\u7F13\u51B2\u8BF4\u660E"));
+    new Setting(playbackAdvanced).setName(translateInterface(settingsLanguage, "Suggest continuous listening after long pauses", "\u6BB5\u95F4\u7B49\u5F85\u8F83\u957F\u65F6\u5EFA\u8BAE\u8FDE\u7EED\u6536\u542C")).setDesc(translateInterface(settingsLanguage, "A dismissible suggestion, at most once per app launch. Never switches modes automatically.", "\u663E\u793A\u53EF\u5173\u95ED\u7684\u5EFA\u8BAE\uFF0C\u6BCF\u6B21\u542F\u52A8\u6700\u591A\u4E00\u6B21\uFF0C\u4E0D\u4F1A\u81EA\u52A8\u5207\u6362\u6A21\u5F0F\u3002")).addToggle((toggle) => toggle.setValue(this.plugin.settings.bufferingHints !== false).onChange(async (value) => {
+      this.plugin.settings.bufferingHints = value;
+      if (!value) this.plugin.bufferingHint?.dismiss();
+      await this.plugin.saveSettings();
+    }));
     bufferDetails.createEl("p", { text: translateInterface(
       settingsLanguage,
       "Balanced is not one request per sentence. It normally synthesizes a whole segment; quick start and provider limits can split it into several audio parts. Playback plays these parts in order, without waiting to merge the entire document.",

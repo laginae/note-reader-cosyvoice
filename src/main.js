@@ -43,6 +43,7 @@ const { readerRange } = require('./reader-selection');
 const { getSpeechParts, planSpeechParts, adjacentSpeechPart, getSpeechPartTiming } = require('./speech-parts');
 const { preparationStatusText } = require('./preparation-status');
 const { listeningMode, planListeningBuffer } = require('./listening-buffer');
+const { BufferingHint, renderBufferingHint } = require('./buffering-hint');
 const { locateReading } = require('./locate-reading');
 const { MIMO_ENDPOINT, MIMO_DEFAULTS, MIMO_VOICES, MIMO_MAX_CHUNK_CHARS, normalizeMimoSettings, buildMimoRequestBody, decodeMimoAudio } = require('./mimo-tts');
 const { BYOK_DEFAULTS, normalizeByokSettings, getByokProfile, getByokConfigurationError, assertByokAuthorized, buildByokRequest, safeByokRequestError } = require('./byok-tts');
@@ -1680,6 +1681,7 @@ function createDefaultSettings() {
     ).join(','),
     onlinePrefetchChunks: normalizeOnlinePrefetchChunks(DEFAULT_SETTINGS.onlinePrefetchChunks),
     continuousListening: DEFAULT_SETTINGS.continuousListening === true,
+    bufferingHints: true,
     readingPositions: normalizeReadingPositions(DEFAULT_SETTINGS.readingPositions),
     readingHistoryMode: 'session',
     smartQuickStart: true,
@@ -2768,7 +2770,8 @@ class CosyVoiceReaderPlugin extends Plugin {
       },
     });
 
-    this.addSettingTab(new CosyVoiceReaderSettingTab(this.app, this));
+    this.readerSettingsTab = new CosyVoiceReaderSettingTab(this.app, this);
+    this.addSettingTab(this.readerSettingsTab);
     this.register(() => {
       void this.stopReading({ silent: true });
     });
@@ -2777,6 +2780,7 @@ class CosyVoiceReaderPlugin extends Plugin {
   }
 
   async onunload() {
+    this.bufferingHint?.stop();
     this.systemSpeechUnloaded = true;
     this.htmlHighlights?.destroy();
     this.nativeToolbars?.destroy(); this.pdfHighlights?.destroy();
@@ -5593,6 +5597,8 @@ class CosyVoiceReaderPlugin extends Plugin {
           canPause: true, canStop: true, canSeek: false,
           progress: session.totalChunks ? (index + this.getSegmentTiming(session, index, part, 0).fraction) / session.totalChunks : 0,
         });
+        this.bufferingHint ||= new BufferingHint(this);
+        this.bufferingHint.start(session);
         const prepared = await this.waitForSessionOperation(session, preparation);
         if (!this.isActive(session)) {
           break;
@@ -5605,6 +5611,7 @@ class CosyVoiceReaderPlugin extends Plugin {
         timings.record('foregroundWait', timings.now() - waitStarted);
         session.requestedChunkIndex = null;
         await this.playPreparedAudio(prepared, session, index, session.totalChunks, part);
+        this.bufferingHint.stop(session);
 
         if (Number.isInteger(session.requestedChunkIndex)) {
           continue;
@@ -5661,6 +5668,7 @@ class CosyVoiceReaderPlugin extends Plugin {
       }
     } finally {
       session.prepareAvailableChunks = null;
+      this.bufferingHint?.stop(session);
       pool.clear();
       session.prefetchBaseIndex = null;
       if (session.producerPromise) {
@@ -6045,6 +6053,7 @@ class CosyVoiceReaderPlugin extends Plugin {
         await this.requestRemoteAudioOnce(options);
         return;
       } catch (error) {
+        session.waitHintError = true;
         if (!this.isActive(session)) {
           throw new Error('Reading stopped.');
         }
@@ -6393,7 +6402,9 @@ class CosyVoiceReaderPlugin extends Plugin {
         const measurePlaying = () => {
           if (measuredPlaying || settled || !this.isActive(session) || Number.isInteger(session.requestedChunkIndex)) return;
           measuredPlaying = true;
+          this.bufferingHint?.playing();
           this.playbackTimings?.playing(loadingStarted);
+          session.waitHintError = false;
         };
         const recordDuration = () => {
           if (this.isActive(session) && Number.isFinite(audio.duration) && audio.duration > 0) {
@@ -6507,7 +6518,9 @@ class CosyVoiceReaderPlugin extends Plugin {
 
         audio.onended = () => {
           if (settled) return;
-          if (measuredPlaying && !Number.isInteger(session.requestedChunkIndex)) this.playbackTimings?.ended();
+          if (measuredPlaying && !Number.isInteger(session.requestedChunkIndex)) {
+            this.playbackTimings?.ended();
+          }
           const currentTotal = getPlaybackTotal();
           this.setReaderState({
             canPause: false,
@@ -7073,6 +7086,8 @@ class CosyVoiceReaderView extends ItemView {
 
   render() {
     if (this.sidebarOutline?.pointerBusy) return;
+    if (this.plugin.bufferingHint?.visibleSession === this.plugin.activeSession
+      && this.bufferingHintEl?.contains(this.bufferingHintEl.ownerDocument.activeElement)) return;
     const outlineFocus = this.sidebarOutline?.root.contains(this.sidebarOutline.root.ownerDocument.activeElement)
       ? this.sidebarOutline.root.ownerDocument.activeElement : null;
     const outlineScroll = this.sidebarOutline?.list.scrollTop;
@@ -7086,6 +7101,7 @@ class CosyVoiceReaderView extends ItemView {
     const state = this.plugin.readerState || createReaderState();
 
     this.sidebarOutline?.root.remove();
+    this.bufferingHintEl?.remove();
     root.empty();
     root.addClass('note-reader-cosyvoice-view');
     root.classList.toggle('note-reader-outline-focused', Boolean(this.outlineFocused));
@@ -7096,6 +7112,7 @@ class CosyVoiceReaderView extends ItemView {
     const header = root.createDiv({ cls: 'note-reader-cosyvoice-panel-header' });
     header.createEl('h3', { text: this.translate('Voice Reader') });
     header.createDiv({ cls: `note-reader-cosyvoice-state is-${state.status}`, text: state.label });
+    this.bufferingHintEl = renderBufferingHint(this.plugin, header, this.bufferingHintEl, setIcon);
 
     const progressWrap = root.createDiv({ cls: 'note-reader-cosyvoice-progress-wrap' });
     const progressHeading = progressWrap.createDiv({ cls: 'note-reader-progress-heading' });
@@ -8176,6 +8193,14 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
       });
 
     const bufferDetails = disclosure(containerEl, translateInterface(settingsLanguage, 'How buffering works', '分段与缓冲说明'));
+    new Setting(playbackAdvanced)
+      .setName(translateInterface(settingsLanguage, 'Suggest continuous listening after long pauses', '段间等待较长时建议连续收听'))
+      .setDesc(translateInterface(settingsLanguage, 'A dismissible suggestion, at most once per app launch. Never switches modes automatically.', '显示可关闭的建议，每次启动最多一次，不会自动切换模式。'))
+      .addToggle(toggle => toggle.setValue(this.plugin.settings.bufferingHints !== false).onChange(async value => {
+        this.plugin.settings.bufferingHints = value;
+        if (!value) this.plugin.bufferingHint?.dismiss();
+        await this.plugin.saveSettings();
+      }));
     bufferDetails.createEl('p', { text: translateInterface(settingsLanguage,
       'Balanced is not one request per sentence. It normally synthesizes a whole segment; quick start and provider limits can split it into several audio parts. Playback plays these parts in order, without waiting to merge the entire document.',
       '均衡不是逐句合成：通常一段合成一次，快速起读或接口长度限制可能将其拆成几份音频。播放时依次衔接，不必等全文合成后再拼接。') });

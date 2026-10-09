@@ -5,7 +5,7 @@ const PAGE_KEYS = {
     'azureSpeechConsent', 'azureSpeechVoice', 'openRouterConsent', 'openRouterModel', 'openRouterVoice',
     'mimoConsent', 'mimoVoice', 'mimoChunkLimit', 'openRouterContext'],
   playback: ['readingContextMenu', 'readingFloatingToolbar', 'readingFloatingAction', 'speed', 'playbackSpeed', 'playbackVolume', 'chunkLimits', 'onlineChunkLimits', 'onlinePrefetchChunks',
-    'continuousListening', 'smartQuickStart', 'rapidQuickStart', 'highlightColor', 'highlightStrength', 'noteHighlightBorder', 'readerOpenMode', 'readingHighlight', 'readingFollow',
+    'continuousListening', 'bufferingHints', 'smartQuickStart', 'rapidQuickStart', 'highlightColor', 'highlightStrength', 'noteHighlightBorder', 'readerOpenMode', 'readingHighlight', 'readingFollow',
     'webReadingHighlight', 'webReadingFollow', 'copilotChatEnabled', 'copilotChatScope', 'copilotIncludeQuestions'],
   academic: ['stripMarkdown', 'academicMathMode', 'academicMathStyle', 'academicTableMode', 'academicSkipNotice',
     'mathReadingLanguage', 'pdfBookmarksOverwrite', 'pdfFootnoteMode', 'pdfSkipHeaders', 'pdfIncludeGlossary', 'speechTermsEnabled', 'speechTerms'],

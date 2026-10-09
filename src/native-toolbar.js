@@ -9,6 +9,7 @@ const { isElevenLabsModel } = require('./openrouter-elevenlabs');
 const { getHtmlReaderDocument } = require('./html-text');
 const { captureHtmlOutline, htmlSectionText } = require('./html-outline');
 const { preparationStatusText } = require('./preparation-status');
+const { renderBufferingHint } = require('./buffering-hint');
 
 function node(parent, tag, className = '') {
   const element = parent.ownerDocument.createElement(tag);
@@ -291,6 +292,7 @@ class NativeReaderToolbar {
     const current = ranges.length ? [...(this.entries || [])].reverse().find(heading => heading.from <= ranges[0].from) : null;
     this.status.textContent = state.error || (session ? [preparationStatusText(state, this.plugin.settings.settingsLanguage), session.sourceLabel, current?.title, `${state.currentChunk || 0} / ${state.totalChunks || 0}`].filter(Boolean).join(' · ') : '');
     this.status.hidden = !this.status.textContent;
+    this.bufferingHintEl = renderBufferingHint(this.plugin, this.root, this.bufferingHintEl, setIcon);
   }
   destroy() {
     this.root.ownerDocument.removeEventListener('keydown', this.documentKeydown);
