@@ -4,6 +4,8 @@
 
 Read aloud your **notes, PDFs, HTML files and web pages** in Obsidian. Listen while following the original document, jump between sections, or export audio for later.
 
+**Formerly Note and PDF Voice Reader.** Same plugin, new name. Your settings and update path remain unchanged; no reinstall is required.
+
 **One-click reading toolbar:** click the audio icon in the pane header to show or hide playback controls above the original document.
 
 ![Click the audio icon to show and hide the reading toolbar](docs/images/reading-toolbar-demo.gif)
