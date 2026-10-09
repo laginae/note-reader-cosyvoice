@@ -23,6 +23,36 @@ function playbackFixture(rows, chunk) {
     marked: () => [...doc.querySelectorAll('.note-reader-pdf-current')].map(node => node.textContent) };
 }
 
+test('PDF follow is opt-in, scrolls once per audio part, pauses on user input and resumes explicitly', async () => {
+  const f = playbackFixture([['Public first.',40,100], ['Public second.',40,120]], 'Public first. Public second.');
+  f.view.contentEl.getBoundingClientRect = () => ({ top: 0, bottom: 80, left: 0, right: 600, width: 600, height: 80 });
+  let calls = 0; f.page.querySelectorAll('span').forEach(node => node.scrollIntoView = () => calls++);
+  f.highlighter.update(); assert.equal(calls, 0);
+  f.plugin.pauseRequested = true;
+  f.plugin.settings.pdfReadingFollow = true; f.highlighter.update(); assert.equal(calls, 1);
+  f.highlighter.update(); assert.equal(calls, 1);
+  f.view.contentEl.dispatchEvent(new f.dom.window.Event('wheel'));
+  f.plugin.followRevision = 1; f.highlighter.update(); assert.equal(calls, 1);
+  f.plugin.pdfHighlights = f.highlighter; f.plugin.saveSettings = async () => {};
+  await require('./reading-follow').toggleFollowing(f.plugin, 'pdf'); assert.equal(calls, 2);
+  f.highlighter.destroy(); f.dom.window.close();
+});
+
+test('PDF follow avoids visible or mismatched text and loads a trusted page before its text layer', () => {
+  const f = playbackFixture([['Public first.',40,100], ['Public second.',40,120]], 'Public first. Public second.');
+  f.plugin.settings.pdfReadingFollow = true;
+  f.view.contentEl.getBoundingClientRect = () => ({ top: 0, bottom: 500, left: 0, right: 600, width: 600, height: 500 });
+  let calls = 0; f.page.querySelector('span').scrollIntoView = () => calls++;
+  f.highlighter.update(); assert.equal(calls, 0);
+  f.highlighter.destroy();
+  f.page.querySelector('.textLayer').remove();
+  f.page.getBoundingClientRect = () => ({ top: 900, bottom: 1700, left: 0, right: 600, width: 600, height: 800 });
+  f.page.scrollIntoView = () => calls++;
+  const h = new PdfReadingHighlights(f.plugin); h.update(); h.update(); assert.equal(calls, 1);
+  f.session.chunks = ['Unrelated text.']; f.plugin.followRevision = 1; h.update(); assert.equal(calls, 1);
+  h.destroy(); f.dom.window.close();
+});
+
 test('PDF follows prepared audio parts using the full chunk to disambiguate repeated short phrases', () => {
   const f = playbackFixture([['Again.',40,100], ['Middle.',40,120], ['Again.',40,140]], 'Again. Middle. Again.');
   f.session.audioParts = { 0: ['Again.', 'Middle.', 'Again.'] };

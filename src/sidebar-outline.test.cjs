@@ -45,6 +45,30 @@ test('tree shows two levels, expands all, searches hidden descendants and preser
   o.search.value = ''; o.search.dispatchEvent(new doc.defaultView.Event('input'));
   assert.deepEqual([...o.rows.keys()], [0, 3]);
 });
+
+test('outline follow labels distinguish document scrolling and reflect pause immediately in both languages', () => {
+  const { outline: o, plugin, doc, calls } = fixture();
+  for (const language of ['english', 'chinese']) {
+    plugin.settings.settingsLanguage = language; o.state.follow = true; o.state.manual = false; o.refresh();
+    assert.equal(o.follow.getAttribute('aria-pressed'), 'true');
+    assert.match(o.follow.getAttribute('aria-label'), language === 'chinese' ? /大纲自动跟随：已开启/ : /Outline auto-follow: on/);
+    o.list.dispatchEvent(new doc.defaultView.Event('wheel'));
+    assert.equal(o.follow.getAttribute('aria-pressed'), 'false');
+    assert.match(o.follow.getAttribute('aria-label'), language === 'chinese' ? /点击恢复/ : /click to resume/);
+    o.follow.click(); assert.equal(o.state.follow, true); assert.equal(o.state.manual, false);
+    assert.equal(o.follow.getAttribute('aria-pressed'), 'true');
+    o.follow.click(); assert.equal(o.state.follow, false);
+    assert.match(o.follow.getAttribute('aria-label'), language === 'chinese' ? /已关闭/ : /off/);
+    o.follow.click();
+    o.search.value = 'Child'; o.search.dispatchEvent(new doc.defaultView.Event('input'));
+    assert.equal(o.follow.getAttribute('aria-pressed'), 'false');
+    assert.match(o.follow.getAttribute('aria-label'), language === 'chinese' ? /清空搜索/ : /clear search/);
+    o.search.value = ''; o.search.dispatchEvent(new doc.defaultView.Event('input'));
+    assert.equal(o.follow.getAttribute('aria-pressed'), 'true');
+    assert.equal(o.follow.hasAttribute('title'), false);
+  }
+  assert.deepEqual(calls, []); o.destroy();
+});
 test('navigation is separate from playback and export blocks synthesis but not navigation', async () => {
   const { outline: o, plugin, calls, text } = fixture();
   await o.locate(1); assert.equal(calls[0][0], 'locate');

@@ -4,6 +4,7 @@ const { getHtmlReaderDocument } = require('./html-text');
 const { highlightDocument, clearDocumentHighlight, isDocumentHighlightCurrent } = require('./dom-highlights');
 const { updateWebHighlight, getWebPageUrl } = require('./web-page');
 const { getSpeechParts } = require('./speech-parts');
+const { following, watchFollowing, pauseFollowing } = require('./reading-follow');
 function htmlReadingTarget(session, highlight, settings) {
   const chunk = session.chunks[highlight.index];
   const sentence = settings.readingHighlight === 'sentence' && highlight.sentence;
@@ -19,7 +20,7 @@ class HtmlReadingHighlights {
     for(const doc of this.documents)clearDocumentHighlight(doc);
     this.documents.clear();
     this.markedDocuments.clear();
-    for (const { observer } of this.htmlObservers.values()) observer.disconnect();
+    for (const { observer, unwatch } of this.htmlObservers.values()) { observer.disconnect(); unwatch?.(); }
     this.htmlObservers.clear();
     if(this.web){const view=this.web;this.chain=this.chain.catch(()=>{}).then(()=>updateWebHighlight(view,{})).catch(()=>{});}
     this.web=null;this.key='';
@@ -47,7 +48,10 @@ class HtmlReadingHighlights {
         && (!this.markedDocuments.has(doc) || isDocumentHighlightCurrent(doc))))))return;
     this.clear();this.key=key;
     const speechSettings = s.synthesisSettings || p.settings;
-    const options={text:target.text,color:p.settings.highlightColor,strength:p.settings.highlightStrength,follow:p.settings.webReadingFollow===true,restoreOnChange:true,academic:academicOptions(speechSettings)};
+    const options={text:target.text,color:p.settings.highlightColor,strength:p.settings.highlightStrength,follow:following(p, s.sourceKind),restoreOnChange:true,academic:academicOptions(speechSettings)};
+    options.followRevision = p.followRevision || 0;
+    options.reportFollowState = true;
+    options.onFollowPaused = () => { if (p.activeSession === s) pauseFollowing(p, s.sourceKind); };
     if (s.sourceKind === 'html' && typeof p.prepareHtmlSpeechText === 'function') {
       options.speechTransform = text => p.prepareHtmlSpeechText(text, speechSettings);
     }
@@ -66,7 +70,7 @@ class HtmlReadingHighlights {
           });
           observer.observe(root, { subtree: true, childList: true, characterData: true, attributes: true,
             attributeFilter: ['hidden','aria-hidden','class','style'] });
-          this.htmlObservers.set(doc, { observer, root });
+          this.htmlObservers.set(doc, { observer, root, unwatch: watchFollowing(p, root, s.sourceKind) });
         }
       }
     } else {

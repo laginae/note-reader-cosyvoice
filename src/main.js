@@ -44,6 +44,7 @@ const { getSpeechParts, planSpeechParts, adjacentSpeechPart, getSpeechPartTiming
 const { preparationStatusText } = require('./preparation-status');
 const { listeningMode, planListeningBuffer } = require('./listening-buffer');
 const { BufferingHint, renderBufferingHint } = require('./buffering-hint');
+const { kindFor, toggleFollowing, updateFollowButton } = require('./reading-follow');
 const { locateReading } = require('./locate-reading');
 const { MIMO_ENDPOINT, MIMO_DEFAULTS, MIMO_VOICES, MIMO_MAX_CHUNK_CHARS, normalizeMimoSettings, buildMimoRequestBody, decodeMimoAudio } = require('./mimo-tts');
 const { BYOK_DEFAULTS, normalizeByokSettings, getByokProfile, getByokConfigurationError, assertByokAuthorized, buildByokRequest, safeByokRequestError } = require('./byok-tts');
@@ -1658,6 +1659,7 @@ function createDefaultSettings() {
     webReadingHighlight: true,
     webReadingFollow: false,
     readingFollow: false,
+    pdfReadingFollow: false,
     pdfBookmarksOverwrite: false,
     pdfFootnoteMode: 'body',
     pdfSkipHeaders: true,
@@ -7117,7 +7119,11 @@ class CosyVoiceReaderView extends ItemView {
     const progressWrap = root.createDiv({ cls: 'note-reader-cosyvoice-progress-wrap' });
     const progressHeading = progressWrap.createDiv({ cls: 'note-reader-progress-heading' });
     progressHeading.createDiv({ cls: 'note-reader-cosyvoice-section-label', text: this.translate('Overall progress') });
-    this.createIconButton(progressHeading, 'locate-fixed', this.plugin.settings.settingsLanguage === 'chinese'
+    const followActions = progressHeading.createDiv({ cls: 'note-reader-follow-actions' });
+    const follow = this.createIconButton(followActions, 'move-vertical', 'Auto-follow',
+      () => toggleFollowing(this.plugin, kindFor(this.plugin)), false, { triggerOnPointerDown: true });
+    if (follow) updateFollowButton(follow, this.plugin, kindFor(this.plugin));
+    this.createIconButton(followActions, 'locate-fixed', this.plugin.settings.settingsLanguage === 'chinese'
       ? '定位正在朗读的位置' : 'Locate current reading', () => this.plugin.locateCurrentReading(),
       !this.plugin.activeSession || this.plugin.activeSession.kind === 'audio-export', { triggerOnPointerDown: true });
     const progressControls = progressWrap.createDiv({ cls: 'note-reader-cosyvoice-progress-controls' });
@@ -8298,7 +8304,20 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
         : 'Off by default. On segment changes, scroll an off-screen highlight into view without moving keyboard focus.')
       .addToggle(toggle => toggle.setValue(this.plugin.settings.webReadingFollow === true).onChange(async value => {
         this.plugin.settings.webReadingFollow = value;
-        await this.plugin.saveSettings(); this.plugin.renderDocumentViews();
+        this.plugin.readingFollowPaused?.delete('webReadingFollow');
+        this.plugin.followRevision = (this.plugin.followRevision || 0) + 1;
+        await this.plugin.saveSettings(); this.plugin.renderReaderViews();
+      }));
+    new Setting(containerEl)
+      .setName(zhReading ? 'PDF 跟随滚动' : 'Follow PDF reading')
+      .setDesc(zhReading ? '默认关闭。可靠匹配当前音频后才滚动，不改变缩放。手动浏览暂停跟随，可用播放控制中的自动跟随按钮恢复；需开启正文高亮。'
+        : 'Off by default. Scroll only after a reliable match, without changing zoom. Manual browsing pauses following; use Auto-follow in playback controls to resume. Requires text highlighting.')
+      .addToggle(toggle => toggle.setValue(this.plugin.settings.pdfReadingFollow === true).onChange(async value => {
+        this.plugin.settings.pdfReadingFollow = value;
+        this.plugin.readingFollowPaused?.delete('pdfReadingFollow');
+        this.plugin.followRevision = (this.plugin.followRevision || 0) + 1;
+        this.plugin.pdfHighlights?.update();
+        await this.plugin.saveSettings(); this.plugin.renderReaderViews();
       }));
     new Setting(containerEl)
       .setName(zhReading ? '正文跟随滚动' : 'Follow reading text')
@@ -8306,10 +8325,11 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
         : 'Off by default. Scrolls only when the highlight leaves the viewport. Manual scrolling suspends following without moving keyboard focus.')
       .addToggle(toggle => toggle.setValue(this.plugin.settings.readingFollow === true).onChange(async value => {
         this.plugin.settings.readingFollow = value;
+        this.plugin.readingFollowPaused?.delete('readingFollow');
         await this.plugin.saveSettings();
         for (const view of this.plugin.documentViews || []) { view.manualScroll = false; view.lastHighlight = ''; }
         this.plugin.noteHighlights?.resetFollowing();
-        this.plugin.renderDocumentViews();
+        this.plugin.renderReaderViews();
       }));
     new Setting(containerEl)
       .setName(zhReading ? '专注朗读与系统讲述人' : 'Focus reading and system Narrator')

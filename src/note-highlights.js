@@ -2,15 +2,19 @@
 
 const { compact, currentSourceRanges, sourceLineStarts, markdownReadingHighlight } = require('./markdown-source');
 const { extractHtmlTreeText } = require('./html-text');
+const { following, pauseFollowing } = require('./reading-follow');
+const { manualScrollIntent } = require('./follow-input');
+const { visibleReadingArea, scrollDecision, followElements } = require('./follow-viewport');
 
 function installNoteHighlights(plugin) {
   const { editorInfoField, MarkdownRenderChild, Notice } = require('obsidian');
-  const { StateEffect } = require('@codemirror/state');
+  const { StateEffect, EditorSelection } = require('@codemirror/state');
   const { Decoration, EditorView, ViewPlugin } = require('@codemirror/view');
   const refresh = StateEffect.define(), editors = new Set(), previews = new Set();
   let disposed = false;
   let cachedSource, cachedSession, cachedKey, cachedData;
   const warnedSessions = new WeakSet();
+  const followedPreviews = new WeakMap();
   function changed(data, path, text) {
     const session = plugin.activeSession;
     if (!data || !session || path !== data.source.filePath || typeof text !== 'string' || text === data.source.text
@@ -43,8 +47,24 @@ function installNoteHighlights(plugin) {
       if (disposed) return;
       for (const editor of editors) editor.refresh();
       for (const preview of previews) preview.refresh();
+      if (following(plugin, 'markdown')) {
+        const groups = new Map();
+        for (const preview of previews) {
+          if (preview.manualScroll) continue;
+          const scroller = preview.containerEl.closest('.markdown-preview-view');
+          if (!scroller) continue;
+          if (!groups.has(scroller)) groups.set(scroller, []);
+          groups.get(scroller).push(...preview.marked);
+        }
+        for (const [scroller, nodes] of groups) {
+          const old = followedPreviews.get(scroller);
+          if (!old || old.length !== nodes.length || old.some((node, i) => node !== nodes[i])) {
+            followElements(scroller, nodes); followedPreviews.set(scroller, nodes);
+          }
+        }
+      }
     },
-    resetFollowing() { for (const target of [...editors, ...previews]) target.manualScroll = false; },
+    resetFollowing() { for (const target of [...editors, ...previews]) { target.manualScroll = false; target.key = ''; const scroller = target.containerEl?.closest('.markdown-preview-view'); if (scroller) followedPreviews.delete(scroller); } },
     dispose() {
       disposed = true;
       for (const editor of editors) editor.view.dispatch({ effects: [refresh.of(null)] });
@@ -65,12 +85,6 @@ function installNoteHighlights(plugin) {
     cachedSource = source; cachedSession = session; cachedKey = key;
     return cachedData = { source, ranges: currentSourceRanges(source, selected) };
   }
-  function follow(target, node) {
-    if (!node || target.manualScroll || !plugin.settings.readingFollow) return;
-    const scroller = node.closest('.markdown-preview-view') || node.parentElement;
-    const bounds = node.getBoundingClientRect(), visible = scroller.getBoundingClientRect();
-    if (bounds.top < visible.top || bounds.bottom > visible.bottom) node.scrollIntoView({ block: 'center', behavior: 'auto' });
-  }
   const extension = ViewPlugin.fromClass(class {
     constructor(view) {
       this.view = view; this.decorations = Decoration.none; this.key = ''; editors.add(this); this.rebuild();
@@ -89,10 +103,17 @@ function installNoteHighlights(plugin) {
       if (this.key === key) return;
       this.key = key;
       const effects = [refresh.of(ranges)];
-      if (ranges.length && plugin.settings.readingFollow && !this.manualScroll) {
-        const bounds = this.view.coordsAtPos?.(ranges[0].from), visible = this.view.scrollDOM?.getBoundingClientRect();
-        if (bounds && visible && (bounds.top < visible.top || bounds.bottom > visible.bottom))
-          effects.push(EditorView.scrollIntoView(ranges[0].from, { y: 'center' }));
+      if (ranges.length && following(plugin, 'markdown') && !this.manualScroll) {
+        const from = Math.min(...ranges.map(range => range.from)), to = Math.max(...ranges.map(range => range.to));
+        const first = this.view.coordsAtPos?.(from), last = this.view.coordsAtPos?.(Math.max(from, to - 1));
+        const visible = visibleReadingArea(this.view.scrollDOM);
+        const decision = first && (!last && visible && Math.abs(first.top - visible.top) > 2
+          ? { tall: true } : scrollDecision({ top: first.top, bottom: last?.bottom ?? first.bottom }, visible));
+        if (decision) {
+          const margin = Math.max(16, (visible?.top || 0) - (this.view.scrollDOM?.getBoundingClientRect().top || 0));
+          effects.push(EditorView.scrollIntoView(decision.tall || !last ? from : EditorSelection.range(from, to),
+            { y: 'start', yMargin: margin }));
+        }
       }
       this.view.dispatch({ effects });
     }
@@ -125,9 +146,9 @@ function installNoteHighlights(plugin) {
   }, {
     decorations: value => value.decorations,
     eventHandlers: {
-      wheel() { this.manualScroll = true; }, touchmove() { this.manualScroll = true; },
-      pointerdown() { this.manualScroll = true; },
-      keydown(event) { if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End'].includes(event.key)) this.manualScroll = true; },
+      wheel() { this.manualScroll = true; pauseFollowing(plugin, 'markdown'); }, touchmove() { this.manualScroll = true; pauseFollowing(plugin, 'markdown'); },
+      pointerdown(event) { if (manualScrollIntent(event)) { this.manualScroll = true; pauseFollowing(plugin, 'markdown'); } },
+      keydown(event) { if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End'].includes(event.key)) { this.manualScroll = true; pauseFollowing(plugin, 'markdown'); } },
     },
   });
   plugin.registerEditorExtension(extension);
@@ -139,7 +160,7 @@ function installNoteHighlights(plugin) {
         this.marked = new Set();
         previews.add(this);
         const scroller = element.closest('.markdown-preview-view');
-        for (const event of ['wheel', 'touchmove', 'pointerdown']) if (scroller) this.registerDomEvent(scroller, event, () => { this.manualScroll = true; }, { passive: true });
+        for (const event of ['wheel', 'touchmove', 'pointerdown']) if (scroller) this.registerDomEvent(scroller, event, e => { if (manualScrollIntent(e)) { this.manualScroll = true; pauseFollowing(plugin, 'markdown'); } }, { passive: true });
         this.refresh();
       }
       clear() {
@@ -178,14 +199,11 @@ function installNoteHighlights(plugin) {
             }
           }
         }
-        let firstNew;
         for (const node of this.marked) if (!nodes.has(node)) node.classList.remove('note-reader-note-segment');
         for (const node of nodes) {
-          if (!this.marked.has(node)) firstNew ||= node;
           node.classList.add('note-reader-note-segment');
         }
         this.marked = nodes;
-        if (firstNew) follow(this, firstNew);
       }
       onunload() { this.clear(); previews.delete(this); }
     }

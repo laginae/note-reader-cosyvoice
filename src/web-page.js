@@ -81,13 +81,18 @@ async function updateWebHighlight(view, options) {
   }
   if(!GUEST_SOURCE||!view.webview?.executeJavaScript)return false;
   // Keep the guest module alive so cleanup and mutation observers share state.
-  const code=`(function(){window.__noteReaderHighlightModule ||= (function(){${GUEST_SOURCE}\nreturn NoteReaderWebDocument;})(); return window.__noteReaderHighlightModule.highlightDocument(document,${JSON.stringify(options)});})()`;
+  const code=`(function(){window.__noteReaderHighlightModule ||= (function(){${GUEST_SOURCE}\nreturn NoteReaderWebDocument;})(); const m=window.__noteReaderHighlightModule; const matched=m.highlightDocument(document,${JSON.stringify(options)}); return ${options.reportFollowState ? '{matched,paused:m.isDocumentFollowingPaused?.(document)===true}' : 'matched'};})()`;
   let timer;
   try {
-    return await Promise.race([
+    const result = await Promise.race([
       view.webview.executeJavaScript(code),
       new Promise(resolve => { timer = setTimeout(() => resolve(false), WEB_TIMEOUT_MS); }),
     ]);
+    if (options.reportFollowState && result && typeof result === 'object') {
+      if (result.paused) options.onFollowPaused?.();
+      return result.matched;
+    }
+    return result;
   } finally { clearTimeout(timer); }
 }
 module.exports = { WEB_VIEW_TYPE, captureWebPage, getWebPageUrl, isWebPageView, validateWebSnapshot, updateWebHighlight };

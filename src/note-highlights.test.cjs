@@ -22,7 +22,7 @@ function fixture(options = {}) {
   const obsidian = { editorInfoField: infoField, Notice: class { constructor(message) { notices.push(message); } }, MarkdownRenderChild: class {
     constructor(node) { this.containerEl = node; } registerDomEvent(node, event, handler) { node.addEventListener(event, handler); }
   } };
-  const state = { StateEffect: { define() {
+  const state = { EditorSelection: { range: (from, to) => ({ from, to }) }, StateEffect: { define() {
     const type = { of: value => ({ value, is: other => other === type }) }; return type;
   } } };
   const view = { ViewPlugin: { fromClass: (Class, spec) => ({ Class, spec }) },
@@ -172,8 +172,24 @@ test('editor following does not scroll a visible target or override manual scrol
   f.controller.update(); assert.deepEqual(f.scrolls, []);
   f.plugin.getCurrentReadingHighlight = () => ({ index: 0 });
   f.editorView.coordsAtPos = () => ({ top: 200, bottom: 220 });
-  f.controller.update(); assert.deepEqual(f.scrolls, [0]);
+  f.controller.update(); assert.equal(f.scrolls.length, 1); assert.equal(f.scrolls[0].from, 0);
   f.editor.manualScroll = true; f.plugin.getCurrentReadingHighlight = () => ({ index: 1 });
-  f.controller.update(); assert.deepEqual(f.scrolls, [0]);
+  f.controller.update(); assert.equal(f.scrolls.length, 1);
+  f.controller.dispose(); f.dom.window.close();
+});
+
+test('editor follows the end as well as the start, and aligns overlong ranges at their beginning', () => {
+  const f = fixture(); f.plugin.settings.readingFollow = true;
+  f.editorView.scrollDOM = { getBoundingClientRect: () => ({ top: 0, bottom: 200 }) };
+  f.editorView.coordsAtPos = pos => pos < 25 ? { top: 140, bottom: 160 } : { top: 220, bottom: 240 };
+  f.controller.update(); assert.equal(f.scrolls.length, 1);
+  assert.deepEqual(f.scrolls[0], { from: 18, to: 35 });
+  f.controller.update(); assert.equal(f.scrolls.length, 1);
+  f.controller.resetFollowing();
+  f.editorView.coordsAtPos = pos => pos < 25 ? { top: 140, bottom: 160 } : { top: 500, bottom: 520 };
+  f.controller.update(); assert.equal(f.scrolls[1], 18);
+  f.controller.resetFollowing();
+  f.editorView.coordsAtPos = pos => pos < 25 ? { top: 140, bottom: 160 } : null;
+  f.controller.update(); assert.equal(f.scrolls[2], 18);
   f.controller.dispose(); f.dom.window.close();
 });

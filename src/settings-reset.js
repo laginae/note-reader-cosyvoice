@@ -6,7 +6,7 @@ const PAGE_KEYS = {
     'mimoConsent', 'mimoVoice', 'mimoChunkLimit', 'openRouterContext'],
   playback: ['readingContextMenu', 'readingFloatingToolbar', 'readingFloatingAction', 'speed', 'playbackSpeed', 'playbackVolume', 'chunkLimits', 'onlineChunkLimits', 'onlinePrefetchChunks',
     'continuousListening', 'bufferingHints', 'smartQuickStart', 'rapidQuickStart', 'highlightColor', 'highlightStrength', 'noteHighlightBorder', 'readerOpenMode', 'readingHighlight', 'readingFollow',
-    'webReadingHighlight', 'webReadingFollow', 'copilotChatEnabled', 'copilotChatScope', 'copilotIncludeQuestions'],
+    'webReadingHighlight', 'webReadingFollow', 'pdfReadingFollow', 'copilotChatEnabled', 'copilotChatScope', 'copilotIncludeQuestions'],
   academic: ['stripMarkdown', 'academicMathMode', 'academicMathStyle', 'academicTableMode', 'academicSkipNotice',
     'mathReadingLanguage', 'pdfBookmarksOverwrite', 'pdfFootnoteMode', 'pdfSkipHeaders', 'pdfIncludeGlossary', 'speechTermsEnabled', 'speechTerms'],
   storage: ['audioExportLocation', 'audioExportFolder', 'cleanupCache', 'readingHistoryMode', 'rememberReadingPosition'],

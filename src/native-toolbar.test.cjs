@@ -98,7 +98,8 @@ test('locate toolbar action is available for reading but not export and follows 
   let count = 0; plugin.locateCurrentReading = () => count++;
   assert.equal(toolbar.locate.disabled, true);
   assert.equal(toolbar.speed.nextElementSibling, toolbar.locate);
-  assert.equal(toolbar.locate.nextElementSibling, toolbar.outlineButton);
+  assert.equal(toolbar.locate.nextElementSibling, toolbar.follow);
+  assert.equal(toolbar.follow.nextElementSibling, toolbar.outlineButton);
   plugin.activeSession = { chunks: ['Public text.'] }; toolbar.render();
   toolbar.locate.click(); assert.equal(count, 1);
   plugin.settings.settingsLanguage = 'chinese'; toolbar.render();

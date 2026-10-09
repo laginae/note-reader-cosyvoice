@@ -866,6 +866,9 @@
 .note-reader-buffering-hint > span { flex: 1 1 240px; overflow-wrap: anywhere; }
 .note-reader-buffering-hint > button { height: auto; min-height: 28px; white-space: normal; box-shadow: none; }
 .note-reader-buffering-hint svg { width: 16px; height: 16px; }
+.note-reader-native-controls button[aria-pressed="true"], .note-reader-progress-heading button[aria-pressed="true"] { color: var(--interactive-accent); background: var(--background-modifier-hover); }
+.note-reader-native-controls button.is-paused, .note-reader-progress-heading button.is-paused { color: var(--text-muted); }
+.note-reader-follow-actions { display: flex; align-items: center; gap: 4px; margin-left: auto; flex: 0 0 auto; }
 @media (max-width: 600px) {
   .reader-setup-actions button { min-height: 44px; }
   .note-reader-settings-panel .setting-item { flex-wrap: wrap; gap: 10px; }

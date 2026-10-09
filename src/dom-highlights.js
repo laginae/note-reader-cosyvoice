@@ -1,7 +1,22 @@
 'use strict';
 const { extractHtmlTreeText } = require('./html-text');
+const { manualScrollIntent } = require('./follow-input');
 const NAME = 'note-reader-speech';
 const states = new WeakMap();
+const followStates = new WeakMap();
+function documentFollowState(doc, options) {
+  let state = followStates.get(doc);
+  if (!state) {
+    state = { paused: false }; followStates.set(doc, state);
+    const pause = event => {
+      if (manualScrollIntent(event)) state.paused = true;
+    };
+    for (const name of ['wheel','touchmove','pointerdown','keydown']) doc.addEventListener(name, pause, { passive: true });
+  }
+  if (state.revision !== options.followRevision) { state.revision = options.followRevision; state.paused = false; }
+  return state;
+}
+function isDocumentFollowingPaused(doc) { return followStates.get(doc)?.paused === true; }
 const documentIndexes = new WeakMap();
 const compact = text => String(text || '').replace(/[\s\u00ad]/g, '');
 function documentIndex(root, options, win) {
@@ -212,8 +227,9 @@ function highlightDocument(doc, options = {}, root = doc.body) {
   observer.observe(root,{subtree:true,childList:true,characterData:true,attributes:true,attributeFilter:['hidden','aria-hidden','class','style']});
   states.set(doc,{style,observer,highlight,text:options.text,nodes:included.map(item => item.node)});
   if(options.follow) {
+    const follow = documentFollowState(doc, options);
     const rect=ranges[0].getBoundingClientRect();
-    if(rect.top<0||rect.bottom>win.innerHeight) included[0].node.parentElement.scrollIntoView({block:'center',behavior:'auto'});
+    if(!follow.paused && (rect.top<0||rect.bottom>win.innerHeight)) included[0].node.parentElement.scrollIntoView({block:'center',behavior:'auto'});
   }
   return true;
 }
@@ -224,4 +240,4 @@ function currentDocumentHighlightElement(doc, text) {
   const node = range?.startContainer;
   return node?.nodeType === 1 ? node : node?.parentElement || null;
 }
-module.exports={highlightDocument,clearDocumentHighlight,isDocumentHighlightCurrent,currentDocumentHighlightElement};
+module.exports={highlightDocument,clearDocumentHighlight,isDocumentHighlightCurrent,currentDocumentHighlightElement,isDocumentFollowingPaused};

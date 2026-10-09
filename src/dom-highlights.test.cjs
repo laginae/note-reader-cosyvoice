@@ -6,6 +6,24 @@ const { HtmlReadingHighlights } = require('./html-highlights');
 const { extractHtmlText } = require('./html-text');
 const { createReadingAnchor, sliceTextFromReadingPosition, sliceOriginalTextFromReadingPosition } = require('./reading-position');
 
+test('HTML and guest following pauses on manual browsing until an explicit resume revision', () => {
+  const { dom, doc } = fixture();
+  doc.body.innerHTML = '<p>Public first sentence.</p><p>Public second sentence.</p>';
+  let calls = 0;
+  dom.window.Range.prototype.getBoundingClientRect = () => ({ top: -100, bottom: -80 });
+  doc.querySelectorAll('p').forEach(p => p.scrollIntoView = () => calls++);
+  const options = { text: 'Public first sentence.', follow: true, followRevision: 0 };
+  assert.equal(highlightDocument(doc, options), true); assert.equal(calls, 1);
+  const button = doc.createElement('button'); doc.body.append(button);
+  button.dispatchEvent(new dom.window.MouseEvent('pointerdown', { bubbles: true }));
+  doc.querySelector('p').dispatchEvent(new dom.window.MouseEvent('pointerdown', { bubbles: true }));
+  assert.equal(require('./dom-highlights').isDocumentFollowingPaused(doc), false);
+  doc.dispatchEvent(new dom.window.Event('wheel'));
+  assert.equal(highlightDocument(doc, { ...options, text: 'Public second sentence.' }), true); assert.equal(calls, 1);
+  highlightDocument(doc, { ...options, followRevision: 1 }); assert.equal(calls, 2);
+  clearDocumentHighlight(doc); dom.window.close();
+});
+
 test('resumed HTML with full-width punctuation keeps a matchable DOM stream', () => {
   const { dom, doc } = fixture();
   doc.body.innerHTML = '<p>Earlier paragraph.</p><p>数据说明：容量（２０％），<em>持续３０分钟</em>；随后继续。</p><p>下一段正文。</p>';

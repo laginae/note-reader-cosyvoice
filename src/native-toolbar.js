@@ -10,6 +10,7 @@ const { getHtmlReaderDocument } = require('./html-text');
 const { captureHtmlOutline, htmlSectionText } = require('./html-outline');
 const { preparationStatusText } = require('./preparation-status');
 const { renderBufferingHint } = require('./buffering-hint');
+const { kindFor, toggleFollowing, updateFollowButton } = require('./reading-follow');
 
 function node(parent, tag, className = '') {
   const element = parent.ownerDocument.createElement(tag);
@@ -84,6 +85,7 @@ class NativeReaderToolbar {
     }
     this.speed.addEventListener('change', () => this.action(() => plugin.setPlaybackSpeed(Number(this.speed.value))));
     this.locate = this.button(controls, 'locate-fixed', ['Locate current reading', '定位正在朗读的位置'], () => plugin.locateCurrentReading());
+    this.follow = this.button(controls, 'move-vertical', ['Auto-follow', '自动跟随'], () => toggleFollowing(plugin, kindFor(plugin, view)));
     this.outlineButton = this.button(controls, 'list-tree', ['Outline', '大纲'], () => {
       if (this.isPdf) { plugin.openPdfOutline(view.file); return; }
       this.outline.hidden = !this.outline.hidden; this.outlineButton.setAttribute('aria-expanded', String(!this.outline.hidden));
@@ -250,6 +252,7 @@ class NativeReaderToolbar {
     this.play.disabled = Boolean(session && !state.canPause);
     this.stop.disabled = !state.canStop || exporting;
     this.locate.disabled = !session || exporting;
+    updateFollowButton(this.follow, this.plugin, kindFor(this.plugin, this.view));
     this.previous.disabled = !state.canPreviousChunk || exporting;
     this.next.disabled = !state.canNextChunk || exporting;
     this.back.disabled = this.forward.disabled = (!state.canSeek && !session?.seekTarget) || exporting;

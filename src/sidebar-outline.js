@@ -27,6 +27,7 @@ class SidebarOutline {
     this.expand = this.button(header, 'unfold-vertical', () => this.setExpanded(true));
     this.collapse = this.button(header, 'fold-vertical', () => this.setExpanded(false));
     this.follow = this.button(header, 'locate-fixed', () => {
+      if (!this.state) return;
       if (!this.state.manual || !this.state.follow) this.state.follow = !this.state.follow;
       this.state.manual = false; this.updateCurrent(true);
     });
@@ -38,7 +39,7 @@ class SidebarOutline {
     this.list = this.el(this.root, 'div', 'note-reader-outline-list');
     this.list.addEventListener('scroll', () => { if (this.state) this.state.scroll = this.list.scrollTop; });
     for (const event of ['wheel', 'touchstart', 'pointerdown', 'keydown']) this.list.addEventListener(event, () => {
-      if (this.state) this.state.manual = true;
+      if (this.state) { this.state.manual = true; this.updateFollowControl(); }
     }, { passive: true });
   }
   el(parent, tag, cls) {
@@ -48,6 +49,19 @@ class SidebarOutline {
   t(zh, en) { return this.plugin.settings.settingsLanguage === 'chinese' ? zh : en; }
   // Obsidian supplies the tooltip from aria-label; title would add a second native tooltip.
   label(el, label) { el.setAttribute('aria-label', label); }
+  updateFollowControl() {
+    const enabled = this.state?.follow === true;
+    const manual = enabled && this.state.manual;
+    const searching = enabled && Boolean(this.search.value);
+    this.follow.setAttribute('aria-pressed', String(enabled && !manual && !searching));
+    this.label(this.follow, !enabled ? this.t('大纲自动跟随：已关闭', 'Outline auto-follow: off')
+      : searching && manual ? this.t('大纲跟随已暂停：清空搜索并点击恢复', 'Outline following paused: clear search and click to resume')
+        : searching ? this.t('大纲跟随已暂停：清空搜索后恢复', 'Outline following paused: clear search to resume')
+        : manual ? this.t('大纲跟随已暂停：点击恢复', 'Outline following paused: click to resume')
+          : this.t('大纲自动跟随：已开启', 'Outline auto-follow: on'));
+    this.follow.setAttribute('aria-description', this.t('仅滚动大纲目录，不滚动正文或改变播放位置。',
+      'Scrolls the outline only; does not scroll the document or change playback.'));
+  }
   button(parent, icon, action) {
     const button = this.el(parent, 'button', 'clickable-icon'); button.type = 'button'; setIcon(button, icon);
     button.addEventListener('click', event => void this.plugin.runUserAction('Outline', () => action(event)));
@@ -73,7 +87,7 @@ class SidebarOutline {
     this.summary.textContent = this.t('文档大纲', 'Document outline');
     this.label(this.enlarge, this.t('大纲专注视图', 'Outline focus view'));
     this.label(this.expand, this.t('展开全部', 'Expand all')); this.label(this.collapse, this.t('折叠全部', 'Collapse all'));
-    this.label(this.follow, this.t('跟随朗读位置', 'Follow reading')); this.label(this.pdfButton, this.t('编辑 PDF 书签', 'Edit PDF bookmarks'));
+    this.label(this.pdfButton, this.t('编辑 PDF 书签', 'Edit PDF bookmarks'));
     this.label(this.reload, this.t('刷新大纲', 'Refresh outline'));
     this.pdfButton.hidden = file?.extension !== 'pdf';
     this.search.placeholder = this.t('搜索标题', 'Search headings'); this.label(this.search, this.search.placeholder);
@@ -209,8 +223,7 @@ class SidebarOutline {
       }
     }
     const changed = current !== this.current; this.current = current;
-    this.follow.setAttribute('aria-pressed', String(this.state.follow));
-    this.label(this.follow, this.state.manual && this.state.follow ? this.t('恢复跟随朗读位置', 'Resume following reading') : this.t('跟随朗读位置', 'Follow reading'));
+    this.updateFollowControl();
     for (const [index, item] of this.rows || []) {
       item.row.classList.toggle('is-current', index === current);
       if (index === current) item.title.setAttribute('aria-current', 'location'); else item.title.removeAttribute('aria-current');
