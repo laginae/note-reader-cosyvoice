@@ -465,9 +465,24 @@ var require_preparation_pool = __commonJS({
         this.active = /* @__PURE__ */ new Set();
         this.bytes = 0;
         this.paused = false;
+        this.backgroundFailures = /* @__PURE__ */ new Map();
+        this.cooldownUntil = 0;
       }
       state(key) {
         return this.entries.get(key)?.state;
+      }
+      throttle(milliseconds = 5e3) {
+        this.limit = 1;
+        const delay = Number.isFinite(milliseconds) && milliseconds > 0 ? milliseconds : 5e3;
+        this.cooldownUntil = Math.max(this.cooldownUntil, this.timings.now() + delay);
+        this.timings.count("rateLimited");
+        this.drain();
+      }
+      retainBackground(keys) {
+        const keep = new Set(keys);
+        for (const entry of this.entries.values()) {
+          if (entry.background && entry.state === "queued" && !keep.has(entry.key)) this.drop(entry);
+        }
       }
       select(key) {
         for (const entry of this.entries.values()) {
@@ -492,10 +507,16 @@ var require_preparation_pool = __commonJS({
         }
       }
       clear() {
+        clearTimeout(this.cooldownTimer);
+        this.cooldownTimer = null;
+        this.cooldownUntil = 0;
+        this.backgroundFailures.clear();
         for (const entry of this.entries.values()) this.drop(entry);
         this.bytes = 0;
       }
       get(key, factory, { background = false, valid = () => true } = {}) {
+        if (background && this.backgroundFailures.has(key)) return this.backgroundFailures.get(key);
+        if (!background) this.backgroundFailures.delete(key);
         const old = this.entries.get(key);
         if (old) {
           this.timings.count(old.state === "ready" ? "cacheHit" : "inflightHit");
@@ -533,6 +554,17 @@ var require_preparation_pool = __commonJS({
       }
       drain() {
         if (this.paused) return;
+        const wait = this.cooldownUntil - this.timings.now();
+        if (wait > 0) {
+          if (!this.cooldownTimer) {
+            this.cooldownTimer = setTimeout(() => {
+              this.cooldownTimer = null;
+              this.drain();
+            }, Math.min(wait, 6e4));
+            this.cooldownTimer.unref?.();
+          }
+          return;
+        }
         while (this.active.size < this.limit) {
           const queued = [...this.entries.values()].filter((entry2) => entry2.state === "queued");
           const entry = queued.find((entry2) => !entry2.background) || queued.find((entry2) => ![...this.active].some((active) => active.background));
@@ -560,6 +592,10 @@ var require_preparation_pool = __commonJS({
             entry.resolve(value);
           }, (error) => {
             if (this.entries.get(entry.key) === entry) this.entries.delete(entry.key);
+            if (entry.background && error?.name !== "AbortError" && entry.valid()) {
+              this.backgroundFailures.set(entry.key, entry.promise);
+              while (this.backgroundFailures.size > 128) this.backgroundFailures.delete(this.backgroundFailures.keys().next().value);
+            }
             this.timings.count(error?.name === "AbortError" ? "cancelled" : "failed");
             entry.reject(error);
           }).finally(() => {
@@ -703,6 +739,7 @@ var require_settings_reset = __commonJS({
         "chunkLimits",
         "onlineChunkLimits",
         "onlinePrefetchChunks",
+        "continuousListening",
         "smartQuickStart",
         "rapidQuickStart",
         "highlightColor",
@@ -10554,7 +10591,8 @@ var require_preparation_status = __commonJS({
       const labels = {
         synthesizing: ["Synthesizing target segment", "\u6B63\u5728\u5408\u6210\u76EE\u6807\u6BB5"],
         waiting: ["Waiting for existing synthesis (no duplicate request)", "\u7B49\u5F85\u5DF2\u6709\u5408\u6210\u5B8C\u6210\uFF08\u4E0D\u91CD\u590D\u8BF7\u6C42\uFF09"],
-        loading: ["Loading audio", "\u6B63\u5728\u52A0\u8F7D\u97F3\u9891"]
+        loading: ["Loading audio", "\u6B63\u5728\u52A0\u8F7D\u97F3\u9891"],
+        "rate-limited": ["Provider rate limit; reducing concurrency and waiting", "\u63A5\u53E3\u9650\u6D41\uFF0C\u5DF2\u964D\u4F4E\u5E76\u53D1\u5E76\u7B49\u5F85"]
       };
       const label = labels[state.preparationStatus];
       return label ? translate(language, ...label) : "";
@@ -11510,6 +11548,88 @@ var require_semantic_chunker2 = __commonJS({
   }
 });
 
+// src/listening-buffer.js
+var require_listening_buffer = __commonJS({
+  "src/listening-buffer.js"(exports2, module2) {
+    "use strict";
+    var { estimateTextSeconds } = require_playback_estimate();
+    var MAX_FUTURE_PARTS = 3;
+    var MAX_FUTURE_CHARS = 900;
+    function listeningMode2(settings = {}) {
+      if (Number(settings.onlinePrefetchChunks) === 0) return "on-demand";
+      return settings.continuousListening === true ? "continuous" : "balanced";
+    }
+    function splitContinuousParts(text, target = 220) {
+      const value = String(text || "").trim();
+      if (!value) return [];
+      const sentences = typeof Intl.Segmenter === "function" ? [...new Intl.Segmenter(void 0, { granularity: "sentence" }).segment(value)].map((s) => s.segment) : value.match(/[^。！？!?]+[。！？!?]*|[。！？!?]+/g) || [value];
+      const parts = [];
+      let pending = "";
+      for (const sentence of sentences) {
+        if (pending && (pending + sentence).length > target) {
+          parts.push(pending.trim());
+          pending = "";
+        }
+        pending += sentence;
+      }
+      if (pending.trim()) parts.push(pending.trim());
+      return parts;
+    }
+    function targetBufferSeconds(latencies = []) {
+      const recent = latencies.filter((n) => Number.isFinite(n) && n >= 0).slice(-16).sort((a, b) => a - b);
+      const p90 = recent.length ? recent[Math.ceil(recent.length * 0.9) - 1] / 1e3 : 8;
+      return Math.max(12, Math.min(35, p90 * 1.75 + 2));
+    }
+    function partSeconds(session, index, part, text, speed = 1) {
+      const measured = session.partDurations?.[`${index}:${part}`];
+      return measured > 0 ? measured : Math.max(0.1, estimateTextSeconds(text, session.synthesisSpeeds?.[index] || speed));
+    }
+    function planListeningBuffer2({
+      session,
+      adjacent,
+      parts,
+      playbackRate = 1,
+      synthesisSpeed = 1,
+      currentTime = 0,
+      currentDuration,
+      latencies = []
+    }) {
+      if (!session.prefetchChunks || session.kind === "audio-export") return [];
+      let cursor = { index: session.prefetchBaseIndex, part: session.currentPartIndex || 0 };
+      if (!Number.isInteger(cursor.index)) return [];
+      if (session.bufferMode !== "continuous") {
+        const next = adjacent(session, cursor.index, cursor.part, 1);
+        return next ? [next] : [];
+      }
+      const rate = Number.isFinite(playbackRate) && playbackRate > 0 ? playbackRate : 1;
+      const currentText = parts(session, cursor.index)[cursor.part] || "";
+      let coverage = Math.max(0, (currentDuration > 0 ? currentDuration : partSeconds(session, cursor.index, cursor.part, currentText, synthesisSpeed)) - currentTime) / rate;
+      const target = targetBufferSeconds(latencies), result = [];
+      let chars = 0;
+      for (let i = 0; i < MAX_FUTURE_PARTS; i++) {
+        if (i > 0 && coverage >= target) break;
+        cursor = adjacent(session, cursor.index, cursor.part, 1);
+        if (!cursor) break;
+        const text = parts(session, cursor.index)[cursor.part] || "";
+        const speech = session.audioSpeechParts?.[cursor.index]?.[cursor.part] || text;
+        if (chars + speech.length > MAX_FUTURE_CHARS) break;
+        chars += speech.length;
+        result.push(cursor);
+        coverage += partSeconds(session, cursor.index, cursor.part, text, synthesisSpeed) / rate;
+      }
+      return result;
+    }
+    module2.exports = {
+      listeningMode: listeningMode2,
+      splitContinuousParts,
+      targetBufferSeconds,
+      planListeningBuffer: planListeningBuffer2,
+      MAX_FUTURE_PARTS,
+      MAX_FUTURE_CHARS
+    };
+  }
+});
+
 // src/speech-parts.js
 var require_speech_parts = __commonJS({
   "src/speech-parts.js"(exports2, module2) {
@@ -11517,11 +11637,13 @@ var require_speech_parts = __commonJS({
     var { splitOpeningAudioParts } = require_semantic_chunker2();
     var { estimateTextSeconds } = require_playback_estimate();
     var { applyTerms: applyTerms2, fitSpeechParts: fitSpeechParts2 } = require_speech_options();
+    var { splitContinuousParts } = require_listening_buffer();
     function makeParts(session, index, quick) {
       const text = session.chunks[index], settings = session.synthesisSettings || {};
       const changed = applyTerms2(text, settings) !== text;
       const opening = quick && !changed ? splitOpeningAudioParts(text, session.rapidQuickStart === true) : [text];
-      const parts = opening.flatMap((value) => fitSpeechParts2(value, settings, session.speechPartLimit || 1e5));
+      const grouped = session.bufferMode === "continuous" && session.kind !== "audio-export" ? opening.flatMap((value) => splitContinuousParts(value)) : opening;
+      const parts = grouped.flatMap((value) => fitSpeechParts2(value, settings, session.speechPartLimit || 1e5));
       session.audioSpeechParts || (session.audioSpeechParts = {});
       session.audioSpeechParts[index] = parts.map((part) => part.text);
       return parts.map((part) => part.source);
@@ -36202,6 +36324,7 @@ var { PdfOutlineModal, addPdfOutlineSettings } = require_pdf_outline_ui();
 var { readerRange } = require_reader_selection();
 var { getSpeechParts, planSpeechParts, adjacentSpeechPart, getSpeechPartTiming } = require_speech_parts();
 var { preparationStatusText } = require_preparation_status();
+var { listeningMode, planListeningBuffer } = require_listening_buffer();
 var { locateReading } = require_locate_reading();
 var { MIMO_ENDPOINT, MIMO_DEFAULTS, MIMO_VOICES, MIMO_MAX_CHUNK_CHARS, normalizeMimoSettings, buildMimoRequestBody, decodeMimoAudio } = require_mimo_tts();
 var { BYOK_DEFAULTS, normalizeByokSettings, getByokProfile, getByokConfigurationError, assertByokAuthorized, buildByokRequest, safeByokRequestError } = require_byok_tts();
@@ -36487,13 +36610,13 @@ var SETTINGS_UI_TEXT = {
     speedName: "Synthesis speed",
     speedDesc: "Synthesis speed for new segments only; playing and already prepared audio remain unchanged. MiMo treats speed as an instruction, not an exact rate.",
     chunkLimitsName: "Local chunk limits",
-    chunkLimitsDesc: "Character limits for local CosyVoice and system speech. The first segment plays in up to three audio parts: complete sentences reaching 20 characters, then 40 more, then the remainder (excluding whitespace). It remains one segment in the progress bar.",
+    chunkLimitsDesc: "Sequential character caps for local CosyVoice and system speech, not word counts or alternative presets. For 200,400,800: segment 1 uses up to 200 characters, segment 2 up to 400, and all later segments up to 800. Boundaries may produce shorter segments. Quick start can split one visible segment into smaller audio requests.",
     onlineChunkLimitsName: "Online chunk limits",
-    onlineChunkLimitsDesc: "Used by Edge, Azure, OpenRouter, and MiMo for notes, PDFs, HTML and web pages (default 200,400,800). The first segment plays in up to three audio parts: sentences reaching 20 characters, then 40 more, then the remainder. It remains one visible segment; this can add up to two requests. Prefetch counts audio parts.",
-    onlinePrefetchName: "Online synthesis prefetch",
-    onlinePrefetchDesc: "How many future audio parts an online engine may synthesize early, including the smaller parts inside the first segment. Default 1; choose 0 for strict on-demand synthesis.",
-    onlinePrefetchNone: "0 - synthesize only when needed",
-    onlinePrefetchOne: "1 - prefetch one chunk",
+    onlineChunkLimitsDesc: "200,400,800 means up to 200 characters in segment 1, 400 in segment 2, and 800 in each later segment. These are sequential limits, not three presets. Smaller segments may synthesize sooner but require more requests. Applies next session; provider limits still apply.",
+    onlinePrefetchName: "Online playback buffering",
+    onlinePrefetchDesc: "On demand synthesizes only when needed. Balanced (default) uses normal segments and prepares the next audio part. Continuous listening divides longer segments into smaller sentence groups and prepares more audio to reduce pauses. It may increase requests and charges for text you skip. Applies next session; export is unchanged.",
+    onlinePrefetchNone: "On demand - no prefetch",
+    onlinePrefetchOne: "Balanced - one future audio part",
     audioExportLocationName: "Audio export save location",
     audioExportLocationDesc: "Choose where exported audio is saved. Confirmation shows the scope and planned vault path. Web pages have no source folder; Same folder as the note saves web audio at the vault root.",
     audioExportLocationAttachment: "Obsidian attachment folder (default)",
@@ -36612,13 +36735,13 @@ var SETTINGS_UI_TEXT = {
     speedName: "\u5408\u6210\u8BED\u901F",
     speedDesc: "\u4EC5\u5BF9\u65B0\u5408\u6210\u7684\u5206\u6BB5\u751F\u6548\uFF0C\u6B63\u5728\u64AD\u653E\u53CA\u5DF2\u9884\u5408\u6210\u7684\u97F3\u9891\u4E0D\u53D8\u3002MiMo \u5C06\u901F\u5EA6\u4F5C\u4E3A\u6307\u4EE4\u7406\u89E3\uFF0C\u5E76\u975E\u7CBE\u786E\u500D\u901F\u3002",
     chunkLimitsName: "\u672C\u5730\u5206\u6BB5\u957F\u5EA6",
-    chunkLimitsDesc: "\u672C\u5730 CosyVoice \u548C\u7CFB\u7EDF\u8BED\u97F3\u7684\u5B57\u7B26\u6570\u4E0A\u9650\uFF0C\u4EE5\u82F1\u6587\u9017\u53F7\u5206\u9694\u3002\u7B2C\u4E00\u6BB5\u5185\u90E8\u6309\u6574\u53E5\u7D2F\u52A0\u81F3 20 \u5B57\uFF0C\u518D\u4ECE\u5269\u4F59\u5185\u5BB9\u7D2F\u52A0\u81F3 40 \u5B57\uFF0C\u6700\u540E\u5408\u6210\u4F59\u6587\uFF08\u4E0D\u8BA1\u7A7A\u767D\uFF09\uFF0C\u6700\u591A\u4E09\u6BB5\u97F3\u9891\uFF1B\u8FDB\u5EA6\u6761\u4ECD\u663E\u793A\u4E3A\u540C\u4E00\u6BB5\u3002",
+    chunkLimitsDesc: "\u672C\u5730 CosyVoice \u548C\u7CFB\u7EDF\u8BED\u97F3\u4F9D\u6B21\u4F7F\u7528\u7684\u5B57\u7B26\u4E0A\u9650\uFF0C\u4E0D\u662F\u8BCD\u6570\u6216\u4E09\u4E2A\u53EF\u9009\u6863\u4F4D\u3002\u4F8B\u5982 200,400,800\uFF1A\u7B2C 1 \u6BB5\u6700\u591A 200 \u5B57\u7B26\uFF0C\u7B2C 2 \u6BB5\u6700\u591A 400\uFF0C\u4E4B\u540E\u6BCF\u6BB5\u6700\u591A 800\u3002\u4F1A\u4F18\u5148\u5BFB\u627E\u6362\u884C\u548C\u6807\u70B9\u5207\u5206\uFF0C\u5B9E\u9645\u53EF\u80FD\u66F4\u77ED\u3002\u5FEB\u901F\u8D77\u8BFB\u53EF\u5C06\u4E00\u4E2A\u754C\u9762\u5206\u6BB5\u62C6\u6210\u591A\u4EFD\u5C0F\u97F3\u9891\u3002",
     onlineChunkLimitsName: "\u5728\u7EBF\u5206\u6BB5\u957F\u5EA6",
-    onlineChunkLimitsDesc: "Edge\u3001Azure\u3001OpenRouter \u548C MiMo \u6717\u8BFB\u7B14\u8BB0\u3001PDF\u3001HTML \u6216\u7F51\u9875\u65F6\u4F7F\u7528\uFF08\u9ED8\u8BA4 200,400,800\uFF09\u3002\u7B2C\u4E00\u6BB5\u5185\u90E8\u6309\u6574\u53E5\u7D2F\u52A0\u81F3 20 \u5B57\uFF0C\u518D\u7D2F\u52A0\u65B0\u7684 40 \u5B57\uFF0C\u6700\u540E\u5408\u6210\u4F59\u6587\uFF08\u4E0D\u8BA1\u7A7A\u767D\uFF09\uFF0C\u754C\u9762\u4ECD\u663E\u793A\u540C\u4E00\u6BB5\u3002\u6700\u591A\u589E\u52A0\u4E24\u6B21\u8BF7\u6C42\uFF0C\u9884\u5408\u6210\u6570\u91CF\u6309\u5C0F\u97F3\u9891\u8BA1\u7B97\u3002",
-    onlinePrefetchName: "\u5728\u7EBF\u5408\u6210\u9884\u53D6",
-    onlinePrefetchDesc: "\u5141\u8BB8\u5728\u7EBF\u5F15\u64CE\u63D0\u524D\u5408\u6210\u7684\u540E\u7EED\u97F3\u9891\u6570\u91CF\uFF0C\u7B2C\u4E00\u6BB5\u5185\u90E8\u7684\u5C0F\u97F3\u9891\u4E5F\u5404\u7B97\u4E00\u6B21\u3002\u9ED8\u8BA4 1\uFF1B\u9009\u62E9 0 \u53EF\u4E25\u683C\u6309\u9700\u5408\u6210\u3002",
-    onlinePrefetchNone: "0 - \u9700\u8981\u65F6\u624D\u5408\u6210",
-    onlinePrefetchOne: "1 - \u63D0\u524D\u5408\u6210\u4E00\u6BB5",
+    onlineChunkLimitsDesc: "200,400,800 \u8868\u793A\u7B2C 1 \u6BB5\u6700\u591A 200 \u5B57\u7B26\uFF0C\u7B2C 2 \u6BB5\u6700\u591A 400\uFF0C\u4E4B\u540E\u6BCF\u6BB5\u6700\u591A 800\uFF0C\u4E0D\u662F\u4E09\u4E2A\u53EF\u9009\u6863\u4F4D\u3002\u6BB5\u843D\u8F83\u77ED\u65F6\u53EF\u80FD\u66F4\u5FEB\u5408\u6210\uFF0C\u4F46\u8BF7\u6C42\u4E5F\u4F1A\u589E\u591A\u3002\u4E0B\u6B21\u6717\u8BFB\u751F\u6548\uFF0C\u4ECD\u53D7\u63A5\u53E3\u4E0A\u9650\u7EA6\u675F\u3002",
+    onlinePrefetchName: "\u5728\u7EBF\u64AD\u653E\u7F13\u51B2",
+    onlinePrefetchDesc: "\u6309\u9700\uFF1A\u8F6E\u5230\u65F6\u624D\u5408\u6210\u3002\u5747\u8861\uFF08\u9ED8\u8BA4\uFF09\uFF1A\u6309\u5E38\u89C4\u5206\u6BB5\u5408\u6210\uFF0C\u63D0\u524D\u51C6\u5907\u4E0B\u4E00\u4EFD\u97F3\u9891\u3002\u8FDE\u7EED\u6536\u542C\uFF1A\u628A\u8F83\u957F\u6BB5\u843D\u62C6\u6210\u8F83\u5C0F\u7684\u53E5\u5B50\u7EC4\uFF0C\u63D0\u524D\u51C6\u5907\u66F4\u591A\u97F3\u9891\uFF0C\u51CF\u5C11\u6BB5\u95F4\u7B49\u5F85\uFF1B\u53EF\u80FD\u589E\u52A0\u8BF7\u6C42\u548C\u672A\u6536\u542C\u5185\u5BB9\u7684\u5408\u6210\u8D39\u7528\u3002\u4E0B\u6B21\u6717\u8BFB\u751F\u6548\uFF0C\u5BFC\u51FA\u4E0D\u53D8\u3002",
+    onlinePrefetchNone: "\u6309\u9700 \xB7 \u4E0D\u9884\u53D6",
+    onlinePrefetchOne: "\u5747\u8861 \xB7 \u63D0\u524D\u4E00\u4EFD\u97F3\u9891",
     audioExportLocationName: "\u97F3\u9891\u5BFC\u51FA\u4FDD\u5B58\u4F4D\u7F6E",
     audioExportLocationDesc: "\u9009\u62E9\u5BFC\u51FA\u97F3\u9891\u7684\u4FDD\u5B58\u4F4D\u7F6E\u3002\u786E\u8BA4\u7A97\u53E3\u4F1A\u663E\u793A\u6240\u9009\u8303\u56F4\u548C\u9884\u8BA1\u5E93\u5185\u8DEF\u5F84\u3002\u7F51\u9875\u6CA1\u6709\u539F\u6587\u4EF6\u76EE\u5F55\uFF0C\u9009\u62E9\u201C\u4E0E\u539F\u7B14\u8BB0\u76F8\u540C\u7684\u76EE\u5F55\u201D\u65F6\u4F1A\u4FDD\u5B58\u5230\u5E93\u6839\u76EE\u5F55\u3002",
     audioExportLocationAttachment: "Obsidian \u9644\u4EF6\u76EE\u5F55\uFF08\u9ED8\u8BA4\uFF09",
@@ -36759,6 +36882,7 @@ var DEFAULT_SETTINGS = {
   chunkLimits: DEFAULT_CHUNK_LIMITS.join(","),
   onlineChunkLimits: DEFAULT_ONLINE_CHUNK_LIMITS.join(","),
   onlinePrefetchChunks: 1,
+  continuousListening: false,
   rememberReadingPosition: false,
   readingPositions: {}
 };
@@ -37618,6 +37742,7 @@ function createDefaultSettings() {
       DEFAULT_ONLINE_CHUNK_LIMITS
     ).join(","),
     onlinePrefetchChunks: normalizeOnlinePrefetchChunks(DEFAULT_SETTINGS.onlinePrefetchChunks),
+    continuousListening: DEFAULT_SETTINGS.continuousListening === true,
     readingPositions: normalizeReadingPositions(DEFAULT_SETTINGS.readingPositions),
     readingHistoryMode: "session",
     smartQuickStart: true,
@@ -38732,6 +38857,7 @@ var CosyVoiceReaderPlugin = class extends Plugin {
       this.currentAudio.defaultPlaybackRate = this.settings.playbackSpeed;
       this.currentAudio.playbackRate = this.settings.playbackSpeed;
     }
+    this.activeSession?.prepareAvailableChunks?.();
     this.renderReaderViews();
     await this.saveSettings();
   }
@@ -40436,6 +40562,7 @@ ${embed}
       pdfSelectionMatched: null,
       prefetchChunks: configuration.prefetchChunks,
       prepareAvailableChunks: null,
+      bufferMode: isOnlineSpeechEngine(configuration.speechEngine) && configuration.prefetchChunks > 0 ? listeningMode(this.settings) : "on-demand",
       producerError: null,
       productionComplete: options.productionComplete !== false,
       requestedChunkIndex: null,
@@ -40625,7 +40752,7 @@ ${embed}
     }).catch((error) => {
       this.failSessionChunks(session, error);
     });
-    const prefetchNotice = configuration.prefetchChunks > 0 ? "Up to one next chunk may be prepared early." : "Audio is synthesized only as needed.";
+    const prefetchNotice = session.bufferMode === "continuous" ? "Continuous listening may prepare up to 3 future audio parts / 900 speech characters." : configuration.prefetchChunks > 0 ? "Up to one next chunk may be prepared early." : "Audio is synthesized only as needed.";
     new Notice(
       `${configuration.engineLabel}: progressively reading ${readingSourceLabel}. ${prefetchNotice}`,
       6e3
@@ -41061,6 +41188,7 @@ ${embed}
   async runSpeechSession(session) {
     const timings = this.playbackTimings || (this.playbackTimings = new PlaybackTimings());
     timings.begin("sessionToPlaying");
+    session.preparationLatencies = [];
     const pool = session.preparationPool = new PreparationPool({
       concurrency: isOnlineSpeechEngine(session.speechEngine) && session.speechEngine !== "edge-tts" ? 2 : 1,
       maxEntries: 256,
@@ -41070,7 +41198,13 @@ ${embed}
       planSpeechParts(session, index, foreground && !session.seekTarget);
       const key = `${index}:${part}`;
       if (foreground) pool.select(key);
-      return pool.get(key, () => this.queuePrepareChunk(getSpeechParts(session, index)[part], index, session, part), {
+      return pool.get(key, async () => {
+        const started = timings.now();
+        const prepared = await this.queuePrepareChunk(getSpeechParts(session, index)[part], index, session, part);
+        session.preparationLatencies.push(timings.now() - started);
+        if (session.preparationLatencies.length > 16) session.preparationLatencies.shift();
+        return prepared;
+      }, {
         background: !foreground,
         valid: () => this.isActive(session) && (foreground || !this.pauseRequested && !Number.isInteger(session.requestedChunkIndex) && !session.seekTarget)
       });
@@ -41079,11 +41213,21 @@ ${embed}
       if (!this.isActive(session) || Number.isInteger(session.requestedChunkIndex) || session.seekTarget || this.pauseRequested || !Number.isInteger(session.prefetchBaseIndex)) {
         return;
       }
-      let cursor = { index: session.prefetchBaseIndex, part: session.currentPartIndex || 0 };
-      for (let offset = 1; offset <= session.prefetchChunks; offset += 1) {
-        cursor = adjacentSpeechPart(session, cursor.index, cursor.part, 1);
-        if (!cursor) break;
-        getPreparedChunk(cursor.index, cursor.part).catch(() => {
+      const audio = this.currentAudio;
+      const current = audio?.noteReaderSessionId === session.id && audio.noteReaderChunkIndex === session.prefetchBaseIndex && audio.noteReaderPartIndex === (session.currentPartIndex || 0);
+      const targets = planListeningBuffer({
+        session,
+        adjacent: adjacentSpeechPart,
+        parts: getSpeechParts,
+        playbackRate: normalizeSpeed(this.settings.playbackSpeed),
+        synthesisSpeed: effectiveSynthesisSpeed(session.synthesisSettings || this.settings),
+        currentTime: current ? audio.currentTime : 0,
+        currentDuration: current ? audio.duration : void 0,
+        latencies: session.preparationLatencies
+      });
+      pool.retainBackground(targets.map((cursor) => `${cursor.index}:${cursor.part}`));
+      for (const cursor of targets) {
+        if (!pool.state(`${cursor.index}:${cursor.part}`)) getPreparedChunk(cursor.index, cursor.part).catch(() => {
         });
       }
     };
@@ -41132,7 +41276,7 @@ ${embed}
         const preparation = getPreparedChunk(index, part, true);
         if (!session.seekTarget) session.prepareAvailableChunks();
         this.updateStatus(`${session.engineLabel} preparing ${index + 1}/${session.totalChunks}`, {
-          preparationStatus: previousState === "ready" ? "loading" : reused ? "waiting" : "synthesizing",
+          preparationStatus: pool.cooldownUntil > timings.now() ? "rate-limited" : previousState === "ready" ? "loading" : reused ? "waiting" : "synthesizing",
           phase: "synthesizing",
           currentChunk: index + 1,
           totalChunks: session.totalChunks,
@@ -41546,6 +41690,10 @@ ${embed}
         if (!this.isActive(session)) {
           throw new Error("Reading stopped.");
         }
+        if (error.statusCode === 429) {
+          session.preparationPool?.throttle(error.retryAfterMs);
+          if (["queued", "synthesizing"].includes(this.readerState?.phase)) this.setReaderState({ preparationStatus: "rate-limited" });
+        }
         if (!isRetryableRemoteError(error)) {
           throw error;
         }
@@ -41843,6 +41991,7 @@ ${embed}
         audio.noteReaderReleaseSource = source.release;
         audio.noteReaderSessionId = session.id;
         audio.noteReaderChunkIndex = index;
+        audio.noteReaderPartIndex = part;
         const partOffset = session.chunks?.[index] === void 0 ? null : speechPartOffset(session.chunks[index], getSpeechParts(session, index), part);
         audio.noteReaderSentenceCues = partOffset === null ? [] : (prepared.sentenceCues || []).map((cue) => ({
           ...cue,
@@ -41956,6 +42105,7 @@ ${embed}
             return;
           }
           lastProgressUpdate = now;
+          if (session.bufferMode === "continuous") session.prepareAvailableChunks?.();
           const duration = Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : 0;
           const chunkProgress = duration ? this.getSegmentTiming(session, index, part, audio.currentTime).fraction : 0;
           const currentTotal = getPlaybackTotal();
@@ -43364,12 +43514,29 @@ var CosyVoiceReaderSettingTab = class extends PluginSettingTab {
         await this.plugin.saveSettings();
       });
     });
-    new Setting(playbackAdvanced).setName(ui.onlinePrefetchName).setDesc(ui.onlinePrefetchDesc).addDropdown((dropdown) => {
-      dropdown.addOption("0", ui.onlinePrefetchNone).addOption("1", ui.onlinePrefetchOne).setValue(String(normalizeOnlinePrefetchChunks(this.plugin.settings.onlinePrefetchChunks))).onChange(async (value) => {
-        this.plugin.settings.onlinePrefetchChunks = normalizeOnlinePrefetchChunks(value);
+    new Setting(containerEl).setName(ui.onlinePrefetchName).setDesc(ui.onlinePrefetchDesc).addDropdown((dropdown) => {
+      dropdown.addOption("0", ui.onlinePrefetchNone).addOption("1", ui.onlinePrefetchOne).addOption("continuous", translateInterface(settingsLanguage, "Continuous listening - adaptive buffer", "\u8FDE\u7EED\u6536\u542C \xB7 \u81EA\u9002\u5E94\u7F13\u51B2")).setValue(listeningMode(this.plugin.settings) === "continuous" ? "continuous" : String(normalizeOnlinePrefetchChunks(this.plugin.settings.onlinePrefetchChunks))).onChange(async (value) => {
+        this.plugin.settings.continuousListening = value === "continuous";
+        this.plugin.settings.onlinePrefetchChunks = value === "continuous" ? 1 : normalizeOnlinePrefetchChunks(value);
         await this.plugin.saveSettings();
       });
     });
+    const bufferDetails = disclosure(containerEl, translateInterface(settingsLanguage, "How buffering works", "\u5206\u6BB5\u4E0E\u7F13\u51B2\u8BF4\u660E"));
+    bufferDetails.createEl("p", { text: translateInterface(
+      settingsLanguage,
+      "Balanced is not one request per sentence. It normally synthesizes a whole segment; quick start and provider limits can split it into several audio parts. Playback plays these parts in order, without waiting to merge the entire document.",
+      "\u5747\u8861\u4E0D\u662F\u9010\u53E5\u5408\u6210\uFF1A\u901A\u5E38\u4E00\u6BB5\u5408\u6210\u4E00\u6B21\uFF0C\u5FEB\u901F\u8D77\u8BFB\u6216\u63A5\u53E3\u957F\u5EA6\u9650\u5236\u53EF\u80FD\u5C06\u5176\u62C6\u6210\u51E0\u4EFD\u97F3\u9891\u3002\u64AD\u653E\u65F6\u4F9D\u6B21\u8854\u63A5\uFF0C\u4E0D\u5FC5\u7B49\u5168\u6587\u5408\u6210\u540E\u518D\u62FC\u63A5\u3002"
+    ) });
+    bufferDetails.createEl("p", { text: translateInterface(
+      settingsLanguage,
+      "Continuous listening groups sentences around a soft 220-character target, not one sentence per request. It preserves visible segment numbers and adapts a 12-35-second buffer target to playback speed and recent synthesis times, capped at three future audio parts / 900 speech characters.",
+      "\u8FDE\u7EED\u6536\u542C\u4EE5\u7EA6 220 \u5B57\u7B26\u4E3A\u8F6F\u76EE\u6807\u7EC4\u5408\u53E5\u5B50\uFF0C\u4E0D\u662F\u4E00\u53E5\u8BDD\u4E00\u6B21\u8BF7\u6C42\uFF0C\u754C\u9762\u6BB5\u53F7\u4E0D\u53D8\u3002\u7ED3\u5408\u500D\u901F\u548C\u8FD1\u671F\u5408\u6210\u8017\u65F6\uFF0C\u4E89\u53D6 12\u201335 \u79D2\u7F13\u51B2\uFF0C\u6700\u591A\u63D0\u524D\u4E09\u4EFD\u97F3\u9891\u3001900 \u4E2A\u6717\u8BFB\u5B57\u7B26\u3002"
+    ) });
+    bufferDetails.createEl("p", { text: translateInterface(
+      settingsLanguage,
+      "Splitting prefers sentence boundaries, but long sentences can still be split at hard limits. At most two HTTP synthesis operations run concurrently; Edge remains serial. Already-sent text may be billed when skipped. Buffering does not guarantee uninterrupted playback or faster startup and jumps.",
+      "\u5207\u5206\u5C3D\u91CF\u4FDD\u7559\u5B8C\u6574\u53E5\u5B50\uFF0C\u4F46\u9047\u5230\u786C\u6027\u957F\u5EA6\u9650\u5236\u4ECD\u53EF\u80FD\u62C6\u5F00\u957F\u53E5\u3002HTTP \u5408\u6210\u6700\u591A\u4E24\u4E2A\u64CD\u4F5C\u5E76\u53D1\uFF0CEdge \u4ECD\u4E32\u884C\u3002\u5DF2\u53D1\u9001\u4F46\u8DF3\u8FC7\u7684\u6587\u5B57\u4ECD\u53EF\u80FD\u8BA1\u8D39\uFF1B\u4E0D\u4FDD\u8BC1\u5B8C\u5168\u65E0\u505C\u987F\uFF0C\u4E5F\u4E0D\u4FDD\u8BC1\u9996\u64AD\u6216\u6BCF\u6B21\u8DF3\u8F6C\u66F4\u5FEB\u3002"
+    ) });
     containerEl = pages.storage;
     new Setting(containerEl).setName(ui.audioExportLocationName).setDesc(ui.audioExportLocationDesc).addDropdown((dropdown) => {
       dropdown.addOption("obsidian-attachment", ui.audioExportLocationAttachment).addOption("note-folder", ui.audioExportLocationNote).addOption("custom-folder", ui.audioExportLocationCustom).setValue(normalizeAudioExportLocation(this.plugin.settings.audioExportLocation)).onChange(async (value) => {

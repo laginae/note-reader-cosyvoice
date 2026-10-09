@@ -3,12 +3,15 @@
 const { splitOpeningAudioParts } = require('./semantic-chunker');
 const { estimateTextSeconds } = require('./playback-estimate');
 const { applyTerms, fitSpeechParts } = require('./speech-options');
+const { splitContinuousParts } = require('./listening-buffer');
 
 function makeParts(session, index, quick) {
   const text = session.chunks[index], settings = session.synthesisSettings || {};
   const changed = applyTerms(text, settings) !== text;
   const opening = quick && !changed ? splitOpeningAudioParts(text, session.rapidQuickStart === true) : [text];
-  const parts = opening.flatMap(value => fitSpeechParts(value, settings, session.speechPartLimit || 100000));
+  const grouped = session.bufferMode === 'continuous' && session.kind !== 'audio-export'
+    ? opening.flatMap(value => splitContinuousParts(value)) : opening;
+  const parts = grouped.flatMap(value => fitSpeechParts(value, settings, session.speechPartLimit || 100000));
   session.audioSpeechParts ||= {};
   session.audioSpeechParts[index] = parts.map(part => part.text);
   return parts.map(part => part.source);

@@ -78,3 +78,26 @@ test('timing report contains bounded numeric aggregates only and excludes paused
   assert.equal(report.timings.prepare.p95,143);
   assert.equal(report.timings.audioLoadToPlaying.count,3);
 });
+test('failed background requests are not retried by buffer polling; foreground can retry once', async () => {
+  const pool = new PreparationPool(); let calls = 0;
+  const fail = () => { calls++; throw new Error('Temporary service failure'); };
+  await assert.rejects(pool.get('future', fail, { background: true })); await tick();
+  for (let i = 0; i < 20; i++) await assert.rejects(pool.get('future', fail, { background: true }));
+  assert.equal(calls, 1);
+  assert.equal(await pool.get('future', () => { calls++; return 7; }), 7);
+  assert.equal(calls, 2); pool.clear();
+});
+test('a rate limit reduces concurrency and prevents queued requests until cooldown expires', async () => {
+  let time = 0; const pool = new PreparationPool({ timings: new PlaybackTimings(() => time) });
+  pool.throttle(5000); let calls = 0;
+  const next = pool.get('a', () => { calls++; return {}; });
+  await tick(); assert.equal(calls, 0); assert.equal(pool.limit, 1);
+  time = 5000; pool.drain(); await next; assert.equal(calls, 1); pool.clear();
+});
+test('shrinking the horizon cancels queued speculation but never drops running request slots', async () => {
+  const pool = new PreparationPool({ concurrency: 1 }), d = deferred();
+  const active = pool.get('a', () => d.promise);
+  const future = pool.get('b', () => 2, { background: true });
+  pool.retainBackground([]); await assert.rejects(future, { name: 'AbortError' });
+  assert.equal(pool.active.size, 1); d.resolve(1); await active; pool.clear();
+});

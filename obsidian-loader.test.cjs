@@ -215,7 +215,7 @@ const testVaultPath = path.resolve('test-vault');
 const testAudioPath = path.join(testVaultPath, '.obsidian', 'plugins', 'note-reader-cosyvoice', 'cache', 'a.wav');
 assert.strictEqual(manifest.id, 'note-reader-cosyvoice');
 assert.strictEqual(manifest.name, 'Cozy Read Aloud');
-assert.strictEqual(manifest.version, '1.0.4');
+assert.strictEqual(manifest.version, '1.0.5');
 assert.strictEqual(
   moduleObject.exports.__test.sanitizeTextForSpeech('第一段的结尾。\n\n## 第二节标题\n\n下一节的正文。'),
   '第一段的结尾。\n第二节标题\n下一节的正文。'
@@ -343,6 +343,7 @@ assert.deepStrictEqual(moduleObject.exports.__test.createDefaultSettings(), {
   chunkLimits: '40,80,120,160,280,320',
   onlineChunkLimits: '200,400,800',
   onlinePrefetchChunks: 1,
+  continuousListening: false,
   readingPositions: {},
   rememberReadingPosition: false,
   readingHistoryMode: 'session',

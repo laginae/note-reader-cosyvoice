@@ -1,7 +1,7 @@
 {
   "id": "note-reader-cosyvoice",
   "name": "Cozy Read Aloud",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "minAppVersion": "1.5.0",
   "description": "Read aloud notes, PDFs, HTML and web pages with privacy-first controls, flexible voice options, highlighting and audio export.",
   "author": "Note and PDF Voice Reader Contributors",

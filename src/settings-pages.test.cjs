@@ -31,7 +31,7 @@ test('actual settings retain all groups and place global reset last without chan
   const group=name=>rows.find(row=>row.nameEl.textContent===name)?.settingEl.closest('[role=tabpanel]')?.dataset.settingsPage;
   assert.equal(group('Settings language'),undefined);
   for(const [name,page] of [ ['Reading method','engine'],['Allow MiMo online processing','engine'],
-    ['Online synthesis prefetch','playback'],['Highlight color','playback'],['Copilot chat reading','playback'],
+    ['Online playback buffering','playback'],['Highlight color','playback'],['Copilot chat reading','playback'],
     ['Formula reading','academic'],['PDF footnote reading','academic'],['Overwrite original PDF for bookmarks by default','academic'],
     ['Audio export save location','storage'],['Clean temporary audio','storage'],['Clear temporary data','storage'],
     ['Diagnostic logging','privacy'],['Feedback and bug reports','privacy'],['Restore all default settings','privacy'] ]) assert.equal(group(name),page,name);
@@ -61,6 +61,35 @@ test('all languages and engine branches render five panels with unchanged settin
     assert.equal(privacy.firstElementChild.querySelector('.setting-item-name').textContent,
       language === 'chinese' ? '通用隐私说明（适用于所有语音模式）' : 'General privacy (all speech engines)');
     assert.match(privacy.firstElementChild.textContent, language === 'chinese' ? /遥测/ : /telemetry/);
+    dom.window.close();
+  }
+});
+test('buffer strategy selection is explicit, preserves on-demand and does not change text limits', async () => {
+  const { dom, plugin, rows } = settingsFixture();
+  const row = rows.find(item => item.nameEl.textContent === 'Online playback buffering');
+  const caps = plugin.settings.onlineChunkLimits;
+  assert.equal(plugin.settings.continuousListening, false);
+  await row.change('continuous');
+  assert.equal(plugin.settings.continuousListening, true); assert.equal(plugin.settings.onlinePrefetchChunks, 1);
+  await row.change('0');
+  assert.equal(plugin.settings.continuousListening, false); assert.equal(plugin.settings.onlinePrefetchChunks, 0);
+  await row.change('1');
+  assert.equal(plugin.settings.continuousListening, false); assert.equal(plugin.settings.onlinePrefetchChunks, 1);
+  assert.equal(plugin.settings.onlineChunkLimits, caps); dom.window.close();
+});
+
+test('buffering copy distinguishes segment synthesis from sentence grouping and folds technical details', () => {
+  for (const language of ['english', 'chinese']) {
+    const { dom, doc, rows } = settingsFixture(language);
+    const row = rows.find(item => item.nameEl.textContent === (language === 'chinese' ? '在线播放缓冲' : 'Online playback buffering'));
+    const description = row.settingEl.querySelector('.setting-item-description').textContent;
+    assert.match(description, language === 'chinese' ? /按常规分段合成/ : /normal segments/);
+    assert.doesNotMatch(description, /220|900|12.35/);
+    const details = [...doc.querySelectorAll('[data-settings-page=playback] details')].find(el => el.querySelector('summary').textContent === (language === 'chinese' ? '分段与缓冲说明' : 'How buffering works'));
+    assert.ok(details); assert.equal(details.open, false);
+    assert.match(details.textContent, /220/); assert.match(details.textContent, /900/);
+    assert.match(details.textContent, language === 'chinese' ? /均衡不是逐句合成/ : /Balanced is not one request per sentence/);
+    assert.match(details.textContent, language === 'chinese' ? /依次衔接/ : /plays these parts in order/);
     dom.window.close();
   }
 });

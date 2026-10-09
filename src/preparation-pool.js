@@ -56,8 +56,23 @@ class PreparationPool {
     this.active = new Set();
     this.bytes = 0;
     this.paused = false;
+    this.backgroundFailures = new Map();
+    this.cooldownUntil = 0;
   }
   state(key) { return this.entries.get(key)?.state; }
+  throttle(milliseconds = 5000) {
+    this.limit = 1;
+    const delay = Number.isFinite(milliseconds) && milliseconds > 0 ? milliseconds : 5000;
+    this.cooldownUntil = Math.max(this.cooldownUntil, this.timings.now() + delay);
+    this.timings.count('rateLimited');
+    this.drain();
+  }
+  retainBackground(keys) {
+    const keep = new Set(keys);
+    for (const entry of this.entries.values()) {
+      if (entry.background && entry.state === 'queued' && !keep.has(entry.key)) this.drop(entry);
+    }
+  }
   select(key) {
     for (const entry of this.entries.values()) {
       if (entry.state === 'queued' && entry.key !== key) this.drop(entry);
@@ -81,11 +96,15 @@ class PreparationPool {
     }
   }
   clear() {
+    clearTimeout(this.cooldownTimer); this.cooldownTimer = null;
+    this.cooldownUntil = 0; this.backgroundFailures.clear();
     for (const entry of this.entries.values()) this.drop(entry);
     this.bytes = 0;
     // Active operations are deliberately not removed from active.
   }
   get(key, factory, { background = false, valid = () => true } = {}) {
+    if (background && this.backgroundFailures.has(key)) return this.backgroundFailures.get(key);
+    if (!background) this.backgroundFailures.delete(key);
     const old = this.entries.get(key);
     if (old) {
       this.timings.count(old.state === 'ready' ? 'cacheHit' : 'inflightHit');
@@ -105,6 +124,14 @@ class PreparationPool {
   }
   drain() {
     if (this.paused) return;
+    const wait = this.cooldownUntil - this.timings.now();
+    if (wait > 0) {
+      if (!this.cooldownTimer) {
+        this.cooldownTimer = setTimeout(() => { this.cooldownTimer = null; this.drain(); }, Math.min(wait, 60000));
+        this.cooldownTimer.unref?.();
+      }
+      return;
+    }
     while (this.active.size < this.limit) {
       const queued = [...this.entries.values()].filter(entry => entry.state === 'queued');
       const entry = queued.find(entry => !entry.background)
@@ -130,6 +157,10 @@ class PreparationPool {
         entry.resolve(value);
       }, error => {
         if (this.entries.get(entry.key) === entry) this.entries.delete(entry.key);
+        if (entry.background && error?.name !== 'AbortError' && entry.valid()) {
+          this.backgroundFailures.set(entry.key, entry.promise);
+          while (this.backgroundFailures.size > 128) this.backgroundFailures.delete(this.backgroundFailures.keys().next().value);
+        }
         this.timings.count(error?.name === 'AbortError' ? 'cancelled' : 'failed');
         entry.reject(error);
       }).finally(() => { this.active.delete(entry); this.drain(); });

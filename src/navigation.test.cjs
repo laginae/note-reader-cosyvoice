@@ -36,7 +36,7 @@ function fixture(chunks = ['First.', 'Second.', 'Third.', 'Fourth.'], options = 
   const plugin = Object.create(PluginClass.prototype);
   plugin.sequence = 0;
   plugin.settings = { ...loaded.exports.__test.createDefaultSettings(), cleanupCache: false,
-    speechEngine: 'openrouter-tts' };
+    speechEngine: 'openrouter-tts', continuousListening: options.continuous === true };
   plugin.readerState = loaded.exports.__test.createReaderState();
   plugin.currentAudio = null;
   plugin.currentProcess = null;
@@ -95,6 +95,25 @@ test('prefetch starts alongside foreground but never runs beyond one future part
   requests.get('0:0').resolve({}); await run;
   assert.equal(requests.has('2:0'), false);
   requests.get('1:0').resolve({});
+});
+test('continuous buffering is bounded and pausing cancels queued expansion without re-synthesis', async () => {
+  const { plugin, session, requests } = fixture(['One.', 'Two.', 'Three.', 'Four.', 'Five.'], { prefetch: 1, continuous: true });
+  const run = plugin.runSpeechSession(session); await tick();
+  assert.equal(session.bufferMode, 'continuous'); assert.equal(requests.size, 2);
+  assert.equal(session.preparationPool.entries.size, 4);
+  plugin.pauseRequested = true; session.preparationPool.pause(true);
+  requests.get('1:0').resolve({}); await tick(); session.prepareAvailableChunks();
+  assert.equal(requests.size, 2); assert.equal(session.preparationPool.entries.size, 2);
+  plugin.pauseRequested = false; session.preparationPool.pause(false); session.prepareAvailableChunks(); await tick();
+  assert.equal(requests.size, 3); assert.ok(requests.has('2:0'));
+  requests.get('0:0').resolve({}); await run;
+  for (const request of requests.values()) request.resolve({});
+});
+test('continuous mode is not applied to strict on-demand sessions or exports', () => {
+  const { session, plugin } = fixture(undefined, { continuous: true });
+  assert.equal(session.bufferMode, 'on-demand');
+  const exported = plugin.createSpeechSession(['Example.'], 'Export', { speechEngine: 'openrouter-tts', prefetchChunks: 0 }, { kind: 'audio-export' });
+  assert.equal(exported.bufferMode, 'on-demand');
 });
 
 test('local and Edge subprocess engines do not run speculative processes concurrently', async () => {

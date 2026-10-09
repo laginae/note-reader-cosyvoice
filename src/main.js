@@ -42,6 +42,7 @@ const { PdfOutlineModal, addPdfOutlineSettings } = require('./pdf-outline-ui');
 const { readerRange } = require('./reader-selection');
 const { getSpeechParts, planSpeechParts, adjacentSpeechPart, getSpeechPartTiming } = require('./speech-parts');
 const { preparationStatusText } = require('./preparation-status');
+const { listeningMode, planListeningBuffer } = require('./listening-buffer');
 const { locateReading } = require('./locate-reading');
 const { MIMO_ENDPOINT, MIMO_DEFAULTS, MIMO_VOICES, MIMO_MAX_CHUNK_CHARS, normalizeMimoSettings, buildMimoRequestBody, decodeMimoAudio } = require('./mimo-tts');
 const { BYOK_DEFAULTS, normalizeByokSettings, getByokProfile, getByokConfigurationError, assertByokAuthorized, buildByokRequest, safeByokRequestError } = require('./byok-tts');
@@ -332,13 +333,13 @@ const SETTINGS_UI_TEXT = {
     speedName: 'Synthesis speed',
     speedDesc: 'Synthesis speed for new segments only; playing and already prepared audio remain unchanged. MiMo treats speed as an instruction, not an exact rate.',
     chunkLimitsName: 'Local chunk limits',
-    chunkLimitsDesc: 'Character limits for local CosyVoice and system speech. The first segment plays in up to three audio parts: complete sentences reaching 20 characters, then 40 more, then the remainder (excluding whitespace). It remains one segment in the progress bar.',
+    chunkLimitsDesc: 'Sequential character caps for local CosyVoice and system speech, not word counts or alternative presets. For 200,400,800: segment 1 uses up to 200 characters, segment 2 up to 400, and all later segments up to 800. Boundaries may produce shorter segments. Quick start can split one visible segment into smaller audio requests.',
     onlineChunkLimitsName: 'Online chunk limits',
-    onlineChunkLimitsDesc: 'Used by Edge, Azure, OpenRouter, and MiMo for notes, PDFs, HTML and web pages (default 200,400,800). The first segment plays in up to three audio parts: sentences reaching 20 characters, then 40 more, then the remainder. It remains one visible segment; this can add up to two requests. Prefetch counts audio parts.',
-    onlinePrefetchName: 'Online synthesis prefetch',
-    onlinePrefetchDesc: 'How many future audio parts an online engine may synthesize early, including the smaller parts inside the first segment. Default 1; choose 0 for strict on-demand synthesis.',
-    onlinePrefetchNone: '0 - synthesize only when needed',
-    onlinePrefetchOne: '1 - prefetch one chunk',
+    onlineChunkLimitsDesc: '200,400,800 means up to 200 characters in segment 1, 400 in segment 2, and 800 in each later segment. These are sequential limits, not three presets. Smaller segments may synthesize sooner but require more requests. Applies next session; provider limits still apply.',
+    onlinePrefetchName: 'Online playback buffering',
+    onlinePrefetchDesc: 'On demand synthesizes only when needed. Balanced (default) uses normal segments and prepares the next audio part. Continuous listening divides longer segments into smaller sentence groups and prepares more audio to reduce pauses. It may increase requests and charges for text you skip. Applies next session; export is unchanged.',
+    onlinePrefetchNone: 'On demand - no prefetch',
+    onlinePrefetchOne: 'Balanced - one future audio part',
     audioExportLocationName: 'Audio export save location',
     audioExportLocationDesc: 'Choose where exported audio is saved. Confirmation shows the scope and planned vault path. Web pages have no source folder; Same folder as the note saves web audio at the vault root.',
     audioExportLocationAttachment: 'Obsidian attachment folder (default)',
@@ -457,13 +458,13 @@ const SETTINGS_UI_TEXT = {
     speedName: '合成语速',
     speedDesc: '仅对新合成的分段生效，正在播放及已预合成的音频不变。MiMo 将速度作为指令理解，并非精确倍速。',
     chunkLimitsName: '本地分段长度',
-    chunkLimitsDesc: '本地 CosyVoice 和系统语音的字符数上限，以英文逗号分隔。第一段内部按整句累加至 20 字，再从剩余内容累加至 40 字，最后合成余文（不计空白），最多三段音频；进度条仍显示为同一段。',
+    chunkLimitsDesc: '本地 CosyVoice 和系统语音依次使用的字符上限，不是词数或三个可选档位。例如 200,400,800：第 1 段最多 200 字符，第 2 段最多 400，之后每段最多 800。会优先寻找换行和标点切分，实际可能更短。快速起读可将一个界面分段拆成多份小音频。',
     onlineChunkLimitsName: '在线分段长度',
-    onlineChunkLimitsDesc: 'Edge、Azure、OpenRouter 和 MiMo 朗读笔记、PDF、HTML 或网页时使用（默认 200,400,800）。第一段内部按整句累加至 20 字，再累加新的 40 字，最后合成余文（不计空白），界面仍显示同一段。最多增加两次请求，预合成数量按小音频计算。',
-    onlinePrefetchName: '在线合成预取',
-    onlinePrefetchDesc: '允许在线引擎提前合成的后续音频数量，第一段内部的小音频也各算一次。默认 1；选择 0 可严格按需合成。',
-    onlinePrefetchNone: '0 - 需要时才合成',
-    onlinePrefetchOne: '1 - 提前合成一段',
+    onlineChunkLimitsDesc: '200,400,800 表示第 1 段最多 200 字符，第 2 段最多 400，之后每段最多 800，不是三个可选档位。段落较短时可能更快合成，但请求也会增多。下次朗读生效，仍受接口上限约束。',
+    onlinePrefetchName: '在线播放缓冲',
+    onlinePrefetchDesc: '按需：轮到时才合成。均衡（默认）：按常规分段合成，提前准备下一份音频。连续收听：把较长段落拆成较小的句子组，提前准备更多音频，减少段间等待；可能增加请求和未收听内容的合成费用。下次朗读生效，导出不变。',
+    onlinePrefetchNone: '按需 · 不预取',
+    onlinePrefetchOne: '均衡 · 提前一份音频',
     audioExportLocationName: '音频导出保存位置',
     audioExportLocationDesc: '选择导出音频的保存位置。确认窗口会显示所选范围和预计库内路径。网页没有原文件目录，选择“与原笔记相同的目录”时会保存到库根目录。',
     audioExportLocationAttachment: 'Obsidian 附件目录（默认）',
@@ -605,6 +606,7 @@ const DEFAULT_SETTINGS = {
   chunkLimits: DEFAULT_CHUNK_LIMITS.join(','),
   onlineChunkLimits: DEFAULT_ONLINE_CHUNK_LIMITS.join(','),
   onlinePrefetchChunks: 1,
+  continuousListening: false,
   rememberReadingPosition: false,
   readingPositions: {},
 };
@@ -1677,6 +1679,7 @@ function createDefaultSettings() {
       DEFAULT_ONLINE_CHUNK_LIMITS
     ).join(','),
     onlinePrefetchChunks: normalizeOnlinePrefetchChunks(DEFAULT_SETTINGS.onlinePrefetchChunks),
+    continuousListening: DEFAULT_SETTINGS.continuousListening === true,
     readingPositions: normalizeReadingPositions(DEFAULT_SETTINGS.readingPositions),
     readingHistoryMode: 'session',
     smartQuickStart: true,
@@ -2954,6 +2957,7 @@ class CosyVoiceReaderPlugin extends Plugin {
       this.currentAudio.defaultPlaybackRate = this.settings.playbackSpeed;
       this.currentAudio.playbackRate = this.settings.playbackSpeed;
     }
+    this.activeSession?.prepareAvailableChunks?.();
     this.renderReaderViews();
     await this.saveSettings();
   }
@@ -4790,6 +4794,8 @@ class CosyVoiceReaderPlugin extends Plugin {
       pdfSelectionMatched: null,
       prefetchChunks: configuration.prefetchChunks,
       prepareAvailableChunks: null,
+      bufferMode: isOnlineSpeechEngine(configuration.speechEngine) && configuration.prefetchChunks > 0
+        ? listeningMode(this.settings) : 'on-demand',
       producerError: null,
       productionComplete: options.productionComplete !== false,
       requestedChunkIndex: null,
@@ -5026,7 +5032,8 @@ class CosyVoiceReaderPlugin extends Plugin {
       this.failSessionChunks(session, error);
     });
 
-    const prefetchNotice = configuration.prefetchChunks > 0
+    const prefetchNotice = session.bufferMode === 'continuous'
+      ? 'Continuous listening may prepare up to 3 future audio parts / 900 speech characters.' : configuration.prefetchChunks > 0
       ? 'Up to one next chunk may be prepared early.'
       : 'Audio is synthesized only as needed.';
     new Notice(
@@ -5485,6 +5492,7 @@ class CosyVoiceReaderPlugin extends Plugin {
   async runSpeechSession(session) {
     const timings = this.playbackTimings ||= new PlaybackTimings();
     timings.begin('sessionToPlaying');
+    session.preparationLatencies = [];
     const pool = session.preparationPool = new PreparationPool({
       concurrency: isOnlineSpeechEngine(session.speechEngine) && session.speechEngine !== 'edge-tts' ? 2 : 1,
       maxEntries: 256, timings,
@@ -5493,7 +5501,13 @@ class CosyVoiceReaderPlugin extends Plugin {
       planSpeechParts(session, index, foreground && !session.seekTarget);
       const key = `${index}:${part}`;
       if (foreground) pool.select(key);
-      return pool.get(key, () => this.queuePrepareChunk(getSpeechParts(session, index)[part], index, session, part), {
+      return pool.get(key, async () => {
+        const started = timings.now();
+        const prepared = await this.queuePrepareChunk(getSpeechParts(session, index)[part], index, session, part);
+        session.preparationLatencies.push(timings.now() - started);
+        if (session.preparationLatencies.length > 16) session.preparationLatencies.shift();
+        return prepared;
+      }, {
         background: !foreground,
         valid: () => this.isActive(session) && (foreground || (!this.pauseRequested
           && !Number.isInteger(session.requestedChunkIndex) && !session.seekTarget)),
@@ -5504,11 +5518,17 @@ class CosyVoiceReaderPlugin extends Plugin {
         || session.seekTarget || this.pauseRequested || !Number.isInteger(session.prefetchBaseIndex)) {
         return;
       }
-      let cursor = { index: session.prefetchBaseIndex, part: session.currentPartIndex || 0 };
-      for (let offset = 1; offset <= session.prefetchChunks; offset += 1) {
-        cursor = adjacentSpeechPart(session, cursor.index, cursor.part, 1);
-        if (!cursor) break;
-        getPreparedChunk(cursor.index, cursor.part).catch(() => {});
+      const audio = this.currentAudio;
+      const current = audio?.noteReaderSessionId === session.id && audio.noteReaderChunkIndex === session.prefetchBaseIndex
+        && audio.noteReaderPartIndex === (session.currentPartIndex || 0);
+      const targets = planListeningBuffer({ session, adjacent: adjacentSpeechPart, parts: getSpeechParts,
+        playbackRate: normalizeSpeed(this.settings.playbackSpeed),
+        synthesisSpeed: effectiveSynthesisSpeed(session.synthesisSettings || this.settings),
+        currentTime: current ? audio.currentTime : 0, currentDuration: current ? audio.duration : undefined,
+        latencies: session.preparationLatencies });
+      pool.retainBackground(targets.map(cursor => `${cursor.index}:${cursor.part}`));
+      for (const cursor of targets) {
+        if (!pool.state(`${cursor.index}:${cursor.part}`)) getPreparedChunk(cursor.index, cursor.part).catch(() => {});
       }
     };
 
@@ -5564,7 +5584,8 @@ class CosyVoiceReaderPlugin extends Plugin {
         const preparation = getPreparedChunk(index, part, true);
         if (!session.seekTarget) session.prepareAvailableChunks();
         this.updateStatus(`${session.engineLabel} preparing ${index + 1}/${session.totalChunks}`, {
-          preparationStatus: previousState === 'ready' ? 'loading' : reused ? 'waiting' : 'synthesizing',
+          preparationStatus: pool.cooldownUntil > timings.now() ? 'rate-limited'
+            : previousState === 'ready' ? 'loading' : reused ? 'waiting' : 'synthesizing',
           phase: 'synthesizing',
           currentChunk: index + 1,
           totalChunks: session.totalChunks,
@@ -6028,6 +6049,11 @@ class CosyVoiceReaderPlugin extends Plugin {
           throw new Error('Reading stopped.');
         }
 
+        if (error.statusCode === 429) {
+          session.preparationPool?.throttle(error.retryAfterMs);
+          if (['queued', 'synthesizing'].includes(this.readerState?.phase)) this.setReaderState({ preparationStatus: 'rate-limited' });
+        }
+
         if (!isRetryableRemoteError(error)) {
           throw error;
         }
@@ -6356,6 +6382,7 @@ class CosyVoiceReaderPlugin extends Plugin {
         audio.noteReaderReleaseSource = source.release;
         audio.noteReaderSessionId = session.id;
         audio.noteReaderChunkIndex = index;
+        audio.noteReaderPartIndex = part;
         const partOffset = session.chunks?.[index] === undefined ? null
           : speechPartOffset(session.chunks[index], getSpeechParts(session, index), part);
         audio.noteReaderSentenceCues = partOffset === null ? [] : (prepared.sentenceCues || []).map(cue => ({
@@ -6468,6 +6495,7 @@ class CosyVoiceReaderPlugin extends Plugin {
             return;
           }
           lastProgressUpdate = now;
+          if (session.bufferMode === 'continuous') session.prepareAvailableChunks?.();
           const duration = Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : 0;
           const chunkProgress = duration ? this.getSegmentTiming(session, index, part, audio.currentTime).fraction : 0;
           const currentTotal = getPlaybackTotal();
@@ -8130,19 +8158,33 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
         });
       });
 
-    new Setting(playbackAdvanced)
+    new Setting(containerEl)
       .setName(ui.onlinePrefetchName)
       .setDesc(ui.onlinePrefetchDesc)
       .addDropdown((dropdown) => {
         dropdown
           .addOption('0', ui.onlinePrefetchNone)
           .addOption('1', ui.onlinePrefetchOne)
-          .setValue(String(normalizeOnlinePrefetchChunks(this.plugin.settings.onlinePrefetchChunks)))
+          .addOption('continuous', translateInterface(settingsLanguage, 'Continuous listening - adaptive buffer', '连续收听 · 自适应缓冲'))
+          .setValue(listeningMode(this.plugin.settings) === 'continuous' ? 'continuous'
+            : String(normalizeOnlinePrefetchChunks(this.plugin.settings.onlinePrefetchChunks)))
           .onChange(async (value) => {
-            this.plugin.settings.onlinePrefetchChunks = normalizeOnlinePrefetchChunks(value);
+            this.plugin.settings.continuousListening = value === 'continuous';
+            this.plugin.settings.onlinePrefetchChunks = value === 'continuous' ? 1 : normalizeOnlinePrefetchChunks(value);
             await this.plugin.saveSettings();
           });
       });
+
+    const bufferDetails = disclosure(containerEl, translateInterface(settingsLanguage, 'How buffering works', '分段与缓冲说明'));
+    bufferDetails.createEl('p', { text: translateInterface(settingsLanguage,
+      'Balanced is not one request per sentence. It normally synthesizes a whole segment; quick start and provider limits can split it into several audio parts. Playback plays these parts in order, without waiting to merge the entire document.',
+      '均衡不是逐句合成：通常一段合成一次，快速起读或接口长度限制可能将其拆成几份音频。播放时依次衔接，不必等全文合成后再拼接。') });
+    bufferDetails.createEl('p', { text: translateInterface(settingsLanguage,
+      'Continuous listening groups sentences around a soft 220-character target, not one sentence per request. It preserves visible segment numbers and adapts a 12-35-second buffer target to playback speed and recent synthesis times, capped at three future audio parts / 900 speech characters.',
+      '连续收听以约 220 字符为软目标组合句子，不是一句话一次请求，界面段号不变。结合倍速和近期合成耗时，争取 12–35 秒缓冲，最多提前三份音频、900 个朗读字符。') });
+    bufferDetails.createEl('p', { text: translateInterface(settingsLanguage,
+      'Splitting prefers sentence boundaries, but long sentences can still be split at hard limits. At most two HTTP synthesis operations run concurrently; Edge remains serial. Already-sent text may be billed when skipped. Buffering does not guarantee uninterrupted playback or faster startup and jumps.',
+      '切分尽量保留完整句子，但遇到硬性长度限制仍可能拆开长句。HTTP 合成最多两个操作并发，Edge 仍串行。已发送但跳过的文字仍可能计费；不保证完全无停顿，也不保证首播或每次跳转更快。') });
 
     containerEl = pages.storage;
     new Setting(containerEl)
