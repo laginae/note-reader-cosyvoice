@@ -1,4 +1,4 @@
-# Note and PDF Voice Reader
+# Cozy Read Aloud
 
 **Language:** English | [简体中文](README.zh-CN.md) | [Deutsch](README.de.md) | [Français](README.fr.md) | [Русский](README.ru.md) | [한국어](README.ko.md) | [日本語](README.ja.md) | [Español](README.es.md) | [Italiano](README.it.md) | [Português](README.pt.md)
 
@@ -45,7 +45,7 @@ MiMo's [official pricing](https://mimo.mi.com/docs/zh-CN/price/pay-as-you-go) li
 
 ### Install
 
-On **Obsidian desktop**, install and enable [Note and PDF Voice Reader](https://community.obsidian.md/plugins/note-reader-cosyvoice), then open its settings. Manual installation is covered in [INSTALL.md](INSTALL.md).
+On **Obsidian desktop**, install and enable [Cozy Read Aloud](https://community.obsidian.md/plugins/note-reader-cosyvoice), then open its settings. Manual installation is covered in [INSTALL.md](INSTALL.md).
 
 The initial engine is local CosyVoice, which needs configuration. In **Quick start**, select **Use system speech** for a first test without an API key. Existing users keep their selected engine and saved provider settings.
 
@@ -387,7 +387,7 @@ To list available voices:
 edge-tts --list-voices
 ```
 
-Then open `Settings -> Note and PDF Voice Reader`:
+Then open `Settings -> Cozy Read Aloud`:
 
 1. Set `Speech engine` to `Microsoft Edge online voice`.
 2. Enable `Allow Edge online processing`.
@@ -417,7 +417,7 @@ If you select the external key-file fallback, a suitable path is:
 %LOCALAPPDATA%\note-reader-cosyvoice\azure-speech-key.txt
 ```
 
-Then open `Settings -> Note and PDF Voice Reader`:
+Then open `Settings -> Cozy Read Aloud`:
 
 1. Set `Speech engine` to `Microsoft Azure Speech`.
 2. Enable `Allow Azure online processing`.
@@ -442,7 +442,7 @@ Create a dedicated API key in [OpenRouter API Keys](https://openrouter.ai/settin
 %LOCALAPPDATA%\note-reader-cosyvoice\openrouter-api-key.txt
 ```
 
-Then open `Settings -> Note and PDF Voice Reader`:
+Then open `Settings -> Cozy Read Aloud`:
 
 1. Set `Speech engine` to `OpenRouter TTS`.
 2. Enable `Allow OpenRouter online processing`.

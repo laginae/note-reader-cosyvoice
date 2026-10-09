@@ -2969,7 +2969,7 @@ class CosyVoiceReaderPlugin extends Plugin {
     const adapter = this.app.vault.adapter;
 
     if (!adapter || typeof adapter.getBasePath !== 'function') {
-      throw new Error('Note and PDF Voice Reader requires the desktop FileSystemAdapter.');
+      throw new Error('Cozy Read Aloud requires the desktop FileSystemAdapter.');
     }
 
     this.vaultBasePath = adapter.getBasePath();

@@ -1,4 +1,4 @@
-# Note and PDF Voice Reader
+# Cozy Read Aloud
 
 **语言：** [English](README.md) | 简体中文 | [Deutsch](README.de.md) | [Français](README.fr.md) | [Русский](README.ru.md) | [한국어](README.ko.md) | [日本語](README.ja.md) | [Español](README.es.md) | [Italiano](README.it.md) | [Português](README.pt.md)
 
@@ -49,7 +49,7 @@
 
 ### 安装插件
 
-在 **Obsidian 桌面版**中安装并启用 [Note and PDF Voice Reader](https://community.obsidian.md/plugins/note-reader-cosyvoice)，然后打开插件设置。手动安装见 [INSTALL.md](INSTALL.md)。
+在 **Obsidian 桌面版**中安装并启用 [Cozy Read Aloud](https://community.obsidian.md/plugins/note-reader-cosyvoice)，然后打开插件设置。手动安装见 [INSTALL.md](INSTALL.md)。
 
 初始引擎是需要额外配置的本地 CosyVoice。**第一次朗读前，请先选好下面的一种引擎。** 每种在线引擎都需要单独授权。
 
@@ -355,7 +355,7 @@ INSTALL.md
 LICENSE
 ```
 
-4. 重新打开 Obsidian，进入 `Settings -> Community plugins`，启用 `Note and PDF Voice Reader`。
+4. 重新打开 Obsidian，进入 `Settings -> Community plugins`，启用 `Cozy Read Aloud`。
 5. 进入插件设置，选择 `Speech engine`。默认本地模式需要填写 CosyVoice 包装脚本路径；Edge 模式需要安装 `edge-tts`；Azure 模式需要 Azure Speech 资源及 SecretStorage 或库外密钥文件；OpenRouter 模式需要 OpenRouter 账户、额度及 SecretStorage 或库外 API 密钥文件。
 
 ## 本地 CosyVoice 要求
@@ -421,7 +421,7 @@ edge-tts --help
 edge-tts --list-voices
 ```
 
-然后进入 `Settings -> Note and PDF Voice Reader`：
+然后进入 `Settings -> Cozy Read Aloud`：
 
 1. 把 `Speech engine` 改为 `Microsoft Edge online voice`。
 2. 开启 `Allow Edge online processing`。
@@ -451,7 +451,7 @@ Azure 模式使用官方实时 Speech REST 接口，支持 Azure 公有云和由
 %LOCALAPPDATA%\note-reader-cosyvoice\azure-speech-key.txt
 ```
 
-然后进入 `Settings -> Note and PDF Voice Reader`：
+然后进入 `Settings -> Cozy Read Aloud`：
 
 1. 把 `Speech engine` 改为 `Microsoft Azure Speech`。
 2. 开启 `Allow Azure online processing`。
@@ -476,7 +476,7 @@ OpenRouter 提供与 OpenAI Audio Speech 兼容的专用 TTS 接口，输入文�
 %LOCALAPPDATA%\note-reader-cosyvoice\openrouter-api-key.txt
 ```
 
-然后进入 `Settings -> Note and PDF Voice Reader`：
+然后进入 `Settings -> Cozy Read Aloud`：
 
 1. 把 `Speech engine` 改为 `OpenRouter TTS`。
 2. 开启 `Allow OpenRouter online processing`。

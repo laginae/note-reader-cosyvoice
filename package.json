@@ -1,8 +1,8 @@
 {
   "name": "note-reader-cosyvoice",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
-  "description": "Build and test tooling for the Note and PDF Voice Reader Obsidian plugin.",
+  "description": "Build and test tooling for the Cozy Read Aloud Obsidian plugin.",
   "scripts": {
     "build": "node scripts/build.cjs",
     "test": "npm run build && node core.test.cjs && node main.test.cjs && node obsidian-loader.test.cjs && node --test src/*.test.cjs"

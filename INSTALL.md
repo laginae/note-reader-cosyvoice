@@ -11,7 +11,7 @@
 
 3. In Obsidian, open `Settings -> Community plugins`.
 4. Turn off Restricted mode if required.
-5. Enable `Note and PDF Voice Reader`.
+5. Enable `Cozy Read Aloud`.
 6. Run `Open voice reader controls` from the command palette, or click the ribbon icon.
 
 ## Read Local HTML
@@ -26,7 +26,7 @@ With the toolbar or one of its buttons focused, press **Space** to pause/resume 
 
 ## Choose Speech Engine
 
-Open `Settings -> Note and PDF Voice Reader` and choose `Speech engine`.
+Open `Settings -> Cozy Read Aloud` and choose `Speech engine`.
 
 - `Local CosyVoice` is the default and uses your configured PowerShell wrapper.
 - `System local speech (Windows/macOS)` uses installed Windows SAPI or macOS `say` voices without an API key, automatic downloads or cloud fallback. Select a detected voice, or keep the installed system default; refresh after downloading more voices. The settings page includes optional platform-specific download steps and official help links. Narrator natural voices and Siri-only voices may not be exposed to these interfaces. Synthesis and exported WAV use normal pace; adjust playback rate in the reader panel. See the bilingual README for privacy boundaries and macOS testing limitations.
@@ -38,7 +38,7 @@ On Obsidian 1.11.4 or later, Azure and OpenRouter use Obsidian SecretStorage by 
 
 ## Configure Local CosyVoice
 
-Open `Settings -> Note and PDF Voice Reader` and set `CosyVoice script` if your wrapper is not at:
+Open `Settings -> Cozy Read Aloud` and set `CosyVoice script` if your wrapper is not at:
 
 ```text
 %LOCALAPPDATA%\note-reader-cosyvoice\cosyvoice-wrapper.ps1

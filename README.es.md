@@ -1,4 +1,4 @@
-# Note and PDF Voice Reader
+# Cozy Read Aloud
 
 [English](README.md) | [简体中文](README.zh-CN.md) | [Deutsch](README.de.md) | [Français](README.fr.md) | [Русский](README.ru.md) | [한국어](README.ko.md) | [日本語](README.ja.md) | Español | [Italiano](README.it.md) | [Português](README.pt.md)
 

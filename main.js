@@ -600,7 +600,7 @@ var require_settings_pages = __commonJS({
       const header = doc.createElement("div");
       header.className = "note-reader-settings-header";
       const title = doc.createElement("h2");
-      title.textContent = "Note and PDF Voice Reader";
+      title.textContent = "Cozy Read Aloud";
       const select = doc.createElement("select");
       select.className = "note-reader-settings-language";
       const label = translate(language, "Settings language", "\u8BBE\u7F6E\u8BED\u8A00");
@@ -38467,7 +38467,7 @@ var CosyVoiceReaderPlugin = class extends Plugin {
   async ensureCacheDir() {
     const adapter = this.app.vault.adapter;
     if (!adapter || typeof adapter.getBasePath !== "function") {
-      throw new Error("Note and PDF Voice Reader requires the desktop FileSystemAdapter.");
+      throw new Error("Cozy Read Aloud requires the desktop FileSystemAdapter.");
     }
     this.vaultBasePath = adapter.getBasePath();
     this.legacyCacheDir = path.join(this.vaultBasePath, ".obsidian", "plugins", PLUGIN_ID, "cache");

@@ -14,7 +14,7 @@ function createSettingsHeader(root, language, onChange) {
   const header = doc.createElement('div');
   header.className = 'note-reader-settings-header';
   const title = doc.createElement('h2');
-  title.textContent = 'Note and PDF Voice Reader';
+  title.textContent = 'Cozy Read Aloud';
   const select = doc.createElement('select');
   select.className = 'note-reader-settings-language';
   const label = translate(language, 'Settings language', '设置语言');
