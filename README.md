@@ -1,32 +1,43 @@
+<img src="docs/images/cozy-cat.png" alt="Cozy Read Aloud: a cat listening with headphones and an open book" width="88" align="right">
+
 # Cozy Read Aloud
+
+**Listen to what you read, without leaving Obsidian.**
+
+Read aloud **notes, PDFs, HTML files, web pages and saved Copilot chats** with local or online voices. Follow the original text, jump by heading, or export audio for later. Optional **academic reading** settings make formulas, citations and tables easier to listen to.
 
 **Language:** English | [简体中文](README.zh-CN.md) | [Deutsch](README.de.md) | [Français](README.fr.md) | [Русский](README.ru.md) | [한국어](README.ko.md) | [日本語](README.ja.md) | [Español](README.es.md) | [Italiano](README.it.md) | [Português](README.pt.md)
 
-Read aloud your **notes, PDFs, HTML files and web pages** in Obsidian. Listen while following the original document, jump between sections, or export audio for later.
+### See it in action
 
-**Formerly Note and PDF Voice Reader.** Same plugin, new name. Your settings and update path remain unchanged; no reinstall is required.
+[![Select a passage, read it aloud, pause and resume, then navigate by heading](docs/images/cozy-quick-tour.gif)](docs/media/cozy-quick-tour.mp4)
 
-**One-click reading toolbar:** click the audio icon in the pane header to show or hide playback controls above the original document.
+[Watch the 53-second demo with sound (MP4)](docs/media/cozy-quick-tour.mp4) · [Demo transcript and recording details](docs/media/README.md)
 
-![Click the audio icon to show and hide the reading toolbar](docs/images/reading-toolbar-demo.gif)
+Recorded in Obsidian with public sample text and **OpenRouter → ElevenLabs Multilingual v2 → Sarah** at 1x speed. The preview is silent. The video replays previously generated audio locally to demonstrate the controls, not online synthesis speed. Appearance and voice quality vary by setup.
 
-Demo shown in English. Appearance may vary by theme.
+## Quick start
 
-Read selected text or start reading from a chosen position in Markdown. Optional Editing Toolbar integration puts reading one click away.
+1. **Install and enable** [Cozy Read Aloud](https://community.obsidian.md/plugins/note-reader-cosyvoice) from Obsidian's community plugins on desktop.
+2. **Choose a voice.** In the plugin's **Quick start**, choose **Use system speech** to try a compatible installed Windows/macOS voice without an API key. Prefer an online voice? Configure its credentials and approve text processing first.
+3. **Open a note and listen.** Click the audio icon in the pane header, then Play for the whole note. For a passage, select text and choose **More controls → Selection only → Read selected text**. Pause, resume and change speed in the same toolbar.
 
-## Why use it?
+Click **More controls** again to fold the extra controls away; click the pane-header audio icon again to hide the playback bar.
 
-- **Privacy under your control.** Document text is extracted locally. Online speech requires explicit consent; installed offline system voices and local CosyVoice keep synthesis on your device.
-- **Read from where you are.** Read the whole document, only selected text, or continue from a selected position, including in PDFs.
-- **Follow along without losing the layout.** Optional, adjustable highlighting in Markdown/live preview, text PDFs, local HTML and Web viewer, with reading-order support for common two-column PDF papers. The toolbar stays with the original content.
-- **Listen to Copilot replies.** Read saved conversations: the latest reply, last two replies, or a question and answer. Preview your selection, or right-click the toolbar chat icon to read the most recently saved conversation's latest answer.
-- **Navigate by outline.** Use note headings, PDF bookmarks or locally inferred PDF headings, and HTML headings or coherent section numbering. Read one section or continue from it.
-- **Academic reading without the noise.** Skip complex LaTeX formulas and long numeric tables, use concise `sub` / `bar` notation, and merge adjacent numbered references. Keep short formulas, small tables and prose; PDF filtering is conservative.
-- **Start listening sooner.** Progressive text extraction and short startup audio parts reduce the wait; later PDF pages can be processed while playback begins.
-- **Avoid unnecessary synthesis.** By default, online playback prepares only one upcoming audio part. Choose zero prefetch for on-demand synthesis. Audio export always asks for confirmation.
-- **Keep an audio copy.** Export all, selected or remaining text; insert the result into a Markdown note. If final merging fails, retry with retained audio instead of synthesizing it again.
+No extra toolbar plugin is needed for these steps. The initial local CosyVoice engine requires setup; choose system speech explicitly for this first try. [Other engines and setup options](#choose-a-voice-service) · [Manual installation](INSTALL.md)
 
-Text PDFs must contain selectable text; scanned pages need OCR first. Highlighting and inferred outlines depend on source structure and are not guaranteed for every layout. Sentence-level highlighting requires reliable timing; other engines use segment highlighting.
+## Make it fit your reading
+
+- **Stay with the original.** Highlight the current passage in notes, text PDFs, HTML and web pages. Turn on auto-follow when you want the view to move with reading; use the outline to jump to a section in notes, PDFs and local HTML.
+- **Listen to an answer.** Read the latest reply, recent replies or a question and answer from a **saved Copilot conversation**. This is not automatic narration of streaming chat replies.
+- **Focus on the argument.** Optional academic settings simplify short formulas, skip complex formulas or long numeric tables, merge numbered citations and handle PDF headers, footers and footnotes. Your source stays unchanged; recognition depends on the document.
+- **Take the audio with you.** Export the whole document, a selection or the remaining text after reviewing the scope and destination. Supported output formats depend on the engine.
+
+**Your voice, your processing choice.** Use installed offline system voices or a local model, or connect an online speech API. The plugin has no built-in usage telemetry or developer-operated text/key relay. Online voices send the chosen text to the selected service; provider fees and retention policies apply. Local temporary files follow your cleanup settings. See [the full privacy notes](#privacy).
+
+**Source notes:** PDFs need selectable text; scanned pages need OCR first. Local HTML's original-page controls require **HTML Reader**; web pages use Obsidian **Web viewer**. Highlighting and inferred outlines depend on source structure. Sentence-level highlighting requires reliable timing; other engines highlight segments.
+
+Formerly **Note and PDF Voice Reader**. Existing settings and updates are preserved; no reinstall is needed.
 
 ## Choose a voice service
 
@@ -43,7 +54,7 @@ For a first try, choose based on what matters most to you, rather than installin
 
 MiMo's [official pricing](https://mimo.mi.com/docs/zh-CN/price/pay-as-you-go) lists `mimo-v2.5-tts` as temporarily free, checked **2026-10-04**. Availability, prices and quotas can change. Voice quality is subjective: test a short, non-sensitive passage before choosing.
 
-## Quick start
+## Voice setup and reading
 
 ### Install
 
