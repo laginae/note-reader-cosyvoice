@@ -25,7 +25,7 @@ test('range recognition does not reinterpret arbitrary pairs, vectors or unsuppo
   assert.equal(mathSpeech(String.raw`\ell`), 'ell');
   assert.equal(mathSpeech(String.raw`R_\infty`), 'R sub infinity');
   assert.equal(mathSpeech(String.raw`E_\min`), 'E sub min');
-  assert.equal(mathSpeech(String.raw`\min(x,y)`), 'Formula.');
+  assert.equal(mathSpeech(String.raw`\min(x,y)`), 'the minimum of x and y');
   assert.equal(mathSpeech(String.raw`[E_{\min},F_{\max}]`), 'open bracket E sub min ,F sub max close bracket');
   assert.equal(mathSpeech(String.raw`[E_{\min}+\sqrt{x},E_{\max}-\sqrt{x}]`).includes('omitted'), false);
   for (const source of [

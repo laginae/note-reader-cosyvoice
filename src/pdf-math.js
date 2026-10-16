@@ -1,6 +1,7 @@
 'use strict';
 
 const { academicOptions, omission, formulaNoticeWithPause, formulaNoticeEnding } = require('./academic-speech');
+const { structuredMathSpeech } = require('./structured-math');
 
 const mathGlyph = /[\u{1d400}-\u{1d7ff}\u220f\u2211\u221a\u222b-\u2233]/u;
 const prose = value => /[\u3400-\u9fff]/u.test(value)
@@ -72,6 +73,7 @@ function pdfMathChanges(layout, items, settings = {}, names = {}) {
       supported: plainEquation || mapped.some(token => fonts.has(token.item.fontName) || mathGlyph.test(token.item.str)) };
   });
   const complex = text => {
+    if (structuredMathSpeech(text.trim().replace(/[,;.]$/, ''), false, true) !== null) return false;
     const value = text.normalize('NFKC').replace(/\s/g, '');
     return value.length > 24 || /[\u220f\u2211\u222b-\u2233]/.test(value)
       || (value.length > 16 && (value.match(/[=+\-\u2212\u2264\u2265/|]/g) || []).length >= 3);

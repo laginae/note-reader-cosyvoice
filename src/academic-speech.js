@@ -1,4 +1,5 @@
 'use strict';
+const { structuredMathSpeech, replacePlainStructuredMath } = require('./structured-math');
 
 const ACADEMIC_DEFAULTS = { academicMathMode: 'smart', academicMathStyle: 'concise', academicTableMode: 'smart', academicSkipNotice: true };
 function academicOptions(settings = {}) {
@@ -9,6 +10,15 @@ function academicOptions(settings = {}) {
     academicTableMode: ['smart','all','skip'].includes(settings.academicTableMode) ? settings.academicTableMode : 'smart' };
 }
 const chinese = text => /[\u3400-\u9fff]/.test(text);
+function contextualMathOptions(options, before, after) {
+  if (options.mathReadingLanguage === 'skip') return options;
+  const proseTokens = value => [...String(value).matchAll(/[\u3400-\u9fff]+|[A-Za-z]{3,}/g)]
+    .map(match => match[0]).filter(word => !/^(?:min|max|epsilon|ceil|floor|formula|left|right)$/i.test(word));
+  const preceding = String(before).slice(-400).replace(/\$\$[\s\S]*?\$\$|\$[^$]*\$|\\\([\s\S]*?\\\)|\\\[[\s\S]*?\\\]/g, ' ');
+  const following = String(after).slice(0,400).replace(/\$\$[\s\S]*?\$\$|\$[^$]*\$|\\\([\s\S]*?\\\)|\\\[[\s\S]*?\\\]/g, ' ');
+  const token = proseTokens(preceding).at(-1) || proseTokens(following)[0];
+  return token ? { ...options, mathReadingLanguage: chinese(token) ? 'chinese' : 'english' } : options;
+}
 function omission(kind, options, text = '') {
   if (options.academicSkipNotice === false) return '';
   // A spoken omission follows supplied prose, not the short-formula language.
@@ -91,6 +101,9 @@ function mathSpeech(content, inputOptions = {}) {
   if (options.mathReadingLanguage === 'skip' || options.academicMathMode === 'skip') return omission('formula', options);
   let value = normalizeMathPresentation(content);
   if (value === null) return omission('formula', options);
+  if (/^\s*(?:\\?(?:min|max)\b|\\[lr](?:ceil|floor)\b|[⌈⌊])/.test(value)) {
+    return structuredMathSpeech(value, zh, options.academicMathMode !== 'all') ?? omission('formula', options);
+  }
   const commands = value.match(/\\[A-Za-z]+/g) || [];
   const semantic = value.replace(/\\[A-Za-z]+/g,'x').replace(/[{}\s]/g,'');
   const limit = options.academicMathMode === 'all' ? 100 : 32;
@@ -146,7 +159,8 @@ function academicLatex(text, options = {}) {
   let result = '', end = 0;
   for (const match of source.matchAll(pattern)) {
     result += source.slice(end, match.index);
-    const speech = mathSpeech(match.slice(1,5).find(v => v !== undefined), options);
+    const contextOptions = contextualMathOptions(options, source.slice(0, match.index), source.slice(match.index + match[0].length));
+    const speech = mathSpeech(match.slice(1,5).find(v => v !== undefined), contextOptions);
     end = match.index + match[0].length;
     if (speech === 'Formula.' || speech === '公式。') {
       const ending = formulaNoticeEnding(speech, source.slice(end));
@@ -155,6 +169,15 @@ function academicLatex(text, options = {}) {
       end += ending.consumed;
     } else result += ` ${speech} `;
   }
-  return result + source.slice(end);
+  return replacePlainStructuredMath(result + source.slice(end), (formula, context) => {
+    const contextOptions = contextualMathOptions(options, context.before, context.after);
+    const speech = structuredMathSpeech(formula, contextOptions.mathReadingLanguage === 'chinese', options.academicMathMode !== 'all');
+    if (speech !== null && options.academicMathMode !== 'skip' && options.mathReadingLanguage !== 'skip') return speech;
+    const notice = omission('formula', academicOptions(contextOptions));
+    if (!notice) return '';
+    const ending = formulaNoticeEnding(notice, context.after);
+    const spoken = formulaNoticeWithPause(notice, context.before).replace(notice, ending.notice);
+    return { text: context.before.trimEnd() + spoken.replace(/^(?=Formula|公式)/, ' ') + ' ', consumed: ending.consumed };
+  });
 }
 module.exports = { ACADEMIC_DEFAULTS, academicOptions, academicLatex, mathSpeech, citations, skipTable, numericCell, omission, formulaNoticeWithPause, formulaNoticeEnding };
