@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { JSDOM } = require('jsdom');
-const { academicOptions, mathSpeech, academicLatex, citations, skipTable } = require('./academic-speech');
+const { academicOptions, mathSpeech, academicLatex, citations, skipTable, omission } = require('./academic-speech');
 const { extractHtmlText, extractHtmlTreeText } = require('./html-text');
 const { numericTableRegions } = require('./pdf-academic');
 const { highlightDocument } = require('./dom-highlights');
@@ -28,6 +28,16 @@ test('complex or unsupported math is omitted with a configurable notice, not gue
   }
   assert.equal(mathSpeech('x'.repeat(33), { academicMathMode:'all' }), 'x'.repeat(33));
   assert.equal(mathSpeech('x', { academicMathMode:'skip', mathReadingLanguage:'chinese' }), '公式略过。');
+});
+
+test('formula omission uses supplied prose language without changing short-formula speech', () => {
+  assert.equal(omission('formula', { mathReadingLanguage: 'chinese' }, 'The next equation follows.'), 'Formula omitted.');
+  assert.equal(omission('formula', { mathReadingLanguage: 'english' }, '下一项关系如下。'), '公式略过。');
+  assert.equal(omission('formula', { mathReadingLanguage: 'chinese' }, 'x = y + 2'), '公式略过。');
+  assert.equal(omission('formula', { mathReadingLanguage: 'english' }), 'Formula omitted.');
+  assert.equal(omission('formula', { academicSkipNotice: false }, '下一项关系如下。'), '');
+  assert.equal(mathSpeech('x + y', { mathReadingLanguage: 'chinese' }), 'x 加 y');
+  assert.equal(mathSpeech('x + y', { mathReadingLanguage: 'english' }), 'x plus y');
 });
 
 test('numeric citations merge adjacent groups and links without changing units, years or zero intervals', () => {

@@ -215,7 +215,7 @@ const testVaultPath = path.resolve('test-vault');
 const testAudioPath = path.join(testVaultPath, '.obsidian', 'plugins', 'note-reader-cosyvoice', 'cache', 'a.wav');
 assert.strictEqual(manifest.id, 'note-reader-cosyvoice');
 assert.strictEqual(manifest.name, 'Cozy Read Aloud');
-assert.strictEqual(manifest.version, '1.1.1');
+assert.strictEqual(manifest.version, '1.1.2');
 assert.strictEqual(
   moduleObject.exports.__test.sanitizeTextForSpeech('第一段的结尾。\n\n## 第二节标题\n\n下一节的正文。'),
   '第一段的结尾。\n第二节标题\n下一节的正文。'
@@ -988,6 +988,10 @@ const repeatedPdfLayout = {
   twoColumn: true,
 };
 const repeatedPdfText = repeatedPdfLayout.lines.map((line) => line.text).join('\n');
+const selectedMathSource = 'Public introduction.\nA selected explanation of ef\ufb01ciency.\n𝑥 = 𝑦 + 1\nThe next paragraph.';
+assert.deepStrictEqual(moduleObject.exports.__test.slicePdfTextFromSelection(
+  selectedMathSource, 'A selected explanation of efficiency.', { preserveSource: true }
+), { matched: true, text: selectedMathSource.slice(selectedMathSource.indexOf('A selected')) });
 assert.deepStrictEqual(
   moduleObject.exports.__test.slicePdfTextFromSelection(repeatedPdfText, 'Repeated passage'),
   {

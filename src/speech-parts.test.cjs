@@ -82,3 +82,16 @@ test('prefetched plans are reused, and disabled quick start and exports never sp
     assert.equal(planSpeechParts({ chunks: [text], ...options }, 0, true).length, 1);
   }
 });
+
+test('early progressive PDF prefetch freezes the same opening parts seen by the buffer planner', () => {
+  const text = 'This first sentence is a complete public example. A second sentence explains the sample in more detail. A final sentence closes it.';
+  for (const bufferMode of ['balanced', 'continuous']) {
+    const session = { chunks: [text], bufferMode, speechPartLimit: 800 };
+    const estimate = [...getSpeechParts(session, 0)];
+    assert.ok(estimate.length > 1);
+    assert.deepEqual(planSpeechParts(session, 0, false), estimate);
+    assert.deepEqual(planSpeechParts(session, 0, true), estimate);
+    assert.deepEqual(session.audioSpeechParts[0], estimate);
+    assert.equal(estimate.join(' ').replace(/\s/g, ''), text.replace(/\s/g, ''));
+  }
+});

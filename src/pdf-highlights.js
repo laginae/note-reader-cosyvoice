@@ -4,6 +4,7 @@ const { extractPdfTextLayout } = require('./pdf-layout');
 const { compact, markdownReadingHighlight: readingTarget } = require('./markdown-source');
 const { inside } = require('./pdf-ancillary');
 const { following, watchFollowing } = require('./reading-follow');
+const { applyPdfMathChanges } = require('./pdf-math');
 
 function pdfPageLines(page, clean, source = null, footnote = false) {
   const bounds = page.getBoundingClientRect();
@@ -26,9 +27,11 @@ function pdfPageLines(page, clean, source = null, footnote = false) {
   // Match the layout's baseline tolerance; paired columns can shift its mean baseline.
   const tolerance = Math.max(2, medianHeight * 0.5);
   const lineNodes = layout.lines.map(() => []);
+  const omitted = source?.mathChanges?.flatMap(change => change.omitted) || [];
   positioned.forEach(({ span, rect, sourceIndex }, i) => {
     const item = items[exact ? sourceIndex : i], x = exact ? item.transform[4] : rect.left - bounds.left;
     const y = exact ? item.transform[5] : bounds.top - rect.top;
+    if (exact && omitted.some(token => token.str === item.str && token.x === x && token.y === y)) return;
     const width = exact ? Math.abs(item.width) : rect.width;
     let nearest = -1, distance = Infinity;
     layout.lines.forEach((line, index) => {
@@ -63,7 +66,11 @@ function finishPageLines(layout, lineNodes, clean, source, footnote, exact) {
     const keptNodes = indices.map(({ index }) => lineNodes[index]);
     lineNodes.splice(0, lineNodes.length, ...keptNodes);
     layout.text = layout.lines.map(line => line.text).join('\n').replace(/([A-Za-z])-\n(?=[a-z])/g, '$1').trim();
-  } else if (!exact && (ancillaryFilter || (source?.footnoteRegions?.length && source.footnoteMode !== 'inline'))) return null;
+  } else if (!exact && (source?.mathChanges?.length || ancillaryFilter || (source?.footnoteRegions?.length && source.footnoteMode !== 'inline'))) return null;
+  if (source?.mathChanges?.length) {
+    layout.lines = layout.lines.map(line => ({ ...line, text: applyPdfMathChanges(line.text, source.mathChanges) }));
+    layout.text = layout.lines.map(line => line.text).join('\n').replace(/([A-Za-z])-\n(?=[a-z])/g, '$1').trim();
+  }
   const text = compact(clean(layout.text));
   let offset = 0;
   const lines = layout.lines.map((line, index) => {
@@ -80,7 +87,17 @@ function finishPageLines(layout, lineNodes, clean, source, footnote, exact) {
     const end = start < 0 ? -1 : start + value.length;
     if (end >= 0) offset = end;
     const nodes = lineNodes[index];
-    return { start, end, text: value, nodes };
+    let cursor = 0;
+    const runs = nodes.map(node => {
+      const literal = compact(node.textContent), speech = compact(clean(node.textContent));
+      // A line-end hyphen can disappear when the next PDF line joins the word.
+      const token = speech.endsWith('-') && !joined.endsWith('-') ? speech.slice(0, -1) : speech;
+      const found = token ? value.indexOf(token, cursor) : -1;
+      if (found < 0) return null;
+      cursor = found + token.length;
+      return { node, start: start + found, end: start + cursor, literal: token === literal || token + '-' === literal };
+    });
+    return { start, end, text: value, nodes, runs: runs.every(Boolean) ? runs : null };
   }).filter(line => line.start >= 0);
   if (!text || !lines.length) return null;
   return { text, lines };
@@ -96,13 +113,25 @@ function pdfChunkRange(pages, chunk, range) {
   return { start: start + (valid ? range.start : 0), end: start + (valid ? range.end : needle.length) };
 }
 
-function matchPdfChunk(pages, chunk, range) {
+function matchPdfChunk(pages, chunk, range, selections = null) {
   const match = pdfChunkRange(pages, chunk, range);
   if (!match) return [];
   const { start, end } = match, result = [];
   let offset = 0;
   for (const page of pages) {
-    for (const line of page.lines) if (offset + line.start < end && offset + line.end > start) result.push(...line.nodes);
+    for (const line of page.lines) if (offset + line.start < end && offset + line.end > start) {
+      if (!line.runs) { result.push(...line.nodes); continue; }
+      for (const run of line.runs) {
+        const from = Math.max(start, offset + run.start), to = Math.min(end, offset + run.end);
+        if (from >= to) continue;
+        result.push(run.node);
+        if (run.literal && selections) {
+          const chars = [];
+          for (let i = 0; i < run.node.textContent.length; i++) if (!/\s/.test(run.node.textContent[i])) chars.push(i);
+          selections.set(run.node, { start: chars[from - offset - run.start], end: chars[to - offset - run.start - 1] + 1 });
+        }
+      }
+    }
     offset += page.text.length;
   }
   return [...new Set(result)];
@@ -191,17 +220,25 @@ class PdfReadingHighlights {
     for (const { element } of this.overlays.values()) element.remove();
     this.overlays.clear();
   }
-  renderOverlays(nodes, groups = new Map()) {
+  renderOverlays(nodes, groups = new Map(), selections = new Map()) {
     const pages = new Map();
     for (const node of nodes) {
       const page = node.closest('[data-page-number]');
       if (!page) continue;
       if (!pages.has(page)) pages.set(page, { bounds: page.getBoundingClientRect(), groups: new Map() });
-      const data = pages.get(page), bounds = data.bounds, rect = node.getBoundingClientRect();
-      if (!(bounds.width > 0 && bounds.height > 0 && rect.width > 0 && rect.height > 0)) continue;
+      const data = pages.get(page), bounds = data.bounds;
+      if (!(bounds.width > 0 && bounds.height > 0)) continue;
+      let rects = [node.getBoundingClientRect()];
+      const selection = selections.get(node), text = node.firstChild;
+      if (selection && text?.nodeType === 3 && node.childNodes.length === 1) {
+        const range = node.ownerDocument.createRange();
+        range.setStart(text, selection.start); range.setEnd(text, selection.end);
+        if (typeof range.getClientRects === 'function') rects = [...range.getClientRects()];
+      }
       const group = groups.get(node) || page;
       if (!data.groups.has(group)) data.groups.set(group, []);
-      data.groups.get(group).push([rect.left - bounds.left, rect.top - bounds.top, rect.width, rect.height]);
+      for (const rect of rects) if (rect.width > 0 && rect.height > 0)
+        data.groups.get(group).push([rect.left - bounds.left, rect.top - bounds.top, rect.width, rect.height]);
     }
     for (const [page, overlay] of this.overlays) if (!pages.has(page)) {
       overlay.element.remove(); this.overlays.delete(page);
@@ -242,7 +279,7 @@ class PdfReadingHighlights {
     const target = readingTarget(session, highlight, plugin.settings);
     const settings = session.synthesisSettings || plugin.settings;
     const clean = text => plugin.sanitizeAudioExportText(text, settings);
-    const next = new Set(), live = new Set(), groups = new Map();
+    const next = new Set(), live = new Set(), groups = new Map(), selections = new Map();
     let geometryChanged = false;
     for (const leaf of plugin.app.workspace.getLeavesOfType('pdf')) {
       const view = leaf.view;
@@ -292,10 +329,15 @@ class PdfReadingHighlights {
       }
       const targetKey = `${highlight.index}:${target.speechRange?.start}:${target.speechRange?.end}`;
       if (cache.targetKey !== targetKey) {
-        cache.nodes = matchPdfChunk(cache.pages, session.chunks[highlight.index], target.speechRange);
+        cache.selections = new Map();
+        cache.nodes = matchPdfChunk(cache.pages, session.chunks[highlight.index], target.speechRange, cache.selections);
         cache.targetKey = targetKey;
+        geometryChanged = true;
       }
-      for (const node of cache.nodes) if (node.isConnected) { next.add(node); groups.set(node, cache.groups.get(node)); }
+      for (const node of cache.nodes) if (node.isConnected) {
+        next.add(node); groups.set(node, cache.groups.get(node));
+        if (cache.selections.has(node)) selections.set(node, cache.selections.get(node));
+      }
       this.follow(view, root, session, highlight, target, cache.nodes, clean);
     }
     for (const view of this.cached.keys()) if (!live.has(view)) this.discardCache(view);
@@ -305,7 +347,7 @@ class PdfReadingHighlights {
     const changed = next.size !== this.marked.size || [...next].some(node => !this.marked.has(node));
     this.marked = next;
     if (geometryChanged || changed || [...this.overlays.values()].some(overlay => !overlay.element.isConnected
-      || overlay.element.children.length !== overlay.count)) this.renderOverlays(next, groups);
+      || overlay.element.children.length !== overlay.count)) this.renderOverlays(next, groups, selections);
   }
   destroy() { this.clear(); this.clearCache(); this.clearFollowing(); }
 }

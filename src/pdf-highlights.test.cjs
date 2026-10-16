@@ -2,6 +2,40 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { JSDOM } = require('jsdom');
 const { pdfPageLines, matchPdfChunk, PdfReadingHighlights, mergeHighlightRects } = require('./pdf-highlights');
+const { pdfMathChanges, applyPdfMathChanges } = require('./pdf-math');
+const { extractPdfTextLayout } = require('./pdf-layout');
+
+test('PDF highlights clip to the active audio part inside a shared text span', () => {
+  const text = 'The first sentence. The second sentence.';
+  const f = playbackFixture([[text, 40, 100, 390], ['A later paragraph.', 40, 140, 180]], text);
+  f.session.audioParts = { 0: ['The first sentence.', 'The second sentence.'] };
+  const calls = [];
+  f.dom.window.Range.prototype.getClientRects = function () {
+    calls.push([this.startOffset, this.endOffset]);
+    return [{ left: 40 + this.startOffset * 10, top: 100, width: (this.endOffset - this.startOffset) * 10, height: 12 }];
+  };
+  f.highlighter.update(); assert.deepEqual(calls.at(-1), [0, 19]);
+  f.session.currentPartIndex = 1; f.highlighter.update();
+  assert.deepEqual(calls.at(-1), [20, text.length]);
+  assert.equal(f.page.querySelectorAll('.note-reader-pdf-rectangle').length, 1);
+  f.highlighter.destroy(); f.dom.window.close();
+});
+
+test('PDF math omissions and following prose share the same highlight mapping', () => {
+  const rows = [['Before.',40,100,50], ['𝑥',40,130,8], ['=',50,130,8], ['𝑦',60,130,8],
+    ['After.',40,160,50], ['Same line.',100,160,80]];
+  const f = playbackFixture(rows, '');
+  const source = f.session.pdfHighlightPages.get(1);
+  source.items.forEach((item, i) => { item.fontName = i >= 1 && i <= 3 ? 'math' : 'body'; });
+  const layout = extractPdfTextLayout(source.items, { viewport: source.viewport });
+  source.mathChanges = pdfMathChanges(layout, source.items, { academicMathMode: 'skip' });
+  f.session.chunks = [applyPdfMathChanges(layout.text, source.mathChanges).replace(/\s+/g, ' ')];
+  f.session.audioParts = { 0: ['Before. Formula omitted.', 'After.', 'Same line.'] };
+  f.highlighter.update(); assert.deepEqual(f.marked(), ['Before.']);
+  f.session.currentPartIndex = 1; f.highlighter.update(); assert.deepEqual(f.marked(), ['After.']);
+  f.session.currentPartIndex = 2; f.highlighter.update(); assert.deepEqual(f.marked(), ['Same line.']);
+  f.highlighter.destroy(); f.dom.window.close();
+});
 
 function sourceRows(rows) {
   return { viewport: { width: 600, height: 800 }, items: rows.map(([str, x, y, width = 220]) =>

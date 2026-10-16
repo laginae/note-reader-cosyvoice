@@ -22,6 +22,8 @@ const { partitionFootnotes, footnoteRules, normalizeFootnoteMode, addFootnoteSet
 const { recurringEdges, ancillaryLayout, inside: insidePdfRegion, textOf: pdfLinesText, addAncillarySettings } = require('./pdf-ancillary');
 const { ACADEMIC_DEFAULTS, academicOptions, academicLatex, mathSpeech, citations, skipTable, omission } = require('./academic-speech');
 const { numericTableRegions } = require('./pdf-academic');
+const { pdfMathChanges, applyPdfMathChanges, pdfFontNames } = require('./pdf-math');
+const { pdfSelectionSourceMap } = require('./pdf-selection-source');
 const { MAX_HTML_BYTES, captureHtmlSelection, extractHtmlText, getHtmlReaderDocument, isHtmlFile } = require('./html-text');
 const { WEB_VIEW_TYPE, captureWebPage, getWebPageUrl, isWebPageView } = require('./web-page');
 const { estimatePlayback, formatDuration } = require('./playback-estimate');
@@ -910,8 +912,11 @@ function findPdfSelectionMatchIndices(pageLower, candidateLower) {
 function slicePdfTextFromSelection(pageText, selectedText, options = {}) {
   const page = normalizePdfSelectionText(pageText);
   const selected = normalizePdfSelectionText(selectedText);
+  const source = options.preserveSource ? pdfSelectionSourceMap(pageText) : null;
+  const result = (matched, offset = 0) => ({ matched, text: source?.text === page
+    ? pageText.slice(source.offsets[offset] ?? pageText.length) : page.slice(offset) });
   if (!page || !selected) {
-    return { matched: false, text: page };
+    return result(false);
   }
 
   const spatialAnchor = getPdfSpatialLineAnchor(
@@ -935,7 +940,7 @@ function slicePdfTextFromSelection(pageText, selectedText, options = {}) {
         matchIndex = pageLower.indexOf(candidate.toLocaleLowerCase());
       }
       if (matchIndex >= 0) {
-        return { matched: true, text: page.slice(matchIndex) };
+        return result(true, matchIndex);
       }
       continue;
     }
@@ -953,14 +958,14 @@ function slicePdfTextFromSelection(pageText, selectedText, options = {}) {
         : closest
     ));
     if (Math.abs(closestIndex - spatialAnchor) <= Math.max(240, selected.length)) {
-      return { matched: true, text: page.slice(closestIndex) };
+      return result(true, closestIndex);
     }
   }
 
   if (spatialAnchor !== null) {
-    return { matched: true, text: page.slice(spatialAnchor) };
+    return result(true, spatialAnchor);
   }
-  return { matched: false, text: page };
+  return result(false);
 }
 
 function joinPdfPageText(pageTexts) {
@@ -5235,6 +5240,8 @@ class CosyVoiceReaderPlugin extends Plugin {
             ...(contentScope !== 'glossary' && settings?.pdfIncludeGlossary !== true ? ancillary.glossary : []),
             ...(contentScope === 'body' && footnoteMode !== 'footnotes' ? numericTableRegions(ancillary.layout,viewport,settings) : [])];
           if (!isCurrent()) return '';
+          const pageLayout = extractPdfTextLayout(textContent && textContent.items, { viewport });
+          const mathChanges = pdfMathChanges(pageLayout, textContent.items, settings, pdfFontNames(page, textContent.items));
           if (session.kind === 'pdf-progressive') {
             session.pdfHighlightPages ||= new Map();
             session.pdfHighlightPages.set(pageNumber, {
@@ -5247,9 +5254,9 @@ class CosyVoiceReaderPlugin extends Plugin {
               omittedRegions,
               glossaryRegions: ancillary.glossary,
               contentScope,
+              mathChanges,
             });
           }
-          const pageLayout = extractPdfTextLayout(textContent && textContent.items, { viewport });
           let pageText = pageLayout.text;
           if (options.outlineRange) {
             const range = options.outlineRange;
@@ -5261,6 +5268,7 @@ class CosyVoiceReaderPlugin extends Plugin {
             const selectionSlice = slicePdfTextFromSelection(pageText, selectedText, {
               layout: pageLayout,
               selectionPosition: options.selectionPosition,
+              preserveSource: true,
             });
             pageText = selectionSlice.text;
             session.pdfSelectionMatched = selectionSlice.matched;
@@ -5282,6 +5290,8 @@ class CosyVoiceReaderPlugin extends Plugin {
             const omitted = { notes: { lines: ancillary.layout.lines.filter(line => omittedRegions.some(region => insidePdfRegion(line, region))) } };
             pageText = splitFootnotesInRange(pageText, omitted).body;
           }
+          pageText = applyPdfMathChanges(pageText, mathChanges);
+          noteText = applyPdfMathChanges(noteText, mathChanges);
           if (footnoteMode === 'after' && noteText) delayedNotes.push({ text: noteText, pageNumber });
           if (collectText) {
             pageTexts.push(pageText);
@@ -8354,7 +8364,7 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
       });
 
     new Setting(containerEl).setName(zhReading ? '公式朗读策略' : 'Formula reading')
-      .setDesc(zhReading ? '智能模式默认跳过复杂公式；支持的短公式在本地转换。完整模式也不会猜读无法可靠解析的公式。需开启“移除 Markdown 格式”。' : 'Smart mode skips complex formulas. Supported short formulas are converted locally; unsupported notation is never guessed. Requires Strip Markdown.')
+      .setDesc(zhReading ? '智能模式跳过复杂公式，尽量保留正文中的短变量和简单关系。PDF 结合字形、字体和排版识别；不确定的内容保留。Markdown/HTML 中支持的短公式在本地转换，需开启“移除 Markdown 格式”。完整模式也不会猜读无法可靠解析的公式。' : 'Smart mode skips complex formulas while keeping short inline variables and simple relations. PDF detection uses glyphs, fonts and layout; uncertain content is retained. Supported Markdown/HTML formulas are converted locally with Strip Markdown enabled. Unsupported notation is never guessed.')
       .addDropdown(dropdown => dropdown.addOption('smart', zhReading ? '智能：跳过复杂公式' : 'Smart: skip complex formulas')
         .addOption('all', zhReading ? '朗读支持的公式' : 'Read supported formulas').addOption('skip', zhReading ? '跳过所有公式' : 'Skip all formulas')
         .setValue(academicOptions(this.plugin.settings).academicMathMode).onChange(async value => { this.plugin.settings.academicMathMode=value; await this.plugin.saveSettings(); }));
@@ -8384,7 +8394,7 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
         .addOption('all',zhReading ? '完整朗读表格' : 'Read all tables').addOption('skip',zhReading ? '跳过所有已识别表格' : 'Skip all recognized tables')
         .setValue(academicOptions(this.plugin.settings).academicTableMode).onChange(async value => { this.plugin.settings.academicTableMode=value; await this.plugin.saveSettings(); }));
     new Setting(containerEl).setName(zhReading ? '简短提示略过内容' : 'Announce skipped content')
-      .setDesc(zhReading ? '略过公式或表格数据时简短提示。关闭后直接继续正文。PDF 保留表格标题，不额外插入提示。' : 'Briefly announce omitted formulas or table data. Disable for uninterrupted prose.')
+      .setDesc(zhReading ? '略过公式或表格数据时简短提示。PDF 公式提示随邻近正文使用中文或英文。关闭后直接继续正文。PDF 保留表格标题，不额外插入提示。' : 'Briefly announce omitted formulas or table data. PDF formula notices follow nearby Chinese or English prose. Disable for uninterrupted prose. PDF tables keep their captions without an extra notice.')
       .addToggle(toggle => toggle.setValue(this.plugin.settings.academicSkipNotice !== false).onChange(async value => { this.plugin.settings.academicSkipNotice=value; await this.plugin.saveSettings(); }));
     containerEl.createEl('h3', { text: translateInterface(settingsLanguage, 'PDF content', 'PDF 内容') });
     addFootnoteSettings(containerEl, this.plugin, Setting);

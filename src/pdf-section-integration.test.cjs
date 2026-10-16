@@ -77,3 +77,36 @@ test('PDF body, glossary and footnote scopes preserve filtering, progress metada
   assert.ok(selected.startsWith('Left body after glossary.'));assert.ok(selected.includes('Right body paragraph'));
   assert.ok(!selected.includes('Alternating current'));
 });
+
+test('smart PDF math filtering shares original source metadata across full and selected-start reading', async () => {
+  const item = (str, x, y, fontName = 'body', width = 10) =>
+    ({ str, width, height: 12, fontName, transform: [12, 0, 0, 12, x, y] });
+  const items = [item('Public introduction.',40,730,'body',450),
+    item('Selected explanation of ef\ufb01ciency.',40,700,'body',450),
+    item('Use',40,680,'body',20),item('x',65,680,'math'),item('for this short variable.',80,680,'body',410),
+    item('a + b',190,650,'math',40),item('x =',150,640,'math',30),item('c',200,630,'math'),
+    item('(7)',280,640,'math',20),item('The next paragraph remains.',40,600,'body',450)];
+  pdf = { numPages: 1, getPage: async () => ({ getTextContent: async () => ({ items }),
+    getViewport: () => ({ width: 600, height: 800 }),
+    commonObjs: { has: name => name === 'math', get: () => ({ name: 'ABCDEF+CMMI10' }) }, cleanup() {} }), destroy: async () => {} };
+  const plugin = Object.create(loaded.exports.default.prototype);
+  plugin.app = { vault: { readBinary: async () => new ArrayBuffer(0) } }; plugin.isActive = () => true;
+  plugin.settings = { academicMathMode: 'smart', mathReadingLanguage: 'chinese', academicSkipNotice: true, pdfSkipHeaders: false };
+  const file = { extension: 'pdf', path: 'public.pdf', stat: { size: 100, mtime: 1 } };
+  const full = await plugin.extractPdfText(file, {}, { reportProgress: false });
+  const session = { kind: 'pdf-progressive' }, streamed = [];
+  const selected = await plugin.extractPdfText(file, session, { reportProgress: false,
+    selectedText: 'Selected explanation of efficiency.', startPageNumber: 1,
+    onPageText: async text => streamed.push(text) });
+  assert.equal(session.pdfSelectionMatched, true);
+  assert.equal(selected, full.slice(full.indexOf('Selected explanation')));
+  assert.equal(selected, streamed.join('\n\n'));
+  assert.match(selected, /Use x for this short variable\./);
+  assert.match(selected, /Formula omitted\./);
+  assert.doesNotMatch(selected, /公式略过/);
+  assert.doesNotMatch(selected, /a \+ b|\(7\)/);
+  assert.ok(session.pdfHighlightPages.get(1).mathChanges.length > 0);
+  const { pdfSourceLines } = require('./pdf-highlights');
+  const mapped = pdfSourceLines(session.pdfHighlightPages.get(1), text => text);
+  assert.ok(mapped.text.endsWith(selected.replace(/\s/g, '')));
+});

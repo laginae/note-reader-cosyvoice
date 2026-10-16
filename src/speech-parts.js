@@ -34,7 +34,7 @@ function planSpeechParts(session, index, foreground = false) {
   if (!session.plannedAudioParts.has(index)) {
     session.audioParts ||= {};
     const text = session.chunks[index];
-    session.audioParts[index] = makeParts(session, index, foreground && session.smartQuickStart !== false && session.kind !== 'audio-export');
+    session.audioParts[index] = makeParts(session, index, (index === 0 || foreground) && session.smartQuickStart !== false && session.kind !== 'audio-export');
     session.plannedAudioParts.add(index);
   }
   return getSpeechParts(session, index);

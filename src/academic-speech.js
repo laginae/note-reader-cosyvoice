@@ -11,7 +11,10 @@ function academicOptions(settings = {}) {
 const chinese = text => /[\u3400-\u9fff]/.test(text);
 function omission(kind, options, text = '') {
   if (options.academicSkipNotice === false) return '';
-  const zh = kind === 'formula' ? options.mathReadingLanguage === 'chinese' : chinese(text);
+  // A spoken omission follows supplied prose, not the short-formula language.
+  // Without prose (for example a formula-only page), retain the saved fallback.
+  const hasProse = chinese(text) || /[A-Za-z]{4,}/.test(text);
+  const zh = kind === 'formula' && !hasProse ? options.mathReadingLanguage === 'chinese' : chinese(text);
   return kind === 'formula' ? (zh ? '公式略过。' : 'Formula omitted.') : (zh ? '表格数据略过。' : 'Table data omitted.');
 }
 function numericCell(value) {
