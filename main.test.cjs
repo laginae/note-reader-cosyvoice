@@ -36,6 +36,7 @@ Module._load = function loadWithObsidianMock(request, parent, isMain) {
 
 try {
   const pluginModule = require('./main');
+  assert.equal(pluginModule.__test.sanitizeLatexForSpeech('Read \\tau, \\chi and \\varphi.'), 'Read tau, chi and phi.');
   const progressProbe = {
     activeSession: { chunks: ['a', 'b', 'c', 'd'] },
     readerState: { currentChunk: 1 },

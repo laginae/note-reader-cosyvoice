@@ -40,6 +40,54 @@ test('formula omission uses supplied prose language without changing short-formu
   assert.equal(mathSpeech('x + y', { mathReadingLanguage: 'english' }), 'x plus y');
 });
 
+test('retained formulas verbalize operators consistently in Unicode and LaTeX', () => {
+  const examples = [
+    ['x = y + z', 'x equals y plus z', 'x 等于 y 加 z'],
+    ['x − y', 'x minus y', 'x 减 y'],
+    ['x <= y', 'x less than or equal to y', 'x 小于等于 y'],
+    ['x ≥ y', 'x greater than or equal to y', 'x 大于等于 y'],
+    ['x != y', 'x not equal to y', 'x 不等于 y'],
+    ['x ≈ y', 'x approximately equal to y', 'x 约等于 y'],
+    ['x ± y', 'x plus or minus y', 'x 正负 y'],
+    ['x ∓ y', 'x minus or plus y', 'x 负正 y'],
+    ['x × y ÷ 2', 'x times y divided by 2', 'x 乘以 y 除以 2'],
+    [String.raw`x \times y`, 'x times y', 'x 乘以 y'],
+    [String.raw`p = k\tau`, 'p equals k times tau', 'p 等于 k 乘以 tau'],
+    ['p = kτ', 'p equals k times tau', 'p 等于 k 乘以 tau'],
+    [String.raw`x_i = y_j - 2`, 'x sub i equals y sub j minus 2', 'x sub i 等于 y sub j 减 2'],
+  ];
+  for (const [source, en, zh] of examples) {
+    assert.equal(mathSpeech(source), en, source);
+    assert.equal(mathSpeech(source, { mathReadingLanguage:'chinese' }), zh, source);
+  }
+});
+
+test('operator speech follows surrounding prose and never rewrites ordinary strings', () => {
+  const ordinary = 'Date 2026-01-02; pages 3-5; well-being; C++; https://example.test/a-b?q=x+y; version 1.2.3.';
+  assert.equal(academicLatex(ordinary), ordinary);
+  assert.match(academicLatex('The relation $x = y - 2$ holds.', { mathReadingLanguage:'chinese' }), /x equals y minus 2/);
+  assert.match(academicLatex('关系为 $x = y + 2$。', { mathReadingLanguage:'english' }), /x 等于 y 加 2/);
+  assert.doesNotMatch(academicLatex('The sum $\\sum_{i=1}^n x_i$ is omitted.'), /equals|plus|sub/);
+  assert.doesNotMatch(academicLatex('The relation $x = y + 2$ holds.', { academicMathMode:'skip' }), /equals|plus/);
+});
+
+test('HTML math operator speech preserves the original formula DOM', () => {
+  const source = '<p>The relation $x = y + 2$ holds.</p>';
+  const dom = new JSDOM(source), doc = dom.window.document, before = doc.body.innerHTML;
+  // The text extractor and highlight mapper must share the same math reading.
+  const options = academicOptions({ mathReadingLanguage:'chinese' });
+  const speechTransform = text => academicLatex(text, options);
+  const speech = speechTransform(extractHtmlText(source, options));
+  assert.match(speech, /x equals y plus 2/);
+  dom.window.CSS = { highlights:new Map() };
+  dom.window.Highlight = class extends Set { constructor(...ranges) { super(ranges); } };
+  assert.equal(highlightDocument(doc, { text:speech, academic:options, speechTransform }), true);
+  assert.equal([...dom.window.CSS.highlights.get('note-reader-speech')].map(range=>range.toString()).join(''),
+    'The relation $x = y + 2$ holds.');
+  assert.equal(doc.body.innerHTML, before);
+  dom.window.close();
+});
+
 test('numeric citations merge adjacent groups and links without changing units, years or zero intervals', () => {
   assert.equal(citations('研究[3]。'), '研究 文献3 。');
   assert.equal(citations('研究[2][4]。'), '研究 文献2和4 。');

@@ -54,4 +54,9 @@ function createPdfSpeechChunker(maxLengths) {
   };
 }
 
-module.exports = { createPdfSpeechChunker, sentenceCut };
+function splitPdfSpeechChunks(text, limits) {
+  const chunker = createPdfSpeechChunker(limits);
+  return [...chunker.push(text), ...chunker.finish()].map(chunk => chunk.text);
+}
+
+module.exports = { createPdfSpeechChunker, splitPdfSpeechChunks, sentenceCut };

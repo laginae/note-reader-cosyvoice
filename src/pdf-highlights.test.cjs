@@ -37,6 +37,23 @@ test('PDF math omissions and following prose share the same highlight mapping', 
   f.highlighter.destroy(); f.dom.window.close();
 });
 
+test('PDF spoken operators highlight original formula nodes and then the correct following line', () => {
+  const rows = [['The relation is',40,100,85], ['𝑥',135,100,8], ['=',150,100,8], ['𝑦',165,100,8],
+    ['+',180,100,8], ['2',195,100,8], ['.',210,100,5], ['A separate sentence follows.',40,140,200]];
+  const f = playbackFixture(rows,''), source = f.session.pdfHighlightPages.get(1);
+  const before = [...f.page.querySelectorAll('span')].map(node=>node.textContent);
+  const layout = extractPdfTextLayout(source.items,{viewport:source.viewport});
+  source.mathChanges = pdfMathChanges(layout,source.items);
+  f.session.chunks = [applyPdfMathChanges(layout.text,source.mathChanges).replace(/\s+/g,' ')];
+  f.session.audioParts = {0:['The relation is x equals y plus 2 .','A separate sentence follows.']};
+  f.highlighter.update();
+  assert.deepEqual(f.marked(),before.slice(0,-1));
+  f.session.currentPartIndex = 1; f.highlighter.update();
+  assert.deepEqual(f.marked(),[before.at(-1)]);
+  assert.deepEqual([...f.page.querySelectorAll('.textLayer span')].map(node=>node.textContent),before);
+  f.highlighter.destroy(); f.dom.window.close();
+});
+
 function sourceRows(rows) {
   return { viewport: { width: 600, height: 800 }, items: rows.map(([str, x, y, width = 220]) =>
     ({ str, width, height: 12, transform: [12, 0, 0, 12, x, 800 - y] })) };

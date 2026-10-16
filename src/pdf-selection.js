@@ -2,10 +2,11 @@
 
 const { extractPdfTextLayout } = require('./pdf-layout');
 const { pdfMathChanges, applyPdfMathChanges } = require('./pdf-math');
+const { speakGreekSymbols } = require('./math-symbols');
 
 function normalizePdfSpeechText(text) {
-  return String(text || '').normalize('NFKC').replace(/\u00ad/g, '')
-    .replace(/([A-Za-z])-\s*\n\s*(?=[a-z])/g, '$1');
+  return speakGreekSymbols(String(text || '').normalize('NFKC').replace(/\u00ad/g, '')
+    .replace(/([A-Za-z])-\s*\n\s*(?=[a-z])/g, '$1')).replace(/[ \t]+/g, ' ');
 }
 
 // Capture only the selected portions of text-layer spans. No DOM references or

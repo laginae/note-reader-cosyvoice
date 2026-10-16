@@ -44,7 +44,10 @@ test('PDF math skipping is explicit, respects notices, and keeps ordinary numeri
   const items = [item('Results in 2025 improved by 12.5%.', 40, 700), item('x = y + 2', 210, 660),
     item('Date: 2025-01-02; pages 3-5.', 40, 620)];
   const layout = extractPdfTextLayout(items, { viewport });
-  for (const academicMathMode of ['smart', 'all']) assert.deepEqual(pdfMathChanges(layout, items, { academicMathMode }), []);
+  for (const academicMathMode of ['smart', 'all']) {
+    const spoken = applyPdfMathChanges(layout.text, pdfMathChanges(layout, items, { academicMathMode }));
+    assert.equal(spoken, `${items[0].str}\nx equals y plus 2\n${items[2].str}`);
+  }
   const changes = pdfMathChanges(layout, items, { mathReadingLanguage: 'skip', academicSkipNotice: false });
   const speech = applyPdfMathChanges(layout.text, changes);
   assert.equal(speech, `${items[0].str}\n\n${items[2].str}`);
@@ -90,7 +93,7 @@ test('smart PDF mode groups complex display formulas while preserving short inli
   const layout = extractPdfTextLayout(items, { viewport });
   const changes = pdfMathChanges(layout, items, { academicMathMode: 'smart' }, names);
   const speech = applyPdfMathChanges(layout.text, changes);
-  assert.match(speech, /Use x when p = q in this example\./);
+  assert.match(speech, /Use x when p equals q in this example\./);
   assert.equal((speech.match(/Formula\./g) || []).length, 1);
   assert.doesNotMatch(speech, /a \+ b|\(7\)/);
   assert.ok(speech.endsWith('Normal text.'));
@@ -125,4 +128,111 @@ test('PDF formula notices use following prose at page start and saved language o
     assert.equal(fallback, mathReadingLanguage === 'chinese' ? '公式。' : 'Formula.');
     assert.deepEqual(pdfMathChanges(layout, withProse, { ...settings, academicSkipNotice: false }).map(change => change.text), ['']);
   }
+});
+
+test('shared-font inline constraints form a complete run and survive a preceding hyphenated word', () => {
+  const items = [item('The measure describes a varia-',40,720), item('tion given by',40,700),
+    item('𝑤',115,700),item('=',130,700),item('|',145,700),item('𝑥',155,700),item('2',165,699,'body',8),
+    item('−',180,700),item('𝑥',195,700),item('ref',205,699,'body',8),item('|',225,700),item('≤',235,700),item('𝑟',250,700),
+    item('. Continue.',265,700),item('Normal ending.',40,670)];
+  items[0].width=450;items.at(-1).width=450;
+  const layout=extractPdfTextLayout(items,{viewport});
+  const mathChanges=pdfMathChanges(layout,items,{academicMathMode:'smart'});
+  const speech=applyPdfMathChanges(layout.text,mathChanges);
+  assert.match(speech,/variation given by\. Formula\. Continue\./);
+  assert.doesNotMatch(speech,/[|=≤]|ref/);
+  assert.equal((speech.match(/Formula\./g)||[]).length,1);
+  assert.equal(pdfSourceLines({items,viewport,mathChanges},text=>text).text,speech.replace(/\s/g,''));
+  assert.doesNotMatch(applyPdfMathChanges(layout.text,pdfMathChanges(layout,items,{academicSkipNotice:false})),/Formula|[|=≤]|ref/);
+  const fullChanges=pdfMathChanges(layout,items,{academicMathMode:'all'});
+  const fullSpeech=applyPdfMathChanges(layout.text,fullChanges);
+  assert.match(fullSpeech,/w equals absolute value of x sub 2 minus x sub ref less than or equal to r/);
+  assert.equal(fullChanges.flatMap(change=>change.omitted).length,0);
+  // A partial, changed source must not authorize deleting surrounding prose.
+  const partial='An unrelated prefix '+items[1].str+' 𝑤 = | 𝑥 2 − 𝑥 ref | ≤ 𝑟. Continue.';
+  assert.equal(applyPdfMathChanges(partial,mathChanges),partial);
+});
+
+test('simple inline equations and ordinary prose are retained while shared-font operators join', () => {
+  const items=[item('Use',40,700),item('𝑘',65,700),item('=',78,700),item('2',90,700),
+    item('and compare',105,700),item('𝑥',170,700),item('with',185,700),item('𝑦',215,700),item('in this example.',230,700)];
+  items.at(-1).width=300;
+  const layout=extractPdfTextLayout(items,{viewport});
+  const spoken=applyPdfMathChanges(layout.text,pdfMathChanges(layout,items,{academicMathMode:'smart'}));
+  assert.match(spoken,/Use k equals 2 and compare 𝑥 with 𝑦 in this example\./u);
+  const skipped=applyPdfMathChanges(layout.text,pdfMathChanges(layout,items,{academicMathMode:'skip'}));
+  assert.match(skipped,/Use\. Formula\. and compare\. Formula\. with\. Formula\. in this example\./);
+  assert.doesNotMatch(skipped,/=|2|[𝑘𝑥𝑦]/u);
+});
+
+test('short absolute values get words without losing prose, scripts, mode or highlight mapping', () => {
+  for (const mathReadingLanguage of ['chinese','english']) {
+    const items=[item('The value is',40,700),item('|',110,700),item('𝑥',120,700),item('i',130,699,'body',8),
+      item('−',145,700),item('𝑦',160,700),item('|',175,700),item('. Continue.',185,700)];
+    items.at(-1).width=300;
+    const layout=extractPdfTextLayout(items,{viewport});
+    for (const academicMathMode of ['smart','all']) {
+      const mathChanges=pdfMathChanges(layout,items,{academicMathMode,mathReadingLanguage});
+      const speech=applyPdfMathChanges(layout.text,mathChanges);
+      assert.match(speech,/The value is absolute value of x sub i minus y/);
+      assert.doesNotMatch(speech,/[|𝑥𝑦]/u);
+      assert.equal(mathChanges.flatMap(change=>change.omitted).length,0);
+      assert.equal(pdfSourceLines({items,viewport,mathChanges},text=>text).text,speech.replace(/\s/g,''));
+    }
+  }
+});
+
+test('PDF simple operators use local prose language and preserve source highlight mapping', () => {
+  for (const [prefix, language, expected] of [['The relation is', 'chinese', 'x sub i equals y plus 2'],
+    ['其关系如下', 'english', 'x sub i 等于 y 加 2']]) {
+    const items = [item(prefix,40,700),item('𝑥',130,700),item('i',140,699,'body',8),
+      item('=',155,700),item('y',170,700),item('+',185,700),item('2',200,700),item('.',215,700)];
+    const original = JSON.stringify(items), layout = extractPdfTextLayout(items,{viewport});
+    for (const academicMathMode of ['smart','all']) {
+      const mathChanges = pdfMathChanges(layout,items,{academicMathMode,mathReadingLanguage:language});
+      const speech = applyPdfMathChanges(layout.text,mathChanges);
+      assert.ok(speech.includes(expected),speech);
+      assert.equal(mathChanges.flatMap(change=>change.omitted).length,0);
+      assert.equal(pdfSourceLines({items,viewport,mathChanges},text=>text).text,speech.replace(/\s/g,''));
+    }
+    assert.equal(JSON.stringify(items),original);
+  }
+});
+
+test('PDF math-anchored runs include plain Latin factors and comparison or arithmetic signs', () => {
+  const expressions = [
+    [['p','=','k','τ'], 'p equals k times tau'],
+    [['𝑥','−','y'], 'x minus y'],
+    [['𝑥','≤','y'], 'x less than or equal to y'],
+    [['𝑥','≥','y'], 'x greater than or equal to y'],
+    [['𝑥','≠','y'], 'x not equal to y'],
+    [['𝑥','≈','y'], 'x approximately equal to y'],
+    [['𝑥','×','y'], 'x times y'],
+    [['𝑥','÷','2'], 'x divided by 2'],
+    [['𝑥','±','y'], 'x plus or minus y'],
+  ];
+  for (const [tokens,expected] of expressions) {
+    const items = [item('Use',40,700),...tokens.map((token,index)=>item(token,70+index*16,700)),item('in this example.',200,700)];
+    const layout = extractPdfTextLayout(items,{viewport});
+    const mathChanges = pdfMathChanges(layout,items);
+    assert.equal(applyPdfMathChanges(layout.text,mathChanges),`Use ${expected} in this example.`);
+  }
+});
+
+test('PDF operator conversion leaves dates, ranges, URLs, code and ordinary hyphens untouched', () => {
+  const strings = ['Date: 2026-01-02; pages 3-5.', 'Read well-being with C++ version 1.2.3.',
+    'https://example.test/a-b?q=x+y', 'Units m/s and kg/m3, 12.5% gain.'];
+  const items = strings.map((value,index)=>item(value,40,720-index*20));
+  const layout = extractPdfTextLayout(items,{viewport});
+  assert.deepEqual(pdfMathChanges(layout,items),[]);
+  assert.equal(applyPdfMathChanges(layout.text,pdfMathChanges(layout,items)),layout.text);
+});
+
+test('shared-font operator grouping does not absorb an ordinary article before a formula', () => {
+  const items = [item('Choose',40,700),item('a',80,700),item('𝑥',95,700),item('=',110,700),
+    item('y',125,700),item('for this example.',140,700)];
+  const layout = extractPdfTextLayout(items,{viewport});
+  assert.equal(applyPdfMathChanges(layout.text,pdfMathChanges(layout,items)), 'Choose a x equals y for this example.');
+  assert.equal(applyPdfMathChanges(layout.text,pdfMathChanges(layout,items,{academicMathMode:'skip'})),
+    'Choose a. Formula. for this example.');
 });

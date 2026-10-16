@@ -21,6 +21,7 @@ const { extractPdfTextLayout, extractTextFromPdfItems } = require('./pdf-layout'
 const { partitionFootnotes, footnoteRules, normalizeFootnoteMode, addFootnoteSettings, splitFootnotesInRange } = require('./pdf-footnotes');
 const { recurringEdges, ancillaryLayout, inside: insidePdfRegion, textOf: pdfLinesText, addAncillarySettings } = require('./pdf-ancillary');
 const { ACADEMIC_DEFAULTS, academicOptions, academicLatex, mathSpeech, citations, skipTable, omission } = require('./academic-speech');
+const { speakGreekCommands } = require('./math-symbols');
 const { numericTableRegions } = require('./pdf-academic');
 const { pdfMathChanges, applyPdfMathChanges, pdfFontNames } = require('./pdf-math');
 const { pdfSelectionSourceMap } = require('./pdf-selection-source');
@@ -40,7 +41,7 @@ const { PdfReadingHighlights } = require('./pdf-highlights');
 const { HtmlReadingHighlights } = require('./html-highlights');
 const { COPILOT_DEFAULTS, normalizeCopilotSettings } = require('./copilot-chat');
 const { CopilotChatModal, addCopilotChatSettings, readLatestCopilotReply } = require('./copilot-chat-ui');
-const { createPdfSpeechChunker } = require('./pdf-chunker');
+const { createPdfSpeechChunker, splitPdfSpeechChunks } = require('./pdf-chunker');
 const { APPEARANCE_DEFAULTS, normalizeAppearance, applyAppearance, clearAppearance } = require('./reader-appearance');
 const { SidebarOutline } = require('./sidebar-outline');
 const { PdfOutlineModal, addPdfOutlineSettings } = require('./pdf-outline-ui');
@@ -1195,7 +1196,7 @@ function replaceLatexCommands(text, mathReadingLanguage) {
 }
 
 function replaceLatexSymbolCommands(text, mathReadingLanguage) {
-  let value = String(text || '');
+  let value = speakGreekCommands(String(text || ''));
   const replacements = LATEX_COMMAND_REPLACEMENTS[mathReadingLanguage] || LATEX_COMMAND_REPLACEMENTS[DEFAULT_MATH_READING_LANGUAGE];
 
   for (const [command, speech] of replacements) {
@@ -3212,7 +3213,8 @@ class CosyVoiceReaderPlugin extends Plugin {
       }
       if (!current()) return leaf;
       if (!text?.trim()) throw new Error(this.settings.settingsLanguage === 'chinese' ? '没有可读取的正文。' : 'No readable text found.');
-      model.chunks = splitTextForSpeechChunks(text, getChunkLimitsForSpeechEngine(this.settings, this.settings.speechEngine));
+      const split = context.documentKind === 'pdf' ? splitPdfSpeechChunks : splitTextForSpeechChunks;
+      model.chunks = split(text, getChunkLimitsForSpeechEngine(this.settings, this.settings.speechEngine));
       if (model.markdownSource) model.markdownSource = buildMarkdownSource(context.documentText, model.chunks,
         value => this.sanitizeAudioExportText(value), { filePath: context.file?.path });
     } catch (error) {
@@ -4347,7 +4349,8 @@ class CosyVoiceReaderPlugin extends Plugin {
     }
 
     const termSnapshot = { speechTerms: this.settings.speechTerms, speechTermsEnabled: this.settings.speechTermsEnabled };
-    const exportParts = splitTextForSpeechChunks(text, configuration.chunkLimits)
+    const split = context.documentKind === 'pdf' ? splitPdfSpeechChunks : splitTextForSpeechChunks;
+    const exportParts = split(text, configuration.chunkLimits)
       .flatMap(value => fitSpeechParts(value, termSnapshot, Math.max(...configuration.chunkLimits)));
     const chunks = exportParts.map(part => part.source);
     if (!text || !chunks.length) {
@@ -5366,7 +5369,7 @@ class CosyVoiceReaderPlugin extends Plugin {
       await this.startReading(
         preparePdfSelection(selectionContext, this.settings),
         `${activeFile.basename || activeFile.name || 'PDF'} (PDF selection)`,
-        { plainText: true, skipReadingPosition: true }
+        { plainText: true, pdfText: true, skipReadingPosition: true }
       );
       return;
     }
@@ -5452,7 +5455,8 @@ class CosyVoiceReaderPlugin extends Plugin {
     if (options.settingsPreview && (options.settingsPreview.cancelled || this.activeSession)) return 'cancelled';
     this.pauseRequested = false;
 
-    const chunks = options.readingChunks || splitTextForSpeechChunks(text, configuration.chunkLimits);
+    const split = options.pdfText ? splitPdfSpeechChunks : splitTextForSpeechChunks;
+    const chunks = options.readingChunks || split(text, configuration.chunkLimits);
     let markdownSource = options.markdownSource || (options.sourceKind === 'markdown' && !options.plainText
       ? buildMarkdownSource(rawText, chunks, value => this.settings.stripMarkdown
         ? sanitizeTextForSpeech(value, academicOptions(this.settings))

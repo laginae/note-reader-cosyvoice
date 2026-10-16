@@ -110,3 +110,22 @@ test('smart PDF math filtering shares original source metadata across full and s
   const mapped = pdfSourceLines(session.pdfHighlightPages.get(1), text => text);
   assert.ok(mapped.text.endsWith(selected.replace(/\s/g, '')));
 });
+
+test('PDF full and selected-start extraction share spoken operators and immutable source mapping', async () => {
+  const item=(str,x,y)=>({str,width:str.length*5,height:12,fontName:'body',transform:[12,0,0,12,x,y]});
+  const items=[item('Public introduction.',40,730),item('The relation is',40,700),item('𝑥',130,700),
+    item('=',145,700),item('𝑦',160,700),item('+',175,700),item('2',190,700),item('.',205,700),item('Another sentence follows.',40,670)];
+  const original=JSON.stringify(items), viewport={width:600,height:800};
+  pdf={numPages:1,getPage:async()=>({getTextContent:async()=>({items}),getViewport:()=>viewport,cleanup(){}}),destroy:async()=>{}};
+  const plugin=Object.create(loaded.exports.default.prototype);
+  plugin.app={vault:{readBinary:async()=>new ArrayBuffer(0)}};plugin.isActive=()=>true;
+  plugin.settings={academicMathMode:'smart',mathReadingLanguage:'chinese',pdfSkipHeaders:false};
+  const file={extension:'pdf',path:'public.pdf',stat:{size:100,mtime:1}}, session={kind:'pdf-progressive'}, streamed=[];
+  const full=await plugin.extractPdfText(file,session,{reportProgress:false,onPageText:async text=>streamed.push(text)});
+  assert.equal(full,streamed.join('\n\n'));
+  assert.match(full,/The relation is x equals y plus 2/);
+  const selected=await plugin.extractPdfText(file,{}, {reportProgress:false,selectedText:'The relation is 𝑥 = 𝑦 + 2',startPageNumber:1});
+  assert.equal(selected,full.slice(full.indexOf('The relation')));
+  assert.equal(require('./pdf-highlights').pdfSourceLines(session.pdfHighlightPages.get(1),text=>text).text,full.replace(/\s/g,''));
+  assert.equal(JSON.stringify(items),original);
+});

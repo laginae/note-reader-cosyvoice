@@ -1,5 +1,6 @@
 'use strict';
 const { structuredMathSpeech, replacePlainStructuredMath } = require('./structured-math');
+const { greekMathCommands, greekNames } = require('./math-symbols');
 
 const ACADEMIC_DEFAULTS = { academicMathMode: 'smart', academicMathStyle: 'concise', academicTableMode: 'smart', academicSkipNotice: true };
 function academicOptions(settings = {}) {
@@ -63,7 +64,8 @@ function citations(text) {
 }
 // Normalize presentation only; keep mathematical operators and unknown commands intact.
 function normalizeMathPresentation(content) {
-  let value = String(content || '').trim();
+  let value = greekMathCommands(String(content || '')).trim()
+    .replace(/[×÷±∓≈]/g, symbol => ({ '×':'\\times ', '÷':' / ', '±':'\\pm ', '∓':'\\mp ', '≈':'\\approx ' })[symbol]);
   if (value.length > 4096) return null;
   let depth = 0;
   for (const char of value) {
@@ -83,7 +85,8 @@ function normalizeMathPresentation(content) {
   }
   // min/max are labels only inside a simple script, not general operator support.
   value = value.replace(/([_^])\s*\{\s*\\(min|max)\s*\}/g, '$1{$2}');
-  return value.replace(/([_^])\s*(\\(?:alpha|beta|gamma|delta|epsilon|theta|lambda|mu|pi|sigma|omega|rho|tau|phi|eta|nu|xi|zeta|Gamma|Delta|Theta|Lambda|Sigma|Omega|Phi|Pi|Psi|psi|ell|infty))\b/g, '$1{$2}')
+  const scriptSymbol = new RegExp('([_^])\\s*(\\\\(?:' + [...new Set(Object.values(greekNames)), 'ell', 'infty'].join('|') + '))(?![A-Za-z])', 'g');
+  return value.replace(scriptSymbol, '$1{$2}')
     .replace(/([_^])\s*\\(min|max)\b/g, '$1{$2}');
 }
 // Only conventional lower/upper labels are shortened; arbitrary pairs stay bracketed.
@@ -108,7 +111,7 @@ function mathSpeech(content, inputOptions = {}) {
   const semantic = value.replace(/\\[A-Za-z]+/g,'x').replace(/[{}\s]/g,'');
   const limit = options.academicMathMode === 'all' ? 100 : 32;
   if (semantic.length > limit || /\\(?:begin|end|sum|prod|int|iint|oint|cases|matrix)\b|\\\\/.test(value)) return omission('formula', options);
-  const symbols = { ell:'ell', alpha:'alpha', beta:'beta', gamma:'gamma', delta:'delta', epsilon:'epsilon', theta:'theta', lambda:'lambda', mu:'mu', pi:'pi', sigma:'sigma', omega:'omega', rho:'rho', tau:'tau', phi:'phi', eta:'eta', nu:'nu', xi:'xi', zeta:'zeta' };
+  const symbols = { ell:'ell', ...Object.fromEntries(Object.values(greekNames).map(name => [name, name])) };
   const known = new Set([...Object.keys(symbols), 'Gamma','Delta','Theta','Lambda','Sigma','Omega','Phi','Pi','Psi','psi','frac','dfrac','tfrac','sqrt','bar','overline','hat','tilde','vec','dot','ddot','text','mathrm','mathbf','mathbb','boldsymbol','operatorname','left','right','lvert','rvert','vert','leq','geq','le','ge','lt','gt','neq','ne','approx','times','cdot','pm','mp','infty','to','rightarrow','leftarrow','in','notin','partial']);
   if (commands.some(c => !known.has(c.slice(1)))) return omission('formula', options);
   let depth = 0, maxDepth = 0;
@@ -125,6 +128,9 @@ function mathSpeech(content, inputOptions = {}) {
   }
   // Explicitly speak products of adjacent, simply subscripted variables.
   value = value.replace(/([A-Za-z]_\{\s*(?:\\[A-Za-z]+|[A-Za-z0-9]+)\s*\})\s*(?=[A-Za-z]_\{)/g, '$1 * ');
+  // A single Latin factor next to a Greek symbol is a product, not a word.
+  const greekFactor = Object.keys(symbols).filter(name => name !== 'ell').join('|');
+  value = value.replace(new RegExp('(?<![A-Za-z\\\\])([A-Za-z](?:_\\{[A-Za-z0-9]+\\})?)\\s*(?=\\\\(?:' + greekFactor + ')\\b)', 'g'), '$1 * ');
   value = value.replace(/\\(?:left|right)\b/g,'').replace(/\\(?:lvert|rvert|vert)\b/g,'|');
   const group = (inner) => /[+−=<>-]|\bover\b|分之/.test(inner) ? (zh ? ` 括号 ${inner} 括号结束 ` : ` open parenthesis ${inner} close parenthesis `) : inner;
   for (let pass=0;pass<4;pass++) {
@@ -180,4 +186,4 @@ function academicLatex(text, options = {}) {
     return { text: context.before.trimEnd() + spoken.replace(/^(?=Formula|公式)/, ' ') + ' ', consumed: ending.consumed };
   });
 }
-module.exports = { ACADEMIC_DEFAULTS, academicOptions, academicLatex, mathSpeech, citations, skipTable, numericCell, omission, formulaNoticeWithPause, formulaNoticeEnding };
+module.exports = { ACADEMIC_DEFAULTS, academicOptions, contextualMathOptions, academicLatex, mathSpeech, citations, skipTable, numericCell, omission, formulaNoticeWithPause, formulaNoticeEnding };

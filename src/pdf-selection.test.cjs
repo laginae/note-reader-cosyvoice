@@ -23,7 +23,7 @@ test('selected PDF layout filters a multi-line formula, keeps short variables an
   assert.equal((smart.match(/Formula\./g)||[]).length,1);
   assert.doesNotMatch(smart,/a \+ b|\(7\)/);
   assert.ok(smart.endsWith('Normal text.'));
-  assert.match(preparePdfSelection(context,{academicMathMode:'all'}),/a \+ b/);
+  assert.match(preparePdfSelection(context,{academicMathMode:'all'}),/a plus b/);
   assert.doesNotMatch(preparePdfSelection(context,{academicMathMode:'skip',academicSkipNotice:false}),/Formula\.|Use j/);
 });
 
@@ -41,4 +41,29 @@ test('PDF selection capture excludes unselected span prefixes, suffixes and adja
   page.getBoundingClientRect=()=>({width:0,height:0});
   assert.equal(capturePdfSelectionLayout(range,doc.body,selectedText),null);
   dom.window.close();
+});
+
+test('shared fallback fonts retain complete display blocks including labels and equation numbers', () => {
+  const items = [item('An example follows',40,720),
+    item('𝑙',100,690),item('≤',112,690),item('𝑥',124,690),item('2',134,689,'body',8),item('≤',145,690),item('𝑢',157,690),
+    item('𝑙',110,674),item('=',122,674),item('max',135,674),item('(',155,674),item('𝑧',165,674),
+    item('ref',175,673,'body',8),item(',',192,674),item('𝑦',202,674),item('−',215,674),item('1',227,674),item(')',238,674),item('(42)',300,674),
+    item('𝑢',110,658),item('=',122,658),item('min',135,658),item('(',155,658),item('𝑧',165,658),
+    item('lim',175,657,'body',8),item(',',192,658),item('𝑦',202,658),item('+',215,658),item('1',227,658),item(')',238,658),
+    item('Normal prose follows.',40,625)];
+  items[0].width=450; items.at(-1).width=450;
+  const context={selectionLayout:[{items,viewport:{width:600,height:800}}]};
+  const speech=preparePdfSelection(context,{academicMathMode:'smart'});
+  assert.equal(speech.replace(/\s+/g,' ').trim(), 'An example follows . Formula. Normal prose follows.');
+  assert.doesNotMatch(speech, /max|min|ref|lim|42|[=≤]/);
+  assert.doesNotMatch(preparePdfSelection(context,{academicSkipNotice:false}), /Formula|ref|lim|42/);
+  assert.match(preparePdfSelection(context,{academicMathMode:'all'}), /max/);
+});
+
+test('shared fonts do not turn ordinary short words into mathematical scripts', () => {
+  const items=[item('Use',40,700),item('𝑥',65,700),item('and',80,700),item('𝑦',100,700),
+    item('in this example.',120,700),item('Then continue.',40,670)];
+  items[4].width=350;items.at(-1).width=450;
+  const result=preparePdfSelection({selectionLayout:[{items,viewport:{width:600,height:800}}]},{});
+  assert.equal(result,'Use x and y in this example.\nThen continue.');
 });

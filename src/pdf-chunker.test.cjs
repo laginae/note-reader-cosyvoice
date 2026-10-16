@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { createPdfSpeechChunker } = require('./pdf-chunker');
+const { createPdfSpeechChunker, splitPdfSpeechChunks } = require('./pdf-chunker');
 
 test('PDF line wraps do not outrank complete sentences, including short sentences', () => {
   const chunker = createPdfSpeechChunker([65]);
@@ -25,4 +25,12 @@ test('overlong PDF sentences still respect synthesis limits without dropping tex
   const chunks = [...chunker.push(text, { pageNumber: 3 }), ...chunker.finish()];
   assert.equal(chunks.map(chunk => chunk.text).join(''), text);
   chunks.forEach((chunk, index) => assert.ok(chunk.text.length <= [40, 80, 200][Math.min(index, 2)]));
+});
+
+test('PDF selection and export chunking remove visual wraps before choosing sentence boundaries', () => {
+  const source='The first sentence is wrapped\nacross several lines and ends here. Another sentence\ncontinues to its full stop. Last.';
+  const chunks=splitPdfSpeechChunks(source,[75]);
+  assert.deepEqual(chunks,['The first sentence is wrapped across several lines and ends here.', 'Another sentence continues to its full stop. Last.']);
+  assert.equal(chunks.join(' '),source.replace(/\s+/g,' '));
+  assert.ok(chunks.every(text=>!text.includes('\n')));
 });
