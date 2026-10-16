@@ -103,6 +103,10 @@ en-GB-RyanNeural
 
 If Obsidian cannot find `edge-tts`, enter its absolute executable path and fully restart Obsidian. Do not depend on an unrelated application's private virtual environment unless you intentionally trust and maintain it.
 
+Use **edge-tts 7.3.1 or newer** and check the exact configured executable with `--version`. Updating this plugin does not update the helper. Upgrade a pipx installation with `pipx upgrade edge-tts`, or use `py -m pip install --upgrade edge-tts` in the Python environment that owns it. Upstream [7.3.0 added a newer connection protocol](https://github.com/rany2/edge-tts/releases/tag/7.3.0); [7.3.1 fixed server-date parsing](https://github.com/rany2/edge-tts/releases/tag/7.3.1).
+
+For `HTTP 403` / `WSServerHandshakeError`, an outdated helper is one possible cause, not a diagnosis of every rejection. Restart Obsidian after updating and test a non-sensitive sentence. If synthesis still fails, check the system clock and network/proxy settings or use another engine; do not disable certificate verification. Voice-list success alone does not prove synthesis works. Remove private text, local paths and request URLs/tokens before sharing errors. See the [detailed troubleshooting guide](README.md#edge-tts-version-checks-and-http-403).
+
 Privacy note: Edge mode sends each text chunk to Microsoft Edge TTS. Use `Local CosyVoice` for private or sensitive notes.
 
 ## Configure Microsoft Azure Speech

@@ -5,6 +5,7 @@ const { compact, markdownReadingHighlight: readingTarget } = require('./markdown
 const { inside } = require('./pdf-ancillary');
 const { following, watchFollowing } = require('./reading-follow');
 const { applyPdfMathChanges } = require('./pdf-math');
+const { normalizePdfSpeechText } = require('./pdf-selection');
 
 function pdfPageLines(page, clean, source = null, footnote = false) {
   const bounds = page.getBoundingClientRect();
@@ -52,6 +53,8 @@ function pdfSourceLines(source, clean, footnote = false) {
 }
 
 function finishPageLines(layout, lineNodes, clean, source, footnote, exact) {
+  const sanitize = clean;
+  clean = text => sanitize(normalizePdfSpeechText(text));
   const ancillaryFilter = source?.omittedRegions?.length || source?.contentScope === 'glossary';
   if (exact && (ancillaryFilter || (source.footnoteMode && source.footnoteMode !== 'inline' && source.footnoteRegions?.length))) {
     const indices = layout.lines.map((line, index) => ({ line, index })).filter(({ line }) => {

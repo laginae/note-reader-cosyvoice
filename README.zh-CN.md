@@ -450,6 +450,14 @@ edge-tts --list-voices
 
 如果 Obsidian 找不到 `edge-tts`，请在插件设置中填写绝对可执行文件路径并完全重启 Obsidian。除非你明确决定信任并维护该安装，否则不要依赖其他应用的私有虚拟环境。
 
+#### Edge TTS 版本检查与 HTTP 403
+
+建议使用 **edge-tts 7.3.1 或更新版本**。上游 [7.3.0 加入了新版连接协议](https://github.com/rany2/edge-tts/releases/tag/7.3.0)，[7.3.1 修复了服务器日期解析](https://github.com/rany2/edge-tts/releases/tag/7.3.1)。更新本 Obsidian 插件不会自动更新单独安装的 `edge-tts` 程序。
+
+运行 `edge-tts --version` 检查版本。通过 pipx 安装的，运行 `pipx upgrade edge-tts`；通过 Python 安装的，在对应 Python 环境中运行 `py -m pip install --upgrade edge-tts`。如果电脑里有多个安装版本，应使用插件设置中填写的完整可执行文件路径检查版本，不能只检查终端默认找到的那一份。
+
+`HTTP 403` / `WSServerHandshakeError` 表示服务拒绝了连接，旧版本是已知原因之一，但不是唯一原因。升级后完全重启 Obsidian，用一句不含隐私的短文本测试。如果仍失败，请检查系统时间、网络或代理配置，或改用其他语音引擎；不要关闭证书验证。能列出音色不代表一定能合成音频。提交问题时请移除截图或日志中的文档正文、本机路径和请求地址／令牌。
+
 隐私提醒：Edge 模式会把每个文本分段发送给 Microsoft Edge TTS。Microsoft 的 Edge 大声朗读隐私文档说明，在线转换使用的文本和生成音频会在转换完成后立即删除；但本插件使用的第三方 `edge-tts` 调用接口没有为插件请求提供明确的 ZDR 保证。应把它视为没有可保证 ZDR 控制的在线处理方式；私密或敏感笔记建议继续使用默认的 `Local CosyVoice`。参见 [Microsoft Edge 中的用户数据和隐私](https://learn.microsoft.com/zh-cn/microsoft-edge/privacy-whitepaper/)。
 
 ## 保存 Azure 与 OpenRouter 密钥

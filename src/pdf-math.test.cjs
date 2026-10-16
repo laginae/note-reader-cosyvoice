@@ -9,6 +9,21 @@ const item = (str, x, y, fontName = 'body', size = 12) =>
   ({ str, width: str.length * 5, height: size, fontName, transform: [size, 0, 0, size, x, y] });
 const viewport = { width: 600, height: 800 };
 
+test('smart PDF filtering groups plain-font absolute-value bars with a fraction equation', () => {
+  const items = [item('An ordinary introduction.',40,730),
+    item('|',200,690),item('𝑎',210,690,'math'),item('−',225,690,'math'),item('𝑏',240,690,'math'),item('|',250,690),
+    item('𝑣',160,676,'math'),item('=',175,676),item('𝑐',220,676,'math'),
+    item('Ordinary continuation.',40,640)];
+  items[0].width=450;items.at(-1).width=450;
+  const layout=extractPdfTextLayout(items,{viewport});
+  const changes=pdfMathChanges(layout,items,{academicMathMode:'smart'});
+  const speech=applyPdfMathChanges(layout.text,changes);
+  assert.equal((speech.match(/Formula\./g)||[]).length,1);
+  assert.doesNotMatch(speech,/[|=𝑎𝑏𝑐𝑣]/u);
+  assert.match(speech,/An ordinary introduction\./);
+  assert.match(speech,/Ordinary continuation\./);
+});
+
 test('PDF skip uses math font evidence for inline scripts and multiline displayed equations', () => {
   const items = [item('The value', 40, 700), item('𝑥', 100, 700, 'math'), item('i', 110, 697, 'math', 8),
     item('is described below.', 125, 700), item('2', 210, 670, 'math', 8),
@@ -17,7 +32,7 @@ test('PDF skip uses math font evidence for inline scripts and multiline displaye
   const layout = extractPdfTextLayout(items, { viewport });
   const mathChanges = pdfMathChanges(layout, items, { academicMathMode: 'skip' });
   const speech = applyPdfMathChanges(layout.text, mathChanges);
-  assert.match(speech, /The value Formula\. is described below\./);
+  assert.match(speech, /The value\. Formula\. is described below\./);
   assert.ok(speech.endsWith('Normal prose continues.'));
   assert.doesNotMatch(speech, /[𝑥𝑦=]/u);
   assert.equal((speech.match(/Formula\./g) || []).length, 2);

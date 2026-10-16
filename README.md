@@ -416,6 +416,14 @@ Common presets include `zh-CN-XiaoxiaoNeural`, `zh-CN-YunxiNeural`, `zh-CN-Yunya
 
 If Obsidian cannot find `edge-tts`, use the absolute executable path in the plugin settings and fully restart Obsidian. Do not rely on an unrelated application's private virtual environment unless you intentionally trust and maintain that installation.
 
+#### Edge TTS version checks and HTTP 403
+
+Use **edge-tts 7.3.1 or newer**. Upstream [7.3.0 added the newer connection protocol](https://github.com/rany2/edge-tts/releases/tag/7.3.0), and [7.3.1 fixed server-date parsing](https://github.com/rany2/edge-tts/releases/tag/7.3.1). Updating this Obsidian plugin does not update the separately installed helper.
+
+Run `edge-tts --version`. For a pipx installation, run `pipx upgrade edge-tts`; for a Python installation, use `py -m pip install --upgrade edge-tts` with the same Python environment that owns the configured executable. If several copies are installed, verify the version using the exact executable path configured in the plugin, not just the command found by your terminal.
+
+`HTTP 403` / `WSServerHandshakeError` means the service rejected the connection. An outdated helper is one known cause, but not the only one. After upgrading, fully restart Obsidian and test a short non-sensitive sentence. If it still fails, check the system clock and network/proxy configuration or choose another speech engine. Do not disable certificate verification. A working voice list alone does not confirm that speech synthesis works. When reporting errors, remove document text, local paths and request URLs/tokens from screenshots or logs.
+
 Privacy note: Edge mode sends each text chunk to Microsoft Edge TTS. Microsoft's Edge Read aloud privacy documentation says text and generated audio used for online conversion are deleted immediately after conversion, but the third-party `edge-tts` calling interface used by this plugin does not expose an explicit ZDR guarantee for plugin requests. Treat it as online processing without a guaranteed ZDR control, and keep `Speech engine` set to `Local CosyVoice` for private or sensitive notes. See [User data and privacy in Microsoft Edge](https://learn.microsoft.com/en-us/microsoft-edge/privacy-whitepaper/).
 
 ### Store Azure and OpenRouter API keys

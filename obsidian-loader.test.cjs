@@ -215,7 +215,7 @@ const testVaultPath = path.resolve('test-vault');
 const testAudioPath = path.join(testVaultPath, '.obsidian', 'plugins', 'note-reader-cosyvoice', 'cache', 'a.wav');
 assert.strictEqual(manifest.id, 'note-reader-cosyvoice');
 assert.strictEqual(manifest.name, 'Cozy Read Aloud');
-assert.strictEqual(manifest.version, '1.1.3');
+assert.strictEqual(manifest.version, '1.1.4');
 assert.strictEqual(
   moduleObject.exports.__test.sanitizeTextForSpeech('第一段的结尾。\n\n## 第二节标题\n\n下一节的正文。'),
   '第一段的结尾。\n第二节标题\n下一节的正文。'
@@ -906,7 +906,7 @@ assert.strictEqual(
 );
 assert.strictEqual(
   moduleObject.exports.__test.sanitizeTextForSpeech('长公式 $\\int_0^1 x^2 + y^2 + z^2 dx$ 跳过，短公式 $a_b$ 读。'),
-  '长公式 Formula. 跳过，短公式 a sub b 读。'
+  '长公式. Formula. 跳过，短公式 a sub b 读。'
 );
 assert.strictEqual(
   moduleObject.exports.__test.calculateCurrentChunkSeekTime({
@@ -1053,6 +1053,12 @@ assert.deepStrictEqual(pdfSelectionContext, {
   pageNumber: 3,
   selectedText: 'Selected PDF passage',
 });
+const longPdfSelection = 'A'.repeat(1999) + '𝑗 followed by the complete selection.';
+assert.equal(moduleObject.exports.__test.getPdfSelectionContext({
+  rangeCount: 1,
+  getRangeAt: () => ({ startContainer: pdfSelectionTextNode }),
+  toString: () => longPdfSelection,
+}, [{ view: { containerEl: pdfSelectionRoot, file: pdfSelectionFile } }], null, 12345).selectedText, longPdfSelection);
 pdfSelectionPage.getBoundingClientRect = () => ({
   height: 700,
   left: 100,
@@ -3032,8 +3038,8 @@ assert.deepStrictEqual(chunkNavigationCalls, [-1, 1]);
           callback(response);
           if (succeeded) {
             response.emit('data', Buffer.alloc(64));
-            response.emit('end');
           }
+          response.emit('end');
         });
       };
       return request;
@@ -3063,6 +3069,7 @@ assert.deepStrictEqual(chunkNavigationCalls, [-1, 1]);
           response.resume = () => {};
           response.destroy = () => {};
           callback(response);
+          response.emit('end');
         });
       };
       return request;
@@ -3093,6 +3100,7 @@ assert.deepStrictEqual(chunkNavigationCalls, [-1, 1]);
           response.resume = () => {};
           response.destroy = () => {};
           callback(response);
+          response.emit('end');
         });
       };
       return request;

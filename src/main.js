@@ -24,10 +24,13 @@ const { ACADEMIC_DEFAULTS, academicOptions, academicLatex, mathSpeech, citations
 const { numericTableRegions } = require('./pdf-academic');
 const { pdfMathChanges, applyPdfMathChanges, pdfFontNames } = require('./pdf-math');
 const { pdfSelectionSourceMap } = require('./pdf-selection-source');
+const { capturePdfSelectionLayout, preparePdfSelection, normalizePdfSpeechText } = require('./pdf-selection');
 const { MAX_HTML_BYTES, captureHtmlSelection, extractHtmlText, getHtmlReaderDocument, isHtmlFile } = require('./html-text');
 const { WEB_VIEW_TYPE, captureWebPage, getWebPageUrl, isWebPageView } = require('./web-page');
 const { estimatePlayback, formatDuration } = require('./playback-estimate');
 const { getSystemVoiceKey, listSystemVoices, normalizeSystemVoice, synthesizeSystemSpeech, systemSpeechError } = require('./system-tts');
+const { edgeTtsError } = require('./edge-errors');
+const { safeRemoteErrorDetail, MAX_ERROR_BYTES } = require('./remote-error-detail');
 const { AccessibleReaderView, DOCUMENT_VIEW_TYPE } = require('./accessible-reader');
 const { normalizeReadingHighlight, buildSentenceCues, sentenceAtTime, speechPartOffset } = require('./reading-highlights');
 const { buildMarkdownSource, compact } = require('./markdown-source');
@@ -787,13 +790,15 @@ function getPdfSelectionContext(selection, leaves, fallbackFile = null, captured
       continue;
     }
     const selectionPosition = getPdfSelectionPosition(range, pageInfo.element);
+    const selectionLayout = capturePdfSelectionLayout(range, root, selectedText);
 
     return {
       capturedAt: Number(capturedAt) || Date.now(),
       filePath: getPdfFileIdentity(file),
       fileMtime: getFileMtime(file),
       pageNumber: pageInfo.pageNumber,
-      selectedText: selectedText.slice(0, 2000),
+      selectedText,
+      ...(selectionLayout ? { selectionLayout } : {}),
       ...(selectionPosition ? { selectionPosition } : {}),
     };
   }
@@ -4333,7 +4338,7 @@ class CosyVoiceReaderPlugin extends Plugin {
           : context.selectionContext.text.slice(context.selectionContext.startOffset);
       text = this.prepareHtmlSpeechText(htmlText);
     } else if (scope === 'selection') {
-      text = this.sanitizeAudioExportText(context.selectionContext.selectedText);
+      text = this.sanitizeAudioExportText(preparePdfSelection(context.selectionContext, this.settings));
     } else {
       text = await this.extractPdfAudioExportText(context, scope, configuration);
       if (!text) {
@@ -5290,8 +5295,8 @@ class CosyVoiceReaderPlugin extends Plugin {
             const omitted = { notes: { lines: ancillary.layout.lines.filter(line => omittedRegions.some(region => insidePdfRegion(line, region))) } };
             pageText = splitFootnotesInRange(pageText, omitted).body;
           }
-          pageText = applyPdfMathChanges(pageText, mathChanges);
-          noteText = applyPdfMathChanges(noteText, mathChanges);
+          pageText = normalizePdfSpeechText(applyPdfMathChanges(pageText, mathChanges));
+          noteText = normalizePdfSpeechText(applyPdfMathChanges(noteText, mathChanges));
           if (footnoteMode === 'after' && noteText) delayedNotes.push({ text: noteText, pageNumber });
           if (collectText) {
             pageTexts.push(pageText);
@@ -5359,8 +5364,9 @@ class CosyVoiceReaderPlugin extends Plugin {
 
       await this.activateControlView();
       await this.startReading(
-        selectionContext.selectedText,
-        `${activeFile.basename || activeFile.name || 'PDF'} (PDF selection)`
+        preparePdfSelection(selectionContext, this.settings),
+        `${activeFile.basename || activeFile.name || 'PDF'} (PDF selection)`,
+        { plainText: true, skipReadingPosition: true }
       );
       return;
     }
@@ -5954,7 +5960,7 @@ class CosyVoiceReaderPlugin extends Plugin {
         }
         settled = true;
         child.kill();
-        reject(new Error('Edge TTS synthesis timed out after 10 minutes.'));
+        reject(new Error(edgeTtsError('', this.settings.settingsLanguage, 'timeout')));
       }, 10 * 60 * 1000);
 
       child.stdout.on('data', (data) => {
@@ -5974,7 +5980,7 @@ class CosyVoiceReaderPlugin extends Plugin {
         if (this.currentProcess === child) {
           this.currentProcess = null;
         }
-        reject(new Error(`Edge TTS command failed at ${executable}. Check the configured executable path. ${messageFromError(error)}`));
+        reject(new Error(edgeTtsError('', this.settings.settingsLanguage, 'command')));
       });
 
       child.on('close', (code) => {
@@ -5998,7 +6004,7 @@ class CosyVoiceReaderPlugin extends Plugin {
         }
 
         const detail = [stderr.trim(), stdout.trim()].filter(Boolean).join('\n');
-        reject(new Error(detail || `Edge TTS exited with code ${code}.`));
+        reject(new Error(edgeTtsError(detail, this.settings.settingsLanguage)));
       });
     });
   }
@@ -6113,13 +6119,39 @@ class CosyVoiceReaderPlugin extends Plugin {
       }, (response) => {
         const statusCode = Number(response.statusCode) || 0;
         if (statusCode !== 200) {
-          response.resume();
-          finish(reject, createRemoteHttpError(
+          const error = createRemoteHttpError(
             serviceLabel,
             statusCode,
             failureHint,
             response.headers && response.headers['retry-after']
-          ));
+          );
+          const chunks = [];
+          let size = 0;
+          const rejectResponse = () => {
+            if (settled) return;
+            const detail = safeRemoteErrorDetail(Buffer.concat(chunks));
+            if (detail) {
+              error.message = `${serviceLabel} returned HTTP ${statusCode}. ${detail.message}`;
+              error.providerReason = detail.reason;
+              error.parameter = detail.parameter;
+            }
+            finish(reject, error);
+          };
+          response.on('data', chunk => {
+            if (settled) return;
+            size += Buffer.byteLength(chunk);
+            if (size > MAX_ERROR_BYTES) {
+              chunks.length = 0;
+              finish(reject, error);
+              response.destroy();
+              return;
+            }
+            chunks.push(Buffer.from(chunk));
+          });
+          response.on('end', rejectResponse);
+          response.on('aborted', () => finish(reject, error));
+          response.on('error', () => finish(reject, error));
+          response.on('close', () => { if (!response.complete) finish(reject, error); });
           return;
         }
 

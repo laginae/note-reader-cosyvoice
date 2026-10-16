@@ -1,6 +1,6 @@
 'use strict';
 
-const { academicOptions, omission } = require('./academic-speech');
+const { academicOptions, omission, formulaNoticeWithPause, formulaNoticeEnding } = require('./academic-speech');
 
 const mathGlyph = /[\u{1d400}-\u{1d7ff}\u220f\u2211\u221a\u222b-\u2233]/u;
 const prose = value => /[\u3400-\u9fff]/u.test(value)
@@ -65,7 +65,7 @@ function pdfMathChanges(layout, items, settings = {}, names = {}) {
     const plainEquation = /[=\u2264\u2265\u2248\u2260]/.test(line.text)
       && /[A-Za-z\u0370-\u03ff\u{1d400}-\u{1d7ff}]/u.test(line.text) && !prose(line.text)
       && (line.text.match(/[A-Za-z]+/g) || []).every(word => word.length === 1 || /^(?:min|max|sin|cos|tan|log|exp|lim|sqrt)$/i.test(word));
-    const neutral = value => /^[\s\d()[\]{},.;:+\-\u2212=<>/]+$/.test(value);
+    const neutral = value => /^[\s\d()[\]{},.;:+\-\u2212=<>/|]+$/.test(value);
     const display = plainEquation || (mapped.every(token => token.math || neutral(token.item.str)));
     if (display) mapped.forEach(token => { token.math = true; });
     return { line, mapped, display, equation: plainEquation || /[=\u2264\u2265\u2248\u2260\u222b-\u2233]/.test(line.text),
@@ -122,7 +122,17 @@ function pdfMathChanges(layout, items, settings = {}, names = {}) {
     if (!selected.length) continue;
     const notice = row.continuation ? '' : omission('formula', options, row.noticeContext);
     let text = '', offset = 0;
-    for (const run of selected) { text += line.text.slice(offset, run.start) + (notice ? ` ${notice} ` : ' '); offset = run.end; }
+    for (const run of selected) {
+      text += line.text.slice(offset, run.start);
+      const before = text.trim() ? text : rows[rows.indexOf(row) - 1]?.line.text || '';
+      offset = run.end;
+      if (notice) {
+        const ending = formulaNoticeEnding(notice, line.text.slice(offset));
+        const spoken = formulaNoticeWithPause(notice, before).replace(notice, ending.notice);
+        text = text.trimEnd() + spoken.replace(/^(?=Formula|公式)/, ' ') + ' ';
+        offset += ending.consumed;
+      } else text += ' ';
+    }
     text = (text + line.text.slice(offset)).replace(/[ \t]+/g, ' ').trim();
     changes.push({ source: line.text, text, xMin: line.xMin, y: line.y,
       omitted: mapped.filter(token => selected.some(run => token.start >= run.start && token.end <= run.end))

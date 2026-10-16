@@ -17,6 +17,16 @@ function omission(kind, options, text = '') {
   const zh = kind === 'formula' && !hasProse ? options.mathReadingLanguage === 'chinese' : chinese(text);
   return kind === 'formula' ? (zh ? '公式。' : 'Formula.') : (zh ? '表格数据略过。' : 'Table data omitted.');
 }
+function formulaNoticeWithPause(notice, before = '') {
+  const previous = String(before).trimEnd();
+  if (!notice || !previous || /[.!?。！？…,:;，：；]["'”’）)]*$/.test(previous)) return notice;
+  return (notice === '公式。' ? '。' : '.') + ' ' + notice;
+}
+function formulaNoticeEnding(notice, after) {
+  const suffix = String(after).match(/^[ \t]*[.!?。！？,;:，；：]+[ \t]*/)?.[0] || '';
+  const emphasis = suffix.match(/[!?！？]/)?.[0];
+  return { notice: emphasis ? notice.slice(0, -1) + emphasis : notice, consumed: suffix.length };
+}
 function numericCell(value) {
   const text = String(value).trim();
   return /\d/.test(text) && !/[\p{L}]{4,}/u.test(text)
@@ -132,6 +142,19 @@ function mathSpeech(content, inputOptions = {}) {
   return value;
 }
 function academicLatex(text, options = {}) {
-  return String(text).replace(/\$\$([\s\S]*?)\$\$|\\\[([\s\S]*?)\\\]|\\\(([\s\S]*?)\\\)|\$([^$\n]+?)\$/g, (_match,...args) => ` ${mathSpeech(args.slice(0,4).find(v => v !== undefined),options)} `);
+  const source = String(text), pattern = /\$\$([\s\S]*?)\$\$|\\\[([\s\S]*?)\\\]|\\\(([\s\S]*?)\\\)|\$([^$\n]+?)\$/g;
+  let result = '', end = 0;
+  for (const match of source.matchAll(pattern)) {
+    result += source.slice(end, match.index);
+    const speech = mathSpeech(match.slice(1,5).find(v => v !== undefined), options);
+    end = match.index + match[0].length;
+    if (speech === 'Formula.' || speech === '公式。') {
+      const ending = formulaNoticeEnding(speech, source.slice(end));
+      const notice = formulaNoticeWithPause(speech, result).replace(speech, ending.notice);
+      result = result.trimEnd() + notice.replace(/^(?=Formula|公式)/, ' ') + ' ';
+      end += ending.consumed;
+    } else result += ` ${speech} `;
+  }
+  return result + source.slice(end);
 }
-module.exports = { ACADEMIC_DEFAULTS, academicOptions, academicLatex, mathSpeech, citations, skipTable, numericCell, omission };
+module.exports = { ACADEMIC_DEFAULTS, academicOptions, academicLatex, mathSpeech, citations, skipTable, numericCell, omission, formulaNoticeWithPause, formulaNoticeEnding };
