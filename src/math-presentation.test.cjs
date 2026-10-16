@@ -14,7 +14,7 @@ test('named lower/upper bounds use concise ranges and preserve verbose interval 
   assert.equal(academicLatex('$' + source + '$').trim(), en);
   assert.equal(mathSpeech(source, {mathReadingLanguage:'chinese'}),
     'E sub min 加 R sub 无穷 乘以 z sub d 到 E sub max 减 R sub 无穷 乘以 z sub c');
-  assert.equal(mathSpeech(source, {academicMathMode:'skip'}), 'Formula omitted.');
+  assert.equal(mathSpeech(source, {academicMathMode:'skip'}), 'Formula.');
   assert.equal(mathSpeech(source, {mathReadingLanguage:'skip', academicSkipNotice:false}), '');
 });
 test('range recognition does not reinterpret arbitrary pairs, vectors or unsupported operators', () => {
@@ -25,7 +25,7 @@ test('range recognition does not reinterpret arbitrary pairs, vectors or unsuppo
   assert.equal(mathSpeech(String.raw`\ell`), 'ell');
   assert.equal(mathSpeech(String.raw`R_\infty`), 'R sub infinity');
   assert.equal(mathSpeech(String.raw`E_\min`), 'E sub min');
-  assert.equal(mathSpeech(String.raw`\min(x,y)`), 'Formula omitted.');
+  assert.equal(mathSpeech(String.raw`\min(x,y)`), 'Formula.');
   assert.equal(mathSpeech(String.raw`[E_{\min},F_{\max}]`), 'open bracket E sub min ,F sub max close bracket');
   assert.equal(mathSpeech(String.raw`[E_{\min}+\sqrt{x},E_{\max}-\sqrt{x}]`).includes('omitted'), false);
   for (const source of [
@@ -33,7 +33,7 @@ test('range recognition does not reinterpret arbitrary pairs, vectors or unsuppo
     String.raw`[E_{\min}+\unknown{x},E_{\max}]`,
     '[E_{min}+' + 'x'.repeat(40) + ',E_{max}]',
   ]) {
-    assert.equal(mathSpeech(source), 'Formula omitted.');
+    assert.equal(mathSpeech(source), 'Formula.');
     assert.equal(mathSpeech(source, {academicSkipNotice:false}), '');
   }
 });
@@ -62,8 +62,8 @@ test('normalization retains omission policy and structural safety', () => {
   for (const input of [String.raw`\unknown{x}`, String.raw`\sum_{i=1}^n x_i`,
     String.raw`\int_0^1 x dx`, String.raw`z_{\mathrm d`, String.raw`\begin{matrix}x\end{matrix}`,
     String.raw`\mathrm{` + 'x'.repeat(33) + '}', '{'.repeat(17)+'x'+'}'.repeat(17)]) {
-    assert.equal(mathSpeech(input), 'Formula omitted.', input);
+    assert.equal(mathSpeech(input), 'Formula.', input);
     assert.equal(mathSpeech(input, {academicSkipNotice:false}), '', input);
   }
-  assert.equal(mathSpeech(String.raw`z_{\mathrm d}`, {academicMathMode:'skip'}), 'Formula omitted.');
+  assert.equal(mathSpeech(String.raw`z_{\mathrm d}`, {academicMathMode:'skip'}), 'Formula.');
 });

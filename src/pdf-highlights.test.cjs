@@ -30,7 +30,7 @@ test('PDF math omissions and following prose share the same highlight mapping', 
   const layout = extractPdfTextLayout(source.items, { viewport: source.viewport });
   source.mathChanges = pdfMathChanges(layout, source.items, { academicMathMode: 'skip' });
   f.session.chunks = [applyPdfMathChanges(layout.text, source.mathChanges).replace(/\s+/g, ' ')];
-  f.session.audioParts = { 0: ['Before. Formula omitted.', 'After.', 'Same line.'] };
+  f.session.audioParts = { 0: ['Before. Formula.', 'After.', 'Same line.'] };
   f.highlighter.update(); assert.deepEqual(f.marked(), ['Before.']);
   f.session.currentPartIndex = 1; f.highlighter.update(); assert.deepEqual(f.marked(), ['After.']);
   f.session.currentPartIndex = 2; f.highlighter.update(); assert.deepEqual(f.marked(), ['Same line.']);

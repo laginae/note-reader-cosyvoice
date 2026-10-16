@@ -17,10 +17,10 @@ test('PDF skip uses math font evidence for inline scripts and multiline displaye
   const layout = extractPdfTextLayout(items, { viewport });
   const mathChanges = pdfMathChanges(layout, items, { academicMathMode: 'skip' });
   const speech = applyPdfMathChanges(layout.text, mathChanges);
-  assert.match(speech, /The value Formula omitted\. is described below\./);
+  assert.match(speech, /The value Formula\. is described below\./);
   assert.ok(speech.endsWith('Normal prose continues.'));
   assert.doesNotMatch(speech, /[𝑥𝑦=]/u);
-  assert.equal((speech.match(/Formula omitted\./g) || []).length, 2);
+  assert.equal((speech.match(/Formula\./g) || []).length, 2);
   const mapped = pdfSourceLines({ items, viewport, mathChanges }, text => text);
   assert.equal(mapped.text, speech.replace(/\s/g, ''));
 });
@@ -76,7 +76,7 @@ test('smart PDF mode groups complex display formulas while preserving short inli
   const changes = pdfMathChanges(layout, items, { academicMathMode: 'smart' }, names);
   const speech = applyPdfMathChanges(layout.text, changes);
   assert.match(speech, /Use x when p = q in this example\./);
-  assert.equal((speech.match(/Formula omitted\./g) || []).length, 1);
+  assert.equal((speech.match(/Formula\./g) || []).length, 1);
   assert.doesNotMatch(speech, /a \+ b|\(7\)/);
   assert.ok(speech.endsWith('Normal text.'));
 });
@@ -90,8 +90,8 @@ test('PDF omission notices follow local prose even when the saved formula langua
     const settings = { academicMathMode: 'skip', mathReadingLanguage };
     const mathChanges = pdfMathChanges(layout, items, settings);
     const speech = applyPdfMathChanges(layout.text, mathChanges);
-    assert.match(speech, /An English explanation follows\.\nFormula omitted\./);
-    assert.match(speech, /这里开始另一段中文说明。\n公式略过。/);
+    assert.match(speech, /An English explanation follows\.\nFormula\./);
+    assert.match(speech, /这里开始另一段中文说明。\n公式。/);
     assert.equal(pdfSourceLines({ items, viewport, mathChanges }, text => text).text, speech.replace(/\s/g, ''));
   }
 });
@@ -103,11 +103,11 @@ test('PDF formula notices use following prose at page start and saved language o
     const settings = { academicMathMode: 'skip', mathReadingLanguage };
     const withProse = [first,last], layout = extractPdfTextLayout(withProse, { viewport });
     const speech = applyPdfMathChanges(layout.text, pdfMathChanges(layout, withProse, settings));
-    assert.ok(speech.startsWith('Formula omitted.'));
+    assert.ok(speech.startsWith('Formula.'));
     const isolatedItems = [item('x',200,700), item('= y + 2',210,700)];
     const formulaOnly = extractPdfTextLayout(isolatedItems, { viewport });
     const fallback = applyPdfMathChanges(formulaOnly.text, pdfMathChanges(formulaOnly, isolatedItems, settings));
-    assert.equal(fallback, mathReadingLanguage === 'chinese' ? '公式略过。' : 'Formula omitted.');
+    assert.equal(fallback, mathReadingLanguage === 'chinese' ? '公式。' : 'Formula.');
     assert.deepEqual(pdfMathChanges(layout, withProse, { ...settings, academicSkipNotice: false }).map(change => change.text), ['']);
   }
 });

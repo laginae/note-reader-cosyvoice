@@ -102,8 +102,8 @@ test('smart PDF math filtering shares original source metadata across full and s
   assert.equal(selected, full.slice(full.indexOf('Selected explanation')));
   assert.equal(selected, streamed.join('\n\n'));
   assert.match(selected, /Use x for this short variable\./);
-  assert.match(selected, /Formula omitted\./);
-  assert.doesNotMatch(selected, /公式略过/);
+  assert.match(selected, /Formula\./);
+  assert.doesNotMatch(selected, /公式/);
   assert.doesNotMatch(selected, /a \+ b|\(7\)/);
   assert.ok(session.pdfHighlightPages.get(1).mathChanges.length > 0);
   const { pdfSourceLines } = require('./pdf-highlights');

@@ -23,18 +23,18 @@ test('concise math preserves fraction order, short commands, bounds, subscripts 
 
 test('complex or unsupported math is omitted with a configurable notice, not guessed', () => {
   for (const input of [String.raw`\sum_{i=1}^n x_i`, String.raw`\unknown{x}`, 'x_{i', 'x'.repeat(33)]) {
-    assert.equal(mathSpeech(input), 'Formula omitted.');
+    assert.equal(mathSpeech(input), 'Formula.');
     assert.equal(mathSpeech(input, { academicSkipNotice:false }), '');
   }
   assert.equal(mathSpeech('x'.repeat(33), { academicMathMode:'all' }), 'x'.repeat(33));
-  assert.equal(mathSpeech('x', { academicMathMode:'skip', mathReadingLanguage:'chinese' }), '公式略过。');
+  assert.equal(mathSpeech('x', { academicMathMode:'skip', mathReadingLanguage:'chinese' }), '公式。');
 });
 
 test('formula omission uses supplied prose language without changing short-formula speech', () => {
-  assert.equal(omission('formula', { mathReadingLanguage: 'chinese' }, 'The next equation follows.'), 'Formula omitted.');
-  assert.equal(omission('formula', { mathReadingLanguage: 'english' }, '下一项关系如下。'), '公式略过。');
-  assert.equal(omission('formula', { mathReadingLanguage: 'chinese' }, 'x = y + 2'), '公式略过。');
-  assert.equal(omission('formula', { mathReadingLanguage: 'english' }), 'Formula omitted.');
+  assert.equal(omission('formula', { mathReadingLanguage: 'chinese' }, 'The next equation follows.'), 'Formula.');
+  assert.equal(omission('formula', { mathReadingLanguage: 'english' }, '下一项关系如下。'), '公式。');
+  assert.equal(omission('formula', { mathReadingLanguage: 'chinese' }, 'x = y + 2'), '公式。');
+  assert.equal(omission('formula', { mathReadingLanguage: 'english' }), 'Formula.');
   assert.equal(omission('formula', { academicSkipNotice: false }, '下一项关系如下。'), '');
   assert.equal(mathSpeech('x + y', { mathReadingLanguage: 'chinese' }), 'x 加 y');
   assert.equal(mathSpeech('x + y', { mathReadingLanguage: 'english' }), 'x plus y');

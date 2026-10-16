@@ -8394,7 +8394,7 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
         .addOption('all',zhReading ? '完整朗读表格' : 'Read all tables').addOption('skip',zhReading ? '跳过所有已识别表格' : 'Skip all recognized tables')
         .setValue(academicOptions(this.plugin.settings).academicTableMode).onChange(async value => { this.plugin.settings.academicTableMode=value; await this.plugin.saveSettings(); }));
     new Setting(containerEl).setName(zhReading ? '简短提示略过内容' : 'Announce skipped content')
-      .setDesc(zhReading ? '略过公式或表格数据时简短提示。PDF 公式提示随邻近正文使用中文或英文。关闭后直接继续正文。PDF 保留表格标题，不额外插入提示。' : 'Briefly announce omitted formulas or table data. PDF formula notices follow nearby Chinese or English prose. Disable for uninterrupted prose. PDF tables keep their captions without an extra notice.')
+      .setDesc(zhReading ? '略过公式时简短提示“公式。”，英文为“Formula.”；停顿由音色按标点处理。PDF 提示随邻近正文使用中文或英文。关闭后直接继续正文。表格数据提示不变；PDF 保留表格标题，不额外插入提示。' : 'Say "Formula." when a formula is skipped; the voice determines the pause from punctuation. PDF notices follow nearby Chinese or English prose. Disable for uninterrupted prose. Table notices are unchanged; PDF tables keep captions without an extra notice.')
       .addToggle(toggle => toggle.setValue(this.plugin.settings.academicSkipNotice !== false).onChange(async value => { this.plugin.settings.academicSkipNotice=value; await this.plugin.saveSettings(); }));
     containerEl.createEl('h3', { text: translateInterface(settingsLanguage, 'PDF content', 'PDF 内容') });
     addFootnoteSettings(containerEl, this.plugin, Setting);
