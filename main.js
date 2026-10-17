@@ -43273,7 +43273,7 @@ ${embed}
           }
           applyPlaybackSpeed();
           measurePlaying();
-          this.setReaderState({ preparationStatus: "", isPaused: false, phase: "playing", status: "running" });
+          this.updateStatus("CosyVoice playing", { preparationStatus: "", isPaused: false, phase: "playing", status: "running" });
         };
         audio.onwaiting = audio.onstalled = () => {
           if (settled || !this.isActive(session) || this.currentAudio !== audio || this.pauseRequested) return;

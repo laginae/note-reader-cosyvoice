@@ -226,6 +226,7 @@ test('pause during source loading survives completion and resumes the same audio
     audio.onpause(); assert.equal(plugin.pauseRequested,false,'late pause event cannot undo resume');
     audio.onwaiting(); assert.equal(plugin.readerState.preparationStatus,'loading');
     audio.onplaying(); assert.equal(plugin.readerState.preparationStatus,'');
+    assert.equal(plugin.readerState.label,'CosyVoice playing');
     audio.onended(); await play; assert.equal(audio.onpause,null);
   } finally {global.Audio=OriginalAudio;}
 });
