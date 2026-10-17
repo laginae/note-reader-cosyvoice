@@ -1,0 +1,81 @@
+name: Verify and attest release assets
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-provenance-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  attest:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      # Match the Windows checkout used for existing release assets. The bundle
+      # itself is emitted by esbuild; no downloaded binary is signed blindly.
+      - name: Set deterministic checkout line endings
+        run: git config --global core.autocrlf true
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24.15.0'
+      - name: Validate release version and source
+        id: version
+        env:
+          EVENT_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          $version = (Get-Content -Raw manifest.json | ConvertFrom-Json).version
+          if ($version -notmatch '^\d+\.\d+\.\d+$') { throw 'Invalid release version' }
+          if ($env:EVENT_TAG -and $env:EVENT_TAG -ne $version) { throw 'Release tag does not match manifest' }
+          if ((Get-Content -Raw package.json | ConvertFrom-Json).version -ne $version) { throw 'Package version mismatch' }
+          # A manual backfill runs from the workflow commit. Its build inputs
+          # must equal the release tag even if publishing documentation changed.
+          git diff --exit-code $version HEAD -- src core.js package.json package-lock.json scripts/build.cjs docs/licenses manifest.json styles.css
+          if ($LASTEXITCODE -ne 0) { throw 'Build inputs differ from release tag' }
+          "tag=$version" >> $env:GITHUB_OUTPUT
+      - name: Install locked dependencies
+        run: |
+          git config --global url."https://github.com/".insteadOf ssh://git@github.com/
+          npm ci
+          if ($LASTEXITCODE -ne 0) { throw 'Dependency installation failed' }
+      - name: Build and test
+        run: |
+          npm test
+          if ($LASTEXITCODE -ne 0) { throw 'Tests failed' }
+      - name: Verify published assets match this build
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          gh release download $env:RELEASE_TAG --repo $env:REPOSITORY --dir published --pattern main.js --pattern manifest.json --pattern styles.css
+          if ($LASTEXITCODE -ne 0) { throw 'Could not download release assets' }
+          foreach ($file in @('main.js', 'manifest.json', 'styles.css')) {
+            $built = (Get-FileHash -Algorithm SHA256 -LiteralPath $file).Hash
+            $published = (Get-FileHash -Algorithm SHA256 -LiteralPath "published/$file").Hash
+            if ($built -ne $published) { throw "Published asset differs from build: $file" }
+            "$file SHA256 $built" >> $env:GITHUB_STEP_SUMMARY
+          }
+      - name: Attest the verified build
+        uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661 # v3
+        with:
+          subject-path: |
+            main.js
+            manifest.json
+            styles.css
