@@ -1,0 +1,2 @@
+# Preserve the stylesheet bytes used by published release assets on all hosts.
+styles.css text eol=lf
