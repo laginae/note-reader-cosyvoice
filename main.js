@@ -1620,7 +1620,19 @@ var require_pdf_layout = __commonJS({
 var require_pdf_layout2 = __commonJS({
   "src/pdf-layout.js"(exports2, module2) {
     "use strict";
-    module2.exports = require_pdf_layout();
+    var core = require_pdf_layout();
+    function extractPdfTextLayout2(items, options) {
+      const layout = core.extractPdfTextLayout(items, options);
+      const visible = (items || []).filter((item) => item?.str?.trim());
+      if (!layout.lines.length && visible.length === 1) {
+        const item = visible[0], x = item.x ?? item.transform?.[4], y = item.y ?? item.transform?.[5];
+        if (Number.isFinite(x) && Number.isFinite(y) && item.width > 0 && item.height > 0) {
+          layout.lines = [{ text: layout.text, xMin: x, xMax: x + item.width, y, height: item.height }];
+        }
+      }
+      return layout;
+    }
+    module2.exports = { ...core, extractPdfTextLayout: extractPdfTextLayout2 };
   }
 });
 
@@ -2513,8 +2525,9 @@ var require_pdf_selection = __commonJS({
           const bounds = page.getBoundingClientRect();
           if (!(bounds.width > 0 && bounds.height > 0)) return null;
           const items = [];
-          for (const span of page.querySelectorAll(".textLayer span")) {
-            if (span.querySelector("span") || !span.textContent || !range.intersectsNode(span)) continue;
+          const spans = [...page.querySelectorAll(".textLayer span")].filter((span) => !span.querySelector("span") && span.textContent.trim());
+          for (const [spanIndex, span] of spans.entries()) {
+            if (!range.intersectsNode(span)) continue;
             if (++count > 5e4) return null;
             const part = span.ownerDocument.createRange();
             part.selectNodeContents(span);
@@ -2527,15 +2540,26 @@ var require_pdf_selection = __commonJS({
             const rect = typeof part.getBoundingClientRect === "function" ? part.getBoundingClientRect() : span.getBoundingClientRect();
             if (!(rect.width > 0 && rect.height > 0)) return null;
             const fontName = span.ownerDocument.defaultView?.getComputedStyle(span).fontFamily || span.style.fontFamily || "";
+            const prefix = span.ownerDocument.createRange();
+            prefix.selectNodeContents(span);
+            prefix.setEnd(part.startContainer, part.startOffset);
+            const selectionStart = prefix.toString().length;
             items.push({
               str,
+              spanIndex,
+              selectionStart,
+              selectionEnd: selectionStart + str.length,
               width: rect.width,
               height: rect.height,
               fontName,
               transform: [rect.height, 0, 0, rect.height, rect.left - bounds.left, bounds.bottom - rect.bottom]
             });
           }
-          if (items.length) pages.push({ items, viewport: { width: bounds.width, height: bounds.height } });
+          if (items.length) pages.push({
+            items,
+            pageNumber: Number(page.getAttribute("data-page-number")),
+            viewport: { width: bounds.width, height: bounds.height }
+          });
         }
         const compact2 = (text) => text.normalize("NFKC").replace(/\s/g, "");
         if (!pages.length || compact2(pieces.join("")) !== compact2(selectedText)) return null;
@@ -11991,7 +12015,18 @@ var require_pdf_highlights = __commonJS({
     function pdfPageLines(page, clean, source = null, footnote = false) {
       const bounds = page.getBoundingClientRect();
       if (!(bounds.width > 0 && bounds.height > 0)) return null;
-      const spans = [...page.querySelectorAll(".textLayer span")].filter((span) => !span.querySelector("span") && span.textContent.trim());
+      let spans = [...page.querySelectorAll(".textLayer span")].filter((span) => !span.querySelector("span") && span.textContent.trim());
+      const selected = /* @__PURE__ */ new Map();
+      if (source?.selectedOnly) {
+        const subset = [];
+        for (const item of source.items) {
+          const span = spans[item.spanIndex];
+          if (!span || span.textContent.slice(item.selectionStart, item.selectionEnd) !== item.str) return null;
+          selected.set(span, item);
+          subset.push(span);
+        }
+        spans = subset;
+      }
       const positioned = spans.map((span, sourceIndex) => ({ span, sourceIndex, rect: span.getBoundingClientRect() })).filter((item) => item.rect.width > 0 && item.rect.height > 0);
       if (!positioned.length) return null;
       let items = positioned.map(({ span, rect }) => ({
@@ -12001,7 +12036,7 @@ var require_pdf_highlights = __commonJS({
         transform: [rect.height, 0, 0, rect.height, rect.left - bounds.left, bounds.top - rect.top]
       }));
       const original = source?.items?.filter((item) => item.str?.trim());
-      const exact = original?.length === spans.length && original.every((item, index) => item.str === spans[index].textContent);
+      const exact = original?.length === spans.length && original.every((item, index) => item.str === (selected.get(spans[index])?.str ?? spans[index].textContent));
       if (exact) items = original;
       const layout = extractPdfTextLayout2(items, { viewport: exact ? source.viewport : { width: bounds.width, height: bounds.height } });
       const heights = items.map((item) => Math.max(1, Math.abs(item.height || 0), Math.abs(item.transform?.[1] || 0), Math.abs(item.transform?.[3] || 0))).sort((a, b) => a - b);
@@ -12025,14 +12060,14 @@ var require_pdf_highlights = __commonJS({
         });
         if (nearest >= 0) lineNodes[nearest].push(span);
       });
-      return finishPageLines(layout, lineNodes, clean, source, footnote, exact);
+      return finishPageLines(layout, lineNodes, clean, source, footnote, exact, selected);
     }
     function pdfSourceLines(source, clean, footnote = false) {
       if (!source?.items?.length || !source.viewport) return null;
       const layout = extractPdfTextLayout2(source.items, { viewport: source.viewport });
       return finishPageLines(layout, layout.lines.map(() => []), clean, source, footnote, true);
     }
-    function finishPageLines(layout, lineNodes, clean, source, footnote, exact) {
+    function finishPageLines(layout, lineNodes, clean, source, footnote, exact, selected = /* @__PURE__ */ new Map()) {
       const sanitize = clean;
       clean = (text2) => sanitize(normalizePdfSpeechText2(text2));
       const ancillaryFilter = source?.omittedRegions?.length || source?.contentScope === "glossary";
@@ -12069,14 +12104,22 @@ var require_pdf_highlights = __commonJS({
         const nodes = lineNodes[index];
         let cursor = 0;
         const runs = nodes.map((node) => {
-          const literal = compact2(node.textContent), speech = compact2(clean(node.textContent));
+          const selection = selected.get(node);
+          const raw = selection?.str ?? node.textContent;
+          const literal = compact2(raw), speech = compact2(clean(raw));
           const token = speech.endsWith("-") && !joined.endsWith("-") ? speech.slice(0, -1) : speech;
           const found = token ? value.indexOf(token, cursor) : -1;
           if (found < 0) return null;
           cursor = found + token.length;
-          return { node, start: start + found, end: start + cursor, literal: token === literal || token + "-" === literal };
+          return {
+            node,
+            start: start + found,
+            end: start + cursor,
+            selection,
+            literal: token === literal || token + "-" === literal
+          };
         });
-        return { start, end, text: value, nodes, runs: runs.every(Boolean) ? runs : null };
+        return { start, end, text: value, nodes, selected, runs: runs.every(Boolean) ? runs : null };
       }).filter((line) => line.start >= 0);
       if (!text || !lines.length) return null;
       return { text, lines };
@@ -12098,6 +12141,10 @@ var require_pdf_highlights = __commonJS({
         for (const line of page.lines) if (offset + line.start < end && offset + line.end > start) {
           if (!line.runs) {
             result.push(...line.nodes);
+            for (const node of line.nodes) {
+              const item = line.selected?.get(node);
+              if (item && selections) selections.set(node, { start: item.selectionStart, end: item.selectionEnd });
+            }
             continue;
           }
           for (const run of line.runs) {
@@ -12106,8 +12153,10 @@ var require_pdf_highlights = __commonJS({
             result.push(run.node);
             if (run.literal && selections) {
               const chars = [];
-              for (let i = 0; i < run.node.textContent.length; i++) if (!/\s/.test(run.node.textContent[i])) chars.push(i);
+              for (let i = run.selection?.selectionStart ?? 0; i < (run.selection?.selectionEnd ?? run.node.textContent.length); i++) if (!/\s/.test(run.node.textContent[i])) chars.push(i);
               selections.set(run.node, { start: chars[from - offset - run.start], end: chars[to - offset - run.start - 1] + 1 });
+            } else if (run.selection && selections) {
+              selections.set(run.node, { start: run.selection.selectionStart, end: run.selection.selectionEnd });
             }
           }
         }
@@ -39512,6 +39561,9 @@ var CosyVoiceReaderPlugin = class extends Plugin {
       })
     );
     if (typeof document !== "undefined") {
+      this.registerDomEvent(document, "visibilitychange", () => {
+        if (document.visibilityState === "visible") this.syncCurrentAudioState();
+      });
       this.registerDomEvent(document, "selectionchange", () => {
         this.capturePdfSelection();
         this.captureWebReaderRange();
@@ -42116,10 +42168,25 @@ ${embed}
         return;
       }
       await this.activateControlView();
+      if (!selectionContext.selectionLayout?.length) {
+        new Notice(translateInterface(
+          this.settings.settingsLanguage,
+          "PDF selection layout is unavailable. Wait for the page to render, then select the text again.",
+          "\u65E0\u6CD5\u53EF\u9760\u8BFB\u53D6 PDF \u9009\u533A\u7248\u9762\u3002\u8BF7\u7B49\u5F85\u9875\u9762\u663E\u793A\u5B8C\u6574\u540E\u91CD\u65B0\u9009\u62E9\u6587\u5B57\u3002"
+        ), 8e3);
+        return;
+      }
       await this.startReading(
         preparePdfSelection(selectionContext, this.settings),
         `${activeFile.basename || activeFile.name || "PDF"} (PDF selection)`,
-        { plainText: true, pdfText: true, skipReadingPosition: true }
+        {
+          plainText: true,
+          pdfText: true,
+          skipReadingPosition: true,
+          file: activeFile,
+          sourceKind: "pdf",
+          pdfSelection: selectionContext
+        }
       );
       return;
     }
@@ -42198,7 +42265,19 @@ ${embed}
     if (options.settingsPreview && (options.settingsPreview.cancelled || this.activeSession)) return "cancelled";
     this.pauseRequested = false;
     const split = options.pdfText ? splitPdfSpeechChunks : splitTextForSpeechChunks;
-    const chunks = options.readingChunks || split(text, configuration.chunkLimits);
+    let chunks = options.readingChunks || split(text, configuration.chunkLimits);
+    const selectedPages = options.pdfSelection?.selectionLayout;
+    let selectionPageNumbers;
+    if (selectedPages?.length) {
+      chunks = [];
+      selectionPageNumbers = [];
+      for (const [index, page] of selectedPages.entries()) {
+        const pageText = this.prepareHtmlSpeechText(preparePdfSelection({ selectionLayout: [page] }, this.settings));
+        const parts = splitPdfSpeechChunks(pageText, configuration.chunkLimits);
+        chunks.push(...parts);
+        selectionPageNumbers.push(...parts.map(() => page.pageNumber || options.pdfSelection.pageNumber + index));
+      }
+    }
     let markdownSource = options.markdownSource || (options.sourceKind === "markdown" && !options.plainText ? buildMarkdownSource(rawText, chunks, (value) => this.settings.stripMarkdown ? sanitizeTextForSpeech(value, academicOptions(this.settings)) : normalizeLineBreaks(value).trim(), { sourceText: options.sourceText, sourceOffset: options.sourceOffset, filePath: options.file?.path }) : null);
     if (options.focusDisplay) {
       const display = options.focusDisplay;
@@ -42221,6 +42300,17 @@ ${embed}
       markdownSource
     });
     session.webContext = options.webContext;
+    if (selectedPages?.length) {
+      session.chunkPageNumbers = selectionPageNumbers;
+      session.pdfHighlightPages = new Map(selectedPages.map((page, index) => {
+        const layout = extractPdfTextLayout(page.items, { viewport: page.viewport });
+        return [page.pageNumber || options.pdfSelection.pageNumber + index, {
+          ...page,
+          selectedOnly: true,
+          mathChanges: pdfMathChanges(layout, page.items, this.settings)
+        }];
+      }));
+    }
     session.skipReadingPosition = options.skipReadingPosition === true;
     if (options.settingsPreview) {
       if (options.settingsPreview.cancelled) return "cancelled";
@@ -43076,7 +43166,8 @@ ${embed}
         if (audio) {
           audio.noteReaderFinished = true;
           audio.noteReaderCancel = null;
-          audio.onended = audio.onerror = audio.onplaying = audio.ontimeupdate = null;
+          audio.onended = audio.onerror = audio.onplaying = audio.ontimeupdate = audio.onpause = null;
+          audio.onwaiting = audio.onstalled = null;
           audio.onloadedmetadata = audio.ondurationchange = null;
           audio.pause();
         }
@@ -43182,11 +43273,32 @@ ${embed}
           }
           applyPlaybackSpeed();
           measurePlaying();
+          this.setReaderState({ preparationStatus: "", isPaused: false, phase: "playing", status: "running" });
+        };
+        audio.onwaiting = audio.onstalled = () => {
+          if (settled || !this.isActive(session) || this.currentAudio !== audio || this.pauseRequested) return;
+          this.updateStatus(translateInterface(
+            this.settings.settingsLanguage,
+            "Waiting for audio playback",
+            "\u6B63\u5728\u7B49\u5F85\u97F3\u9891\u64AD\u653E"
+          ), { preparationStatus: "loading" });
+        };
+        audio.onpause = () => {
+          if (settled || !audio.paused || !this.isActive(session) || this.currentAudio !== audio || audio.ended || Number.isInteger(session.requestedChunkIndex)) return;
+          this.pauseRequested = true;
+          session.preparationPool?.pause(true);
+          this.playbackTimings?.suspend();
+          this.updateStatus("CosyVoice paused", {
+            isPaused: true,
+            canPause: true,
+            phase: "paused",
+            status: "paused"
+          });
         };
         audio.ondurationchange = recordDuration;
         this.currentAudio = audio;
         const playbackTotal = getPlaybackTotal();
-        this.updateStatus(`${session.engineLabel || getSpeechEngineLabel(this.settings)} play ${index + 1}/${playbackTotal}`, {
+        this.updateStatus(this.pauseRequested ? "CosyVoice paused" : `${session.engineLabel || getSpeechEngineLabel(this.settings)} play ${index + 1}/${playbackTotal}`, {
           canPause: true,
           canNextChunk: index + 1 < playbackTotal,
           canPreviousChunk: index > 0,
@@ -43194,11 +43306,11 @@ ${embed}
           canStop: true,
           currentChunk: index + 1,
           currentText: previewText(Array.isArray(session.chunks) ? session.chunks[index] : ""),
-          isPaused: false,
-          phase: "playing",
+          isPaused: Boolean(this.pauseRequested),
+          phase: this.pauseRequested ? "paused" : "playing",
           preparationStatus: "",
           progress: (index + this.getSegmentTiming(session, index, part, 0).fraction) / playbackTotal,
-          status: "running",
+          status: this.pauseRequested ? "paused" : "running",
           totalChunks: playbackTotal
         });
         void this.writeRuntimeLog("play", {
@@ -43251,7 +43363,7 @@ ${embed}
         applyPlaybackSpeed();
         if (session.seekTarget) {
           audio.load();
-        } else {
+        } else if (!this.pauseRequested) {
           Promise.resolve(audio.play()).catch((error) => {
             if (settled || !this.isActive(session) || error?.name === "AbortError" && this.pauseRequested) return;
             finish(reject, error);
@@ -43475,6 +43587,12 @@ ${embed}
       totalChunks: total
     });
     return true;
+  }
+  syncCurrentAudioState() {
+    const audio = this.currentAudio;
+    if (!audio || audio.noteReaderFinished || !this.isActive(this.activeSession)) return;
+    if (audio.ended) audio.onended?.();
+    else if (audio.paused) audio.onpause?.();
   }
   async pauseOrResume() {
     const session = this.activeSession;

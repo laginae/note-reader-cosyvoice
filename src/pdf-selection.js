@@ -21,8 +21,9 @@ function capturePdfSelectionLayout(range, root, selectedText) {
       const bounds = page.getBoundingClientRect();
       if (!(bounds.width > 0 && bounds.height > 0)) return null;
       const items = [];
-      for (const span of page.querySelectorAll('.textLayer span')) {
-        if (span.querySelector('span') || !span.textContent || !range.intersectsNode(span)) continue;
+      const spans = [...page.querySelectorAll('.textLayer span')].filter(span => !span.querySelector('span') && span.textContent.trim());
+      for (const [spanIndex, span] of spans.entries()) {
+        if (!range.intersectsNode(span)) continue;
         if (++count > 50000) return null;
         const part = span.ownerDocument.createRange(); part.selectNodeContents(span);
         if (part.compareBoundaryPoints(0, range) < 0) part.setStart(range.startContainer, range.startOffset);
@@ -34,10 +35,15 @@ function capturePdfSelectionLayout(range, root, selectedText) {
         const rect = typeof part.getBoundingClientRect === 'function' ? part.getBoundingClientRect() : span.getBoundingClientRect();
         if (!(rect.width > 0 && rect.height > 0)) return null;
         const fontName = span.ownerDocument.defaultView?.getComputedStyle(span).fontFamily || span.style.fontFamily || '';
-        items.push({ str, width: rect.width, height: rect.height, fontName,
+        const prefix = span.ownerDocument.createRange(); prefix.selectNodeContents(span);
+        prefix.setEnd(part.startContainer, part.startOffset);
+        const selectionStart = prefix.toString().length;
+        items.push({ str, spanIndex, selectionStart, selectionEnd: selectionStart + str.length,
+          width: rect.width, height: rect.height, fontName,
           transform: [rect.height, 0, 0, rect.height, rect.left - bounds.left, bounds.bottom - rect.bottom] });
       }
-      if (items.length) pages.push({ items, viewport: { width: bounds.width, height: bounds.height } });
+      if (items.length) pages.push({ items, pageNumber: Number(page.getAttribute('data-page-number')),
+        viewport: { width: bounds.width, height: bounds.height } });
     }
     const compact = text => text.normalize('NFKC').replace(/\s/g, '');
     if (!pages.length || compact(pieces.join('')) !== compact(selectedText)) return null;

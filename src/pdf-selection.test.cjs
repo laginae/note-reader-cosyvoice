@@ -43,6 +43,22 @@ test('PDF selection capture excludes unselected span prefixes, suffixes and adja
   dom.window.close();
 });
 
+test('selected PDF highlighting stays inside partial spans and rejects changed text layers', () => {
+  const {pdfPageLines,matchPdfChunk}=require('./pdf-highlights');
+  const dom=new JSDOM('<div data-page-number="3"><div class="textLayer"><span>Outside.</span><span>Before Selected words After</span></div></div>');
+  const doc=dom.window.document,page=doc.querySelector('[data-page-number]'),spans=page.querySelectorAll('span');
+  page.getBoundingClientRect=()=>({left:0,top:0,bottom:800,width:600,height:800});
+  for(const span of spans) span.getBoundingClientRect=()=>({left:40,top:100,bottom:112,width:200,height:12});
+  const range=doc.createRange();range.setStart(spans[1].firstChild,7);range.setEnd(spans[1].firstChild,21);
+  const [source]=capturePdfSelectionLayout(range,doc.body,range.toString());source.selectedOnly=true;
+  assert.equal(source.pageNumber,3);
+  const layout=pdfPageLines(page,t=>t,source), selections=new Map();
+  const nodes=matchPdfChunk([layout],'Selected words',null,selections);
+  assert.deepEqual(nodes,[spans[1]]);assert.deepEqual(selections.get(spans[1]),{start:7,end:21});
+  spans[1].textContent='Changed content';assert.equal(pdfPageLines(page,t=>t,source),null);
+  dom.window.close();
+});
+
 test('shared fallback fonts retain complete display blocks including labels and equation numbers', () => {
   const items = [item('An example follows',40,720),
     item('𝑙',100,690),item('≤',112,690),item('𝑥',124,690),item('2',134,689,'body',8),item('≤',145,690),item('𝑢',157,690),

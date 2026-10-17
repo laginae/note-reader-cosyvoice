@@ -2535,6 +2535,9 @@ class CosyVoiceReaderPlugin extends Plugin {
       })
     );
     if (typeof document !== 'undefined') {
+      this.registerDomEvent(document, 'visibilitychange', () => {
+        if (document.visibilityState === 'visible') this.syncCurrentAudioState();
+      });
       this.registerDomEvent(document, 'selectionchange', () => {
         this.capturePdfSelection();
         this.captureWebReaderRange();
@@ -5366,10 +5369,17 @@ class CosyVoiceReaderPlugin extends Plugin {
       }
 
       await this.activateControlView();
+      if (!selectionContext.selectionLayout?.length) {
+        new Notice(translateInterface(this.settings.settingsLanguage,
+          'PDF selection layout is unavailable. Wait for the page to render, then select the text again.',
+          '无法可靠读取 PDF 选区版面。请等待页面显示完整后重新选择文字。'), 8000);
+        return;
+      }
       await this.startReading(
         preparePdfSelection(selectionContext, this.settings),
         `${activeFile.basename || activeFile.name || 'PDF'} (PDF selection)`,
-        { plainText: true, pdfText: true, skipReadingPosition: true }
+        { plainText: true, pdfText: true, skipReadingPosition: true,
+          file: activeFile, sourceKind: 'pdf', pdfSelection: selectionContext }
       );
       return;
     }
@@ -5456,7 +5466,18 @@ class CosyVoiceReaderPlugin extends Plugin {
     this.pauseRequested = false;
 
     const split = options.pdfText ? splitPdfSpeechChunks : splitTextForSpeechChunks;
-    const chunks = options.readingChunks || split(text, configuration.chunkLimits);
+    let chunks = options.readingChunks || split(text, configuration.chunkLimits);
+    const selectedPages = options.pdfSelection?.selectionLayout;
+    let selectionPageNumbers;
+    if (selectedPages?.length) {
+      chunks = []; selectionPageNumbers = [];
+      for (const [index, page] of selectedPages.entries()) {
+        const pageText = this.prepareHtmlSpeechText(preparePdfSelection({ selectionLayout: [page] }, this.settings));
+        const parts = splitPdfSpeechChunks(pageText, configuration.chunkLimits);
+        chunks.push(...parts);
+        selectionPageNumbers.push(...parts.map(() => page.pageNumber || options.pdfSelection.pageNumber + index));
+      }
+    }
     let markdownSource = options.markdownSource || (options.sourceKind === 'markdown' && !options.plainText
       ? buildMarkdownSource(rawText, chunks, value => this.settings.stripMarkdown
         ? sanitizeTextForSpeech(value, academicOptions(this.settings))
@@ -5474,6 +5495,16 @@ class CosyVoiceReaderPlugin extends Plugin {
     });
 
     session.webContext = options.webContext;
+    if (selectedPages?.length) {
+      session.chunkPageNumbers = selectionPageNumbers;
+      session.pdfHighlightPages = new Map(selectedPages.map((page, index) => {
+        const layout = extractPdfTextLayout(page.items, { viewport: page.viewport });
+        return [page.pageNumber || options.pdfSelection.pageNumber + index, {
+          ...page, selectedOnly: true,
+          mathChanges: pdfMathChanges(layout, page.items, this.settings),
+        }];
+      }));
+    }
     session.skipReadingPosition = options.skipReadingPosition === true;
     if (options.settingsPreview) {
       if (options.settingsPreview.cancelled) return 'cancelled';
@@ -6416,7 +6447,8 @@ class CosyVoiceReaderPlugin extends Plugin {
         if (audio) {
           audio.noteReaderFinished = true;
           audio.noteReaderCancel = null;
-          audio.onended = audio.onerror = audio.onplaying = audio.ontimeupdate = null;
+          audio.onended = audio.onerror = audio.onplaying = audio.ontimeupdate = audio.onpause = null;
+          audio.onwaiting = audio.onstalled = null;
           audio.onloadedmetadata = audio.ondurationchange = null;
           audio.pause();
         }
@@ -6521,11 +6553,27 @@ class CosyVoiceReaderPlugin extends Plugin {
             return;
           }
           applyPlaybackSpeed(); measurePlaying();
+          this.setReaderState({ preparationStatus: '', isPaused: false, phase: 'playing', status: 'running' });
+        };
+        audio.onwaiting = audio.onstalled = () => {
+          if (settled || !this.isActive(session) || this.currentAudio !== audio || this.pauseRequested) return;
+          this.updateStatus(translateInterface(this.settings.settingsLanguage,
+            'Waiting for audio playback', '正在等待音频播放'), { preparationStatus: 'loading' });
+        };
+        audio.onpause = () => {
+          if (settled || !audio.paused || !this.isActive(session) || this.currentAudio !== audio || audio.ended
+            || Number.isInteger(session.requestedChunkIndex)) return;
+          this.pauseRequested = true;
+          session.preparationPool?.pause(true);
+          this.playbackTimings?.suspend();
+          this.updateStatus('CosyVoice paused', { isPaused: true, canPause: true,
+            phase: 'paused', status: 'paused' });
         };
         audio.ondurationchange = recordDuration;
         this.currentAudio = audio;
         const playbackTotal = getPlaybackTotal();
-        this.updateStatus(`${session.engineLabel || getSpeechEngineLabel(this.settings)} play ${index + 1}/${playbackTotal}`, {
+        this.updateStatus(this.pauseRequested ? 'CosyVoice paused'
+          : `${session.engineLabel || getSpeechEngineLabel(this.settings)} play ${index + 1}/${playbackTotal}`, {
           canPause: true,
           canNextChunk: index + 1 < playbackTotal,
           canPreviousChunk: index > 0,
@@ -6533,11 +6581,11 @@ class CosyVoiceReaderPlugin extends Plugin {
           canStop: true,
           currentChunk: index + 1,
           currentText: previewText(Array.isArray(session.chunks) ? session.chunks[index] : ''),
-          isPaused: false,
-          phase: 'playing',
+          isPaused: Boolean(this.pauseRequested),
+          phase: this.pauseRequested ? 'paused' : 'playing',
           preparationStatus: '',
           progress: (index + this.getSegmentTiming(session, index, part, 0).fraction) / playbackTotal,
-          status: 'running',
+          status: this.pauseRequested ? 'paused' : 'running',
           totalChunks: playbackTotal,
         });
         void this.writeRuntimeLog('play', {
@@ -6595,7 +6643,7 @@ class CosyVoiceReaderPlugin extends Plugin {
         applyPlaybackSpeed();
         if (session.seekTarget) {
           audio.load();
-        } else {
+        } else if (!this.pauseRequested) {
           Promise.resolve(audio.play()).catch((error) => {
             if (settled || !this.isActive(session) || (error?.name === 'AbortError' && this.pauseRequested)) return;
             finish(reject, error);
@@ -6852,6 +6900,13 @@ class CosyVoiceReaderPlugin extends Plugin {
     });
 
     return true;
+  }
+
+  syncCurrentAudioState() {
+    const audio = this.currentAudio;
+    if (!audio || audio.noteReaderFinished || !this.isActive(this.activeSession)) return;
+    if (audio.ended) audio.onended?.();
+    else if (audio.paused) audio.onpause?.();
   }
 
   async pauseOrResume() {

@@ -10,7 +10,17 @@ const { normalizePdfSpeechText } = require('./pdf-selection');
 function pdfPageLines(page, clean, source = null, footnote = false) {
   const bounds = page.getBoundingClientRect();
   if (!(bounds.width > 0 && bounds.height > 0)) return null;
-  const spans = [...page.querySelectorAll('.textLayer span')].filter(span => !span.querySelector('span') && span.textContent.trim());
+  let spans = [...page.querySelectorAll('.textLayer span')].filter(span => !span.querySelector('span') && span.textContent.trim());
+  const selected = new Map();
+  if (source?.selectedOnly) {
+    const subset = [];
+    for (const item of source.items) {
+      const span = spans[item.spanIndex];
+      if (!span || span.textContent.slice(item.selectionStart, item.selectionEnd) !== item.str) return null;
+      selected.set(span, item); subset.push(span);
+    }
+    spans = subset;
+  }
   const positioned = spans.map((span, sourceIndex) => ({ span, sourceIndex, rect: span.getBoundingClientRect() }))
     .filter(item => item.rect.width > 0 && item.rect.height > 0);
   if (!positioned.length) return null;
@@ -19,7 +29,7 @@ function pdfPageLines(page, clean, source = null, footnote = false) {
   const original = source?.items?.filter(item => item.str?.trim());
   // Zero-width combining marks still belong to the source text, even though
   // they cannot produce a rectangle. Verify before filtering by visible area.
-  const exact = original?.length === spans.length && original.every((item, index) => item.str === spans[index].textContent);
+  const exact = original?.length === spans.length && original.every((item, index) => item.str === (selected.get(spans[index])?.str ?? spans[index].textContent));
   if (exact) items = original;
   const layout = extractPdfTextLayout(items, { viewport: exact ? source.viewport : { width: bounds.width, height: bounds.height } });
   const heights = items.map(item => Math.max(1, Math.abs(item.height || 0), Math.abs(item.transform?.[1] || 0), Math.abs(item.transform?.[3] || 0))).sort((a, b) => a - b);
@@ -43,7 +53,7 @@ function pdfPageLines(page, clean, source = null, footnote = false) {
     });
     if (nearest >= 0) lineNodes[nearest].push(span);
   });
-  return finishPageLines(layout, lineNodes, clean, source, footnote, exact);
+  return finishPageLines(layout, lineNodes, clean, source, footnote, exact, selected);
 }
 
 function pdfSourceLines(source, clean, footnote = false) {
@@ -52,7 +62,7 @@ function pdfSourceLines(source, clean, footnote = false) {
   return finishPageLines(layout, layout.lines.map(() => []), clean, source, footnote, true);
 }
 
-function finishPageLines(layout, lineNodes, clean, source, footnote, exact) {
+function finishPageLines(layout, lineNodes, clean, source, footnote, exact, selected = new Map()) {
   const sanitize = clean;
   clean = text => sanitize(normalizePdfSpeechText(text));
   const ancillaryFilter = source?.omittedRegions?.length || source?.contentScope === 'glossary';
@@ -92,15 +102,18 @@ function finishPageLines(layout, lineNodes, clean, source, footnote, exact) {
     const nodes = lineNodes[index];
     let cursor = 0;
     const runs = nodes.map(node => {
-      const literal = compact(node.textContent), speech = compact(clean(node.textContent));
+      const selection = selected.get(node);
+      const raw = selection?.str ?? node.textContent;
+      const literal = compact(raw), speech = compact(clean(raw));
       // A line-end hyphen can disappear when the next PDF line joins the word.
       const token = speech.endsWith('-') && !joined.endsWith('-') ? speech.slice(0, -1) : speech;
       const found = token ? value.indexOf(token, cursor) : -1;
       if (found < 0) return null;
       cursor = found + token.length;
-      return { node, start: start + found, end: start + cursor, literal: token === literal || token + '-' === literal };
+      return { node, start: start + found, end: start + cursor, selection,
+        literal: token === literal || token + '-' === literal };
     });
-    return { start, end, text: value, nodes, runs: runs.every(Boolean) ? runs : null };
+    return { start, end, text: value, nodes, selected, runs: runs.every(Boolean) ? runs : null };
   }).filter(line => line.start >= 0);
   if (!text || !lines.length) return null;
   return { text, lines };
@@ -123,15 +136,24 @@ function matchPdfChunk(pages, chunk, range, selections = null) {
   let offset = 0;
   for (const page of pages) {
     for (const line of page.lines) if (offset + line.start < end && offset + line.end > start) {
-      if (!line.runs) { result.push(...line.nodes); continue; }
+      if (!line.runs) {
+        result.push(...line.nodes);
+        for (const node of line.nodes) {
+          const item = line.selected?.get(node);
+          if (item && selections) selections.set(node, { start: item.selectionStart, end: item.selectionEnd });
+        }
+        continue;
+      }
       for (const run of line.runs) {
         const from = Math.max(start, offset + run.start), to = Math.min(end, offset + run.end);
         if (from >= to) continue;
         result.push(run.node);
         if (run.literal && selections) {
           const chars = [];
-          for (let i = 0; i < run.node.textContent.length; i++) if (!/\s/.test(run.node.textContent[i])) chars.push(i);
+          for (let i = run.selection?.selectionStart ?? 0; i < (run.selection?.selectionEnd ?? run.node.textContent.length); i++) if (!/\s/.test(run.node.textContent[i])) chars.push(i);
           selections.set(run.node, { start: chars[from - offset - run.start], end: chars[to - offset - run.start - 1] + 1 });
+        } else if (run.selection && selections) {
+          selections.set(run.node, { start: run.selection.selectionStart, end: run.selection.selectionEnd });
         }
       }
     }

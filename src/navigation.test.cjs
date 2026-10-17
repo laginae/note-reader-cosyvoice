@@ -204,6 +204,32 @@ test('a late playing event respects a pause made during audio startup', async ()
   } finally {global.Audio=OriginalAudio;}
 });
 
+test('pause during source loading survives completion and resumes the same audio once', async () => {
+  const {plugin,session}=fixture(['Public sample.']);
+  const source=deferred(); plugin.createPlayableAudioSource=()=>source.promise;
+  const OriginalAudio=global.Audio; let audio, plays=0;
+  global.Audio=class {
+    constructor(){audio=this;this.duration=3;this.currentTime=0;this.paused=true;}
+    play(){plays++;this.paused=false;this.onplaying?.();return Promise.resolve();}
+    pause(){this.paused=true;this.onpause?.();} load(){} removeAttribute(){}
+  };
+  try {
+    const play=PluginClass.prototype.playPreparedAudio.call(plugin,{},session,0,1);
+    await tick(); await plugin.pauseOrResume();
+    source.resolve({url:'public-test',release(){}}); await tick();
+    assert.equal(plays,0); assert.equal(audio.paused,true);
+    assert.equal(plugin.readerState.isPaused,true); assert.equal(plugin.readerState.phase,'paused');
+    await plugin.pauseOrResume(); assert.equal(plays,1);
+    audio.currentTime=1; audio.paused=true; plugin.syncCurrentAudioState();
+    assert.equal(plugin.pauseRequested,true); assert.equal(plugin.readerState.isPaused,true);
+    await plugin.pauseOrResume(); assert.equal(audio.currentTime,1); assert.equal(plays,2);
+    audio.onpause(); assert.equal(plugin.pauseRequested,false,'late pause event cannot undo resume');
+    audio.onwaiting(); assert.equal(plugin.readerState.preparationStatus,'loading');
+    audio.onplaying(); assert.equal(plugin.readerState.preparationStatus,'');
+    audio.onended(); await play; assert.equal(audio.onpause,null);
+  } finally {global.Audio=OriginalAudio;}
+});
+
 test('rapid jumps remain bounded and discard intermediate queued targets', async () => {
   const { plugin, session, requests, events } = fixture(['One.', 'Two.', 'Three.', 'Four.', 'Five.']);
   const run = plugin.runSpeechSession(session); await tick();
