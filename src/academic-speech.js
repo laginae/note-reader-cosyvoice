@@ -99,6 +99,28 @@ function namedBounds(value) {
   const high = upper.match(/^([A-Za-z])_\{\s*max\s*\}(?=\s*(?:[+−-]|$))/);
   return low && high && low[1] === high[1] ? [lower, upper] : null;
 }
+
+// Judge listening cost from operators and grouping, not typography or script labels.
+function complexListeningMath(content) {
+  const normalized = normalizeMathPresentation(content);
+  if (normalized === null) return true;
+  const value = normalized.replace(/[_^]\s*(?:\{[^{}]*\}|\\[A-Za-z]+|[A-Za-z0-9])/g, '')
+    .replace(/\\(?:left|right)\b/g, '')
+    .replace(/\\(?:leq?|geq?|neq?|approx|times|cdot|pm|mp|to|rightarrow)\b/g, '+');
+  const fractions = (value.match(/\\(?:d?frac|tfrac)\b|\//g) || []).length;
+  const operations = (value.match(/[=+−\-*<>≤≥≠≈]/g) || []).length + fractions;
+  let depth = 0, maxDepth = 0, groups = 0;
+  for (const char of value) {
+    if ('(['.includes(char)) { groups++; maxDepth = Math.max(maxDepth, ++depth); }
+    else if (')]'.includes(char)) depth--;
+  }
+  const commas = (value.match(/,/g) || []).length;
+  const transpose = /\^\s*(?:\{\s*(?:T|\\top|\\mathrm\s*\{?T\}?)\s*\}|T|\\top)/.test(normalized);
+  return fractions > 1 || (fractions > 0 && operations >= 3)
+    || maxDepth >= 3 || (maxDepth >= 2 && operations >= 2)
+    || (groups >= 3 && operations >= 2)
+    || (commas >= 3 && /[\[\{]/.test(value)) || (transpose && commas > 0);
+}
 function mathSpeech(content, inputOptions = {}) {
   const options = academicOptions(inputOptions), zh = options.mathReadingLanguage === 'chinese', brief = options.academicMathStyle === 'concise';
   if (options.mathReadingLanguage === 'skip' || options.academicMathMode === 'skip') return omission('formula', options);
@@ -125,6 +147,11 @@ function mathSpeech(content, inputOptions = {}) {
     }
     const range = endpoints.join(zh ? ' 到 ' : ' to ');
     return brief ? range : (zh ? '闭区间，' : 'closed interval, ') + range;
+  }
+  if (options.academicMathMode === 'smart' && complexListeningMath(value)) return omission('formula', options);
+  if (brief) {
+    const call = value.match(/^(\\[A-Za-z]+|[A-Za-z])\s*(?:\[([A-Za-z])\]|\(([A-Za-z])\))$/);
+    if (call) return `${mathSpeech(call[1], options)} of ${call[2] || call[3]}`;
   }
   // Explicitly speak products of adjacent, simply subscripted variables.
   value = value.replace(/([A-Za-z]_\{\s*(?:\\[A-Za-z]+|[A-Za-z0-9]+)\s*\})\s*(?=[A-Za-z]_\{)/g, '$1 * ');
@@ -186,4 +213,4 @@ function academicLatex(text, options = {}) {
     return { text: context.before.trimEnd() + spoken.replace(/^(?=Formula|公式)/, ' ') + ' ', consumed: ending.consumed };
   });
 }
-module.exports = { ACADEMIC_DEFAULTS, academicOptions, contextualMathOptions, academicLatex, mathSpeech, citations, skipTable, numericCell, omission, formulaNoticeWithPause, formulaNoticeEnding };
+module.exports = { ACADEMIC_DEFAULTS, academicOptions, contextualMathOptions, academicLatex, mathSpeech, citations, skipTable, numericCell, omission, formulaNoticeWithPause, formulaNoticeEnding, complexListeningMath };

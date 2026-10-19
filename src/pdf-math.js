@@ -1,6 +1,6 @@
 'use strict';
 
-const { academicOptions, contextualMathOptions, mathSpeech, omission, formulaNoticeWithPause, formulaNoticeEnding } = require('./academic-speech');
+const { academicOptions, contextualMathOptions, mathSpeech, omission, formulaNoticeWithPause, formulaNoticeEnding, complexListeningMath } = require('./academic-speech');
 const { structuredMathSpeech } = require('./structured-math');
 
 const mathGlyph = /[\u{1d400}-\u{1d7ff}\u220f\u2211\u221a\u222b-\u2233]|(?<![\p{Script=Greek}\p{M}])[\u0391-\u03c9](?![\p{Script=Greek}\p{M}])/u;
@@ -117,7 +117,7 @@ function pdfMathChanges(layout, items, settings = {}, names = {}) {
   const complex = text => {
     if (structuredMathSpeech(text.trim().replace(/[,;.]$/, ''), false, true) !== null) return false;
     const value = text.normalize('NFKC').replace(/\s/g, '');
-    return value.length > 24 || /[\u220f\u2211\u222b-\u2233]/.test(value)
+    return complexListeningMath(text) || value.length > 24 || /[\u220f\u2211\u222b-\u2233]/.test(value)
       || (/\|[^|]+\|/.test(value) && (value.match(/[=<>\u2264\u2265\u2248\u2260]/g) || []).length > 1)
       || (value.length > 16 && (value.match(/[=+\-\u2212\u2264\u2265/|]/g) || []).length >= 3);
   };
