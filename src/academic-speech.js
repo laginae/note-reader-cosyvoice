@@ -139,6 +139,15 @@ function mathSpeech(content, inputOptions = {}) {
   let depth = 0, maxDepth = 0;
   for (const c of value) { if (c === '{') maxDepth = Math.max(maxDepth, ++depth); if (c === '}' && --depth < 0) return omission('formula',options); }
   if (depth || maxDepth > 3) return omission('formula', options);
+  // Recognize a complete numeric interval, not a vector embedded in an expression.
+  const numericRange = value.replace(/\\(?:left|right)\b/g, '').trim()
+    .match(/^\[\s*([+−-]?\s*(?:\d+(?:\.\d+)?|\.\d+))\s*,\s*([+−-]?\s*(?:\d+(?:\.\d+)?|\.\d+))\s*\]$/);
+  if (numericRange) {
+    const endpoints = numericRange.slice(1).map(number => number.replace(/\s/g, '')
+      .replace(/^[−-]/, zh ? '负' : 'minus ').replace(/^\+/, zh ? '正' : 'plus '));
+    const range = endpoints.join(zh ? ' 到 ' : ' to ');
+    return brief ? range : (zh ? '闭区间，' : 'closed interval, ') + range;
+  }
   const bounds = namedBounds(value);
   if (bounds) {
     const endpoints = bounds.map(bound => mathSpeech(bound, { ...options, academicSkipNotice: true }));
@@ -170,6 +179,24 @@ function mathSpeech(content, inputOptions = {}) {
   }
   // Remaining structural commands cannot be interpreted reliably by this short-form reader.
   if (/\\(?:frac|dfrac|tfrac|sqrt|bar|overline|hat|tilde|vec|dot|ddot|text|mathrm|mathbf|mathbb|boldsymbol|operatorname)\b/.test(value)) return omission('formula',options);
+  // Only named statistics with short variable arguments get natural labels.
+  // Ordinary brackets, conditional expressions and compound arguments stay intact.
+  value = value.replace(/\{\s*(Var|Cov|Corr)\s*\}(?=\s*[[(])/g, '$1')
+    .replace(/(?<![A-Za-z\\])(Var|Cov|Corr)\s*(?:\[([^\[\]()]+)\]|\(([^\[\]()]+)\))/g, (match, name, square, round) => {
+      const raw = square ?? round, args = []; let depth = 0, start = 0;
+      for (let i = 0; i < raw.length; i++) {
+        if (raw[i] === '{') depth++;
+        else if (raw[i] === '}') depth--;
+        else if (raw[i] === ',' && !depth) { args.push(raw.slice(start, i).trim()); start = i + 1; }
+      }
+      args.push(raw.slice(start).trim());
+      const atom = /^(?:[A-Za-z]|\\[A-Za-z]+)(?:\s*[_^]\s*(?:\{(?:[A-Za-z0-9, ]{1,12}|\\[A-Za-z]+)\}|[A-Za-z0-9])){0,2}$/;
+      if (args.length !== (name === 'Var' ? 1 : 2) || args.some(arg => !atom.test(arg))) return match;
+      const spoken = args.map(arg => mathSpeech(arg, { ...options, academicSkipNotice: true }));
+      if (spoken.some(arg => !arg || /^(?:Formula\.|公式。)$/.test(arg))) return match;
+      const label = { Var: ['variance', '方差'], Cov: ['covariance', '协方差'], Corr: ['correlation', '相关系数'] }[name];
+      return zh ? `${spoken.join(' 与 ')} 的${label[1]}` : `${label[0]} of ${spoken.join(' and ')}`;
+    });
   const ops = {leq:['less than or equal to','小于等于'],geq:['greater than or equal to','大于等于'],neq:['not equal to','不等于'],approx:['approximately equal to','约等于'],times:['times','乘以'],cdot:['times','乘以'],pm:['plus or minus','正负'],mp:['minus or plus','负正'],infty:['infinity','无穷'],to:['to','到'],rightarrow:['to','到'],leftarrow:['from','来自'],in:['belongs to','属于'],notin:['does not belong to','不属于'],partial:['partial','偏导']};
   Object.assign(ops,{le:ops.leq,ge:ops.geq,ne:ops.neq,lt:['less than','小于'],gt:['greater than','大于']});
   value = value.replace(/\\([A-Za-z]+)/g, (_,symbol) => ` ${ops[symbol]?.[zh?1:0] || symbols[symbol] || symbol} `);

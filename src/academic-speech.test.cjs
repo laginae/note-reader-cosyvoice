@@ -18,7 +18,7 @@ test('concise math preserves fraction order, short commands, bounds, subscripts 
   assert.equal(mathSpeech(String.raw`|Y\_{k,h}|`), 'absolute value of Y sub k,h');
   assert.equal(mathSpeech(String.raw`\sqrt{x}`), 'square root of x');
   assert.match(mathSpeech(String.raw`\frac{1}{a-b}`), /open parenthesis a minus b close parenthesis/);
-  assert.equal(citations(academicLatex('Bounds $[1,2]$ and $x<y$; $z>w$.')), 'Bounds  open bracket 1,2 close bracket  and  x less than y ;  z greater than w .');
+  assert.equal(citations(academicLatex('Bounds $[1,2]$ and $x<y$; $z>w$.')), 'Bounds  1 to 2  and  x less than y ;  z greater than w .');
 });
 
 test('complex or unsupported math is omitted with a configurable notice, not guessed', () => {

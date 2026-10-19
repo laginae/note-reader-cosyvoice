@@ -19,7 +19,7 @@ test('named lower/upper bounds use concise ranges and preserve verbose interval 
 });
 test('range recognition does not reinterpret arbitrary pairs, vectors or unsupported operators', () => {
   assert.equal(mathSpeech('[x,y]'), 'open bracket x,y close bracket');
-  assert.equal(mathSpeech('[1,2]'), 'open bracket 1,2 close bracket');
+  assert.equal(mathSpeech('v=[1,2]'), 'v equals open bracket 1,2 close bracket');
   assert.equal(mathSpeech('[l,u,v]'), 'open bracket l,u,v close bracket');
   assert.equal(mathSpeech('(l,u]'), 'open parenthesis l,u close bracket');
   assert.equal(mathSpeech(String.raw`\ell`), 'ell');
