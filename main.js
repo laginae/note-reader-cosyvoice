@@ -10370,11 +10370,72 @@ var require_reading_highlights = __commonJS({
   }
 });
 
+// src/markdown-syntax.js
+var require_markdown_syntax = __commonJS({
+  "src/markdown-syntax.js"(exports2, module2) {
+    "use strict";
+    var blank = (text) => text.replace(/[^\r\n]/g, " ");
+    function maskMarkdownNonSpeech(text) {
+      text = String(text || "");
+      let out = "", i = 0;
+      while (i < text.length) {
+        if (i === 0 || text[i - 1] === "\n") {
+          const fence = text.slice(i).match(/^ {0,3}(`{3,}|~{3,})[^\n]*(?:\n|$)/);
+          if (fence) {
+            const close = new RegExp("^ {0,3}" + fence[1][0] + "{" + fence[1].length + ",}[ \\t]*\\r?$", "gm");
+            close.lastIndex = i + fence[0].length;
+            const end = close.exec(text);
+            const next = end ? end.index + end[0].length : text.length;
+            out += blank(text.slice(i, next));
+            i = next;
+            continue;
+          }
+        }
+        if (text[i] === "\\" && i + 1 < text.length) {
+          out += text.slice(i, i + 2);
+          i += 2;
+          continue;
+        }
+        if (text[i] === "`") {
+          const marker = text.slice(i).match(/^`+/)[0];
+          const close = new RegExp("(?<!`)" + marker + "(?!`)", "g");
+          close.lastIndex = i + marker.length;
+          const end = close.exec(text);
+          if (end) {
+            const next = end.index + marker.length;
+            out += text.slice(i, next);
+            i = next;
+            continue;
+          }
+        }
+        const closing = text.startsWith("<!--", i) ? "-->" : text.startsWith("%%", i) ? "%%" : null;
+        if (closing) {
+          const end = text.indexOf(closing, i + (closing === "-->" ? 4 : 2));
+          const next = end < 0 ? text.length : end + closing.length;
+          out += blank(text.slice(i, next));
+          i = next;
+          continue;
+        }
+        out += text[i++];
+      }
+      return out;
+    }
+    function cleanMarkdownPresentation(text) {
+      return maskMarkdownNonSpeech(text).replace(
+        /(`+)[\s\S]*?\1|\$\$[\s\S]*?\$\$|\$[^\n$]+\$|\\\([\s\S]*?\\\)|\\\[[\s\S]*?\\\]|==(?=\S)([^\n]*?\S)==/g,
+        (match, code, highlighted) => highlighted === void 0 ? match : highlighted
+      ).replace(/^(\s*[-+*]\s+)\[[ xX]\]\s+/gm, "$1").replace(/^ {0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,}|={3,})$/gm, "");
+    }
+    module2.exports = { maskMarkdownNonSpeech, cleanMarkdownPresentation };
+  }
+});
+
 // src/markdown-source.js
 var require_markdown_source = __commonJS({
   "src/markdown-source.js"(exports2, module2) {
     "use strict";
     var { speechPartOffset: speechPartOffset2 } = require_reading_highlights();
+    var { maskMarkdownNonSpeech } = require_markdown_syntax();
     function compact2(text) {
       return String(text || "").replace(/\s/g, "");
     }
@@ -10440,8 +10501,10 @@ var require_markdown_source = __commonJS({
     function buildMarkdownSource2(raw, chunks, clean, options = {}) {
       const text = options.sourceText ?? raw, offset = options.sourceOffset ?? 0;
       if (!Number.isInteger(offset) || offset < 0 || text.slice(offset, offset + raw.length) !== raw) return null;
-      const blocks = sourceBlocks(raw).map((block) => ({
+      const masked = options.preserveSyntax ? raw : maskMarkdownNonSpeech(text).slice(offset, offset + raw.length);
+      const blocks = sourceBlocks(masked).map((block) => ({
         ...block,
+        text: raw.slice(block.from, block.to),
         from: block.from + offset,
         to: block.to + offset,
         speech: compact2(clean(block.text))
@@ -10454,9 +10517,9 @@ var require_markdown_source = __commonJS({
       }
       const speech = blocks.map((block) => block.speech).join("");
       const actual = chunks.map(compact2).join("");
-      const mappingValid = speech === compact2(clean(raw)) && speech === actual;
+      const mappingValid = speech === compact2(clean(masked)) && speech === actual;
       let partialMapping = false;
-      if (!mappingValid && actual === compact2(clean(raw))) {
+      if (!mappingValid && actual === compact2(clean(masked))) {
         let cursor = 0, diverged = false;
         for (const block of blocks) {
           block.verified = false;
@@ -38395,7 +38458,8 @@ function verbalizeNumericCitationsForSpeech(text) {
   return citations(text);
 }
 function sanitizeTextForSpeech(text, options = {}) {
-  let value = sanitizeLatexForSpeech(normalizeLineBreaks(text), options);
+  const markdown = normalizeLineBreaks(text).replace(/^---\n[\s\S]*?\n---(?:\n|$)/, "");
+  let value = sanitizeLatexForSpeech(require_markdown_syntax().cleanMarkdownPresentation(markdown), options);
   value = value.replace(/^---\n[\s\S]*?\n---\n?/, "");
   value = value.replace(/```[\s\S]*?```/g, " ");
   value = value.replace(/!\[\[[^\]]+\]\]/g, " ");
@@ -39210,18 +39274,26 @@ function getAvailableVaultAudioPath(vault, requestedPath) {
   }
   throw new Error("Could not choose a non-conflicting name for the exported audio.");
 }
-function selectMarkdownAudioExportText(documentText, selectionText, selectionStart, scopeValue) {
+function selectMarkdownAudioExportText(documentText, selectionText, selectionStart, scopeValue, stripSyntax = false) {
   const scope = normalizeAudioExportScope(scopeValue);
+  const original = normalizeLineBreaks(documentText);
+  const masked = stripSyntax ? require_markdown_syntax().maskMarkdownNonSpeech(original) : original;
   if (scope === "selection") {
+    if (stripSyntax && Number.isInteger(selectionStart?.line) && Number.isInteger(selectionStart?.ch)) {
+      const lines = original.split("\n");
+      const offset = lines.slice(0, selectionStart.line).reduce((n, line) => n + line.length + 1, 0) + selectionStart.ch;
+      const selected = normalizeLineBreaks(selectionText);
+      if (original.slice(offset, offset + selected.length) === selected) return masked.slice(offset, offset + selected.length).trim();
+    }
     return String(selectionText || "").trim();
   }
   if (scope === "from-selection") {
     return getTextFromPositionToEnd(
-      normalizeLineBreaks(documentText).split("\n"),
+      masked.split("\n"),
       selectionStart
     ).trim();
   }
-  return String(documentText || "").trim();
+  return (stripSyntax ? masked : String(documentText || "")).trim();
 }
 function createAudioExportSummary(options = {}) {
   return {
@@ -41237,7 +41309,8 @@ ${embed}
         context.documentText,
         context.selectionText,
         context.selectionStart,
-        scope
+        scope,
+        this.settings.stripMarkdown
       ));
     } else if (context.documentKind === "web") {
       text = this.prepareHtmlSpeechText(scope === "entire" ? context.documentText : scope === "selection" ? context.selectionContext.selectedText : context.selectionContext.text.slice(context.selectionContext.startOffset));
@@ -42252,7 +42325,8 @@ ${embed}
   }
   async startReading(rawText, sourceLabel, options = {}) {
     const preparationStarted = (this.playbackTimings || (this.playbackTimings = new PlaybackTimings())).now();
-    const text = options.plainText || options.sourceKind === "html" ? this.prepareHtmlSpeechText(rawText) : this.settings.stripMarkdown ? sanitizeTextForSpeech(rawText, academicOptions(this.settings)) : normalizeLineBreaks(rawText).trim();
+    const speechRaw = options.sourceKind === "markdown" && this.settings.stripMarkdown && typeof options.sourceText === "string" ? require_markdown_syntax().maskMarkdownNonSpeech(options.sourceText).slice(options.sourceOffset || 0, (options.sourceOffset || 0) + rawText.length) : rawText;
+    const text = options.plainText || options.sourceKind === "html" ? this.prepareHtmlSpeechText(speechRaw) : this.settings.stripMarkdown ? sanitizeTextForSpeech(speechRaw, academicOptions(this.settings)) : normalizeLineBreaks(rawText).trim();
     if (!text) {
       new Notice("CosyVoice: nothing readable in this note.");
       return;
@@ -42278,7 +42352,12 @@ ${embed}
         selectionPageNumbers.push(...parts.map(() => page.pageNumber || options.pdfSelection.pageNumber + index));
       }
     }
-    let markdownSource = options.markdownSource || (options.sourceKind === "markdown" && !options.plainText ? buildMarkdownSource(rawText, chunks, (value) => this.settings.stripMarkdown ? sanitizeTextForSpeech(value, academicOptions(this.settings)) : normalizeLineBreaks(value).trim(), { sourceText: options.sourceText, sourceOffset: options.sourceOffset, filePath: options.file?.path }) : null);
+    let markdownSource = options.markdownSource || (options.sourceKind === "markdown" && !options.plainText ? buildMarkdownSource(rawText, chunks, (value) => this.settings.stripMarkdown ? sanitizeTextForSpeech(value, academicOptions(this.settings)) : normalizeLineBreaks(value).trim(), {
+      sourceText: options.sourceText,
+      sourceOffset: options.sourceOffset,
+      filePath: options.file?.path,
+      preserveSyntax: !this.settings.stripMarkdown
+    }) : null);
     if (options.focusDisplay) {
       const display = options.focusDisplay;
       let start = compact(display.text.slice(0, display.offset)).length;

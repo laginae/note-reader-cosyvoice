@@ -1121,7 +1121,8 @@ function verbalizeNumericCitationsForSpeech(text) {
 }
 
 function sanitizeTextForSpeech(text, options = {}) {
-  let value = sanitizeLatexForSpeech(normalizeLineBreaks(text), options);
+  const markdown = normalizeLineBreaks(text).replace(/^---\n[\s\S]*?\n---(?:\n|$)/, '');
+  let value = sanitizeLatexForSpeech(require('./markdown-syntax').cleanMarkdownPresentation(markdown), options);
 
   value = value.replace(/^---\n[\s\S]*?\n---\n?/, '');
   value = value.replace(/```[\s\S]*?```/g, ' ');
@@ -2146,18 +2147,26 @@ function getAvailableVaultAudioPath(vault, requestedPath) {
   throw new Error('Could not choose a non-conflicting name for the exported audio.');
 }
 
-function selectMarkdownAudioExportText(documentText, selectionText, selectionStart, scopeValue) {
+function selectMarkdownAudioExportText(documentText, selectionText, selectionStart, scopeValue, stripSyntax = false) {
   const scope = normalizeAudioExportScope(scopeValue);
+  const original = normalizeLineBreaks(documentText);
+  const masked = stripSyntax ? require('./markdown-syntax').maskMarkdownNonSpeech(original) : original;
   if (scope === 'selection') {
+    if (stripSyntax && Number.isInteger(selectionStart?.line) && Number.isInteger(selectionStart?.ch)) {
+      const lines = original.split('\n');
+      const offset = lines.slice(0, selectionStart.line).reduce((n, line) => n + line.length + 1, 0) + selectionStart.ch;
+      const selected = normalizeLineBreaks(selectionText);
+      if (original.slice(offset, offset + selected.length) === selected) return masked.slice(offset, offset + selected.length).trim();
+    }
     return String(selectionText || '').trim();
   }
   if (scope === 'from-selection') {
     return getTextFromPositionToEnd(
-      normalizeLineBreaks(documentText).split('\n'),
+      masked.split('\n'),
       selectionStart
     ).trim();
   }
-  return String(documentText || '').trim();
+  return (stripSyntax ? masked : String(documentText || '')).trim();
 }
 
 function createAudioExportSummary(options = {}) {
@@ -4331,7 +4340,8 @@ class CosyVoiceReaderPlugin extends Plugin {
         context.documentText,
         context.selectionText,
         context.selectionStart,
-        scope
+        scope,
+        this.settings.stripMarkdown
       ));
     } else if (context.documentKind === 'web') {
       text = this.prepareHtmlSpeechText(scope === 'entire' ? context.documentText
@@ -5446,9 +5456,12 @@ class CosyVoiceReaderPlugin extends Plugin {
 
   async startReading(rawText, sourceLabel, options = {}) {
     const preparationStarted = (this.playbackTimings ||= new PlaybackTimings()).now();
-    const text = options.plainText || options.sourceKind === 'html' ? this.prepareHtmlSpeechText(rawText)
+    const speechRaw = options.sourceKind === 'markdown' && this.settings.stripMarkdown && typeof options.sourceText === 'string'
+      ? require('./markdown-syntax').maskMarkdownNonSpeech(options.sourceText).slice(options.sourceOffset || 0, (options.sourceOffset || 0) + rawText.length)
+      : rawText;
+    const text = options.plainText || options.sourceKind === 'html' ? this.prepareHtmlSpeechText(speechRaw)
       : this.settings.stripMarkdown
-      ? sanitizeTextForSpeech(rawText, academicOptions(this.settings))
+      ? sanitizeTextForSpeech(speechRaw, academicOptions(this.settings))
       : normalizeLineBreaks(rawText).trim();
 
     if (!text) {
@@ -5481,7 +5494,8 @@ class CosyVoiceReaderPlugin extends Plugin {
     let markdownSource = options.markdownSource || (options.sourceKind === 'markdown' && !options.plainText
       ? buildMarkdownSource(rawText, chunks, value => this.settings.stripMarkdown
         ? sanitizeTextForSpeech(value, academicOptions(this.settings))
-        : normalizeLineBreaks(value).trim(), { sourceText: options.sourceText, sourceOffset: options.sourceOffset, filePath: options.file?.path }) : null);
+        : normalizeLineBreaks(value).trim(), { sourceText: options.sourceText, sourceOffset: options.sourceOffset, filePath: options.file?.path,
+          preserveSyntax: !this.settings.stripMarkdown }) : null);
     if (options.focusDisplay) {
       const display = options.focusDisplay;
       let start = compact(display.text.slice(0, display.offset)).length;

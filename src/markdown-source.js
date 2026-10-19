@@ -1,5 +1,6 @@
 'use strict';
 const { speechPartOffset } = require('./reading-highlights');
+const { maskMarkdownNonSpeech } = require('./markdown-syntax');
 
 function compact(text) { return String(text || '').replace(/\s/g, ''); }
 const lineIndexes = new WeakMap();
@@ -62,7 +63,8 @@ function sourceBlocks(text) {
 function buildMarkdownSource(raw, chunks, clean, options = {}) {
   const text = options.sourceText ?? raw, offset = options.sourceOffset ?? 0;
   if (!Number.isInteger(offset) || offset < 0 || text.slice(offset, offset + raw.length) !== raw) return null;
-  const blocks = sourceBlocks(raw).map(block => ({ ...block,
+  const masked = options.preserveSyntax ? raw : maskMarkdownNonSpeech(text).slice(offset, offset + raw.length);
+  const blocks = sourceBlocks(masked).map(block => ({ ...block, text: raw.slice(block.from, block.to),
     from: block.from + offset, to: block.to + offset, speech: compact(clean(block.text)),
   })).filter(block => block.speech);
   let position = 0;
@@ -71,11 +73,11 @@ function buildMarkdownSource(raw, chunks, clean, options = {}) {
   }
   const speech = blocks.map(block => block.speech).join('');
   const actual = chunks.map(compact).join('');
-  const mappingValid = speech === compact(clean(raw)) && speech === actual;
+  const mappingValid = speech === compact(clean(masked)) && speech === actual;
   // A context-sensitive formula/table must not disable unrelated verified blocks.
   // Once alignment diverges, only unique exact matches may resume marking.
   let partialMapping = false;
-  if (!mappingValid && actual === compact(clean(raw))) {
+  if (!mappingValid && actual === compact(clean(masked))) {
     let cursor = 0, diverged = false;
     for (const block of blocks) {
       block.verified = false;
