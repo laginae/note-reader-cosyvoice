@@ -215,7 +215,7 @@ const testVaultPath = path.resolve('test-vault');
 const testAudioPath = path.join(testVaultPath, '.obsidian', 'plugins', 'note-reader-cosyvoice', 'cache', 'a.wav');
 assert.strictEqual(manifest.id, 'note-reader-cosyvoice');
 assert.strictEqual(manifest.name, 'Cozy Read Aloud');
-assert.strictEqual(manifest.version, '1.2.5');
+assert.strictEqual(manifest.version, '1.2.6');
 assert.strictEqual(
   moduleObject.exports.__test.sanitizeTextForSpeech('第一段的结尾。\n\n## 第二节标题\n\n下一节的正文。'),
   '第一段的结尾。\n第二节标题\n下一节的正文。'
@@ -988,6 +988,13 @@ const repeatedPdfLayout = {
   twoColumn: true,
 };
 const repeatedPdfText = repeatedPdfLayout.lines.map((line) => line.text).join('\n');
+assert.strictEqual(moduleObject.exports.__test.slicePdfTextFromSelection(repeatedPdfText, 'Unmatched location', {
+  layout: repeatedPdfLayout, selectionPosition: { xRatio: 0.6, yRatio: 0.375 }, strictMatch: true,
+}).matched, false);
+assert.deepStrictEqual(moduleObject.exports.__test.slicePdfTextFromSelection(repeatedPdfText, 'right-column body.', {
+  layout: repeatedPdfLayout, selectionPosition: { xRatio: 0.7, yRatio: 0.375 },
+  strictMatch: true, sentenceStart: true, preserveSource: true,
+}), { matched: true, text: 'Repeated passage in the right-column body.\nRight-column continuation.' });
 const selectedMathSource = 'Public introduction.\nA selected explanation of ef\ufb01ciency.\n𝑥 = 𝑦 + 1\nThe next paragraph.';
 assert.deepStrictEqual(moduleObject.exports.__test.slicePdfTextFromSelection(
   selectedMathSource, 'A selected explanation of efficiency.', { preserveSource: true }

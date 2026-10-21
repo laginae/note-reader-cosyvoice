@@ -133,7 +133,7 @@ Use pause/resume, playback speed, volume, segment navigation and seeking without
 
 ### Context menu and floating toolbar
 
-In Markdown **Live Preview** or **Source mode**, right-click to **Read aloud from here**; when text is selected, you can also **Read selected text**. PDF, HTML and Markdown Reading view retain their existing reading-toolbar actions.
+In Markdown **Live Preview** or **Source mode**, right-click to **Read aloud from here**; when text is selected, you can also **Read selected text**. PDF text also supports these menu actions: a selection takes priority; otherwise, reading starts near the clicked text, preferably at the sentence beginning within the same column. Blank space and images do not provide a text starting point. An unverified starting point is rejected rather than silently reading from the page beginning. Existing built-in PDF and PDF++ menu items are preserved. HTML and Markdown Reading view retain their reading-toolbar actions.
 
 For a floating speaker icon, separately install and enable the optional **Editing Toolbar** community plugin. Ordinary reading does not require it. In **Playback and interface**, enable **Floating toolbar reading icon** and choose its action: **Read selected text** (default), or **Read from selection** to continue to the document end. Both require a selection.
 

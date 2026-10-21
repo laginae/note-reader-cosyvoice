@@ -1,4 +1,4 @@
-const { ItemView, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, SecretComponent, Setting: ObsidianSetting, loadPdfJs, setIcon } = require('obsidian');
+const { ItemView, MarkdownView, Menu, Modal, Notice, Plugin, PluginSettingTab, SecretComponent, Setting: ObsidianSetting, loadPdfJs, setIcon } = require('obsidian');
 const { LANGUAGES, translate: translateInterface, localizedSetting } = require('./i18n');
 const { PlaybackTimings, PreparationPool } = require('./preparation-pool');
 const { PAGES, createSettingsPages, createSettingsHeader } = require('./settings-pages');
@@ -7,6 +7,7 @@ const { ELEVENLABS_MODELS, ELEVENLABS_VOICES, isElevenLabsModel } = require('./o
 const { getOpenRouterPricing } = require('./openrouter-pricing');
 const { disclosure, renderEngineChoice, renderPreview } = require('./engine-setup');
 const { registerReadingMenu, syncEditingToolbar, addReadingMenuSettings } = require('./reading-menu');
+const { registerPdfReadingMenu, pdfSentenceStart } = require('./pdf-reading-menu');
 const { normalizedTerms, applyTerms, fitSpeechParts, contextOptions, adjacentContext } = require('./speech-options');
 const { addSpeechContextSetting, addSpeechTermsSettings } = require('./speech-options-settings');
 const { SettingsConfirmModal } = require('./settings-confirm');
@@ -919,8 +920,10 @@ function slicePdfTextFromSelection(pageText, selectedText, options = {}) {
   const page = normalizePdfSelectionText(pageText);
   const selected = normalizePdfSelectionText(selectedText);
   const source = options.preserveSource ? pdfSelectionSourceMap(pageText) : null;
-  const result = (matched, offset = 0) => ({ matched, text: source?.text === page
-    ? pageText.slice(source.offsets[offset] ?? pageText.length) : page.slice(offset) });
+  const result = (matched, offset = 0) => {
+    if (matched && options.sentenceStart) offset=pdfSentenceStart(page,offset,createNormalizedPdfLayoutMap(options.layout));
+    return { matched, text: source?.text === page ? pageText.slice(source.offsets[offset] ?? pageText.length) : page.slice(offset) };
+  };
   if (!page || !selected) {
     return result(false);
   }
@@ -968,7 +971,7 @@ function slicePdfTextFromSelection(pageText, selectedText, options = {}) {
     }
   }
 
-  if (spatialAnchor !== null) {
+  if (spatialAnchor !== null && !options.strictMatch) {
     return result(true, spatialAnchor);
   }
   return result(false);
@@ -2491,6 +2494,13 @@ class CosyVoiceReaderPlugin extends Plugin {
         file: snapshot.file, sourceKind: 'markdown', sourceText: snapshot.sourceText,
         sourceOffset: snapshot.start, skipReadingPosition: snapshot.selection,
       })), message => new Notice(message));
+    registerPdfReadingMenu(this, Menu, getPdfSelectionContext, snapshot => this.runUserAction('Read PDF context', async () => {
+      if (!snapshot.selection) return this.readCurrentPdf(snapshot.file, { selectionContext: snapshot.context });
+      await this.activateControlView();
+      return this.startReading(preparePdfSelection(snapshot.context, this.settings), `${snapshot.file.basename || snapshot.file.name} (PDF selection)`, {
+        plainText:true, pdfText:true, skipReadingPosition:true, file:snapshot.file, sourceKind:'pdf', pdfSelection:snapshot.context,
+      });
+    }), message => new Notice(message));
     await this.ensureCacheDir();
 
     this.registerView(VIEW_TYPE, (leaf) => new CosyVoiceReaderView(leaf, this));
@@ -5123,6 +5133,8 @@ class CosyVoiceReaderPlugin extends Plugin {
       selectedText: selectionContext ? selectionContext.selectedText : '',
       selectionPosition: selectionContext ? selectionContext.selectionPosition : null,
       startPageNumber: session.pdfOutlineRange?.startPage || (selectionContext ? selectionContext.pageNumber : 1),
+      sentenceStart: selectionContext?.sentenceStart === true,
+      strictMatch: selectionContext?.strictMatch === true,
     });
 
     if (!this.isActive(session)) {
@@ -5218,6 +5230,7 @@ class CosyVoiceReaderPlugin extends Plugin {
         repeatedHeaders = recurringEdges(samples);
       }
       let textLength = 0;
+      const pdfEncodingContext = new Set();
 
       const endPageNumber = Math.min(totalPages, options.outlineRange?.endPage || totalPages);
       for (let pageNumber = startPageNumber; pageNumber <= endPageNumber; pageNumber += 1) {
@@ -5262,7 +5275,7 @@ class CosyVoiceReaderPlugin extends Plugin {
             ...(contentScope === 'body' && footnoteMode !== 'footnotes' ? numericTableRegions(ancillary.layout,viewport,settings) : [])];
           if (!isCurrent()) return '';
           const pageLayout = extractPdfTextLayout(textContent && textContent.items, { viewport });
-          const mathChanges = pdfMathChanges(pageLayout, textContent.items, settings, pdfFontNames(page, textContent.items));
+          const mathChanges = pdfMathChanges(pageLayout, textContent.items, settings, pdfFontNames(page, textContent.items), pdfEncodingContext);
           if (session.kind === 'pdf-progressive') {
             session.pdfHighlightPages ||= new Map();
             session.pdfHighlightPages.set(pageNumber, {
@@ -5289,10 +5302,15 @@ class CosyVoiceReaderPlugin extends Plugin {
             const selectionSlice = slicePdfTextFromSelection(pageText, selectedText, {
               layout: pageLayout,
               selectionPosition: options.selectionPosition,
+              sentenceStart: options.sentenceStart,
+              strictMatch: options.strictMatch,
               preserveSource: true,
             });
             pageText = selectionSlice.text;
             session.pdfSelectionMatched = selectionSlice.matched;
+            if (options.strictMatch && !selectionSlice.matched) throw new Error(settings.settingsLanguage === 'chinese'
+              ? '无法可靠定位 PDF 起读位置，请重新选择文字后重试。'
+              : 'Unable to locate the PDF starting point reliably. Select the text again.');
           }
           let noteText = '';
           if (partition?.regions.length) {

@@ -1136,7 +1136,7 @@ var require_reading_menu = __commonJS({
     }
     function addReadingMenuSettings2(container, plugin, Setting) {
       const zh = plugin.settings.settingsLanguage === "chinese";
-      new Setting(container).setName(zh ? "\u663E\u793A\u6717\u8BFB\u53F3\u952E\u83DC\u5355" : "Reading context menu").setDesc(zh ? "\u5728 Markdown \u7F16\u8F91\u5668\u83DC\u5355\u4E2D\u663E\u793A\u4ECE\u6B64\u5904\u6717\u8BFB\u548C\u6717\u8BFB\u9009\u4E2D\u5185\u5BB9\u3002" : "Show read-from-here and selection actions in the Markdown editor menu.").addToggle((toggle) => toggle.setValue(plugin.settings.readingContextMenu !== false).onChange(async (value) => {
+      new Setting(container).setName(zh ? "\u663E\u793A\u6717\u8BFB\u53F3\u952E\u83DC\u5355" : "Reading context menu").setDesc(zh ? "\u5728 Markdown \u7F16\u8F91\u5668\u548C PDF \u53F3\u952E\u83DC\u5355\u4E2D\u663E\u793A\u4ECE\u6B64\u5904\u6717\u8BFB\u548C\u6717\u8BFB\u9009\u4E2D\u5185\u5BB9\u3002" : "Show read-from-here and selection actions in Markdown editor and PDF context menus.").addToggle((toggle) => toggle.setValue(plugin.settings.readingContextMenu !== false).onChange(async (value) => {
         plugin.settings.readingContextMenu = value;
         await plugin.saveSettings();
       }));
@@ -1156,6 +1156,168 @@ var require_reading_menu = __commonJS({
       });
     }
     module2.exports = { registerReadingMenu: registerReadingMenu2, syncEditingToolbar: syncEditingToolbar2, addReadingMenuSettings: addReadingMenuSettings2 };
+  }
+});
+
+// src/pdf-reading-menu.js
+var require_pdf_reading_menu = __commonJS({
+  "src/pdf-reading-menu.js"(exports2, module2) {
+    "use strict";
+    function pdfSentenceStart2(page, offset, mapped) {
+      const lines = mapped?.lines || [];
+      let index = lines.findIndex((line) => offset >= line.normalizedStart && offset < line.normalizedEnd);
+      if (index < 0 || mapped.text !== page || typeof Intl.Segmenter !== "function") return offset;
+      let floor = lines[index].normalizedStart;
+      for (let count = 0; index > 0 && count < 6; count++, index--) {
+        const current = lines[index], previous = lines[index - 1];
+        const overlap = Math.min(current.xMax, previous.xMax) - Math.max(current.xMin, previous.xMin);
+        const gap = previous.y - current.y;
+        if (overlap <= 0 || gap < 0 || gap > Math.max(current.height || 12, previous.height || 12) * 2 || offset - previous.normalizedStart > 1200) break;
+        floor = previous.normalizedStart;
+      }
+      const segmenter = new Intl.Segmenter(void 0, { granularity: "sentence" });
+      for (const part of segmenter.segment(page.slice(floor))) {
+        const start = floor + part.index;
+        if (start <= offset && offset < start + part.segment.length) return start + (part.segment.match(/^\s*/)?.[0].length || 0);
+      }
+      return offset;
+    }
+    function pointContext(event, view) {
+      const doc = event.target?.ownerDocument, root = view.containerEl || view.contentEl;
+      const target = event.target?.nodeType === 1 ? event.target : event.target?.parentElement;
+      const span = target?.closest(".textLayer span"), page = span?.closest("[data-page-number]");
+      if (!page || !root?.contains(page) || span.querySelector("span")) return null;
+      const bounds = page.getBoundingClientRect(), rect = span.getBoundingClientRect();
+      const x = event.clientX, y = event.clientY;
+      if (!(bounds.width > 0 && bounds.height > 0) || x < rect.left || x > rect.right || y < rect.top || y > rect.bottom) return null;
+      let caret = doc.caretRangeFromPoint?.(x, y);
+      if (!caret && doc.caretPositionFromPoint) {
+        const pos = doc.caretPositionFromPoint(x, y);
+        if (pos) {
+          caret = doc.createRange();
+          caret.setStart(pos.offsetNode, pos.offset);
+          caret.collapse(true);
+        }
+      }
+      if (!caret || caret.startContainer.nodeType !== 3 || !span.contains(caret.startContainer)) {
+        caret = null;
+        const walker = doc.createTreeWalker(span, 4);
+        let node, budget = 2048;
+        while (!caret && (node = walker.nextNode()) && budget > 0) {
+          for (let offset = 0; offset < node.textContent.length && budget-- > 0; offset++) {
+            if (!node.textContent[offset].trim()) continue;
+            const char = doc.createRange();
+            char.setStart(node, offset);
+            char.setEnd(node, offset + 1);
+            if ([...char.getClientRects()].some((r) => x >= r.left && x <= r.right && y >= r.top && y <= r.bottom)) {
+              caret = char;
+              break;
+            }
+          }
+        }
+        if (!caret) return null;
+      }
+      const text = caret.startContainer.textContent, index = Math.min(caret.startOffset, text.length - 1);
+      let at = -1;
+      for (const offset of [index, index - 1]) {
+        if (offset < 0 || !text[offset]?.trim()) continue;
+        const char = doc.createRange();
+        char.setStart(caret.startContainer, offset);
+        char.setEnd(caret.startContainer, offset + 1);
+        if ([...char.getClientRects()].some((r) => x >= r.left && x <= r.right && y >= r.top && y <= r.bottom)) {
+          at = offset;
+          break;
+        }
+      }
+      if (at < 0) return null;
+      while (at > 0 && /[\p{L}\p{N}]/u.test(text[at - 1])) at--;
+      const selectedText = text.slice(at).trim();
+      const pageNumber = Number(page.dataset.pageNumber);
+      if (!selectedText || !Number.isInteger(pageNumber) || pageNumber < 1) return null;
+      return {
+        filePath: view.file.path,
+        fileMtime: view.file.stat?.mtime || 0,
+        pageNumber,
+        selectedText,
+        selectionPosition: { xRatio: (x - bounds.left) / bounds.width, yRatio: (y - bounds.top) / bounds.height },
+        sentenceStart: true,
+        strictMatch: true
+      };
+    }
+    function registerPdfReadingMenu2(plugin, Menu2, captureSelection, read, notify) {
+      if (!Menu2?.prototype?.showAtMouseEvent) return;
+      const snapshots = /* @__PURE__ */ new WeakMap(), documents = /* @__PURE__ */ new Map(), added = /* @__PURE__ */ new WeakSet();
+      let active = true;
+      const capture = (event) => {
+        if (!active || plugin.settings.readingContextMenu === false) return;
+        const leaf = plugin.app.workspace.getLeavesOfType("pdf").find((l) => (l.view.containerEl || l.view.contentEl)?.contains(event.target));
+        if (!leaf?.view.file) return;
+        const view = leaf.view, root = view.containerEl || view.contentEl, doc = root.ownerDocument;
+        const target = event.target?.nodeType === 1 ? event.target : event.target?.parentElement;
+        if (!target?.closest(".page[data-page-number]")) return;
+        let selection, context;
+        try {
+          selection = captureSelection(doc.getSelection(), [leaf], view.file);
+          context = selection || pointContext(event, view);
+        } catch (_) {
+          return;
+        }
+        if (!context) return;
+        snapshots.set(event, {
+          view,
+          file: view.file,
+          path: view.file.path,
+          mtime: view.file.stat?.mtime || 0,
+          context: { ...context, strictMatch: true },
+          selection: Boolean(selection?.selectionLayout?.length)
+        });
+      };
+      const sync = () => {
+        const docs = new Set(plugin.app.workspace.getLeavesOfType("pdf").map((l) => (l.view.containerEl || l.view.contentEl)?.ownerDocument).filter(Boolean));
+        for (const [doc, handler] of documents) if (!docs.has(doc)) {
+          doc.removeEventListener("contextmenu", handler, true);
+          documents.delete(doc);
+        }
+        for (const doc of docs) if (!documents.has(doc)) {
+          doc.addEventListener("contextmenu", capture, true);
+          documents.set(doc, capture);
+        }
+      };
+      plugin.registerEvent(plugin.app.workspace.on("layout-change", sync));
+      plugin.app.workspace.onLayoutReady?.(sync);
+      sync();
+      const original = Menu2.prototype.showAtMouseEvent;
+      function show(event, ...args) {
+        const snapshot = active && snapshots.get(event);
+        if (snapshot && !added.has(this) && plugin.settings.readingContextMenu !== false) {
+          added.add(this);
+          snapshots.delete(event);
+          const zh = plugin.settings.settingsLanguage === "chinese";
+          for (const selection of snapshot.selection ? [false, true] : [false]) {
+            this.addItem((item) => {
+              item.setSection?.("selection");
+              return item.setTitle(selection ? zh ? "\u6717\u8BFB\u9009\u4E2D\u5185\u5BB9" : "Read selected text" : zh ? "\u4ECE\u6B64\u5904\u5F00\u59CB\u6717\u8BFB" : "Read aloud from here").setIcon(selection ? "text-select" : "list-start").onClick(() => {
+                if (!active || plugin.settings.readingContextMenu === false) return;
+                if (snapshot.view.file !== snapshot.file || snapshot.file.path !== snapshot.path || (snapshot.file.stat?.mtime || 0) !== snapshot.mtime || !plugin.app.workspace.getLeavesOfType("pdf").some((l) => l.view === snapshot.view)) {
+                  notify(zh ? "\u539F\u6587\u5DF2\u53D8\u5316\u6216\u5173\u95ED\uFF0C\u8BF7\u91CD\u65B0\u6253\u5F00\u53F3\u952E\u83DC\u5355\u3002" : "The PDF changed or closed. Open the context menu again.");
+                  return;
+                }
+                return read({ ...snapshot, selection });
+              });
+            });
+          }
+        }
+        return original.call(this, event, ...args);
+      }
+      Menu2.prototype.showAtMouseEvent = show;
+      plugin.register(() => {
+        active = false;
+        if (Menu2.prototype.showAtMouseEvent === show) Menu2.prototype.showAtMouseEvent = original;
+        for (const [doc, handler] of documents) doc.removeEventListener("contextmenu", handler, true);
+        documents.clear();
+      });
+    }
+    module2.exports = { registerPdfReadingMenu: registerPdfReadingMenu2, pointContext, pdfSentenceStart: pdfSentenceStart2 };
   }
 });
 
@@ -2305,6 +2467,36 @@ var require_pdf_math = __commonJS({
     var mathGlyph = /[\u{1d400}-\u{1d7ff}\u220f\u2211\u221a\u222b-\u2233]|(?<![\p{Script=Greek}\p{M}])[\u0391-\u03c9](?![\p{Script=Greek}\p{M}])/u;
     var mathOperator = /[=+\-\u2212<>\u2264\u2265\u2248\u2260\u00d7\u00f7\u00b1\u2213*/|]/;
     var prose = (value) => /[\u3400-\u9fff]/u.test(value) || /\p{Script=Greek}{2,}/u.test(value) || (value.match(/[A-Za-z]{4,}/g) || []).some((word) => !/^(?:sqrt|sinh|cosh|tanh|sin|cos|tan|log|exp|lim)$/i.test(word));
+    var encodedMath = new Map(Object.entries({
+      "\u123A": "(",
+      "\u123B": ")",
+      "\u123C": "{",
+      "\u123D": "}",
+      "\u0D4C": "=",
+      "\u0B40": "=",
+      "\u0D46": "-",
+      "\u0D45": "+",
+      "\u0D50": ">",
+      "\u0D51": "<",
+      "\u0DCD": "\u2211",
+      "\u0DA8": "\u221A"
+    }));
+    var encodingScript = /[\u0b00-\u0b7f\u0d00-\u0dff\u1200-\u137f]/u;
+    function encodedMathFonts(items, known = /* @__PURE__ */ new Set()) {
+      const evidence = /* @__PURE__ */ new Map();
+      for (const item of items) {
+        const key = item.fontName || "";
+        const data = evidence.get(key) || { chars: /* @__PURE__ */ new Set(), scripts: /* @__PURE__ */ new Set(), prose: false };
+        for (const char of item.str) {
+          if (encodedMath.has(char)) {
+            data.chars.add(char);
+            data.scripts.add(char.codePointAt(0) >= 4608 ? "ethiopic" : char.codePointAt(0) >= 3456 ? "sinhala" : char.codePointAt(0) >= 3328 ? "malayalam" : "oriya");
+          } else if (encodingScript.test(char) && /\p{L}/u.test(char)) data.prose = true;
+        }
+        evidence.set(key, data);
+      }
+      return new Set([...evidence].filter(([font, data]) => !data.prose && (font && known.has(font) || data.chars.size >= 3 && data.scripts.size >= 2)).map(([font]) => font));
+    }
     function mathFonts(items, names = {}) {
       const fonts = /* @__PURE__ */ new Map();
       for (const item of items) {
@@ -2326,7 +2518,7 @@ var require_pdf_math = __commonJS({
       }
       return names;
     }
-    function pdfMathChanges2(layout, items, settings = {}, names = {}) {
+    function pdfMathChanges2(layout, items, settings = {}, names = {}, encodingContext = /* @__PURE__ */ new Set()) {
       const options = academicOptions2(settings);
       const skipAll = options.academicMathMode === "skip" || options.mathReadingLanguage === "skip";
       const filtering = skipAll || options.academicMathMode === "smart";
@@ -2334,7 +2526,10 @@ var require_pdf_math = __commonJS({
       if (!positioned.length || !layout.lines.length) return [];
       const heights = positioned.map((item) => Math.max(1, Math.abs(item.height || item.transform[3]))).sort((a, b) => a - b);
       const height = heights[Math.floor(heights.length / 2)], tolerance = Math.max(2, height * 0.5);
-      const fonts = mathFonts(positioned, names), groups = layout.lines.map(() => []);
+      const encodedFonts = encodedMathFonts(positioned, encodingContext);
+      for (const font of encodedFonts) if (font) encodingContext.add(font);
+      const decoded = (item) => encodedFonts.has(item.fontName || "") ? [...item.str].map((char) => encodedMath.get(char) || (encodingScript.test(char) ? "\uFFFD" : char)).join("") : item.str;
+      const fonts = mathFonts(positioned.map((item) => ({ ...item, str: decoded(item) })), names), groups = layout.lines.map(() => []);
       for (const item of positioned) {
         let nearest = -1, distance = Infinity;
         layout.lines.forEach((line, index) => {
@@ -2353,11 +2548,15 @@ var require_pdf_math = __commonJS({
           const value = item.str.replace(/[ \t]+/g, " ").trim();
           const start = line.text.indexOf(value, cursor);
           if (start >= 0) cursor = start + value.length;
+          const speechText = decoded(item).replace(/[ \t]+/g, " ").trim();
           return {
             item,
             start,
             end: start + value.length,
-            math: fonts.has(item.fontName) || mathGlyph.test(value) && !prose(value)
+            speechText,
+            repaired: speechText !== value,
+            unsafe: speechText.includes("\uFFFD"),
+            math: fonts.has(item.fontName) || mathGlyph.test(speechText) && !prose(speechText) || speechText !== value
           };
         });
         if (!mapped.length || mapped.some((token) => token.start < 0)) return { line, mapped: [], display: false };
@@ -2377,23 +2576,24 @@ var require_pdf_math = __commonJS({
         });
         let candidates = [];
         const finishCandidates = () => {
-          if (candidates.some((token) => token.math) && candidates.some((token) => mathOperator.test(token.item.str))) {
+          if (candidates.some((token) => token.math) && candidates.some((token) => mathOperator.test(token.speechText))) {
             candidates.forEach((token, index2) => {
-              if (!token.math && /^[A-Za-z]$/.test(token.item.str.trim()) && !mathOperator.test(candidates[index2 - 1]?.item.str || "") && !mathOperator.test(candidates[index2 + 1]?.item.str || "")) return;
+              if (!token.math && /^[A-Za-z]$/.test(token.item.str.trim()) && !mathOperator.test(candidates[index2 - 1]?.speechText || "") && !mathOperator.test(candidates[index2 + 1]?.speechText || "")) return;
               token.math = true;
             });
           }
           candidates = [];
         };
         for (const token of mapped) {
-          if (token.math || /^[A-Za-z]$/.test(token.item.str.trim()) || /^[\s\d()[\]{}+*\-\u2212=<>/|\u2264\u2265\u2248\u2260\u00d7\u00f7\u00b1\u2213]+$/.test(token.item.str)) candidates.push(token);
+          if (token.math || /^[A-Za-z]$/.test(token.item.str.trim()) || /^[\s\d()[\]{}+*\-\u2212=<>/|\u2264\u2265\u2248\u2260\u00d7\u00f7\u00b1\u2213]+$/.test(token.speechText)) candidates.push(token);
           else finishCandidates();
         }
         finishCandidates();
-        const plainEquation = /[=\u2264\u2265\u2248\u2260]/.test(line.text) && /[A-Za-z\u0370-\u03ff\u{1d400}-\u{1d7ff}]/u.test(line.text) && !prose(line.text) && (line.text.match(/[A-Za-z]+/g) || []).every((word) => word.length === 1 || /^(?:min|max|sin|cos|tan|log|exp|lim|sqrt)$/i.test(word));
+        const analysisText = mapped.map((token) => token.speechText).join(" ");
+        const plainEquation = /[=\u2264\u2265\u2248\u2260]/.test(analysisText) && /[A-Za-z\u0370-\u03ff\u{1d400}-\u{1d7ff}]/u.test(analysisText) && !prose(analysisText) && (analysisText.match(/[A-Za-z]+/g) || []).every((word) => word.length === 1 || /^(?:min|max|sin|cos|tan|log|exp|lim|sqrt)$/i.test(word));
         const neutral = (value) => /^[\s\d()[\]{},.;:+*\-\u2212=<>/|\u2264\u2265\u2248\u2260\u00d7\u00f7\u00b1\u2213]+$/.test(value);
         const mathFunction = (value) => /^(?:min|max|sin|cos|tan|log|exp|lim|sqrt)$/.test(value.trim());
-        const display = plainEquation || mapped.every((token) => token.math || neutral(token.item.str) || mathFunction(token.item.str));
+        const display = plainEquation || mapped.every((token) => token.math || neutral(token.speechText) || mathFunction(token.speechText));
         if (display) mapped.forEach((token) => {
           token.math = true;
         });
@@ -2401,8 +2601,10 @@ var require_pdf_math = __commonJS({
           line,
           mapped,
           display,
-          equation: plainEquation || /[=\u2264\u2265\u2248\u2260\u222b-\u2233]/.test(line.text),
-          supported: plainEquation || mapped.some((token) => fonts.has(token.item.fontName) || mathGlyph.test(token.item.str))
+          analysisText,
+          repaired: mapped.some((token) => token.repaired),
+          equation: plainEquation || /[=\u2264\u2265\u2248\u2260\u222b-\u2233]/.test(analysisText),
+          supported: plainEquation || mapped.some((token) => token.repaired || fonts.has(token.item.fontName) || mathGlyph.test(token.item.str))
         };
       });
       const complex = (text) => {
@@ -2410,9 +2612,27 @@ var require_pdf_math = __commonJS({
         const value = text.normalize("NFKC").replace(/\s/g, "");
         return complexListeningMath(text) || value.length > 24 || /[\u220f\u2211\u222b-\u2233]/.test(value) || /\|[^|]+\|/.test(value) && (value.match(/[=<>\u2264\u2265\u2248\u2260]/g) || []).length > 1 || value.length > 16 && (value.match(/[=+\-\u2212\u2264\u2265/|]/g) || []).length >= 3;
       };
+      const satellite = (row) => row.mapped.length && !prose(row.analysisText) && /^[\sA-Za-z\d\u0370-\u03ff\u2200-\u22ff\ufffd()[\]{},.;:+*/=<>-]+$/.test(row.analysisText) && (row.analysisText.match(/[A-Za-z]+/g) || []).every((word) => word.length <= 2);
+      for (let i = 0; i < rows.length; i++) {
+        if (!rows[i].display || !rows[i].repaired) continue;
+        const anchor = rows[i].line;
+        for (const step of [-1, 1]) {
+          let previous = anchor;
+          for (let j = i + step; j >= 0 && j < rows.length; j += step) {
+            const row = rows[j], line = row.line;
+            const number = /^\(\d{1,3}\)$/.test(row.analysisText.replace(/\s/g, ""));
+            if (!satellite(row) || Math.abs(previous.y - line.y) > height * 2.6 || line.xMax < anchor.xMin - height || line.xMin > anchor.xMax + (number ? height * 10 : height)) break;
+            row.display = true;
+            row.mapped.forEach((token) => {
+              token.math = true;
+            });
+            previous = line;
+          }
+        }
+      }
       let block = [];
       const finishBlock = () => {
-        if (filtering && block.some((row) => row.supported) && block.some((row) => row.equation) && (skipAll || block.length > 1 || complex(block.map((row) => row.line.text).join(" ")))) {
+        if (filtering && block.some((row) => row.supported) && block.some((row) => row.equation) && (skipAll || block.length > 1 || complex(block.map((row) => row.analysisText).join(" ")))) {
           block.forEach((row, i) => {
             row.skipDisplay = true;
             row.continuation = i > 0;
@@ -2422,7 +2642,7 @@ var require_pdf_math = __commonJS({
       };
       for (const row of rows) {
         const previous = block.at(-1)?.line;
-        if (!row.display || previous && (previous.y - row.line.y < 0 || previous.y - row.line.y > height * 2.6 || Math.max(...block.map((item) => item.line.xMax)) < row.line.xMin || Math.min(...block.map((item) => item.line.xMin)) > row.line.xMax)) finishBlock();
+        if (!row.display || previous && (previous.y - row.line.y < 0 || previous.y - row.line.y > height * 2.6 || Math.max(...block.map((item) => item.line.xMax)) < row.line.xMin && !(block.some((item) => item.repaired) && /^\s*\(\d{1,3}\)\s*$/.test(row.line.text) && row.line.xMin - Math.max(...block.map((item) => item.line.xMax)) <= height * 10) || Math.min(...block.map((item) => item.line.xMin)) > row.line.xMax)) finishBlock();
         if (row.display) block.push(row);
       }
       finishBlock();
@@ -2448,12 +2668,12 @@ var require_pdf_math = __commonJS({
           else runs.push({ start: token.start, end: token.end });
         }
         const selected = runs.filter((run) => {
-          const source = line.text.slice(run.start, run.end);
-          run.omit = row.skipDisplay || skipAll && row.supported !== false || filtering && !row.display && complex(source);
-          if (run.omit) return true;
-          if (!mathOperator.test(source)) return false;
           const tokens = mapped.filter((token) => token.start >= run.start && token.end <= run.end);
-          const expression = tokens.map((token) => token.script ? `${token.script}{${token.item.str.trim()}}` : token.item.str.trim()).join(" ");
+          const source = tokens.map((token) => token.speechText).join(" ");
+          run.omit = row.skipDisplay || tokens.some((token) => token.unsafe) || skipAll && row.supported !== false || filtering && !row.display && complex(source);
+          if (run.omit) return true;
+          if (!mathOperator.test(source) && !tokens.some((token) => token.repaired)) return false;
+          const expression = tokens.map((token) => token.script ? `${token.script}{${token.speechText}}` : token.speechText).join(" ");
           const local = contextualMathOptions(options, line.text.slice(0, run.start) || row.noticeContext, line.text.slice(run.end));
           const spoken = mathSpeech2(expression, { ...local, academicMathMode: "all", academicSkipNotice: true });
           if (!spoken || spoken === "Formula." || spoken === "\u516C\u5F0F\u3002") return false;
@@ -13798,7 +14018,7 @@ var require_pdf_outline_cache = __commonJS({
 var require_sidebar_outline = __commonJS({
   "src/sidebar-outline.js"(exports2, module2) {
     "use strict";
-    var { setIcon: setIcon2, Notice: Notice2, Menu, loadPdfJs: loadPdfJs2 } = require("obsidian");
+    var { setIcon: setIcon2, Notice: Notice2, Menu: Menu2, loadPdfJs: loadPdfJs2 } = require("obsidian");
     var { createHash } = require("crypto");
     var { outlineSections } = require_reader_selection();
     var { captureHtmlOutline, htmlSectionText } = require_html_outline();
@@ -14044,7 +14264,7 @@ var require_sidebar_outline = __commonJS({
           const play = this.button(row, "play", () => this.read(true, index));
           this.label(play, this.t("\u4ECE\u672C\u8282\u6717\u8BFB\uFF1A", "Read from: ") + entry.title);
           const more = this.button(row, "ellipsis", (event) => {
-            const menu = new Menu();
+            const menu = new Menu2();
             menu.addItem((item) => item.setTitle(this.t("\u53EA\u6717\u8BFB\u672C\u8282", "Read this section only")).setIcon("audio-lines").setDisabled(this.plugin.activeSession?.kind === "audio-export").onClick(() => this.plugin.runUserAction("Read section", () => this.read(false, index))));
             menu.showAtMouseEvent(event);
           });
@@ -37488,7 +37708,7 @@ var require_task_state2 = __commonJS({
 });
 
 // src/main.js
-var { ItemView, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, SecretComponent, Setting: ObsidianSetting, loadPdfJs, setIcon } = require("obsidian");
+var { ItemView, MarkdownView, Menu, Modal, Notice, Plugin, PluginSettingTab, SecretComponent, Setting: ObsidianSetting, loadPdfJs, setIcon } = require("obsidian");
 var { LANGUAGES, translate: translateInterface, localizedSetting } = require_i18n();
 var { PlaybackTimings, PreparationPool } = require_preparation_pool();
 var { PAGES, createSettingsPages, createSettingsHeader } = require_settings_pages();
@@ -37497,6 +37717,7 @@ var { ELEVENLABS_MODELS, ELEVENLABS_VOICES, isElevenLabsModel } = require_openro
 var { getOpenRouterPricing } = require_openrouter_pricing();
 var { disclosure, renderEngineChoice, renderPreview } = require_engine_setup();
 var { registerReadingMenu, syncEditingToolbar, addReadingMenuSettings } = require_reading_menu();
+var { registerPdfReadingMenu, pdfSentenceStart } = require_pdf_reading_menu();
 var { normalizedTerms, applyTerms, fitSpeechParts, contextOptions, adjacentContext } = require_speech_options();
 var { addSpeechContextSetting, addSpeechTermsSettings } = require_speech_options_settings();
 var { SettingsConfirmModal } = require_settings_confirm();
@@ -38342,7 +38563,10 @@ function slicePdfTextFromSelection(pageText, selectedText, options = {}) {
   const page = normalizePdfSelectionText(pageText);
   const selected = normalizePdfSelectionText(selectedText);
   const source = options.preserveSource ? pdfSelectionSourceMap(pageText) : null;
-  const result = (matched, offset = 0) => ({ matched, text: source?.text === page ? pageText.slice(source.offsets[offset] ?? pageText.length) : page.slice(offset) });
+  const result = (matched, offset = 0) => {
+    if (matched && options.sentenceStart) offset = pdfSentenceStart(page, offset, createNormalizedPdfLayoutMap(options.layout));
+    return { matched, text: source?.text === page ? pageText.slice(source.offsets[offset] ?? pageText.length) : page.slice(offset) };
+  };
   if (!page || !selected) {
     return result(false);
   }
@@ -38378,7 +38602,7 @@ function slicePdfTextFromSelection(pageText, selectedText, options = {}) {
       return result(true, closestIndex);
     }
   }
-  if (spatialAnchor !== null) {
+  if (spatialAnchor !== null && !options.strictMatch) {
     return result(true, spatialAnchor);
   }
   return result(false);
@@ -39626,6 +39850,18 @@ var CosyVoiceReaderPlugin = class extends Plugin {
         skipReadingPosition: snapshot.selection
       }
     )), (message) => new Notice(message));
+    registerPdfReadingMenu(this, Menu, getPdfSelectionContext, (snapshot) => this.runUserAction("Read PDF context", async () => {
+      if (!snapshot.selection) return this.readCurrentPdf(snapshot.file, { selectionContext: snapshot.context });
+      await this.activateControlView();
+      return this.startReading(preparePdfSelection(snapshot.context, this.settings), `${snapshot.file.basename || snapshot.file.name} (PDF selection)`, {
+        plainText: true,
+        pdfText: true,
+        skipReadingPosition: true,
+        file: snapshot.file,
+        sourceKind: "pdf",
+        pdfSelection: snapshot.context
+      });
+    }), (message) => new Notice(message));
     await this.ensureCacheDir();
     this.registerView(VIEW_TYPE, (leaf) => new CosyVoiceReaderView(leaf, this));
     this.registerView(DOCUMENT_VIEW_TYPE, (leaf) => new AccessibleReaderView(leaf, this));
@@ -42035,7 +42271,9 @@ ${embed}
       contentScope: session.pdfContentScope,
       selectedText: selectionContext ? selectionContext.selectedText : "",
       selectionPosition: selectionContext ? selectionContext.selectionPosition : null,
-      startPageNumber: session.pdfOutlineRange?.startPage || (selectionContext ? selectionContext.pageNumber : 1)
+      startPageNumber: session.pdfOutlineRange?.startPage || (selectionContext ? selectionContext.pageNumber : 1),
+      sentenceStart: selectionContext?.sentenceStart === true,
+      strictMatch: selectionContext?.strictMatch === true
     });
     if (!this.isActive(session)) {
       return;
@@ -42121,6 +42359,7 @@ ${embed}
         repeatedHeaders = recurringEdges(samples);
       }
       let textLength = 0;
+      const pdfEncodingContext = /* @__PURE__ */ new Set();
       const endPageNumber = Math.min(totalPages, options.outlineRange?.endPage || totalPages);
       for (let pageNumber = startPageNumber; pageNumber <= endPageNumber; pageNumber += 1) {
         if (!isCurrent()) {
@@ -42162,7 +42401,7 @@ ${embed}
           ];
           if (!isCurrent()) return "";
           const pageLayout = extractPdfTextLayout(textContent && textContent.items, { viewport });
-          const mathChanges = pdfMathChanges(pageLayout, textContent.items, settings, pdfFontNames(page, textContent.items));
+          const mathChanges = pdfMathChanges(pageLayout, textContent.items, settings, pdfFontNames(page, textContent.items), pdfEncodingContext);
           if (session.kind === "pdf-progressive") {
             session.pdfHighlightPages || (session.pdfHighlightPages = /* @__PURE__ */ new Map());
             session.pdfHighlightPages.set(pageNumber, {
@@ -42194,10 +42433,13 @@ ${embed}
             const selectionSlice = slicePdfTextFromSelection(pageText, selectedText, {
               layout: pageLayout,
               selectionPosition: options.selectionPosition,
+              sentenceStart: options.sentenceStart,
+              strictMatch: options.strictMatch,
               preserveSource: true
             });
             pageText = selectionSlice.text;
             session.pdfSelectionMatched = selectionSlice.matched;
+            if (options.strictMatch && !selectionSlice.matched) throw new Error(settings.settingsLanguage === "chinese" ? "\u65E0\u6CD5\u53EF\u9760\u5B9A\u4F4D PDF \u8D77\u8BFB\u4F4D\u7F6E\uFF0C\u8BF7\u91CD\u65B0\u9009\u62E9\u6587\u5B57\u540E\u91CD\u8BD5\u3002" : "Unable to locate the PDF starting point reliably. Select the text again.");
           }
           let noteText = "";
           if (partition?.regions.length) {

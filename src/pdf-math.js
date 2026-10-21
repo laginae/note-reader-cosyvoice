@@ -9,6 +9,31 @@ const prose = value => /[\u3400-\u9fff]/u.test(value)
   || /\p{Script=Greek}{2,}/u.test(value)
   || (value.match(/[A-Za-z]{4,}/g) || []).some(word => !/^(?:sqrt|sinh|cosh|tanh|sin|cos|tan|log|exp|lim)$/i.test(word));
 
+// Some embedded Cambria subsets expose glyph codes as unrelated Unicode scripts.
+// Require a multi-script signature in one font, never replace these in plain text.
+const encodedMath = new Map(Object.entries({
+  '\u123a':'(', '\u123b':')', '\u123c':'{', '\u123d':'}',
+  '\u0d4c':'=', '\u0b40':'=', '\u0d46':'-', '\u0d45':'+',
+  '\u0d50':'>', '\u0d51':'<', '\u0dcd':'\u2211', '\u0da8':'\u221a'
+}));
+const encodingScript = /[\u0b00-\u0b7f\u0d00-\u0dff\u1200-\u137f]/u;
+function encodedMathFonts(items, known = new Set()) {
+  const evidence = new Map();
+  for (const item of items) {
+    const key = item.fontName || '';
+    const data = evidence.get(key) || { chars: new Set(), scripts: new Set(), prose: false };
+    for (const char of item.str) {
+      if (encodedMath.has(char)) {
+        data.chars.add(char);
+        data.scripts.add(char.codePointAt(0) >= 0x1200 ? 'ethiopic' : char.codePointAt(0) >= 0x0d80 ? 'sinhala' : char.codePointAt(0) >= 0x0d00 ? 'malayalam' : 'oriya');
+      } else if (encodingScript.test(char) && /\p{L}/u.test(char)) data.prose = true;
+    }
+    evidence.set(key, data);
+  }
+  return new Set([...evidence].filter(([font, data]) => !data.prose
+    && ((font && known.has(font)) || (data.chars.size >= 3 && data.scripts.size >= 2))).map(([font]) => font));
+}
+
 // Infer a dedicated math font only when its glyphs support it. Italic prose,
 // dates, percentages and ordinary numbers alone are not formula evidence.
 function mathFonts(items, names = {}) {
@@ -35,7 +60,7 @@ function pdfFontNames(page, items) {
   return names;
 }
 
-function pdfMathChanges(layout, items, settings = {}, names = {}) {
+function pdfMathChanges(layout, items, settings = {}, names = {}, encodingContext = new Set()) {
   const options = academicOptions(settings);
   const skipAll = options.academicMathMode === 'skip' || options.mathReadingLanguage === 'skip';
   const filtering = skipAll || options.academicMathMode === 'smart';
@@ -43,7 +68,12 @@ function pdfMathChanges(layout, items, settings = {}, names = {}) {
   if (!positioned.length || !layout.lines.length) return [];
   const heights = positioned.map(item => Math.max(1, Math.abs(item.height || item.transform[3]))).sort((a, b) => a - b);
   const height = heights[Math.floor(heights.length / 2)], tolerance = Math.max(2, height * .5);
-  const fonts = mathFonts(positioned, names), groups = layout.lines.map(() => []);
+  const encodedFonts = encodedMathFonts(positioned, encodingContext);
+  // Callers may reuse evidence only within the same loaded PDF document.
+  for (const font of encodedFonts) if (font) encodingContext.add(font);
+  const decoded = item => encodedFonts.has(item.fontName || '')
+    ? [...item.str].map(char => encodedMath.get(char) || (encodingScript.test(char) ? '\ufffd' : char)).join('') : item.str;
+  const fonts = mathFonts(positioned.map(item => ({ ...item, str: decoded(item) })), names), groups = layout.lines.map(() => []);
   for (const item of positioned) {
     let nearest = -1, distance = Infinity;
     layout.lines.forEach((line, index) => {
@@ -60,8 +90,9 @@ function pdfMathChanges(layout, items, settings = {}, names = {}) {
       const value = item.str.replace(/[ \t]+/g, ' ').trim();
       const start = line.text.indexOf(value, cursor);
       if (start >= 0) cursor = start + value.length;
-      return { item, start, end: start + value.length,
-        math: fonts.has(item.fontName) || (mathGlyph.test(value) && !prose(value)) };
+      const speechText = decoded(item).replace(/[ \t]+/g, ' ').trim();
+      return { item, start, end: start + value.length, speechText, repaired: speechText !== value, unsafe: speechText.includes('\ufffd'),
+        math: fonts.has(item.fontName) || (mathGlyph.test(speechText) && !prose(speechText)) || speechText !== value };
     });
     if (!mapped.length || mapped.some(token => token.start < 0)) return { line, mapped: [], display: false };
     // Text-layer selections can expose one shared fallback font. Recover short
@@ -86,12 +117,12 @@ function pdfMathChanges(layout, items, settings = {}, names = {}) {
     let candidates = [];
     const finishCandidates = () => {
       if (candidates.some(token => token.math)
-        && candidates.some(token => mathOperator.test(token.item.str))) {
+        && candidates.some(token => mathOperator.test(token.speechText))) {
         candidates.forEach((token, index) => {
           // Do not absorb a prose article such as "a" before a styled variable.
           if (!token.math && /^[A-Za-z]$/.test(token.item.str.trim())
-            && !mathOperator.test(candidates[index - 1]?.item.str || '')
-            && !mathOperator.test(candidates[index + 1]?.item.str || '')) return;
+            && !mathOperator.test(candidates[index - 1]?.speechText || '')
+            && !mathOperator.test(candidates[index + 1]?.speechText || '')) return;
           token.math = true;
         });
       }
@@ -99,20 +130,21 @@ function pdfMathChanges(layout, items, settings = {}, names = {}) {
     };
     for (const token of mapped) {
       if (token.math || /^[A-Za-z]$/.test(token.item.str.trim())
-        || /^[\s\d()[\]{}+*\-\u2212=<>/|\u2264\u2265\u2248\u2260\u00d7\u00f7\u00b1\u2213]+$/.test(token.item.str)) candidates.push(token);
+        || /^[\s\d()[\]{}+*\-\u2212=<>/|\u2264\u2265\u2248\u2260\u00d7\u00f7\u00b1\u2213]+$/.test(token.speechText)) candidates.push(token);
       else finishCandidates();
     }
     finishCandidates();
     // Plain-font standalone equations need an operator and no prose words.
-    const plainEquation = /[=\u2264\u2265\u2248\u2260]/.test(line.text)
-      && /[A-Za-z\u0370-\u03ff\u{1d400}-\u{1d7ff}]/u.test(line.text) && !prose(line.text)
-      && (line.text.match(/[A-Za-z]+/g) || []).every(word => word.length === 1 || /^(?:min|max|sin|cos|tan|log|exp|lim|sqrt)$/i.test(word));
+    const analysisText = mapped.map(token => token.speechText).join(' ');
+    const plainEquation = /[=\u2264\u2265\u2248\u2260]/.test(analysisText)
+      && /[A-Za-z\u0370-\u03ff\u{1d400}-\u{1d7ff}]/u.test(analysisText) && !prose(analysisText)
+      && (analysisText.match(/[A-Za-z]+/g) || []).every(word => word.length === 1 || /^(?:min|max|sin|cos|tan|log|exp|lim|sqrt)$/i.test(word));
     const neutral = value => /^[\s\d()[\]{},.;:+*\-\u2212=<>/|\u2264\u2265\u2248\u2260\u00d7\u00f7\u00b1\u2213]+$/.test(value);
     const mathFunction = value => /^(?:min|max|sin|cos|tan|log|exp|lim|sqrt)$/.test(value.trim());
-    const display = plainEquation || mapped.every(token => token.math || neutral(token.item.str) || mathFunction(token.item.str));
+    const display = plainEquation || mapped.every(token => token.math || neutral(token.speechText) || mathFunction(token.speechText));
     if (display) mapped.forEach(token => { token.math = true; });
-    return { line, mapped, display, equation: plainEquation || /[=\u2264\u2265\u2248\u2260\u222b-\u2233]/.test(line.text),
-      supported: plainEquation || mapped.some(token => fonts.has(token.item.fontName) || mathGlyph.test(token.item.str)) };
+    return { line, mapped, display, analysisText, repaired: mapped.some(token => token.repaired), equation: plainEquation || /[=\u2264\u2265\u2248\u2260\u222b-\u2233]/.test(analysisText),
+      supported: plainEquation || mapped.some(token => token.repaired || fonts.has(token.item.fontName) || mathGlyph.test(token.item.str)) };
   });
   const complex = text => {
     if (structuredMathSpeech(text.trim().replace(/[,;.]$/, ''), false, true) !== null) return false;
@@ -121,12 +153,32 @@ function pdfMathChanges(layout, items, settings = {}, names = {}) {
       || (/\|[^|]+\|/.test(value) && (value.match(/[=<>\u2264\u2265\u2248\u2260]/g) || []).length > 1)
       || (value.length > 16 && (value.match(/[=+\-\u2212\u2264\u2265/|]/g) || []).length >= 3);
   };
+  // Recover limits, numerators and equation numbers around damaged display math.
+  // Grow only through adjacent, short math-only rows in the same column.
+  const satellite = row => row.mapped.length && !prose(row.analysisText)
+    && /^[\sA-Za-z\d\u0370-\u03ff\u2200-\u22ff\ufffd()[\]{},.;:+*/=<>-]+$/.test(row.analysisText)
+    && (row.analysisText.match(/[A-Za-z]+/g) || []).every(word => word.length <= 2);
+  for (let i = 0; i < rows.length; i++) {
+    if (!rows[i].display || !rows[i].repaired) continue;
+    const anchor = rows[i].line;
+    for (const step of [-1, 1]) {
+      let previous = anchor;
+      for (let j = i + step; j >= 0 && j < rows.length; j += step) {
+        const row = rows[j], line = row.line;
+        const number = /^\(\d{1,3}\)$/.test(row.analysisText.replace(/\s/g, ''));
+        if (!satellite(row) || Math.abs(previous.y - line.y) > height * 2.6
+          || line.xMax < anchor.xMin - height || line.xMin > anchor.xMax + (number ? height * 10 : height)) break;
+        row.display = true; row.mapped.forEach(token => { token.math = true; });
+        previous = line;
+      }
+    }
+  }
   // Group adjacent display rows within one column before deciding complexity;
   // fractions, limits and equation numbers must not leak as isolated audio.
   let block = [];
   const finishBlock = () => {
     if (filtering && block.some(row => row.supported) && block.some(row => row.equation)
-      && (skipAll || block.length > 1 || complex(block.map(row => row.line.text).join(' ')))) {
+      && (skipAll || block.length > 1 || complex(block.map(row => row.analysisText).join(' ')))) {
       block.forEach((row, i) => { row.skipDisplay = true; row.continuation = i > 0; });
     }
     block = [];
@@ -134,7 +186,9 @@ function pdfMathChanges(layout, items, settings = {}, names = {}) {
   for (const row of rows) {
     const previous = block.at(-1)?.line;
     if (!row.display || (previous && (previous.y - row.line.y < 0 || previous.y - row.line.y > height * 2.6
-      || Math.max(...block.map(item => item.line.xMax)) < row.line.xMin
+      || (Math.max(...block.map(item => item.line.xMax)) < row.line.xMin
+        && !(block.some(item => item.repaired) && /^\s*\(\d{1,3}\)\s*$/.test(row.line.text)
+          && row.line.xMin - Math.max(...block.map(item => item.line.xMax)) <= height * 10))
       || Math.min(...block.map(item => item.line.xMin)) > row.line.xMax))) finishBlock();
     if (row.display) block.push(row);
   }
@@ -163,13 +217,13 @@ function pdfMathChanges(layout, items, settings = {}, names = {}) {
       else runs.push({ start: token.start, end: token.end });
     }
     const selected = runs.filter(run => {
-      const source = line.text.slice(run.start, run.end);
-      run.omit = row.skipDisplay || (skipAll && row.supported !== false)
+      const tokens = mapped.filter(token => token.start >= run.start && token.end <= run.end);
+      const source = tokens.map(token => token.speechText).join(' ');
+      run.omit = row.skipDisplay || tokens.some(token => token.unsafe) || (skipAll && row.supported !== false)
         || (filtering && !row.display && complex(source));
       if (run.omit) return true;
-      if (!mathOperator.test(source)) return false;
-      const tokens = mapped.filter(token => token.start >= run.start && token.end <= run.end);
-      const expression = tokens.map(token => token.script ? `${token.script}{${token.item.str.trim()}}` : token.item.str.trim()).join(' ');
+      if (!mathOperator.test(source) && !tokens.some(token => token.repaired)) return false;
+      const expression = tokens.map(token => token.script ? `${token.script}{${token.speechText}}` : token.speechText).join(' ');
       const local = contextualMathOptions(options, line.text.slice(0, run.start) || row.noticeContext, line.text.slice(run.end));
       const spoken = mathSpeech(expression, { ...local, academicMathMode:'all', academicSkipNotice:true });
       if (!spoken || spoken === 'Formula.' || spoken === '公式。') return false;
