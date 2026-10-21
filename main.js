@@ -11416,7 +11416,7 @@ var require_reading_follow = __commonJS({
 var require_follow_viewport = __commonJS({
   "src/follow-viewport.js"(exports2, module2) {
     "use strict";
-    function visibleReadingArea(scroller) {
+    function visibleReadingArea(scroller, bottomOverlays = []) {
       const rect = scroller?.getBoundingClientRect?.();
       if (!rect) return null;
       let top = rect.top, bottom = rect.bottom;
@@ -11429,6 +11429,10 @@ var require_follow_viewport = __commonJS({
       for (const bar of pane.querySelectorAll?.('.note-reader-native-toolbar, .view-header, [role="toolbar"], .editingToolbar, .editing-toolbar') || []) {
         const bounds = bar.getBoundingClientRect(), style = win?.getComputedStyle(bar);
         if (bounds.height > 0 && bounds.top <= top + 2 && bounds.bottom > top && (style?.position === "sticky" || style?.position === "fixed" || bar.classList.contains("note-reader-native-toolbar"))) top = bounds.bottom;
+      }
+      for (const bar of bottomOverlays) {
+        const bounds = bar.getBoundingClientRect();
+        if (bounds.height > 0 && bounds.width > 0 && bounds.right > rect.left && bounds.left < rect.right && bounds.top > top && bounds.top < bottom && bounds.bottom >= bottom - 2) bottom = bounds.top;
       }
       const margin = Math.min(16, Math.max(0, (bottom - top) / 8));
       return { top: top + margin, bottom: bottom - margin };
@@ -12372,6 +12376,7 @@ var require_pdf_highlights = __commonJS({
     var { compact: compact2, markdownReadingHighlight: readingTarget } = require_markdown_source();
     var { inside } = require_pdf_ancillary();
     var { following, watchFollowing } = require_reading_follow();
+    var { visibleReadingArea, scrollDecision } = require_follow_viewport();
     var { applyPdfMathChanges: applyPdfMathChanges2 } = require_pdf_math();
     var { normalizePdfSpeechText: normalizePdfSpeechText2 } = require_pdf_selection();
     function pdfPageLines(page, clean, source = null, footnote = false) {
@@ -12560,6 +12565,48 @@ var require_pdf_highlights = __commonJS({
         return merged;
       });
     }
+    function highlightRects(node, selections) {
+      const selection = selections?.get(node), text = node.firstChild;
+      let rects = [node.getBoundingClientRect()];
+      if (selection && text?.nodeType === 3 && node.childNodes.length === 1) {
+        const range = node.ownerDocument.createRange();
+        range.setStart(text, selection.start);
+        range.setEnd(text, selection.end);
+        if (typeof range.getClientRects === "function") rects = [...range.getClientRects()];
+      }
+      return rects.filter((rect) => rect.width > 0 && rect.height > 0);
+    }
+    function rectBounds(rects) {
+      return {
+        top: Math.min(...rects.map((rect) => rect.top)),
+        bottom: Math.max(...rects.map((rect) => rect.bottom)),
+        left: Math.min(...rects.map((rect) => rect.left)),
+        right: Math.max(...rects.map((rect) => rect.right))
+      };
+    }
+    function followRangeBounds(cache, visible, viewport) {
+      const lines = /* @__PURE__ */ new Map();
+      for (const node of cache.nodes) if (node.isConnected) {
+        const rects = highlightRects(node, cache.selections);
+        if (!rects.length) continue;
+        const key = cache.groups?.get(node) || node;
+        if (!lines.has(key)) lines.set(key, { page: node.closest("[data-page-number]"), rects: [] });
+        lines.get(key).rects.push(...rects);
+      }
+      const ordered = [...lines.values()].map((line) => ({ page: line.page, ...rectBounds(line.rects) }));
+      if (!ordered.length) return null;
+      const all = rectBounds(ordered);
+      if (all.bottom - all.top <= visible.bottom - visible.top && all.right - all.left <= viewport.width) return all;
+      let previous = ordered[0], bounds = rectBounds([previous]);
+      for (const line of ordered.slice(1)) {
+        const tolerance = Math.max(2, Math.min(line.bottom - line.top, previous.bottom - previous.top) / 2);
+        const separateColumn = (line.left > bounds.right + tolerance || line.right < bounds.left - tolerance) && line.top < previous.bottom + tolerance;
+        if (line.page !== previous.page || line.top < previous.top - tolerance || separateColumn) break;
+        bounds = rectBounds([bounds, line]);
+        previous = line;
+      }
+      return bounds;
+    }
     var PdfReadingHighlights2 = class {
       constructor(plugin) {
         this.plugin = plugin;
@@ -12572,7 +12619,7 @@ var require_pdf_highlights = __commonJS({
         for (const item of this.followViews.values()) item.cleanup();
         this.followViews.clear();
       }
-      follow(view, root, session, highlight, target, nodes, clean) {
+      follow(view, root, session, highlight, target, cache, clean) {
         let state = this.followViews.get(view);
         if (state?.root !== root) {
           state?.cleanup();
@@ -12580,17 +12627,25 @@ var require_pdf_highlights = __commonJS({
           this.followViews.set(view, state);
         }
         if (!following(this.plugin, "pdf")) return;
-        const key = `${session.id}:${highlight.index}:${session.currentPartIndex || 0}:${this.plugin.followRevision || 0}`;
-        if (state.done === key) return;
-        const scroller = root.querySelector(".pdf-container") || root;
-        const visible = scroller.getBoundingClientRect();
-        if (!(visible.width > 0 && visible.height > 0)) return;
-        const first = nodes.find((node) => node.isConnected);
-        if (first) {
-          const bounds2 = first.getBoundingClientRect();
-          if (bounds2.top < visible.top || bounds2.bottom > visible.bottom || bounds2.left < visible.left || bounds2.right > visible.right)
-            first.scrollIntoView({ block: "center", inline: "nearest", behavior: "auto" });
+        const scroller = root.querySelector(".pdf-viewer-container") || root.querySelector(".pdf-container") || root;
+        const viewport = scroller.getBoundingClientRect();
+        if (!(viewport.width > 0 && viewport.height > 0)) return;
+        const visible = visibleReadingArea(scroller, root.ownerDocument.querySelectorAll(".status-bar"));
+        if (!visible || visible.bottom <= visible.top) return;
+        const key = `${session.id}:${highlight.index}:${session.currentPartIndex || 0}:${this.plugin.followRevision || 0}:${target.speechRange?.start}:${target.speechRange?.end}:${visible.top}:${visible.bottom}:${viewport.left}:${viewport.right}`;
+        if (state.done === key && state.cache === cache && state.scroller === scroller) return;
+        const bounds = followRangeBounds(cache, visible, viewport);
+        if (bounds) {
+          const vertical = scrollDecision(bounds, visible);
+          if (vertical) scroller.scrollTop += vertical.delta;
+          const sideways = scrollDecision(
+            { top: bounds.left, bottom: bounds.right },
+            { top: viewport.left, bottom: viewport.right }
+          );
+          if (sideways) scroller.scrollLeft += sideways.delta;
           state.done = key;
+          state.cache = cache;
+          state.scroller = scroller;
           return;
         }
         const number = session.chunkPageNumbers?.[highlight.index];
@@ -12601,8 +12656,8 @@ var require_pdf_highlights = __commonJS({
         const destination = number + (range.start >= pages[0].text.length ? 1 : 0);
         const page = root.querySelector(`[data-page-number="${destination}"]`);
         if (!page) return;
-        const bounds = page.getBoundingClientRect();
-        if (bounds.bottom <= visible.top || bounds.top >= visible.bottom) page.scrollIntoView({ block: "start", inline: "nearest", behavior: "auto" });
+        const pageBounds = page.getBoundingClientRect();
+        if (pageBounds.bottom <= visible.top || pageBounds.top >= visible.bottom) page.scrollIntoView({ block: "start", inline: "nearest", behavior: "auto" });
         state.page = key;
       }
       discardCache(view) {
@@ -12626,14 +12681,7 @@ var require_pdf_highlights = __commonJS({
           if (!pages.has(page)) pages.set(page, { bounds: page.getBoundingClientRect(), groups: /* @__PURE__ */ new Map() });
           const data = pages.get(page), bounds = data.bounds;
           if (!(bounds.width > 0 && bounds.height > 0)) continue;
-          let rects = [node.getBoundingClientRect()];
-          const selection = selections.get(node), text = node.firstChild;
-          if (selection && text?.nodeType === 3 && node.childNodes.length === 1) {
-            const range = node.ownerDocument.createRange();
-            range.setStart(text, selection.start);
-            range.setEnd(text, selection.end);
-            if (typeof range.getClientRects === "function") rects = [...range.getClientRects()];
-          }
+          const rects = highlightRects(node, selections);
           const group = groups.get(node) || page;
           if (!data.groups.has(group)) data.groups.set(group, []);
           for (const rect of rects) if (rect.width > 0 && rect.height > 0)
@@ -12758,7 +12806,7 @@ var require_pdf_highlights = __commonJS({
             groups.set(node, cache.groups.get(node));
             if (cache.selections.has(node)) selections.set(node, cache.selections.get(node));
           }
-          this.follow(view, root, session, highlight, target, cache.nodes, clean);
+          this.follow(view, root, session, highlight, target, cache, clean);
         }
         for (const view of this.cached.keys()) if (!live.has(view)) this.discardCache(view);
         for (const [view, state] of this.followViews) if (!live.has(view)) {

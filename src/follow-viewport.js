@@ -1,5 +1,5 @@
 'use strict';
-function visibleReadingArea(scroller) {
+function visibleReadingArea(scroller, bottomOverlays = []) {
   const rect = scroller?.getBoundingClientRect?.();
   if (!rect) return null;
   let top = rect.top, bottom = rect.bottom;
@@ -10,6 +10,11 @@ function visibleReadingArea(scroller) {
     const bounds = bar.getBoundingClientRect(), style = win?.getComputedStyle(bar);
     if (bounds.height > 0 && bounds.top <= top + 2 && bounds.bottom > top
       && (style?.position === 'sticky' || style?.position === 'fixed' || bar.classList.contains('note-reader-native-toolbar'))) top = bounds.bottom;
+  }
+  for (const bar of bottomOverlays) {
+    const bounds = bar.getBoundingClientRect();
+    if (bounds.height > 0 && bounds.width > 0 && bounds.right > rect.left && bounds.left < rect.right
+      && bounds.top > top && bounds.top < bottom && bounds.bottom >= bottom - 2) bottom = bounds.top;
   }
   const margin = Math.min(16, Math.max(0, (bottom - top) / 8));
   return { top: top + margin, bottom: bottom - margin };

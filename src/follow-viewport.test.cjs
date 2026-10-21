@@ -21,3 +21,18 @@ test('preview considers all marked blocks and reserves space beneath overlapping
   followElements(root, nodes); assert.equal(root.scrollTop, 66);
   dom.window.close();
 });
+
+test('bottom overlays reserve space only when visible and overlapping this pane', () => {
+  const dom = new JSDOM('<main></main><div></div>');
+  const root = dom.window.document.querySelector('main'), bar = dom.window.document.querySelector('div');
+  root.getBoundingClientRect = () => ({ top: 40, bottom: 500, left: 0, right: 600 });
+  const rect = { top: 470, bottom: 500, left: 400, right: 600, width: 200, height: 30 };
+  bar.getBoundingClientRect = () => rect;
+  assert.deepEqual(visibleReadingArea(root, [bar]), { top: 56, bottom: 454 });
+  rect.left = 600; rect.right = 800;
+  assert.deepEqual(visibleReadingArea(root, [bar]), { top: 56, bottom: 484 });
+  rect.left = 400; rect.right = 600; rect.height = 0;
+  assert.deepEqual(visibleReadingArea(root, [bar]), { top: 56, bottom: 484 });
+  assert.deepEqual(visibleReadingArea(root), { top: 56, bottom: 484 });
+  dom.window.close();
+});

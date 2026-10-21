@@ -4,6 +4,7 @@ const { extractPdfTextLayout } = require('./pdf-layout');
 const { compact, markdownReadingHighlight: readingTarget } = require('./markdown-source');
 const { inside } = require('./pdf-ancillary');
 const { following, watchFollowing } = require('./reading-follow');
+const { visibleReadingArea, scrollDecision } = require('./follow-viewport');
 const { applyPdfMathChanges } = require('./pdf-math');
 const { normalizePdfSpeechText } = require('./pdf-selection');
 
@@ -198,10 +199,51 @@ function mergeHighlightRects(rects) {
   });
 }
 
+function highlightRects(node, selections) {
+  const selection = selections?.get(node), text = node.firstChild;
+  let rects = [node.getBoundingClientRect()];
+  if (selection && text?.nodeType === 3 && node.childNodes.length === 1) {
+    const range = node.ownerDocument.createRange();
+    range.setStart(text, selection.start); range.setEnd(text, selection.end);
+    if (typeof range.getClientRects === 'function') rects = [...range.getClientRects()];
+  }
+  return rects.filter(rect => rect.width > 0 && rect.height > 0);
+}
+
+function rectBounds(rects) {
+  return { top: Math.min(...rects.map(rect => rect.top)), bottom: Math.max(...rects.map(rect => rect.bottom)),
+    left: Math.min(...rects.map(rect => rect.left)), right: Math.max(...rects.map(rect => rect.right)) };
+}
+
+function followRangeBounds(cache, visible, viewport) {
+  const lines = new Map();
+  // Keep verified source reading order. Sorting by screen Y would put the next column first.
+  for (const node of cache.nodes) if (node.isConnected) {
+    const rects = highlightRects(node, cache.selections);
+    if (!rects.length) continue;
+    const key = cache.groups?.get(node) || node;
+    if (!lines.has(key)) lines.set(key, { page: node.closest('[data-page-number]'), rects: [] });
+    lines.get(key).rects.push(...rects);
+  }
+  const ordered = [...lines.values()].map(line => ({ page: line.page, ...rectBounds(line.rects) }));
+  if (!ordered.length) return null;
+  const all = rectBounds(ordered);
+  if (all.bottom - all.top <= visible.bottom - visible.top && all.right - all.left <= viewport.width) return all;
+  let previous = ordered[0], bounds = rectBounds([previous]);
+  for (const line of ordered.slice(1)) {
+    const tolerance = Math.max(2, Math.min(line.bottom - line.top, previous.bottom - previous.top) / 2);
+    const separateColumn = (line.left > bounds.right + tolerance || line.right < bounds.left - tolerance)
+      && line.top < previous.bottom + tolerance;
+    if (line.page !== previous.page || line.top < previous.top - tolerance || separateColumn) break;
+    bounds = rectBounds([bounds, line]); previous = line;
+  }
+  return bounds;
+}
+
 class PdfReadingHighlights {
   constructor(plugin) { this.plugin = plugin; this.marked = new Set(); this.cached = new Map(); this.overlays = new Map(); this.followViews = new Map(); }
   clearFollowing() { for (const item of this.followViews.values()) item.cleanup(); this.followViews.clear(); }
-  follow(view, root, session, highlight, target, nodes, clean) {
+  follow(view, root, session, highlight, target, cache, clean) {
     let state = this.followViews.get(view);
     if (state?.root !== root) {
       state?.cleanup();
@@ -209,17 +251,22 @@ class PdfReadingHighlights {
       this.followViews.set(view, state);
     }
     if (!following(this.plugin, 'pdf')) return;
-    const key = `${session.id}:${highlight.index}:${session.currentPartIndex || 0}:${this.plugin.followRevision || 0}`;
-    if (state.done === key) return;
-    const scroller = root.querySelector('.pdf-container') || root;
-    const visible = scroller.getBoundingClientRect();
-    if (!(visible.width > 0 && visible.height > 0)) return;
-    const first = nodes.find(node => node.isConnected);
-    if (first) {
-      const bounds = first.getBoundingClientRect();
-      if (bounds.top < visible.top || bounds.bottom > visible.bottom || bounds.left < visible.left || bounds.right > visible.right)
-        first.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'auto' });
-      state.done = key; return;
+    const scroller = root.querySelector('.pdf-viewer-container') || root.querySelector('.pdf-container') || root;
+    const viewport = scroller.getBoundingClientRect();
+    if (!(viewport.width > 0 && viewport.height > 0)) return;
+    const visible = visibleReadingArea(scroller, root.ownerDocument.querySelectorAll('.status-bar'));
+    if (!visible || visible.bottom <= visible.top) return;
+    const key = `${session.id}:${highlight.index}:${session.currentPartIndex || 0}:${this.plugin.followRevision || 0}`
+      + `:${target.speechRange?.start}:${target.speechRange?.end}:${visible.top}:${visible.bottom}:${viewport.left}:${viewport.right}`;
+    if (state.done === key && state.cache === cache && state.scroller === scroller) return;
+    const bounds = followRangeBounds(cache, visible, viewport);
+    if (bounds) {
+      const vertical = scrollDecision(bounds, visible);
+      if (vertical) scroller.scrollTop += vertical.delta;
+      const sideways = scrollDecision({ top: bounds.left, bottom: bounds.right },
+        { top: viewport.left, bottom: viewport.right });
+      if (sideways) scroller.scrollLeft += sideways.delta;
+      state.done = key; state.cache = cache; state.scroller = scroller; return;
     }
     // Only bring an unloaded page into view after an exact unique source match.
     const number = session.chunkPageNumbers?.[highlight.index];
@@ -230,8 +277,8 @@ class PdfReadingHighlights {
     const destination = number + (range.start >= pages[0].text.length ? 1 : 0);
     const page = root.querySelector(`[data-page-number="${destination}"]`);
     if (!page) return;
-    const bounds = page.getBoundingClientRect();
-    if (bounds.bottom <= visible.top || bounds.top >= visible.bottom) page.scrollIntoView({ block: 'start', inline: 'nearest', behavior: 'auto' });
+    const pageBounds = page.getBoundingClientRect();
+    if (pageBounds.bottom <= visible.top || pageBounds.top >= visible.bottom) page.scrollIntoView({ block: 'start', inline: 'nearest', behavior: 'auto' });
     state.page = key;
   }
   discardCache(view) {
@@ -253,13 +300,7 @@ class PdfReadingHighlights {
       if (!pages.has(page)) pages.set(page, { bounds: page.getBoundingClientRect(), groups: new Map() });
       const data = pages.get(page), bounds = data.bounds;
       if (!(bounds.width > 0 && bounds.height > 0)) continue;
-      let rects = [node.getBoundingClientRect()];
-      const selection = selections.get(node), text = node.firstChild;
-      if (selection && text?.nodeType === 3 && node.childNodes.length === 1) {
-        const range = node.ownerDocument.createRange();
-        range.setStart(text, selection.start); range.setEnd(text, selection.end);
-        if (typeof range.getClientRects === 'function') rects = [...range.getClientRects()];
-      }
+      const rects = highlightRects(node, selections);
       const group = groups.get(node) || page;
       if (!data.groups.has(group)) data.groups.set(group, []);
       for (const rect of rects) if (rect.width > 0 && rect.height > 0)
@@ -363,7 +404,7 @@ class PdfReadingHighlights {
         next.add(node); groups.set(node, cache.groups.get(node));
         if (cache.selections.has(node)) selections.set(node, cache.selections.get(node));
       }
-      this.follow(view, root, session, highlight, target, cache.nodes, clean);
+      this.follow(view, root, session, highlight, target, cache, clean);
     }
     for (const view of this.cached.keys()) if (!live.has(view)) this.discardCache(view);
     for (const [view, state] of this.followViews) if (!live.has(view)) { state.cleanup(); this.followViews.delete(view); }

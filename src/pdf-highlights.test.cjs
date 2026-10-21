@@ -77,7 +77,8 @@ function playbackFixture(rows, chunk) {
 test('PDF follow is opt-in, scrolls once per audio part, pauses on user input and resumes explicitly', async () => {
   const f = playbackFixture([['Public first.',40,100], ['Public second.',40,120]], 'Public first. Public second.');
   f.view.contentEl.getBoundingClientRect = () => ({ top: 0, bottom: 80, left: 0, right: 600, width: 600, height: 80 });
-  let calls = 0; f.page.querySelectorAll('span').forEach(node => node.scrollIntoView = () => calls++);
+  let calls = 0, scrollTop = 0;
+  Object.defineProperty(f.view.contentEl, 'scrollTop', { get: () => scrollTop, set: value => { calls++; scrollTop = value; } });
   f.highlighter.update(); assert.equal(calls, 0);
   f.plugin.pauseRequested = true;
   f.plugin.settings.pdfReadingFollow = true; f.highlighter.update(); assert.equal(calls, 1);
@@ -102,6 +103,155 @@ test('PDF follow avoids visible or mismatched text and loads a trusted page befo
   const h = new PdfReadingHighlights(f.plugin); h.update(); h.update(); assert.equal(calls, 1);
   f.session.chunks = ['Unrelated text.']; f.plugin.followRevision = 1; h.update(); assert.equal(calls, 1);
   h.destroy(); f.dom.window.close();
+});
+
+function followFixture(rows, chunk) {
+  const f = playbackFixture(rows, chunk);
+  const outer = f.doc.createElement('div'), scroller = f.doc.createElement('div');
+  outer.className = 'pdf-container'; scroller.className = 'pdf-viewer-container';
+  outer.appendChild(scroller); scroller.appendChild(f.page); f.doc.body.appendChild(outer);
+  const size = { bottom: 500, right: 600 };
+  scroller.getBoundingClientRect = () => ({ top: 40, bottom: size.bottom, left: 0, right: size.right,
+    width: size.right, height: size.bottom - 40 });
+  outer.getBoundingClientRect = scroller.getBoundingClientRect;
+  f.page.getBoundingClientRect = () => ({ top: -scroller.scrollTop, left: -scroller.scrollLeft, width: 600, height: 800 });
+  for (const node of f.page.querySelectorAll('span')) {
+    const rect = node.getBoundingClientRect();
+    node.getBoundingClientRect = () => ({ ...rect, top: rect.top - scroller.scrollTop, bottom: rect.bottom - scroller.scrollTop,
+      left: rect.left - scroller.scrollLeft, right: rect.right - scroller.scrollLeft });
+  }
+  f.plugin.settings.pdfReadingFollow = true;
+  return { ...f, outer, scroller, size };
+}
+
+test('PDF follow reveals the last highlighted line using the inner scrolling container', () => {
+  const f = followFixture([['First.',40,440], ['Last.',40,490]], 'First. Last.');
+  f.highlighter.update();
+  assert.equal(f.scroller.scrollTop, 18);
+  assert.equal(f.outer.scrollTop, 0);
+  assert.equal(f.page.querySelectorAll('span')[1].getBoundingClientRect().bottom, 484);
+  const node = f.page.querySelector('span'), getRect = node.getBoundingClientRect;
+  let reads = 0; node.getBoundingClientRect = () => { reads++; return getRect(); };
+  f.highlighter.update(); assert.equal(f.scroller.scrollTop, 18);
+  assert.equal(reads, 0);
+  f.highlighter.destroy(); f.dom.window.close();
+});
+
+test('PDF follow reserves the overlapping status bar and rechecks a resized viewport', () => {
+  const f = followFixture([['First.',40,420], ['Last.',40,470]], 'First. Last.');
+  const status = f.doc.createElement('div'); status.className = 'status-bar'; f.doc.body.appendChild(status);
+  status.getBoundingClientRect = () => ({ top: f.size.bottom - 30, bottom: f.size.bottom,
+    left: 400, right: 600, height: 30, width: 200 });
+  f.highlighter.update(); assert.equal(f.scroller.scrollTop, 28);
+  f.size.bottom = 450;
+  f.highlighter.update(); assert.equal(f.scroller.scrollTop, 78);
+  f.highlighter.update(); assert.equal(f.scroller.scrollTop, 78);
+  f.highlighter.destroy(); f.dom.window.close();
+});
+
+test('PDF follow aligns an oversized highlight to its start without oscillating', () => {
+  const f = followFixture([['First.',40,100], ['Last.',40,700]], 'First. Last.');
+  f.highlighter.update(); assert.equal(f.scroller.scrollTop, 44);
+  f.highlighter.update(); f.highlighter.update(); assert.equal(f.scroller.scrollTop, 44);
+  f.highlighter.destroy(); f.dom.window.close();
+});
+
+test('PDF follow uses clipped selection rectangles rather than the entire shared span', () => {
+  const f = followFixture([['First. Last.',40,300,200]], 'First. Last.');
+  f.session.audioParts = { 0: ['First.', 'Last.'] };
+  f.dom.window.Range.prototype.getClientRects = function () {
+    const top = (this.startOffset ? 490 : 300) - f.scroller.scrollTop;
+    return [{ left: 40, right: 100, top, bottom: top + 12, width: 60, height: 12 }];
+  };
+  f.highlighter.update(); assert.equal(f.scroller.scrollTop, 0);
+  f.session.currentPartIndex = 1;
+  f.highlighter.update(); assert.equal(f.scroller.scrollTop, 18);
+  f.highlighter.destroy(); f.dom.window.close();
+});
+
+test('PDF follow advances sentence cues within the same audio part', () => {
+  const f = followFixture([['First.',40,300], ['Last.',40,490]], 'First. Last.');
+  f.plugin.settings.readingHighlight = 'sentence';
+  f.plugin.getCurrentReadingHighlight = () => ({ index: 0, sentence: { start: 0, end: 6 } });
+  f.highlighter.update(); assert.equal(f.scroller.scrollTop, 0);
+  f.plugin.getCurrentReadingHighlight = () => ({ index: 0, sentence: { start: 7, end: 12 } });
+  f.highlighter.update(); assert.equal(f.scroller.scrollTop, 18);
+  f.highlighter.destroy(); f.dom.window.close();
+});
+
+test('PDF follow rechecks replaced text geometry and preserves horizontal zoom navigation', () => {
+  const f = followFixture([['First.',540,300,50]], 'First.');
+  f.size.right = 500;
+  f.highlighter.update(); assert.equal(f.scroller.scrollLeft, 90);
+  const node = f.page.querySelector('span'), previous = node.getBoundingClientRect;
+  node.getBoundingClientRect = () => { const r = previous(); return { ...r, top: r.top + 200, bottom: r.bottom + 200 }; };
+  node.style.fontSize = '14px';
+  f.highlighter.update(); assert.equal(f.scroller.scrollTop, 28);
+  assert.equal(f.scroller.scrollLeft, 90);
+  f.highlighter.destroy(); f.dom.window.close();
+});
+
+function columnFollowFixture() {
+  return followFixture([['Left first.',40,100], ['Right first.',330,100],
+    ['Left middle.',40,300], ['Right middle.',330,300],
+    ['Left ending.',40,700], ['Right ending.',330,700]], 'Left ending. Right first. Right middle.');
+}
+
+test('cross-column follow keeps the reading start at the left foot, not the top of the next column', () => {
+  const f = columnFollowFixture();
+  f.highlighter.update();
+  assert.deepEqual(f.highlighter.cached.get(f.view).nodes.map(n => n.textContent), ['Left ending.', 'Right first.', 'Right middle.']);
+  assert.equal(f.scroller.scrollTop, 228);
+  // Without an actual cue, elapsed audio time does not guess when to switch columns.
+  f.session.currentTime = 90; f.session.duration = 100;
+  f.highlighter.update(); assert.equal(f.scroller.scrollTop, 228);
+  f.highlighter.destroy(); f.dom.window.close();
+});
+
+test('cross-column follow moves to the right column on the next verified audio part, including zoom', () => {
+  const f = columnFollowFixture(); f.size.right = 300;
+  f.session.audioParts = { 0: ['Left ending.', 'Right first. Right middle.'] };
+  f.highlighter.update();
+  assert.equal(f.scroller.scrollTop, 228); assert.equal(f.scroller.scrollLeft, 0);
+  f.session.currentPartIndex = 1; f.highlighter.update();
+  assert.equal(f.scroller.scrollTop, 44); assert.equal(f.scroller.scrollLeft, 250);
+  f.highlighter.update(); assert.equal(f.scroller.scrollTop, 44);
+  f.session.currentPartIndex = 0; f.highlighter.update();
+  assert.equal(f.scroller.scrollTop, 228); assert.equal(f.scroller.scrollLeft, 40);
+  f.highlighter.destroy(); f.dom.window.close();
+});
+
+test('cross-column follow can switch with a sentence cue within one audio part', () => {
+  const f = columnFollowFixture(); f.plugin.settings.readingHighlight = 'sentence';
+  f.highlighter.update(); assert.equal(f.scroller.scrollTop, 228);
+  const start = f.session.chunks[0].indexOf('Right first.');
+  f.plugin.getCurrentReadingHighlight = () => ({ index: 0, sentence: { start, end: start + 'Right first.'.length } });
+  f.highlighter.update(); assert.equal(f.scroller.scrollTop, 44);
+  f.highlighter.destroy(); f.dom.window.close();
+});
+
+test('cross-column follow leaves both highlighted regions visible when they fit together', () => {
+  const f = columnFollowFixture(); f.size.bottom = 760;
+  f.highlighter.update(); assert.equal(f.scroller.scrollTop, 0); assert.equal(f.scroller.scrollLeft, 0);
+  f.highlighter.destroy(); f.dom.window.close();
+});
+
+test('cross-page follow anchors the starting page until the next audio part', () => {
+  const f = followFixture([['First.',40,100], ['Ending.',40,700]], 'Ending. Next.');
+  const rows = [['Next.',40,100], ['Later.',40,200]];
+  f.session.pdfHighlightPages.set(2, sourceRows(rows));
+  const next = pdfPage(f.doc, 2, rows); f.scroller.appendChild(next);
+  next.getBoundingClientRect = () => ({ top: 820 - f.scroller.scrollTop, left: 0, width: 600, height: 800 });
+  for (const node of next.querySelectorAll('span')) {
+    const rect = node.getBoundingClientRect();
+    node.getBoundingClientRect = () => ({ ...rect, top: rect.top + 820 - f.scroller.scrollTop,
+      bottom: rect.bottom + 820 - f.scroller.scrollTop });
+  }
+  f.size.bottom = 250;
+  f.highlighter.update(); assert.equal(f.scroller.scrollTop, 478);
+  f.session.audioParts = { 0: ['Ending.', 'Next.'] }; f.session.currentPartIndex = 1;
+  f.highlighter.update(); assert.equal(f.scroller.scrollTop, 698);
+  f.highlighter.destroy(); f.dom.window.close();
 });
 
 test('PDF follows prepared audio parts using the full chunk to disambiguate repeated short phrases', () => {
