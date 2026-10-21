@@ -1,6 +1,7 @@
 'use strict';
 const { structuredMathSpeech, replacePlainStructuredMath } = require('./structured-math');
 const { greekMathCommands, greekNames } = require('./math-symbols');
+const { simpleFunctionCalls, speakSimpleFunctions } = require('./math-functions');
 
 const ACADEMIC_DEFAULTS = { academicMathMode: 'smart', academicMathStyle: 'concise', academicTableMode: 'smart', academicSkipNotice: true };
 function academicOptions(settings = {}) {
@@ -108,6 +109,9 @@ function complexListeningMath(content) {
     .replace(/\\(?:left|right)\b/g, '')
     .replace(/\\(?:leq?|geq?|neq?|approx|times|cdot|pm|mp|to|rightarrow)\b/g, '+');
   const fractions = (value.match(/\\(?:d?frac|tfrac)\b|\//g) || []).length;
+  const calls = simpleFunctionCalls(normalized.replace(/\\(?:left|right)\b/g, ''));
+  const functionRatio = fractions > 0 && calls.length >= 2
+    && (calls.some(call => call.scripted) || calls.length >= 3);
   const operations = (value.match(/[=+−\-*<>≤≥≠≈]/g) || []).length + fractions;
   let depth = 0, maxDepth = 0, groups = 0;
   for (const char of value) {
@@ -116,7 +120,7 @@ function complexListeningMath(content) {
   }
   const commas = (value.match(/,/g) || []).length;
   const transpose = /\^\s*(?:\{\s*(?:T|\\top|\\mathrm\s*\{?T\}?)\s*\}|T|\\top)/.test(normalized);
-  return fractions > 1 || (fractions > 0 && operations >= 3)
+  return functionRatio || fractions > 1 || (fractions > 0 && operations >= 3)
     || maxDepth >= 3 || (maxDepth >= 2 && operations >= 2)
     || (groups >= 3 && operations >= 2)
     || (commas >= 3 && /[\[\{]/.test(value)) || (transpose && commas > 0);
@@ -161,6 +165,8 @@ function mathSpeech(content, inputOptions = {}) {
   if (brief) {
     const call = value.match(/^(\\[A-Za-z]+|[A-Za-z])\s*(?:\[([A-Za-z])\]|\(([A-Za-z])\))$/);
     if (call) return `${mathSpeech(call[1], options)} of ${call[2] || call[3]}`;
+    value = speakSimpleFunctions(value.replace(/\\(?:left|right)\b/g, ''),
+      (name, argument) => `${mathSpeech(name, options)} of ${mathSpeech(argument, options)}`);
   }
   // Explicitly speak products of adjacent, simply subscripted variables.
   value = value.replace(/([A-Za-z]_\{\s*(?:\\[A-Za-z]+|[A-Za-z0-9]+)\s*\})\s*(?=[A-Za-z]_\{)/g, '$1 * ');

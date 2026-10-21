@@ -122,7 +122,9 @@ function pdfMathChanges(layout, items, settings = {}, names = {}, encodingContex
           // Do not absorb a prose article such as "a" before a styled variable.
           if (!token.math && /^[A-Za-z]$/.test(token.item.str.trim())
             && !mathOperator.test(candidates[index - 1]?.speechText || '')
-            && !mathOperator.test(candidates[index + 1]?.speechText || '')) return;
+            && !mathOperator.test(candidates[index + 1]?.speechText || '')
+            && candidates[index - 1]?.speechText !== '('
+            && candidates[index + 1]?.speechText !== ')') return;
           token.math = true;
         });
       }
@@ -130,6 +132,7 @@ function pdfMathChanges(layout, items, settings = {}, names = {}, encodingContex
     };
     for (const token of mapped) {
       if (token.math || /^[A-Za-z]$/.test(token.item.str.trim())
+        || /^(?:[A-Za-z]\s*)?\(\s*(?:[A-Za-z\u0391-\u03c9]|\d+)\s*\)$/.test(token.speechText)
         || /^[\s\d()[\]{}+*\-\u2212=<>/|\u2264\u2265\u2248\u2260\u00d7\u00f7\u00b1\u2213]+$/.test(token.speechText)) candidates.push(token);
       else finishCandidates();
     }
@@ -219,11 +222,11 @@ function pdfMathChanges(layout, items, settings = {}, names = {}, encodingContex
     const selected = runs.filter(run => {
       const tokens = mapped.filter(token => token.start >= run.start && token.end <= run.end);
       const source = tokens.map(token => token.speechText).join(' ');
+      const expression = tokens.map(token => token.script ? `${token.script}{${token.speechText}}` : token.speechText).join(' ');
       run.omit = row.skipDisplay || tokens.some(token => token.unsafe) || (skipAll && row.supported !== false)
-        || (filtering && !row.display && complex(source));
+        || (filtering && !row.display && complex(expression));
       if (run.omit) return true;
       if (!mathOperator.test(source) && !tokens.some(token => token.repaired)) return false;
-      const expression = tokens.map(token => token.script ? `${token.script}{${token.speechText}}` : token.speechText).join(' ');
       const local = contextualMathOptions(options, line.text.slice(0, run.start) || row.noticeContext, line.text.slice(run.end));
       const spoken = mathSpeech(expression, { ...local, academicMathMode:'all', academicSkipNotice:true });
       if (!spoken || spoken === 'Formula.' || spoken === '公式。') return false;
