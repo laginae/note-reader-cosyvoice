@@ -14,7 +14,9 @@ Read aloud **notes, PDFs, HTML files, web pages and saved Copilot chats** with l
 
 [Watch the 53-second demo with sound (MP4)](docs/media/cozy-quick-tour.mp4) · [Demo transcript and recording details](docs/media/README.md)
 
-Recorded in Obsidian with public sample text and **OpenRouter → ElevenLabs Multilingual v2 → Sarah** at 1x speed. The preview is silent. The video replays previously generated audio locally to demonstrate the controls, not online synthesis speed. Appearance and voice quality vary by setup.
+More ways to start: [Editing Toolbar demo](#editing-toolbar-demo) · [Right-click menu demo](#right-click-menu-demo).
+
+The GIF is silent. The video uses public sample text and previously generated audio to demonstrate the controls, not actual online synthesis speed. [Voice and recording details](docs/media/README.md).
 
 ## Quick start
 
@@ -138,6 +140,20 @@ In Markdown **Live Preview** or **Source mode**, right-click to **Read aloud fro
 For a floating speaker icon, separately install and enable the optional **Editing Toolbar** community plugin. Ordinary reading does not require it. In **Playback and interface**, enable **Floating toolbar reading icon** and choose its action: **Read selected text** (default), or **Read from selection** to continue to the document end. Both require a selection.
 
 The context menu and floating icon have independent switches in **Playback and interface**. After changing floating-toolbar options, reselect text to refresh the icon and its tooltip.
+
+#### Editing Toolbar demo
+
+Select a passage, then click the speaker icon to read the selection. This demo uses the optional **Editing Toolbar** plugin in its selection-following layout, with **Floating toolbar reading icon** enabled in Cozy Read Aloud.
+
+![Select a passage and click the Editing Toolbar speaker to start reading and highlight the text](docs/images/editing-toolbar-demo.gif)
+
+#### Right-click menu demo
+
+Select text and choose **Read selected text**, or place the cursor and choose **Read aloud from here** to continue to the end. This Markdown Live Preview demo does **not** require Editing Toolbar.
+
+![Open the right-click menu to read selected text, then start reading from a cursor position](docs/images/context-menu-demo.gif)
+
+These silent loops are real recordings with public sample text and local system speech. Menus are held open before clicking; the pale-yellow cue marks a click. [Recording details](docs/media/README.md#selection-and-context-menu-demos).
 
 ## Interface
 

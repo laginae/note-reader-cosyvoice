@@ -14,7 +14,9 @@
 
 [观看 53 秒有声演示（MP4）](docs/media/cozy-quick-tour.mp4) · [示例文字与录制说明](docs/media/README.md)
 
-在 Obsidian 中使用公开示例实录，音色为 **OpenRouter → ElevenLabs Multilingual v2 → Sarah 女声**，1 倍速播放。动图无声。视频在本地重放此前生成的音频，用于展示操作，不代表在线合成速度；外观和音质取决于配置。
+其他起读方式：[Editing Toolbar 动图](#editing-toolbar-动图) · [鼠标右键菜单动图](#鼠标右键菜单动图)。
+
+动图无声，有声视频使用公开示例和预生成音频演示操作，不代表实际在线合成速度。[音色与录制详情](docs/media/README.md)。
 
 ## 快速开始
 
@@ -140,6 +142,20 @@ MiMo 会将文字发送给小米。[隐私政策](https://privacy.mi.com/XiaomiM
 如需悬浮扬声器图标，请另外安装并启用可选的 **Editing Toolbar** 社区插件；普通朗读功能不依赖它。在“播放与界面”中开启“悬浮工具栏朗读图标”，并选择默认动作：“朗读选中内容”（默认），或“从选中位置开始朗读”至文档末尾。两种动作都需要先选中文字。
 
 右键菜单和悬浮图标可在“播放与界面”中分别开关。修改悬浮栏选项后，重新选择文字即可刷新图标及悬停提示。
+
+#### Editing Toolbar 动图
+
+选中一段文字，再点击扬声器图标即可朗读选区。演示需启用可选的 **Editing Toolbar** 插件及其选区悬浮布局，并在 Cozy Read Aloud 中开启“悬浮工具栏朗读图标”。
+
+![选中文字，点击 Editing Toolbar 扬声器图标，开始朗读并高亮原文](docs/images/editing-toolbar-demo.gif)
+
+#### 鼠标右键菜单动图
+
+选中文字后右键选择“朗读选中内容”；也可以放置光标，右键选择“从此处开始朗读”至文档末尾。此演示使用 Markdown 实时预览，**无需 Editing Toolbar**。
+
+![展开右键菜单朗读选中内容，再从光标位置开始朗读](docs/images/context-menu-demo.gif)
+
+两段均为公开示例文字和本地系统语音的真实操作录制，动图无声。菜单展开后保留停顿，淡黄色提示标记点击位置。[录制说明](docs/media/README.md#selection-and-context-menu-demos)。
 
 ## 界面预览
 
