@@ -301,7 +301,7 @@ The three-part limit above describes quick start itself. Optional **Continuous l
 
 ## Academic reading
 
-Simple formulas such as `$z_{\mathrm d}$` are read as "z sub d". Font and spacing commands do not make a short formula complex; explicit skip settings and complex-formula safeguards still apply.
+In concise style, simple subscripts read naturally: `$z_{\mathrm d}$` as "z d", `r_{t+1}` as "r t plus 1", and `x_{i,j}` as "x i j". Letters stay separated; verbose style retains "subscript", and compound subscripts retain structural cues. Font and spacing commands do not make a short formula complex; explicit skip settings and complex-formula safeguards still apply.
 
 Conventional bounds such as `[\ell,u]` and matching `E_{\min}` / `E_{\max}` endpoints use concise "to" phrasing; verbose mode retains "closed interval". Other bracketed pairs keep their brackets. Simply subscripted adjacent factors are separated by "times".
 
@@ -312,7 +312,7 @@ The separate **Academic reading** settings section groups formulas, tables and P
 | Setting | Default | Alternatives |
 | --- | --- | --- |
 | Formula reading | Smart: skip complex formulas | Read supported formulas; skip all recognized formulas |
-| Formula style | Concise: `x_i` → `x sub i`; `\bar{x}` → `x bar` | Explicit: `subscript` / `下标` |
+| Formula style | Concise: `x_i` → `x i`; `\bar{x}` → `x bar` | Explicit: `subscript` / `下标` |
 | Table reading | Smart: skip long numeric tables | Read all; skip recognized tables |
 | Announce skipped content | Brief omission notice | Disable for continuous prose |
 

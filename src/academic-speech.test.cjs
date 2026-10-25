@@ -10,12 +10,12 @@ const { LANGUAGES, translate, localizedSetting } = require('./i18n');
 test('concise math preserves fraction order, short commands, bounds, subscripts and bar semantics', () => {
   assert.equal(mathSpeech(String.raw`\frac{1}{2}`, { mathReadingLanguage:'chinese' }), '2 分之 1');
   assert.equal(mathSpeech(String.raw`\alpha+\gamma`), 'alpha plus gamma');
-  assert.equal(mathSpeech(String.raw`\bar{x}_i`), 'x bar sub i');
-  assert.equal(mathSpeech(String.raw`x_\alpha`), 'x sub alpha');
+  assert.equal(mathSpeech(String.raw`\bar{x}_i`), 'x bar i');
+  assert.equal(mathSpeech(String.raw`x_\alpha`), 'x alpha');
   assert.equal(mathSpeech(String.raw`x^\alpha`), 'x to the power of alpha');
   assert.equal(mathSpeech('x_i', { academicMathStyle:'verbose' }), 'x subscript i');
   assert.equal(mathSpeech('x_i', { academicMathStyle:'verbose', mathReadingLanguage:'chinese' }), 'x 下标 i');
-  assert.equal(mathSpeech(String.raw`|Y\_{k,h}|`), 'absolute value of Y sub k,h');
+  assert.equal(mathSpeech(String.raw`|Y\_{k,h}|`), 'absolute value of Y k h');
   assert.equal(mathSpeech(String.raw`\sqrt{x}`), 'square root of x');
   assert.match(mathSpeech(String.raw`\frac{1}{a-b}`), /open parenthesis a minus b close parenthesis/);
   assert.equal(citations(academicLatex('Bounds $[1,2]$ and $x<y$; $z>w$.')), 'Bounds  1 to 2  and  x less than y ;  z greater than w .');
@@ -54,7 +54,7 @@ test('retained formulas verbalize operators consistently in Unicode and LaTeX', 
     [String.raw`x \times y`, 'x times y', 'x 乘以 y'],
     [String.raw`p = k\tau`, 'p equals k times tau', 'p 等于 k 乘以 tau'],
     ['p = kτ', 'p equals k times tau', 'p 等于 k 乘以 tau'],
-    [String.raw`x_i = y_j - 2`, 'x sub i equals y sub j minus 2', 'x sub i 等于 y sub j 减 2'],
+    [String.raw`x_i = y_j - 2`, 'x i equals y j minus 2', 'x i 等于 y j 减 2'],
   ];
   for (const [source, en, zh] of examples) {
     assert.equal(mathSpeech(source), en, source);
@@ -86,6 +86,24 @@ test('HTML math operator speech preserves the original formula DOM', () => {
     'The relation $x = y + 2$ holds.');
   assert.equal(doc.body.innerHTML, before);
   dom.window.close();
+});
+
+test('HTML subscript speech keeps selection highlighting on original source', () => {
+  for (const academicMathStyle of ['concise','verbose']) {
+    const source = '<p>The value $x_{i,j}$ follows $r_{t+1}$.</p>';
+    const dom = new JSDOM(source), doc = dom.window.document, before = doc.body.innerHTML;
+    const options = academicOptions({ academicMathStyle });
+    const speechTransform = text => academicLatex(text, options);
+    const speech = speechTransform(extractHtmlText(source, options));
+    assert.ok(speech.includes(academicMathStyle === 'concise' ? 'x i j' : 'x subscript i,j'));
+    dom.window.CSS = { highlights:new Map() };
+    dom.window.Highlight = class extends Set { constructor(...ranges) { super(ranges); } };
+    assert.equal(highlightDocument(doc, { text:speech, academic:options, speechTransform }), true);
+    assert.equal([...dom.window.CSS.highlights.get('note-reader-speech')].map(range=>range.toString()).join(''),
+      'The value $x_{i,j}$ follows $r_{t+1}$.');
+    assert.equal(doc.body.innerHTML, before);
+    dom.window.close();
+  }
 });
 
 test('numeric citations merge adjacent groups and links without changing units, years or zero intervals', () => {

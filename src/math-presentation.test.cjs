@@ -9,11 +9,11 @@ test('named lower/upper bounds use concise ranges and preserve verbose interval 
     assert.equal(mathSpeech(source, {academicMathStyle:'verbose'}), 'closed interval, ' + lower + ' to u');
   }
   const source = String.raw`[E_{\min}+R_{\infty}z_{\mathrm d},\ E_{\max}-R_{\infty}z_{\mathrm c}]`;
-  const en = 'E sub min plus R sub infinity times z sub d to E sub max minus R sub infinity times z sub c';
+  const en = 'E min plus R infinity times z d to E max minus R infinity times z c';
   assert.equal(mathSpeech(source), en);
   assert.equal(academicLatex('$' + source + '$').trim(), en);
   assert.equal(mathSpeech(source, {mathReadingLanguage:'chinese'}),
-    'E sub min 加 R sub 无穷 乘以 z sub d 到 E sub max 减 R sub 无穷 乘以 z sub c');
+    'E min 加 R 无穷 乘以 z d 到 E max 减 R 无穷 乘以 z c');
   assert.equal(mathSpeech(source, {academicMathMode:'skip'}), 'Formula.');
   assert.equal(mathSpeech(source, {mathReadingLanguage:'skip', academicSkipNotice:false}), '');
 });
@@ -23,10 +23,10 @@ test('range recognition does not reinterpret arbitrary pairs, vectors or unsuppo
   assert.equal(mathSpeech('[l,u,v]'), 'open bracket l,u,v close bracket');
   assert.equal(mathSpeech('(l,u]'), 'open parenthesis l,u close bracket');
   assert.equal(mathSpeech(String.raw`\ell`), 'ell');
-  assert.equal(mathSpeech(String.raw`R_\infty`), 'R sub infinity');
-  assert.equal(mathSpeech(String.raw`E_\min`), 'E sub min');
+  assert.equal(mathSpeech(String.raw`R_\infty`), 'R infinity');
+  assert.equal(mathSpeech(String.raw`E_\min`), 'E min');
   assert.equal(mathSpeech(String.raw`\min(x,y)`), 'the minimum of x and y');
-  assert.equal(mathSpeech(String.raw`[E_{\min},F_{\max}]`), 'open bracket E sub min ,F sub max close bracket');
+  assert.equal(mathSpeech(String.raw`[E_{\min},F_{\max}]`), 'open bracket E min ,F max close bracket');
   assert.equal(mathSpeech(String.raw`[E_{\min}+\sqrt{x},E_{\max}-\sqrt{x}]`).includes('omitted'), false);
   for (const source of [
     String.raw`[E_{\min}+\sqrt{x},E_{\max}-\sqrt]`,
@@ -39,23 +39,23 @@ test('range recognition does not reinterpret arbitrary pairs, vectors or unsuppo
 });
 test('short formulas ignore typography without losing scripts or symbols', () => {
   const cases = [
-    [String.raw`z_{\mathrm d}`, 'z sub d'],
-    [String.raw`z_{\mathrm{d}}`, 'z sub d'],
-    [String.raw`z_\mathrm{d}`, 'z sub d'],
-    [String.raw`z_{\text{d}}`, 'z sub d'],
-    [String.raw`z_{{d}}`, 'z sub d'],
-    [String.raw`\mathbf{z}_{\mathrm d}`, 'z sub d'],
+    [String.raw`z_{\mathrm d}`, 'z d'],
+    [String.raw`z_{\mathrm{d}}`, 'z d'],
+    [String.raw`z_\mathrm{d}`, 'z d'],
+    [String.raw`z_{\text{d}}`, 'z d'],
+    [String.raw`z_{{d}}`, 'z d'],
+    [String.raw`\mathbf{z}_{\mathrm d}`, 'z d'],
     [String.raw`\mathit{x}^{\mathrm{2}}`, 'x squared'],
-    [String.raw`\bar{\mathrm{x}}_i`, 'x bar sub i'],
-    [String.raw`\hat{\mathbf{x}}_k`, 'x hat sub k'],
+    [String.raw`\bar{\mathrm{x}}_i`, 'x bar i'],
+    [String.raw`\hat{\mathbf{x}}_k`, 'x hat k'],
     [String.raw`\displaystyle x\,=\;y\!`, 'x equals y'],
     [String.raw`\frac{\mathrm a}{\mathrm b}`, 'a over b'],
-    [String.raw`x_\alpha`, 'x sub alpha'],
-    [String.raw`{\rm z}_{\mathsf d}`, 'z sub d'],
+    [String.raw`x_\alpha`, 'x alpha'],
+    [String.raw`{\rm z}_{\mathsf d}`, 'z d'],
   ];
   for (const [input, expected] of cases) assert.equal(mathSpeech(input), expected, input);
-  assert.equal(academicLatex(String.raw`Read $z_{\mathrm d}$ now.`).trim(), 'Read  z sub d  now.');
-  assert.equal(mathSpeech(String.raw`z_{\mathrm d}`, {mathReadingLanguage:'chinese'}), 'z sub d');
+  assert.equal(academicLatex(String.raw`Read $z_{\mathrm d}$ now.`).trim(), 'Read  z d  now.');
+  assert.equal(mathSpeech(String.raw`z_{\mathrm d}`, {mathReadingLanguage:'chinese'}), 'z d');
   assert.equal(mathSpeech(String.raw`z_{\mathrm d}`, {academicMathStyle:'verbose'}), 'z subscript d');
 });
 test('normalization retains omission policy and structural safety', () => {

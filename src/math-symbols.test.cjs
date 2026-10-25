@@ -12,8 +12,8 @@ test('single Greek mathematical glyphs and commands have explicit speech names',
   for (const [glyph, name] of Object.entries(greekNames)) {
     for (const mathReadingLanguage of ['english', 'chinese']) {
       assert.equal(mathSpeech(glyph, { mathReadingLanguage }), name);
-      assert.equal(mathSpeech(`x_${glyph}`, { mathReadingLanguage }), `x sub ${name}`);
-      assert.equal(mathSpeech(`x_\\${name}`, { mathReadingLanguage }), `x sub ${name}`);
+      assert.equal(mathSpeech(`x_${glyph}`, { mathReadingLanguage }), `x ${name}`);
+      assert.equal(mathSpeech(`x_\\${name}`, { mathReadingLanguage }), `x ${name}`);
     }
     assert.equal(compact(normalizePdfSpeechText(glyph)), name);
     assert.equal(compact(speakGreekCommands(`Read \\${name}.`)), `Read ${name} .`);

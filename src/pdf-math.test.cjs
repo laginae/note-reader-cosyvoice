@@ -146,7 +146,7 @@ test('shared-font inline constraints form a complete run and survive a preceding
   assert.doesNotMatch(applyPdfMathChanges(layout.text,pdfMathChanges(layout,items,{academicSkipNotice:false})),/Formula|[|=≤]|ref/);
   const fullChanges=pdfMathChanges(layout,items,{academicMathMode:'all'});
   const fullSpeech=applyPdfMathChanges(layout.text,fullChanges);
-  assert.match(fullSpeech,/w equals absolute value of x sub 2 minus x sub ref less than or equal to r/);
+  assert.match(fullSpeech,/w equals absolute value of x 2 minus x ref less than or equal to r/);
   assert.equal(fullChanges.flatMap(change=>change.omitted).length,0);
   // A partial, changed source must not authorize deleting surrounding prose.
   const partial='An unrelated prefix '+items[1].str+' 𝑤 = | 𝑥 2 − 𝑥 ref | ≤ 𝑟. Continue.';
@@ -174,7 +174,7 @@ test('short absolute values get words without losing prose, scripts, mode or hig
     for (const academicMathMode of ['smart','all']) {
       const mathChanges=pdfMathChanges(layout,items,{academicMathMode,mathReadingLanguage});
       const speech=applyPdfMathChanges(layout.text,mathChanges);
-      assert.match(speech,/The value is absolute value of x sub i minus y/);
+      assert.match(speech,/The value is absolute value of x i minus y/);
       assert.doesNotMatch(speech,/[|𝑥𝑦]/u);
       assert.equal(mathChanges.flatMap(change=>change.omitted).length,0);
       assert.equal(pdfSourceLines({items,viewport,mathChanges},text=>text).text,speech.replace(/\s/g,''));
@@ -183,8 +183,8 @@ test('short absolute values get words without losing prose, scripts, mode or hig
 });
 
 test('PDF simple operators use local prose language and preserve source highlight mapping', () => {
-  for (const [prefix, language, expected] of [['The relation is', 'chinese', 'x sub i equals y plus 2'],
-    ['其关系如下', 'english', 'x sub i 等于 y 加 2']]) {
+  for (const [prefix, language, expected] of [['The relation is', 'chinese', 'x i equals y plus 2'],
+    ['其关系如下', 'english', 'x i 等于 y 加 2']]) {
     const items = [item(prefix,40,700),item('𝑥',130,700),item('i',140,699,'body',8),
       item('=',155,700),item('y',170,700),item('+',185,700),item('2',200,700),item('.',215,700)];
     const original = JSON.stringify(items), layout = extractPdfTextLayout(items,{viewport});

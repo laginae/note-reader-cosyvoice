@@ -99,7 +99,8 @@ function pdfMathChanges(layout, items, settings = {}, names = {}, encodingContex
     // script labels only from their smaller size and proximity to a math atom.
     mapped.forEach((token, i) => {
       const previous = mapped[i - 1];
-      if (!previous || !/^[A-Za-z0-9]{1,8}$/.test(token.item.str.trim())) return;
+      const label = token.item.str.trim();
+      if (!previous || label.length > 12 || !/^[A-Za-z0-9]+(?:\s*[,+−-]\s*[A-Za-z0-9]+)*$/.test(label)) return;
       const base = previous.item, script = token.item;
       const baseHeight = Math.abs(base.height || base.transform[3]);
       const scriptHeight = Math.abs(script.height || script.transform[3]);
@@ -226,7 +227,7 @@ function pdfMathChanges(layout, items, settings = {}, names = {}, encodingContex
       run.omit = row.skipDisplay || tokens.some(token => token.unsafe) || (skipAll && row.supported !== false)
         || (filtering && !row.display && complex(expression));
       if (run.omit) return true;
-      if (!mathOperator.test(source) && !tokens.some(token => token.repaired)) return false;
+      if (!mathOperator.test(source) && !tokens.some(token => token.repaired || token.script)) return false;
       const local = contextualMathOptions(options, line.text.slice(0, run.start) || row.noticeContext, line.text.slice(run.end));
       const spoken = mathSpeech(expression, { ...local, academicMathMode:'all', academicSkipNotice:true });
       if (!spoken || spoken === 'Formula.' || spoken === '公式。') return false;

@@ -23,7 +23,7 @@ test('statistics read naturally inside equations in both languages and styles', 
   }
   assert.equal(mathSpeech('Cov[x,y]'),'covariance of x and y');
   assert.equal(mathSpeech('Corr(x,y)',{mathReadingLanguage:'chinese'}),'x 与 y 的相关系数');
-  assert.equal(mathSpeech(String.raw`Cov[x_{i,j},y_k]`),'covariance of x sub i,j and y sub k');
+  assert.equal(mathSpeech(String.raw`Cov[x_{i,j},y_k]`),'covariance of x i j and y k');
   assert.equal(mathSpeech(String.raw`Var[\alpha]`),'variance of alpha');
 });
 

@@ -208,7 +208,12 @@ function mathSpeech(content, inputOptions = {}) {
   value = value.replace(/\\([A-Za-z]+)/g, (_,symbol) => ` ${ops[symbol]?.[zh?1:0] || symbols[symbol] || symbol} `);
   value = value.replace(/\|([^|]+)\|/g, (_,a) => zh ? `${a} 的绝对值` : `absolute value of ${a}`);
   if (/\|/.test(value)) return omission('formula',options);
-  value = value.replace(/_\s*(?:\{([^{}]*)\}|([A-Za-z0-9]))/g, (_,a,b) => ` ${brief ? 'sub' : zh ? '下标' : 'subscript'} ${a ?? b} `)
+  value = value.replace(/_\s*(?:\{([^{}]*)\}|([A-Za-z0-9]))/g, (_,a,b) => {
+      const index = (a ?? b).trim();
+      // Short indices read naturally; compound structures retain their label.
+      const simple = /^[\p{L}\p{N}]+(?:\s*[+−-]\s*[\p{L}\p{N}]+)?(?:\s*,\s*[\p{L}\p{N}]+(?:\s*[+−-]\s*[\p{L}\p{N}]+)?)*$/u.test(index);
+      return brief && simple ? ` ${index.replace(/,/g, ' ')} ` : ` ${zh ? '下标' : 'subscript'} ${index} `;
+    })
     .replace(/\^\s*(?:\{([^{}]*)\}|([A-Za-z0-9+-]))/g, (_,a,b) => {
       const exponent = a ?? b;
       return exponent === '2' ? (zh ? ' 的平方 ' : ' squared ') : exponent === '3' ? (zh ? ' 的立方 ' : ' cubed ') : ` ${zh ? '的' : 'to the power of'} ${exponent} ${zh ? '次方' : ''} `;

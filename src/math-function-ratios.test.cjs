@@ -18,8 +18,8 @@ test('smart mode omits scripted function ratios but retains simple expressions',
 
 test('full concise mode uses natural simple arguments; verbose grouping stays explicit', () => {
   assert.equal(mathSpeech('f_k(t)=g_k(t)/g_k(1)', { academicMathMode: 'all' }),
-    'f sub k of t equals g sub k of t divided by g sub k of 1');
-  assert.match(mathSpeech('\\frac{f_k(t)}{g_k(1)}', { academicMathMode: 'all' }), /f sub k of t over g sub k of 1/);
+    'f k of t equals g k of t divided by g k of 1');
+  assert.match(mathSpeech('\\frac{f_k(t)}{g_k(1)}', { academicMathMode: 'all' }), /f k of t over g k of 1/);
   assert.match(mathSpeech('f_k(t)/g_k(1)', { academicMathMode: 'all', academicMathStyle: 'verbose' }), /open parenthesis/);
   assert.match(mathSpeech('f(t+1)', { academicMathMode: 'all' }), /open parenthesis/);
   assert.match(mathSpeech('2(t)', { academicMathMode: 'all' }), /open parenthesis/);
@@ -62,7 +62,7 @@ test('PDF fallback-font parentheses join one math run without swallowing prose',
     assert.doesNotMatch(speech, /equals|divided|parenthesis|[φψ]/);
     const quiet = pdf({ academicSkipNotice: false }, split).speech;
     assert.match(quiet, /^A generic relation is shown here\.$/);
-    assert.match(pdf({ academicMathMode: 'all' }, split).speech, /phi sub n of t equals psi sub n of t divided by psi sub n of 1/);
+    assert.match(pdf({ academicMathMode: 'all' }, split).speech, /phi n of t equals psi n of t divided by psi n of 1/);
   }
 });
 

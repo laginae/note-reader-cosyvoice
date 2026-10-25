@@ -215,7 +215,7 @@ const testVaultPath = path.resolve('test-vault');
 const testAudioPath = path.join(testVaultPath, '.obsidian', 'plugins', 'note-reader-cosyvoice', 'cache', 'a.wav');
 assert.strictEqual(manifest.id, 'note-reader-cosyvoice');
 assert.strictEqual(manifest.name, 'Cozy Read Aloud');
-assert.strictEqual(manifest.version, '1.2.8');
+assert.strictEqual(manifest.version, '1.2.9');
 assert.strictEqual(
   moduleObject.exports.__test.sanitizeTextForSpeech('第一段的结尾。\n\n## 第二节标题\n\n下一节的正文。'),
   '第一段的结尾。\n第二节标题\n下一节的正文。'
@@ -378,9 +378,9 @@ assert.ok(!moduleObject.exports.__test.resolveDefaultScriptPath().toLowerCase().
 assert.strictEqual(moduleObject.exports.__test.normalizeMathReadingLanguage('chinese'), 'chinese');
 assert.strictEqual(moduleObject.exports.__test.normalizeMathReadingLanguage('skip'), 'skip');
 assert.strictEqual(moduleObject.exports.__test.normalizeMathReadingLanguage('bad'), 'english');
-const reportedOpenRouterText = 'As a reference, the static scheme (S) uses no forecast information. Its interval is centered at zero, and the half-width is taken directly as the 0.95 empirical quantile of $|Y\\_{k,h}|$ on the same hold-out data:';
+const reportedOpenRouterText = 'This artificial example reads the expression $|Y\\_{k,h}|$ before continuing with ordinary text.';
 const sanitizedReportedOpenRouterText = moduleObject.exports.__test.sanitizeTextForSpeech(reportedOpenRouterText);
-assert.ok(sanitizedReportedOpenRouterText.includes('absolute value of Y sub k,h'));
+assert.ok(sanitizedReportedOpenRouterText.includes('absolute value of Y k h'));
 assert.ok(!/[|$\\]/.test(sanitizedReportedOpenRouterText));
 const reportedMarkdownTable = `**Table I. Coverage**
 
@@ -906,8 +906,13 @@ assert.strictEqual(
 );
 assert.strictEqual(
   moduleObject.exports.__test.sanitizeTextForSpeech('长公式 $\\int_0^1 x^2 + y^2 + z^2 dx$ 跳过，短公式 $a_b$ 读。'),
-  '长公式。公式。跳过，短公式 a sub b 读。'
+  '长公式。公式。跳过，短公式 a b 读。'
 );
+for (const academicMathStyle of ['concise', 'verbose']) {
+  const speech = moduleObject.exports.__test.sanitizeTextForSpeech('Read $r_{t+1}$ and $x_{i,j}$.', { academicMathStyle });
+  assert.strictEqual(speech, academicMathStyle === 'concise'
+    ? 'Read r t plus 1 and x i j.' : 'Read r subscript t plus 1 and x subscript i,j.');
+}
 assert.strictEqual(
   moduleObject.exports.__test.calculateCurrentChunkSeekTime({
     progress: 0.375,
