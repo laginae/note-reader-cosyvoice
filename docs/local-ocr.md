@@ -10,6 +10,14 @@ Local OCR is an **optional desktop feature**, off by default. It recognizes prin
 4. Choose a page range (initially page 1, at most 10 pages per job) and press **Recognize**. Existing PDF text is preferred when available; turn this option off for broken text layers or scans with only a selectable header. Use clockwise rotation if a scan is sideways or upside down.
 5. Review and edit the text before using **Read page**, **Read selected text**, or **Read all results**. Playback uses the currently configured voice and its existing processing consent. The normal pause, speed and stop controls remain available.
 
+## macOS / Linux: untested source builds
+
+The .NET helper and SimdPaddleOCR have a cross-platform foundation, so macOS/Linux portability is plausible at source level. **This project has not validated builds, Obsidian integration or recognition on either platform.** The Windows x64 package cannot run directly on macOS/Linux, and upstream platform support is not proof of this plugin's end-to-end compatibility.
+
+Advanced users may build `ocr-helper/CozyOcr.csproj` with the .NET 10 SDK for the actual OS and processor: `osx-arm64` for Apple Silicon, `osx-x64` for Intel Macs, or `linux-x64` / `linux-arm64` for Linux. Keep the complete published directory. First verify startup, recognition, cancellation and plugin invocation with a public, non-sensitive single-page sample. These targets are build directions, not tested compatibility or performance claims.
+
+Report problems through [GitHub Issues](https://github.com/laginae/note-reader-cosyvoice/issues), including OS/version, CPU architecture, Obsidian/plugin versions, build command, sanitized errors and a minimal public example. Remove usernames, private paths, document content, API keys and credentials before posting. Do not attach private PDFs or raw configuration files. Successful independent tests are also welcome, but one device's result does not establish universal support.
+
 ## Models and resource use
 
 - **Small** is the default, prioritizing printed Chinese/English prose quality.

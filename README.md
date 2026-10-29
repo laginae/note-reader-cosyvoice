@@ -39,6 +39,8 @@ No extra toolbar plugin is needed. New installations start with system speech an
 
 **Source notes:** Ordinary PDF reading uses selectable text. For scanned PDFs and text in PNG/JPEG/WebP images, enable the optional [local OCR helper](docs/local-ocr.md), recognize a page range, review the text and read it aloud. OCR models load only when requested; source-image highlighting is not yet supported. Local HTML's original-page controls require **HTML Reader**; web pages use Obsidian **Web viewer**. Highlighting and inferred outlines depend on source structure. Sentence-level highlighting requires reliable timing; other engines highlight segments.
 
+**OCR platforms:** Windows x64 is packaged and validated. macOS/Linux source builds are theoretically feasible but untested by this project; advanced users must build and validate them independently. See the [platform notes and privacy-safe issue reporting guide](docs/local-ocr.md#macos--linux-untested-source-builds).
+
 Formerly **Note and PDF Voice Reader**. Existing settings and updates are preserved; no reinstall is needed.
 
 ## Choose a voice service

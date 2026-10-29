@@ -39,6 +39,8 @@
 
 **文档条件：** 普通 PDF 朗读使用可选中文字。扫描 PDF 和 PNG/JPEG/WebP 图片中的文字可通过可选的[本机 OCR 助手](docs/local-ocr.zh-CN.md)识别，在预览中校对后朗读；识别模型仅在需要时加载，目前不支持 OCR 原图高亮。本地 HTML 的原页面控制需要 **HTML Reader**，外部网页使用 Obsidian **Web viewer**。高亮和推断大纲依赖文档结构；可靠时间信息不足时按分段高亮，不保证逐句跟随。
 
+**OCR 平台：** 当前提供并验证 Windows x64 包。macOS/Linux 源码移植理论上可行，但本项目尚未测试，需有经验的用户自行构建和验证；问题反馈与隐私注意事项见[平台说明](docs/local-ocr.zh-CN.md#macos--linux未验证的自行构建)。
+
 原名 **Note and PDF Voice Reader**。已有设置和更新路径保持不变，无需重新安装。
 
 ## 先选一种适合你的语音方式
