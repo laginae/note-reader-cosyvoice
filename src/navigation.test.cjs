@@ -399,3 +399,32 @@ test('a failure of the current target still reports an error, unlike skipped-req
   assert.equal(notices.length, before + 1);
   assert.equal(session.operationWaiters.size, 0);
 });
+
+test('100 seeded desktop sequences protect pause, cancellation and stale audio event ownership', async () => {
+  const OriginalAudio=global.Audio;
+  const audios=[];
+  global.Audio=class {
+    constructor(){audios.push(this);this.duration=5;this.currentTime=0;this.paused=true;}
+    play(){this.paused=false;this.onplaying?.();return Promise.resolve();}
+    pause(){this.paused=true;this.onpause?.();}load(){}removeAttribute(){}
+  };
+  let seed=41;const random=()=>((seed=(Math.imul(seed,1664525)+1013904223)>>>0)/2**32);
+  try{
+    for(let run=0;run<100;run++){
+      const {plugin:p,session:s}=fixture(['Public first.','Public second.']);
+      p.runUserAction=async(_name,action)=>action();
+      p.settings.playbackSpeed=[1,1.75,2][run%3];
+      p.createPlayableAudioSource=async()=>({url:'public-test',release(){}});
+      for(let step=0;step<3;step++){
+        const running=PluginClass.prototype.playPreparedAudio.call(p,{},s,0,2);await tick();
+        const old=audios.at(-1),ended=old.onended;
+        if(random()<.7){await p.pauseOrResume();assert.equal(p.pauseRequested,true);old.onplaying();assert.equal(old.paused,true);await p.pauseOrResume();}
+        assert.equal(old.playbackRate,p.settings.playbackSpeed);
+        if(random()<.5)old.noteReaderCancel();else old.onended();
+        await running;
+        const active=p.currentAudio;ended?.();assert.equal(p.currentAudio,active);assert.equal(old.noteReaderFinished,true);
+      }
+      await p.cancelSessionOperations(s);assert.equal(p.currentAudio,null);
+    }
+  }finally{global.Audio=OriginalAudio;}
+});

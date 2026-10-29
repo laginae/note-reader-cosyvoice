@@ -10092,6 +10092,31 @@ return NoteReaderWebDocument;})(); const m=window.__noteReaderHighlightModule; c
   }
 });
 
+// src/view-observation.js
+var require_view_observation = __commonJS({
+  "src/view-observation.js"(exports2, module2) {
+    function createViewObservation2({ hasViews, observe, setTimer = setInterval, clearTimer = clearInterval }) {
+      let timer = null, disposed = false;
+      const sync = () => {
+        if (disposed) return;
+        observe();
+        if (hasViews()) {
+          if (timer === null) timer = setTimer(sync, 750);
+        } else if (timer !== null) {
+          clearTimer(timer);
+          timer = null;
+        }
+      };
+      return { sync, dispose() {
+        disposed = true;
+        if (timer !== null) clearTimer(timer);
+        timer = null;
+      } };
+    }
+    module2.exports = { createViewObservation: createViewObservation2 };
+  }
+});
+
 // src/playback-estimate.js
 var require_playback_estimate = __commonJS({
   "src/playback-estimate.js"(exports2, module2) {
@@ -13120,6 +13145,38 @@ var require_semantic_chunker = __commonJS({
   "node_modules/@laginae/note-reader-core/src/semantic-chunker.js"(exports2, module2) {
     "use strict";
     var DEFAULT_CHUNK_LIMITS2 = [40, 80, 120, 160, 280, 320];
+    function openingSentenceCut(text, threshold) {
+      const segmenter = typeof Intl !== "undefined" && typeof Intl.Segmenter === "function" ? new Intl.Segmenter(void 0, { granularity: "sentence" }) : null;
+      const segments = segmenter ? segmenter.segment(text) : Array.from(
+        text.matchAll(/[\s\S]*?(?:[。！？!?]["'\u2019\u201d\u3009-\u3011\u3015\uff09]*|\.(?!\d)(?=\s|$)|$)/g),
+        (match) => ({ index: match.index, segment: match[0] })
+      );
+      for (const segment of segments) {
+        const sentence = segment.segment.trimEnd();
+        if (!sentence.trim()) continue;
+        if (/(?:\b(?:Mr|Mrs|Ms|Dr|Prof|Sr|Jr|St|vs|etc|Fig|Figs|Eq|Eqs|Sec|Vol|No|e\.g|i\.e)|\b[A-Z](?:\.[A-Z])*)\.$/i.test(sentence)) continue;
+        const end = segment.index + sentence.length;
+        if (/[。！？!?.]["'\u2019\u201d\u3009-\u3011\u3015\uff09]*$/.test(sentence) && Array.from(text.slice(0, end).replace(/\s/g, "")).length >= threshold) return end;
+      }
+      return text.length;
+    }
+    function splitOpeningAudioParts(text, rapid = false) {
+      let remaining = normalizeChunkText(text);
+      const parts = [];
+      const firstEnd = rapid ? openingSentenceCut(remaining, 1) : 0;
+      const firstSentence = remaining.slice(0, firstEnd).trim();
+      const firstLength = Array.from(firstSentence.replace(/\s/g, "")).length;
+      const hasWords = /\p{L}/u.test(firstSentence) && !/^[IVXLCDM]+[.)]$/i.test(firstSentence);
+      const firstThreshold = rapid && hasWords && firstLength >= 5 && firstLength < 20 ? firstLength : 20;
+      for (const threshold of [firstThreshold, 40]) {
+        if (!remaining) break;
+        const cut = openingSentenceCut(remaining, threshold);
+        parts.push(remaining.slice(0, cut).trim());
+        remaining = remaining.slice(cut).trim();
+      }
+      if (remaining) parts.push(remaining);
+      return parts;
+    }
     function parseChunkLimits2(value, fallback = DEFAULT_CHUNK_LIMITS2) {
       const list = Array.isArray(value) ? value : String(value || "").split(",").map((item) => item.trim());
       const limits = list.map((item) => Math.floor(Number(item))).filter((item) => Number.isFinite(item) && item > 0);
@@ -13273,7 +13330,8 @@ var require_semantic_chunker = __commonJS({
       createIncrementalSpeechChunker: createIncrementalSpeechChunker2,
       normalizeChunkText,
       parseChunkLimits: parseChunkLimits2,
-      splitTextForSpeechChunks: splitTextForSpeechChunks2
+      splitTextForSpeechChunks: splitTextForSpeechChunks2,
+      splitOpeningAudioParts
     };
   }
 });
@@ -38106,6 +38164,7 @@ var { pdfSelectionSourceMap } = require_pdf_selection_source();
 var { capturePdfSelectionLayout, preparePdfSelection, normalizePdfSpeechText } = require_pdf_selection();
 var { MAX_HTML_BYTES, captureHtmlSelection, extractHtmlText, getHtmlReaderDocument, isHtmlFile } = require_html_text();
 var { WEB_VIEW_TYPE, captureWebPage, getWebPageUrl, isWebPageView } = require_web_page();
+var { createViewObservation } = require_view_observation();
 var { estimatePlayback, formatDuration } = require_playback_estimate();
 var { getSystemVoiceKey, listSystemVoices, normalizeSystemVoice, synthesizeSystemSpeech, systemSpeechError } = require_system_tts();
 var { edgeTtsError } = require_edge_errors();
@@ -40243,9 +40302,13 @@ var CosyVoiceReaderPlugin = class extends Plugin {
       this.nativeToolbars?.destroy();
       this.pdfHighlights?.destroy();
     });
-    this.registerEvent(this.app.workspace.on("layout-change", () => this.nativeToolbars.sync()));
+    this.registerEvent(this.app.workspace.on("layout-change", () => {
+      this.nativeToolbars.sync();
+      this.viewObservation?.sync();
+    }));
     this.registerEvent(this.app.workspace.on("file-open", () => {
       this.nativeToolbars.sync();
+      this.viewObservation?.sync();
       this.runUserAction("Save reading position", () => this.saveSessionReadingPosition(this.activeSession));
     }));
     this.registerEvent(this.app.workspace.on("editor-change", (editor) => this.nativeToolbars.invalidate(editor)));
@@ -40280,8 +40343,7 @@ var CosyVoiceReaderPlugin = class extends Plugin {
           this.lastReadableSource = "file";
         }
         this.getCurrentWebPageView();
-        this.observeHtmlSelections();
-        this.observeWebPages();
+        this.viewObservation?.sync();
         this.renderReaderViews();
       })
     );
@@ -40295,12 +40357,17 @@ var CosyVoiceReaderPlugin = class extends Plugin {
       });
     }
     if (typeof window !== "undefined" && typeof this.registerInterval === "function") {
-      this.registerInterval(window.setInterval(() => {
-        this.observeHtmlSelections();
-        this.observeWebPages();
-      }, 750));
-      this.observeHtmlSelections();
-      this.observeWebPages();
+      this.viewObservation = createViewObservation({
+        hasViews: () => this.getHtmlReaderLeaves().length > 0 || this.getWebPageLeaves().length > 0,
+        observe: () => {
+          this.observeHtmlSelections();
+          this.observeWebPages();
+        },
+        setTimer: (callback) => window.setInterval(callback, 750),
+        clearTimer: (timer) => window.clearInterval(timer)
+      });
+      this.register(() => this.viewObservation.dispose());
+      this.viewObservation.sync();
     }
     this.addRibbonIcon("volume-2", "Open voice reader controls", () => {
       void this.runUserAction("Open voice reader", () => this.openPreferredReader());

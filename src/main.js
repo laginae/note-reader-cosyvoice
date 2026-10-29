@@ -30,6 +30,7 @@ const { pdfSelectionSourceMap } = require('./pdf-selection-source');
 const { capturePdfSelectionLayout, preparePdfSelection, normalizePdfSpeechText } = require('./pdf-selection');
 const { MAX_HTML_BYTES, captureHtmlSelection, extractHtmlText, getHtmlReaderDocument, isHtmlFile } = require('./html-text');
 const { WEB_VIEW_TYPE, captureWebPage, getWebPageUrl, isWebPageView } = require('./web-page');
+const { createViewObservation } = require('./view-observation');
 const { estimatePlayback, formatDuration } = require('./playback-estimate');
 const { getSystemVoiceKey, listSystemVoices, normalizeSystemVoice, synthesizeSystemSpeech, systemSpeechError } = require('./system-tts');
 const { edgeTtsError } = require('./edge-errors');
@@ -2514,9 +2515,10 @@ class CosyVoiceReaderPlugin extends Plugin {
     this.htmlHighlights = new HtmlReadingHighlights(this);
     this.register(() => this.htmlHighlights?.destroy());
     this.register(() => { this.nativeToolbars?.destroy(); this.pdfHighlights?.destroy(); });
-    this.registerEvent(this.app.workspace.on('layout-change', () => this.nativeToolbars.sync()));
+    this.registerEvent(this.app.workspace.on('layout-change', () => { this.nativeToolbars.sync(); this.viewObservation?.sync(); }));
     this.registerEvent(this.app.workspace.on('file-open', () => {
       this.nativeToolbars.sync();
+      this.viewObservation?.sync();
       this.runUserAction('Save reading position', () => this.saveSessionReadingPosition(this.activeSession));
     }));
     this.registerEvent(this.app.workspace.on('editor-change', editor => this.nativeToolbars.invalidate(editor)));
@@ -2552,8 +2554,7 @@ class CosyVoiceReaderPlugin extends Plugin {
           this.lastReadableSource = 'file';
         }
         this.getCurrentWebPageView();
-        this.observeHtmlSelections();
-        this.observeWebPages();
+        this.viewObservation?.sync();
         this.renderReaderViews();
       })
     );
@@ -2567,12 +2568,14 @@ class CosyVoiceReaderPlugin extends Plugin {
       });
     }
     if (typeof window !== 'undefined' && typeof this.registerInterval === 'function') {
-      this.registerInterval(window.setInterval(() => {
-        this.observeHtmlSelections();
-        this.observeWebPages();
-      }, 750));
-      this.observeHtmlSelections();
-      this.observeWebPages();
+      this.viewObservation = createViewObservation({
+        hasViews: () => this.getHtmlReaderLeaves().length > 0 || this.getWebPageLeaves().length > 0,
+        observe: () => { this.observeHtmlSelections(); this.observeWebPages(); },
+        setTimer: callback => window.setInterval(callback, 750),
+        clearTimer: timer => window.clearInterval(timer),
+      });
+      this.register(() => this.viewObservation.dispose());
+      this.viewObservation.sync();
     }
 
     this.addRibbonIcon('volume-2', 'Open voice reader controls', () => {
