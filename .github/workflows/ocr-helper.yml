@@ -61,6 +61,11 @@ jobs:
         run: |
           $out = 'dist/ocr-helper-win-x64'
           Copy-Item ocr-helper/APACHE-LICENSE.txt,ocr-helper/UPSTREAM-NOTICES.md,ocr-helper/THIRD-PARTY-NOTICES.md,LICENSE -Destination $out
+          $runtimeVersion = ((Get-Content "$out/CozyOcr.runtimeconfig.json" -Raw | ConvertFrom-Json).runtimeOptions.includedFrameworks | Where-Object name -eq 'Microsoft.NETCore.App').version
+          $cache = if ($env:NUGET_PACKAGES) { $env:NUGET_PACKAGES } else { Join-Path $HOME '.nuget/packages' }
+          $runtime = Join-Path $cache "microsoft.netcore.app.runtime.win-x64/$runtimeVersion"
+          Copy-Item -LiteralPath "$runtime/LICENSE.TXT" -Destination "$out/LICENSE.txt"
+          Copy-Item -LiteralPath "$runtime/THIRD-PARTY-NOTICES.TXT" -Destination "$out/ThirdPartyNotices.txt"
           foreach ($name in @('CozyOcr.exe','CozyOcr.dll','LICENSE.txt','ThirdPartyNotices.txt','APACHE-LICENSE.txt','UPSTREAM-NOTICES.md','THIRD-PARTY-NOTICES.md')) {
             if (!(Test-Path -LiteralPath "$out/$name")) { throw "Missing helper file: $name" }
           }
