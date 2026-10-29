@@ -47,7 +47,9 @@ function renderEngineChoice(parent, tab, Setting, mobile, labels) {
       'azure-speech': settings.azureSpeechConsent && (settings.azureSpeechSecretName || settings.azureSpeechKeyPath),
       'edge-tts': settings.edgeTtsConsent, 'byok-tts': settings.byokProfiles?.find(p => p.id === settings.byokActiveProfileId)?.consent })[engine]);
   const localReady = mobile ? settings.remoteConsent && settings.remoteEndpoint : labels.localReady;
-  const ready = method === 'system' || (method === 'local' ? localReady : onlineReady);
+  const systemReady = mobile ? Boolean(globalThis.speechSynthesis?.getVoices?.().length)
+    : Boolean(plugin.systemVoicesReady && plugin.systemVoices?.length);
+  const ready = method === 'system' ? systemReady : (method === 'local' ? localReady : onlineReady);
   const start = disclosure(parent, t('Quick start', '快速开始'), !tab.setupCompleted && !ready);
   tab.quickStart = start;
   new Setting(start).setName(t('System speech', '系统语音'))

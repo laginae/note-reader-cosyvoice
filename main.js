@@ -618,6 +618,286 @@ var require_preparation_pool = __commonJS({
   }
 });
 
+// src/device-audio-cache.js
+var require_device_audio_cache = __commonJS({
+  "src/device-audio-cache.js"(exports2, module2) {
+    "use strict";
+    var TTL_MS = 24 * 60 * 60 * 1e3;
+    var MAX_BYTES = 64 * 1024 * 1024;
+    var MAX_ITEM_BYTES2 = 8 * 1024 * 1024;
+    var MAX_ENTRIES = 128;
+    function canonical(value) {
+      if (Array.isArray(value)) return value.map(canonical);
+      if (!value || typeof value !== "object") return value;
+      return Object.fromEntries(Object.keys(value).sort().filter((key) => !/^(apiKey|key|token|authorization)$/i.test(key)).map((key) => [key, canonical(value[key])]));
+    }
+    async function digest(value) {
+      const bytes = new TextEncoder().encode(JSON.stringify(value));
+      const hash = await globalThis.crypto.subtle.digest("SHA-256", bytes);
+      return Array.from(new Uint8Array(hash), (byte) => byte.toString(16).padStart(2, "0")).join("");
+    }
+    async function audioCacheKey2(text, settings, context = {}, sourceText = text) {
+      const fields = Object.keys(settings).filter((key) => /^(speechEngine|systemVoice|edgeTts|azure|openRouter|mimo|byok|remote|speed$|speechTerms|mathReadingLanguage|academic|scriptPath|speaker|reference)/.test(key));
+      return digest([
+        "cozy-audio-v1",
+        text,
+        sourceText,
+        canonical(Object.fromEntries(fields.map((key) => [key, settings[key]]))),
+        canonical(settings.openRouterContext === true ? context : {})
+      ]);
+    }
+    function expired(row, now) {
+      return !Number.isFinite(row?.created) || row.created > now || row.created + TTL_MS <= now;
+    }
+    function evictionKeys(rows, now) {
+      const valid = rows.filter((row) => !expired(row, now) && Number.isFinite(row.size) && row.size > 0 && row.size <= MAX_ITEM_BYTES2).sort((a, b) => b.accessed - a.accessed);
+      let bytes = 0;
+      const keep = /* @__PURE__ */ new Set();
+      for (const row of valid) if (keep.size < MAX_ENTRIES && bytes + row.size <= MAX_BYTES) {
+        keep.add(row.key);
+        bytes += row.size;
+      }
+      return rows.filter((row) => !keep.has(row.key)).map((row) => row.key);
+    }
+    var IndexedAudioStore = class {
+      constructor(namespace, indexedDB = globalThis.indexedDB) {
+        this.namespace = namespace;
+        this.indexedDB = indexedDB;
+      }
+      async open() {
+        if (!this.pending) this.pending = digest(this.namespace).then((hash) => new Promise((resolve, reject) => {
+          if (!this.indexedDB) return reject(new Error("Device storage unavailable"));
+          const request = this.indexedDB.open(`cozy-audio-${hash}`, 1);
+          let timedOut = false;
+          const timer = setTimeout(() => {
+            timedOut = true;
+            reject(new Error("Device storage unavailable"));
+          }, 1500);
+          request.onupgradeneeded = () => {
+            request.result.createObjectStore("meta", { keyPath: "key" });
+            request.result.createObjectStore("audio");
+          };
+          request.onsuccess = () => {
+            clearTimeout(timer);
+            const db = request.result;
+            if (timedOut) {
+              db.close();
+              return;
+            }
+            db.onversionchange = () => {
+              db.close();
+              this.pending = null;
+            };
+            resolve(db);
+          };
+          request.onerror = request.onblocked = () => {
+            clearTimeout(timer);
+            reject(new Error("Device storage unavailable"));
+          };
+        }));
+        return this.pending;
+      }
+      async transaction(action) {
+        const db = await this.open();
+        return new Promise((resolve, reject) => {
+          const tx = db.transaction(["meta", "audio"], "readwrite");
+          let value;
+          const timer = setTimeout(() => {
+            try {
+              tx.abort();
+            } catch {
+            }
+            reject(new Error("Device cache operation timed out"));
+          }, 1500);
+          tx.oncomplete = () => {
+            clearTimeout(timer);
+            resolve(value);
+          };
+          tx.onerror = tx.onabort = () => {
+            clearTimeout(timer);
+            reject(new Error("Device cache operation failed"));
+          };
+          action(tx.objectStore("meta"), tx.objectStore("audio"), (result) => {
+            value = result;
+          });
+        });
+      }
+      async get(key, now) {
+        return this.transaction((meta, audio, done) => {
+          const request = meta.get(key);
+          request.onsuccess = () => {
+            if (!request.result || expired(request.result, now)) {
+              meta.delete(key);
+              audio.delete(key);
+              return;
+            }
+            meta.put({ ...request.result, accessed: now });
+            const bytes = audio.get(key);
+            bytes.onsuccess = () => done(bytes.result);
+          };
+        });
+      }
+      async put(key, value, now) {
+        return this.transaction((meta, audio) => {
+          meta.put({ key, created: now, accessed: now, size: value.arrayBuffer.byteLength });
+          audio.put(value, key);
+          const request = meta.getAll();
+          request.onsuccess = () => {
+            for (const old of evictionKeys(request.result, now)) {
+              meta.delete(old);
+              audio.delete(old);
+            }
+          };
+        });
+      }
+      async prune(now) {
+        return this.transaction((meta, audio) => {
+          const request = meta.getAll();
+          request.onsuccess = () => {
+            for (const key of evictionKeys(request.result, now)) {
+              meta.delete(key);
+              audio.delete(key);
+            }
+          };
+        });
+      }
+      clear() {
+        return this.transaction((meta, audio) => {
+          meta.clear();
+          audio.clear();
+        });
+      }
+      async close() {
+        if (this.pending) {
+          try {
+            (await this.pending).close();
+          } catch {
+          }
+          this.pending = null;
+        }
+      }
+    };
+    var DeviceAudioCache = class {
+      constructor(store, enabled = () => false, now = () => Date.now()) {
+        this.store = store;
+        this.enabled = enabled;
+        this.now = now;
+        this.generation = 0;
+        this.tail = Promise.resolve();
+      }
+      token() {
+        return this.generation;
+      }
+      serialize(action) {
+        const work = this.tail.then(action);
+        this.tail = work.catch(() => {
+        });
+        return work;
+      }
+      async get(key) {
+        if (!key || !this.enabled()) return null;
+        const generation = this.generation;
+        try {
+          const value = await this.serialize(() => this.store.get(key, this.now()));
+          if (generation !== this.generation || !this.enabled() || !value?.arrayBuffer?.byteLength || value.arrayBuffer.byteLength > MAX_ITEM_BYTES2) return null;
+          return value;
+        } catch {
+          this.failed = true;
+          return null;
+        }
+      }
+      async put(key, value, generation) {
+        if (!key || !this.enabled() || generation !== this.generation || !value?.arrayBuffer?.byteLength || value.arrayBuffer.byteLength > MAX_ITEM_BYTES2) return;
+        const safe = {
+          arrayBuffer: value.arrayBuffer,
+          mimeType: ["audio/mpeg", "audio/wav", "audio/ogg"].includes(value.mimeType) ? value.mimeType : "audio/mpeg",
+          sentenceCues: (Array.isArray(value.sentenceCues) ? value.sentenceCues : []).slice(0, 4096).filter((cue) => ["start", "end", "time", "until"].every((field) => Number.isFinite(cue?.[field]))).map(({ start, end, time, until }) => ({ start, end, time, until }))
+        };
+        try {
+          await this.serialize(() => {
+            if (this.enabled() && generation === this.generation) return this.store.put(key, safe, this.now());
+          });
+        } catch {
+          this.failed = true;
+        }
+      }
+      async prune() {
+        if (!this.enabled()) return;
+        try {
+          await this.serialize(() => this.store.prune(this.now()));
+        } catch {
+          this.failed = true;
+        }
+      }
+      clear() {
+        this.generation++;
+        return this.serialize(() => this.store.clear());
+      }
+      close() {
+        this.generation++;
+        return this.serialize(() => this.store.close());
+      }
+    };
+    function deviceCacheFor2(plugin) {
+      if (!plugin.deviceAudioCache) {
+        const vault = plugin.app.vault;
+        const namespace = [plugin.manifest?.id || "cozy", vault.adapter?.getBasePath?.() || vault.getName?.() || "default"];
+        plugin.deviceAudioCache = new DeviceAudioCache(new IndexedAudioStore(namespace), () => plugin.settings.persistentAudioCache === true);
+      }
+      return plugin.deviceAudioCache;
+    }
+    function addDeviceCacheSettings2(parent, plugin, Setting, Notice2) {
+      const t = (en, zh) => plugin.settings.settingsLanguage === "chinese" ? zh : en;
+      new Setting(parent).setName(t("Reuse audio on this device", "\u5728\u672C\u673A\u590D\u7528\u97F3\u9891")).setDesc(t(
+        "Off by default. Keep up to 64 MiB / 128 parts for 24 hours outside the vault. Audio can contain private content; it is not encrypted by this plugin. Expired items are removed on use and while enabled. No note text or keys are saved. System and local-model speech are excluded.",
+        "\u9ED8\u8BA4\u5173\u95ED\u3002\u5728\u5E93\u5916\u672C\u673A\u4FDD\u7559\u6700\u591A 64 MiB / 128 \u4EFD\u97F3\u9891\uFF0C24 \u5C0F\u65F6\u6709\u6548\u3002\u97F3\u9891\u53EF\u80FD\u542B\u79C1\u4EBA\u5185\u5BB9\uFF0C\u63D2\u4EF6\u4E0D\u52A0\u5BC6\uFF1B\u4F7F\u7528\u65F6\u53CA\u5F00\u542F\u671F\u95F4\u81EA\u52A8\u6E05\u7406\u8FC7\u671F\u9879\u3002\u4E0D\u4FDD\u5B58\u6B63\u6587\u6216\u5BC6\u94A5\uFF1B\u4E0D\u5305\u542B\u7CFB\u7EDF\u53CA\u672C\u5730\u6A21\u578B\u8BED\u97F3\u3002"
+      )).addToggle((toggle) => toggle.setValue(plugin.settings.persistentAudioCache === true).onChange(async (enabled) => {
+        plugin.settings.persistentAudioCache = enabled;
+        await plugin.saveSettings();
+        if (enabled) await deviceCacheFor2(plugin).prune();
+        else try {
+          await deviceCacheFor2(plugin).clear();
+        } catch {
+          new Notice2(t("Could not clear device audio. Try Clear again.", "\u672A\u80FD\u6E05\u9664\u672C\u673A\u97F3\u9891\uFF0C\u8BF7\u518D\u6B21\u70B9\u51FB\u6E05\u9664\u3002"));
+        }
+      }));
+      new Setting(parent).setName(t("Clear reusable device audio", "\u6E05\u9664\u672C\u673A\u590D\u7528\u97F3\u9891")).addButton((button) => button.setButtonText(t("Clear cache", "\u6E05\u9664\u7F13\u5B58")).onClick(async () => {
+        try {
+          await deviceCacheFor2(plugin).clear();
+          new Notice2(t("Device audio cleared. Current playback and exports are unchanged.", "\u672C\u673A\u590D\u7528\u97F3\u9891\u5DF2\u6E05\u9664\uFF1B\u5F53\u524D\u64AD\u653E\u53CA\u5BFC\u51FA\u6587\u4EF6\u4E0D\u53D7\u5F71\u54CD\u3002"));
+        } catch {
+          new Notice2(t("Device cache could not be cleared.", "\u65E0\u6CD5\u6E05\u9664\u672C\u673A\u7F13\u5B58\u3002"));
+        }
+      }));
+    }
+    function startDeviceCacheMaintenance2(plugin) {
+      if (plugin.settings.persistentAudioCache) void deviceCacheFor2(plugin).prune();
+      const timer = setInterval(() => {
+        if (plugin.settings.persistentAudioCache) void deviceCacheFor2(plugin).prune();
+      }, 10 * 60 * 1e3);
+      timer.unref?.();
+      plugin.register(() => {
+        clearInterval(timer);
+        void plugin.deviceAudioCache?.close();
+      });
+    }
+    module2.exports = {
+      TTL_MS,
+      MAX_BYTES,
+      MAX_ITEM_BYTES: MAX_ITEM_BYTES2,
+      MAX_ENTRIES,
+      canonical,
+      audioCacheKey: audioCacheKey2,
+      evictionKeys,
+      IndexedAudioStore,
+      DeviceAudioCache,
+      deviceCacheFor: deviceCacheFor2,
+      addDeviceCacheSettings: addDeviceCacheSettings2,
+      startDeviceCacheMaintenance: startDeviceCacheMaintenance2
+    };
+  }
+});
+
 // src/settings-pages.js
 var require_settings_pages = __commonJS({
   "src/settings-pages.js"(exports2, module2) {
@@ -770,7 +1050,7 @@ var require_settings_reset = __commonJS({
         "speechTermsEnabled",
         "speechTerms"
       ],
-      storage: ["audioExportLocation", "audioExportFolder", "cleanupCache", "readingHistoryMode", "rememberReadingPosition"],
+      storage: ["audioExportLocation", "audioExportFolder", "cleanupCache", "persistentAudioCache", "readingHistoryMode", "rememberReadingPosition"],
       privacy: ["diagnosticLogging"]
     };
     function resetPageSettings2(settings, defaults, page) {
@@ -949,7 +1229,8 @@ var require_engine_setup = __commonJS({
         "byok-tts": settings.byokProfiles?.find((p) => p.id === settings.byokActiveProfileId)?.consent
       }[engine]);
       const localReady = mobile ? settings.remoteConsent && settings.remoteEndpoint : labels.localReady;
-      const ready = method === "system" || (method === "local" ? localReady : onlineReady);
+      const systemReady = mobile ? Boolean(globalThis.speechSynthesis?.getVoices?.().length) : Boolean(plugin.systemVoicesReady && plugin.systemVoices?.length);
+      const ready = method === "system" ? systemReady : method === "local" ? localReady : onlineReady;
       const start = disclosure2(parent, t("Quick start", "\u5FEB\u901F\u5F00\u59CB"), !tab.setupCompleted && !ready);
       tab.quickStart = start;
       new Setting(start).setName(t("System speech", "\u7CFB\u7EDF\u8BED\u97F3")).setDesc(t("No API key required. Uses available device voices; voice quality and availability vary.", "\u65E0\u9700 API \u5BC6\u94A5\uFF0C\u4F7F\u7528\u8BBE\u5907\u53EF\u7528\u97F3\u8272\uFF1B\u97F3\u8D28\u548C\u53EF\u7528\u6027\u56E0\u8BBE\u5907\u800C\u5F02\u3002")).addButton((button) => control(button).setButtonText(t("Use system speech", "\u4F7F\u7528\u7CFB\u7EDF\u8BED\u97F3")).onClick(() => change(mobile ? "system" : "system-tts")));
@@ -14475,6 +14756,78 @@ var require_sidebar_outline = __commonJS({
       }
     };
     module2.exports = { SidebarOutline: SidebarOutline2 };
+  }
+});
+
+// src/movable-modal.js
+var require_movable_modal = __commonJS({
+  "src/movable-modal.js"(exports2, module2) {
+    "use strict";
+    function makeMovableModal(modal, handle) {
+      const doc = modal.ownerDocument, win = doc.defaultView;
+      let dragging = null, moved = false;
+      function place(left, top) {
+        const rect = modal.getBoundingClientRect();
+        const x = Math.max(8, Math.min(left, win.innerWidth - rect.width - 8));
+        const y = Math.max(8, Math.min(top, win.innerHeight - rect.height - 8));
+        Object.assign(modal.style, { position: "fixed", left: `${x}px`, top: `${y}px`, margin: "0", transform: "none" });
+        moved = true;
+      }
+      function center() {
+        const rect = modal.getBoundingClientRect();
+        place((win.innerWidth - rect.width) / 2, (win.innerHeight - rect.height) / 2);
+      }
+      function start(event) {
+        if (event.button !== 0 || event.target.closest("button,input,select,textarea,a")) return;
+        const rect = modal.getBoundingClientRect();
+        dragging = { id: event.pointerId, x: event.clientX - rect.left, y: event.clientY - rect.top };
+        handle.setPointerCapture?.(event.pointerId);
+        event.preventDefault();
+      }
+      function move(event) {
+        if (dragging?.id === event.pointerId) place(event.clientX - dragging.x, event.clientY - dragging.y);
+      }
+      function stop() {
+        dragging = null;
+      }
+      function resize() {
+        if (moved) {
+          const rect = modal.getBoundingClientRect();
+          place(rect.left, rect.top);
+        }
+      }
+      function key(event) {
+        if (event.target !== handle) return;
+        if (event.key === "Home") {
+          center();
+          event.preventDefault();
+          return;
+        }
+        const direction = { ArrowLeft: [-20, 0], ArrowRight: [20, 0], ArrowUp: [0, -20], ArrowDown: [0, 20] }[event.key];
+        if (!direction) return;
+        const rect = modal.getBoundingClientRect();
+        place(rect.left + direction[0], rect.top + direction[1]);
+        event.preventDefault();
+      }
+      handle.addEventListener("pointerdown", start);
+      handle.addEventListener("keydown", key);
+      doc.addEventListener("pointermove", move);
+      doc.addEventListener("pointerup", stop);
+      doc.addEventListener("pointercancel", stop);
+      win.addEventListener("resize", resize);
+      win.addEventListener("blur", stop);
+      return { center, destroy() {
+        stop();
+        handle.removeEventListener("pointerdown", start);
+        handle.removeEventListener("keydown", key);
+        doc.removeEventListener("pointermove", move);
+        doc.removeEventListener("pointerup", stop);
+        doc.removeEventListener("pointercancel", stop);
+        win.removeEventListener("resize", resize);
+        win.removeEventListener("blur", stop);
+      } };
+    }
+    module2.exports = { makeMovableModal };
   }
 });
 
@@ -36565,85 +36918,12 @@ var require_pdf_bookmarks = __commonJS({
   }
 });
 
-// src/movable-modal.js
-var require_movable_modal = __commonJS({
-  "src/movable-modal.js"(exports2, module2) {
-    "use strict";
-    function makeMovableModal(modal, handle) {
-      const doc = modal.ownerDocument, win = doc.defaultView;
-      let dragging = null, moved = false;
-      function place(left, top) {
-        const rect = modal.getBoundingClientRect();
-        const x = Math.max(8, Math.min(left, win.innerWidth - rect.width - 8));
-        const y = Math.max(8, Math.min(top, win.innerHeight - rect.height - 8));
-        Object.assign(modal.style, { position: "fixed", left: `${x}px`, top: `${y}px`, margin: "0", transform: "none" });
-        moved = true;
-      }
-      function center() {
-        const rect = modal.getBoundingClientRect();
-        place((win.innerWidth - rect.width) / 2, (win.innerHeight - rect.height) / 2);
-      }
-      function start(event) {
-        if (event.button !== 0 || event.target.closest("button,input,select,textarea,a")) return;
-        const rect = modal.getBoundingClientRect();
-        dragging = { id: event.pointerId, x: event.clientX - rect.left, y: event.clientY - rect.top };
-        handle.setPointerCapture?.(event.pointerId);
-        event.preventDefault();
-      }
-      function move(event) {
-        if (dragging?.id === event.pointerId) place(event.clientX - dragging.x, event.clientY - dragging.y);
-      }
-      function stop() {
-        dragging = null;
-      }
-      function resize() {
-        if (moved) {
-          const rect = modal.getBoundingClientRect();
-          place(rect.left, rect.top);
-        }
-      }
-      function key(event) {
-        if (event.target !== handle) return;
-        if (event.key === "Home") {
-          center();
-          event.preventDefault();
-          return;
-        }
-        const direction = { ArrowLeft: [-20, 0], ArrowRight: [20, 0], ArrowUp: [0, -20], ArrowDown: [0, 20] }[event.key];
-        if (!direction) return;
-        const rect = modal.getBoundingClientRect();
-        place(rect.left + direction[0], rect.top + direction[1]);
-        event.preventDefault();
-      }
-      handle.addEventListener("pointerdown", start);
-      handle.addEventListener("keydown", key);
-      doc.addEventListener("pointermove", move);
-      doc.addEventListener("pointerup", stop);
-      doc.addEventListener("pointercancel", stop);
-      win.addEventListener("resize", resize);
-      win.addEventListener("blur", stop);
-      return { center, destroy() {
-        stop();
-        handle.removeEventListener("pointerdown", start);
-        handle.removeEventListener("keydown", key);
-        doc.removeEventListener("pointermove", move);
-        doc.removeEventListener("pointerup", stop);
-        doc.removeEventListener("pointercancel", stop);
-        win.removeEventListener("resize", resize);
-        win.removeEventListener("blur", stop);
-      } };
-    }
-    module2.exports = { makeMovableModal };
-  }
-});
-
 // src/pdf-outline-ui.js
 var require_pdf_outline_ui = __commonJS({
   "src/pdf-outline-ui.js"(exports2, module2) {
     "use strict";
     var { Modal: Modal2, Notice: Notice2, loadPdfJs: loadPdfJs2, setIcon: setIcon2, Setting } = require("obsidian");
     var { scanPdfOutline, inferOutline, sectionRange } = require_pdf_outline();
-    var { writePdfBookmarks } = require_pdf_bookmarks();
     var { PdfOutlineCache } = require_pdf_outline_cache();
     var { createHash } = require("crypto");
     var digest = (bytes) => createHash("sha256").update(new Uint8Array(bytes)).digest("hex");
@@ -36864,6 +37144,7 @@ var require_pdf_outline_ui = __commonJS({
         const overwrite = this.overwrite ?? this.plugin.settings.pdfBookmarksOverwrite === true;
         const rows = this.entries.filter((e) => e.enabled).map((e) => ({ ...e }));
         if (!rows.length) throw new Error(this.t("\u8BF7\u81F3\u5C11\u4FDD\u7559\u4E00\u4E2A\u4E66\u7B7E\u3002", "Include at least one bookmark."));
+        const { writePdfBookmarks } = require_pdf_bookmarks();
         const bytes = await writePdfBookmarks(this.bytes, rows, this.mode, this.model.bookmarks);
         if (this.closed) return;
         const target = overwrite ? this.path : await unusedPath(this.app.vault, this.file, ".bookmarks");
@@ -37796,6 +38077,7 @@ var require_task_state2 = __commonJS({
 var { ItemView, MarkdownView, Menu, Modal, Notice, Plugin, PluginSettingTab, SecretComponent, Setting: ObsidianSetting, loadPdfJs, setIcon } = require("obsidian");
 var { LANGUAGES, translate: translateInterface, localizedSetting } = require_i18n();
 var { PlaybackTimings, PreparationPool } = require_preparation_pool();
+var { audioCacheKey, deviceCacheFor, addDeviceCacheSettings, startDeviceCacheMaintenance, MAX_ITEM_BYTES } = require_device_audio_cache();
 var { PAGES, createSettingsPages, createSettingsHeader } = require_settings_pages();
 var { resetPageSettings } = require_settings_reset();
 var { ELEVENLABS_MODELS, ELEVENLABS_VOICES, isElevenLabsModel } = require_openrouter_elevenlabs();
@@ -39267,6 +39549,7 @@ function createDefaultSettings() {
     azureSpeechSecretName: DEFAULT_SETTINGS.azureSpeechSecretName,
     azureSpeechVoice: normalizeAzureSpeechVoice(DEFAULT_SETTINGS.azureSpeechVoice),
     cleanupCache: DEFAULT_SETTINGS.cleanupCache,
+    persistentAudioCache: false,
     chunkLimits: parseChunkLimits(DEFAULT_SETTINGS.chunkLimits).join(","),
     onlineChunkLimits: parseChunkLimits(
       DEFAULT_SETTINGS.onlineChunkLimits,
@@ -39888,6 +40171,7 @@ var AudioExportConfirmModal = class extends Modal {
 };
 var CosyVoiceReaderPlugin = class extends Plugin {
   async onload() {
+    const startupStarted = performance.now();
     this.systemSpeechUnloaded = false;
     this.systemVoicesReady = false;
     this.systemVoices = [];
@@ -39924,6 +40208,7 @@ var CosyVoiceReaderPlugin = class extends Plugin {
     this.logPath = null;
     this.statusBar = this.addStatusBarItem();
     await this.loadSettings();
+    startDeviceCacheMaintenance(this);
     registerReadingMenu(this, (snapshot) => this.runUserAction("Read context", () => this.startReading(
       snapshot.text,
       snapshot.file.basename || snapshot.file.name,
@@ -40241,6 +40526,11 @@ var CosyVoiceReaderPlugin = class extends Plugin {
       void this.stopReading({ silent: true });
     });
     this.updateStatus("CosyVoice idle");
+    this.startupTiming = { activationMs: performance.now() - startupStarted };
+    if (this.firstInstallation) this.app.workspace.onLayoutReady?.(() => {
+      if (!this.systemSpeechUnloaded) void this.loadSystemSpeechVoices().catch(() => {
+      });
+    });
   }
   async onunload() {
     this.bufferingHint?.stop();
@@ -40274,6 +40564,7 @@ var CosyVoiceReaderPlugin = class extends Plugin {
     const defaults = createDefaultSettings();
     const savedSettings = await this.loadData();
     const source = savedSettings && typeof savedSettings === "object" ? savedSettings : {};
+    this.firstInstallation = Object.keys(source).length === 0;
     const removedObsoleteSettings = Object.keys(source).some(
       (key) => !Object.prototype.hasOwnProperty.call(defaults, key)
     );
@@ -40283,6 +40574,8 @@ var CosyVoiceReaderPlugin = class extends Plugin {
     const hadAzureCredentialSource = Object.prototype.hasOwnProperty.call(source, "azureSpeechCredentialSource");
     const hadOpenRouterCredentialSource = Object.prototype.hasOwnProperty.call(source, "openRouterCredentialSource");
     this.settings = selectKnownSettings(defaults, source);
+    this.settings.persistentAudioCache = this.settings.persistentAudioCache === true;
+    if (this.firstInstallation) this.settings.speechEngine = "system-tts";
     this.settings.openRouterContext = this.settings.openRouterContext === true;
     this.settings.speechTermsEnabled = this.settings.speechTermsEnabled === true;
     this.settings.speechTerms = normalizedTerms(this.settings.speechTerms);
@@ -40335,10 +40628,13 @@ var CosyVoiceReaderPlugin = class extends Plugin {
     }
   }
   async saveSettings() {
+    if (this.deviceAudioCache && !this.settings.persistentAudioCache) await this.deviceAudioCache.clear().catch(() => {
+    });
     applyAppearance(this);
     this.settings.readingHighlight = normalizeReadingHighlight(this.settings.readingHighlight);
     this.settings.readingFollow = this.settings.readingFollow === true;
     this.settings = selectKnownSettings(createDefaultSettings(), this.settings);
+    this.settings.persistentAudioCache = this.settings.persistentAudioCache === true;
     this.settings.openRouterContext = this.settings.openRouterContext === true;
     this.settings.speechTermsEnabled = this.settings.speechTermsEnabled === true;
     this.settings.speechTerms = normalizedTerms(this.settings.speechTerms);
@@ -40436,7 +40732,9 @@ var CosyVoiceReaderPlugin = class extends Plugin {
     this.logPath = path.join(this.cacheDir, "diagnostic.log");
     await fs.promises.mkdir(this.cacheDir, { recursive: true });
     if (this.settings.cleanupCache) {
-      await this.cleanupStaleTemporaryData();
+      this.startupCleanup = this.cleanupStaleTemporaryData().catch(() => {
+        console.warn("[note-reader-cosyvoice] Temporary audio cleanup could not complete.");
+      });
     }
   }
   async cleanupOwnedFilesInDirectory(directoryPath) {
@@ -42981,6 +43279,47 @@ ${embed}
     }
   }
   async prepareChunk(chunkText, index, session, part = 0) {
+    await this.startupCleanup;
+    if (!this.settings.persistentAudioCache || session.kind === "audio-export" || !isOnlineSpeechEngine(session.speechEngine)) return this.synthesizeChunk(chunkText, index, session, part);
+    const assertPermission = () => {
+      if (session.speechEngine === "byok-tts") return assertByokAuthorized(getByokProfile(session.synthesisSettings || this.settings), this.settings);
+      const key2 = { "edge-tts": "edgeTtsConsent", "azure-speech": "azureSpeechConsent", "openrouter-tts": "openRouterConsent", "mimo-tts": "mimoConsent" }[session.speechEngine];
+      if (!key2 || this.settings[key2] !== true || (session.synthesisSettings || this.settings)[key2] !== true) throw new Error("Online speech permission is required.");
+    };
+    assertPermission();
+    const cache = deviceCacheFor(this), token = cache.token();
+    const speechText = session.audioSpeechParts?.[index]?.[part] ?? applyTerms(chunkText, session.synthesisSettings || this.settings);
+    const context = adjacentContext(getSpeechParts(session, index), part, session.chunks?.[index - 1] || "", session.chunks?.[index + 1] || "");
+    let key;
+    try {
+      key = await audioCacheKey(speechText, session.synthesisSettings || this.settings, context, chunkText);
+    } catch {
+    }
+    const cached = await cache.get(key);
+    assertPermission();
+    if (!this.isActive(session)) throw new Error("Reading stopped.");
+    if (cached) {
+      const outputPath = path.join(this.cacheDir, `${Date.now()}-${session.id}-${index}-${part}.${getAudioExportExtension(session.speechEngine)}`);
+      session.files.push(outputPath);
+      await fs.promises.writeFile(outputPath, Buffer.from(cached.arrayBuffer), { mode: 384 });
+      if (!this.isActive(session)) {
+        if (this.settings.cleanupCache) await this.removeTempFile(outputPath);
+        throw new Error("Reading stopped.");
+      }
+      this.playbackTimings?.count("deviceCacheHit");
+      return { outputPath, url: getAudioUrlForFile(this.app.vault.adapter, this.vaultBasePath, outputPath), sentenceCues: cached.sentenceCues || [] };
+    }
+    this.playbackTimings?.count("deviceCacheMiss");
+    const prepared = await this.synthesizeChunk(chunkText, index, session, part);
+    void fs.promises.stat(prepared.outputPath).then(async (stat) => {
+      if (stat.size > MAX_ITEM_BYTES || !this.isActive(session)) return;
+      const bytes = await fs.promises.readFile(prepared.outputPath);
+      await cache.put(key, { arrayBuffer: bufferToArrayBuffer(bytes), sentenceCues: prepared.sentenceCues }, token);
+    }).catch(() => {
+    });
+    return prepared;
+  }
+  async synthesizeChunk(chunkText, index, session, part = 0) {
     if (!this.isActive(session)) {
       throw new Error("Reading stopped.");
     }
@@ -45360,6 +45699,7 @@ var CosyVoiceReaderSettingTab = class extends PluginSettingTab {
     addPdfOutlineSettings(containerEl, this.plugin);
     containerEl = pages.storage;
     containerEl.createEl("h3", { text: translateInterface(settingsLanguage, "Storage and maintenance", "\u5B58\u50A8\u4E0E\u7EF4\u62A4") });
+    addDeviceCacheSettings(containerEl, this.plugin, Setting, Notice);
     new Setting(containerEl).setName(ui.rememberPositionName).setDesc(translateInterface(
       settingsLanguage,
       "Session-only history stays in memory and is cleared on reload or exit. Persistent history stores local file paths, short text anchors and positions, not audio. Regenerated audio resumes at the segment start. Web pages are excluded.",

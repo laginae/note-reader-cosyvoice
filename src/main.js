@@ -1,6 +1,7 @@
 const { ItemView, MarkdownView, Menu, Modal, Notice, Plugin, PluginSettingTab, SecretComponent, Setting: ObsidianSetting, loadPdfJs, setIcon } = require('obsidian');
 const { LANGUAGES, translate: translateInterface, localizedSetting } = require('./i18n');
 const { PlaybackTimings, PreparationPool } = require('./preparation-pool');
+const { audioCacheKey, deviceCacheFor, addDeviceCacheSettings, startDeviceCacheMaintenance, MAX_ITEM_BYTES } = require('./device-audio-cache');
 const { PAGES, createSettingsPages, createSettingsHeader } = require('./settings-pages');
 const { resetPageSettings } = require('./settings-reset');
 const { ELEVENLABS_MODELS, ELEVENLABS_VOICES, isElevenLabsModel } = require('./openrouter-elevenlabs');
@@ -1691,6 +1692,7 @@ function createDefaultSettings() {
     azureSpeechSecretName: DEFAULT_SETTINGS.azureSpeechSecretName,
     azureSpeechVoice: normalizeAzureSpeechVoice(DEFAULT_SETTINGS.azureSpeechVoice),
     cleanupCache: DEFAULT_SETTINGS.cleanupCache,
+    persistentAudioCache: false,
     chunkLimits: parseChunkLimits(DEFAULT_SETTINGS.chunkLimits).join(','),
     onlineChunkLimits: parseChunkLimits(
       DEFAULT_SETTINGS.onlineChunkLimits,
@@ -2452,6 +2454,7 @@ class AudioExportConfirmModal extends Modal {
 
 class CosyVoiceReaderPlugin extends Plugin {
   async onload() {
+    const startupStarted = performance.now();
     this.systemSpeechUnloaded = false;
     this.systemVoicesReady = false;
     this.systemVoices = [];
@@ -2489,6 +2492,7 @@ class CosyVoiceReaderPlugin extends Plugin {
     this.statusBar = this.addStatusBarItem();
 
     await this.loadSettings();
+    startDeviceCacheMaintenance(this);
     registerReadingMenu(this, snapshot => this.runUserAction('Read context', () => this.startReading(
       snapshot.text, snapshot.file.basename || snapshot.file.name, {
         file: snapshot.file, sourceKind: 'markdown', sourceText: snapshot.sourceText,
@@ -2812,6 +2816,10 @@ class CosyVoiceReaderPlugin extends Plugin {
     });
 
     this.updateStatus('CosyVoice idle');
+    this.startupTiming = { activationMs: performance.now() - startupStarted };
+    if (this.firstInstallation) this.app.workspace.onLayoutReady?.(() => {
+      if (!this.systemSpeechUnloaded) void this.loadSystemSpeechVoices().catch(() => {});
+    });
   }
 
   async onunload() {
@@ -2845,6 +2853,7 @@ class CosyVoiceReaderPlugin extends Plugin {
     const defaults = createDefaultSettings();
     const savedSettings = await this.loadData();
     const source = savedSettings && typeof savedSettings === 'object' ? savedSettings : {};
+    this.firstInstallation = Object.keys(source).length === 0;
     const removedObsoleteSettings = Object.keys(source).some(
       (key) => !Object.prototype.hasOwnProperty.call(defaults, key)
     );
@@ -2854,6 +2863,8 @@ class CosyVoiceReaderPlugin extends Plugin {
     const hadAzureCredentialSource = Object.prototype.hasOwnProperty.call(source, 'azureSpeechCredentialSource');
     const hadOpenRouterCredentialSource = Object.prototype.hasOwnProperty.call(source, 'openRouterCredentialSource');
     this.settings = selectKnownSettings(defaults, source);
+    this.settings.persistentAudioCache = this.settings.persistentAudioCache === true;
+    if (this.firstInstallation) this.settings.speechEngine = 'system-tts';
     this.settings.openRouterContext = this.settings.openRouterContext === true;
     this.settings.speechTermsEnabled = this.settings.speechTermsEnabled === true;
     this.settings.speechTerms = normalizedTerms(this.settings.speechTerms);
@@ -2913,10 +2924,12 @@ class CosyVoiceReaderPlugin extends Plugin {
   }
 
   async saveSettings() {
+    if (this.deviceAudioCache && !this.settings.persistentAudioCache) await this.deviceAudioCache.clear().catch(() => {});
     applyAppearance(this);
     this.settings.readingHighlight = normalizeReadingHighlight(this.settings.readingHighlight);
     this.settings.readingFollow = this.settings.readingFollow === true;
     this.settings = selectKnownSettings(createDefaultSettings(), this.settings);
+    this.settings.persistentAudioCache = this.settings.persistentAudioCache === true;
     this.settings.openRouterContext = this.settings.openRouterContext === true;
     this.settings.speechTermsEnabled = this.settings.speechTermsEnabled === true;
     this.settings.speechTerms = normalizedTerms(this.settings.speechTerms);
@@ -3023,7 +3036,10 @@ class CosyVoiceReaderPlugin extends Plugin {
     await fs.promises.mkdir(this.cacheDir, { recursive: true });
 
     if (this.settings.cleanupCache) {
-      await this.cleanupStaleTemporaryData();
+      // Playback awaits this job before creating files; registration need not wait for disk cleanup.
+      this.startupCleanup = this.cleanupStaleTemporaryData().catch(() => {
+        console.warn('[note-reader-cosyvoice] Temporary audio cleanup could not complete.');
+      });
     }
   }
 
@@ -5766,6 +5782,46 @@ class CosyVoiceReaderPlugin extends Plugin {
   }
 
   async prepareChunk(chunkText, index, session, part = 0) {
+    await this.startupCleanup;
+    if (!this.settings.persistentAudioCache || session.kind === 'audio-export'
+      || !isOnlineSpeechEngine(session.speechEngine)) return this.synthesizeChunk(chunkText, index, session, part);
+    const assertPermission = () => {
+      if (session.speechEngine === 'byok-tts') return assertByokAuthorized(getByokProfile(session.synthesisSettings || this.settings), this.settings);
+      const key = { 'edge-tts':'edgeTtsConsent', 'azure-speech':'azureSpeechConsent', 'openrouter-tts':'openRouterConsent', 'mimo-tts':'mimoConsent' }[session.speechEngine];
+      if (!key || this.settings[key] !== true || (session.synthesisSettings || this.settings)[key] !== true) throw new Error('Online speech permission is required.');
+    };
+    assertPermission();
+    const cache = deviceCacheFor(this), token = cache.token();
+    const speechText = session.audioSpeechParts?.[index]?.[part] ?? applyTerms(chunkText, session.synthesisSettings || this.settings);
+    const context = adjacentContext(getSpeechParts(session, index), part, session.chunks?.[index - 1] || '', session.chunks?.[index + 1] || '');
+    let key;
+    try { key = await audioCacheKey(speechText, session.synthesisSettings || this.settings, context, chunkText); } catch {}
+    const cached = await cache.get(key);
+    assertPermission();
+    if (!this.isActive(session)) throw new Error('Reading stopped.');
+    if (cached) {
+      const outputPath = path.join(this.cacheDir, `${Date.now()}-${session.id}-${index}-${part}.${getAudioExportExtension(session.speechEngine)}`);
+      session.files.push(outputPath);
+      await fs.promises.writeFile(outputPath, Buffer.from(cached.arrayBuffer), { mode: 0o600 });
+      if (!this.isActive(session)) {
+        if (this.settings.cleanupCache) await this.removeTempFile(outputPath);
+        throw new Error('Reading stopped.');
+      }
+      this.playbackTimings?.count('deviceCacheHit');
+      return { outputPath, url: getAudioUrlForFile(this.app.vault.adapter, this.vaultBasePath, outputPath), sentenceCues: cached.sentenceCues || [] };
+    }
+    this.playbackTimings?.count('deviceCacheMiss');
+    const prepared = await this.synthesizeChunk(chunkText, index, session, part);
+    // Cache persistence is not on the first-audio critical path.
+    void fs.promises.stat(prepared.outputPath).then(async stat => {
+      if (stat.size > MAX_ITEM_BYTES || !this.isActive(session)) return;
+      const bytes = await fs.promises.readFile(prepared.outputPath);
+      await cache.put(key, { arrayBuffer: bufferToArrayBuffer(bytes), sentenceCues: prepared.sentenceCues }, token);
+    }).catch(() => {});
+    return prepared;
+  }
+
+  async synthesizeChunk(chunkText, index, session, part = 0) {
     if (!this.isActive(session)) {
       throw new Error('Reading stopped.');
     }
@@ -8526,6 +8582,7 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
 
     containerEl = pages.storage;
     containerEl.createEl('h3', { text: translateInterface(settingsLanguage, 'Storage and maintenance', '存储与维护') });
+    addDeviceCacheSettings(containerEl, this.plugin, Setting, Notice);
     new Setting(containerEl)
       .setName(ui.rememberPositionName)
       .setDesc(translateInterface(settingsLanguage,

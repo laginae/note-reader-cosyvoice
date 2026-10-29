@@ -1,0 +1,42 @@
+{
+  "date": "2026-10-29",
+  "scope": "Development acceptance, not a provider or platform-wide performance guarantee",
+  "startup": {
+    "method": "Nine fresh Node processes per build, warm OS disk cache, median; mocked Obsidian imports. Excludes Obsidian activation, document parsing and first speech.",
+    "script": "scripts/benchmark-startup.cjs",
+    "desktopBefore": {"bytes": 2823594, "compileMs": 19.75, "initializeMs": 34.27},
+    "desktopAfter": {"bytes": 2839577, "compileMs": 19.47, "initializeMs": 21.30},
+    "mobileAfter": {"bytes": 660246, "compileMs": 6.61, "initializeMs": 6.43},
+    "desktopLiveActivation": {"version":"1.3.0", "activationMs":218.2, "samples":1, "scope":"Observed onload during a real plugin reload; excludes module evaluation and complete app startup; no before/after activation baseline"},
+    "change": "Load PDF bookmark-writing dependency only when writing bookmarks; temporary-file cleanup no longer blocks UI registration, but playback waits for cleanup before creating files.",
+    "decision": "Optimize the existing plugin before creating a separate lite edition. No evidence here that splitting products would materially improve perceived startup. Mobile is already substantially smaller."
+  },
+  "liveProvider": {
+    "model": "microsoft/mai-voice-2.1-flash",
+    "voice": "en-GB-Harry:MAI-Voice-2.1-Flash",
+    "provider": {"zdr": true, "data_collection": "deny"},
+    "textSource": "Two invented English public samples, no vault content",
+    "requests": 6,
+    "characters": 1056,
+    "http200": 6,
+    "requestMs": [4126,6241,4569,6556,5683,5403],
+    "peakConcurrency": 2,
+    "decodedAudioSeconds": [11.544,13.296],
+    "endToEndPlaybackVerified": false,
+    "limitation": "Electron aborted muted background media to save power, also reproduced using a generated silent WAV. Network and decoding succeeded; no measured speaker startup, continuous gap or real jump-speed claim. No more requests were made after the six-request cap."
+  },
+  "deviceCache": {
+    "default": "off", "ttlHours": 24, "maxMiB": 64, "maxEntries": 128, "maxItemMiB": 8,
+    "runtimeVerified": ["write and read", "database reopen", "expiry", "prune", "clear blocks late writes"],
+    "script": "scripts/check-device-cache-runtime.cjs",
+    "automaticChecks": ["disabled means no reuse", "configuration key changes", "no raw transcript or credential records", "LRU bounds", "failure fallback", "consent cannot be bypassed", "cross-session hit avoids synthesis"]
+  },
+  "regressionGates": {
+    "pdf": ["same synthetic corpus on desktop and mobile", "whole/selection parity in smart/all/skip modes", "column order", "hyphen joining", "font evidence", "Greek letters", "complex formula omission", "existing cross-page, footnote and highlight/follow suites"],
+    "playback": ["existing pause/resume and stale-event tests", "rapid navigation and two-request budget", "429 cooldown tests", "on-demand/balanced/continuous virtual-clock simulations at 1x, 1.75x and 2x"],
+    "mobile": ["background mode is opt-in", "system speech remains paused while hidden", "generic lock-screen metadata", "unsupported Media Session handlers degrade safely"]
+  },
+  "remainingAcceptance": ["Physical iPhone/iPad lock-screen and background continuation", "Real speaker startup/gaps and jump timings in a foreground interactive session", "Do not claim recognition accuracy for arbitrary PDFs from synthetic tests"],
+  "tests": {"desktopNodeTests":510,"desktopAdditionalSuites":["core","main exports","Obsidian loader"],"mobileNodeTests":189,"mobileBoundaryFiles":32},
+  "privacy": "No personal documents or credentials are included in this report or the fixtures. No publishing was performed during this acceptance run."
+}

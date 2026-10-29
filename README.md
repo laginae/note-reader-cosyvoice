@@ -26,7 +26,7 @@ The GIF is silent. The video uses public sample text and previously generated au
 
 Click **More controls** again to fold the extra controls away; click the pane-header audio icon again to hide the playback bar.
 
-No extra toolbar plugin is needed for these steps. The initial local CosyVoice engine requires setup; choose system speech explicitly for this first try. [Other engines and setup options](#choose-a-voice-service) · [Manual installation](INSTALL.md)
+No extra toolbar plugin is needed. New installations start with system speech and check available voices after the workspace is ready; existing users keep their engine and permissions. Test the fixed sample before reading a document. Local CosyVoice still requires its own setup. [Other engines and setup options](#choose-a-voice-service) · [Manual installation](INSTALL.md)
 
 ## Make it fit your reading
 
@@ -330,7 +330,7 @@ Interface language, voice and formula language are independent. Formula conversi
 
 **BYOK:** text and the selected credential are sent directly to the configured HTTPS endpoint, which may forward text to upstream services. Review the provider, intermediary and account policies yourself. This plugin cannot verify or enforce no-training or zero data retention for BYOK. Consent is configuration-specific and off by default; HTTP redirects are not followed. API keys are read from SecretStorage or a file outside the vault, not stored in profile data. Export still requires its separate confirmation; failed BYOK synthesis requests are not automatically retried.
 
-By default, the plugin uses local TTS. In `Local CosyVoice` mode, the plugin itself does not send note or extracted PDF text to Microsoft, OpenAI, or another remote TTS service. The configured wrapper remains part of your trust boundary and may make its own network requests.
+New installations start with system speech; existing engine choices are preserved. In `Local CosyVoice` mode, the plugin itself does not send note or extracted PDF text to Microsoft, OpenAI, or another remote TTS service. The configured wrapper remains part of your trust boundary and may make its own network requests.
 
 PDF extraction uses Obsidian's bundled PDF.js and `Vault.readBinary`; the PDF file itself is not uploaded by this feature. To support PDF selection commands, the plugin temporarily keeps the selection's page number, relative in-page coordinates, and up to 2,000 characters of locator text in memory only; none of this selection locator is saved to settings or diagnostic logs. When an online speech engine is selected and its consent is enabled, extracted PDF text chunks are transmitted under the same rules as note text. Scanned or image-only PDFs need OCR before the plugin can read them.
 
@@ -538,7 +538,9 @@ Balanced normally synthesizes each segment in one request, not one request per s
 
 In Balanced mode, a quiet inline suggestion can appear after a five-second natural gap, or two three-second gaps in one reading session. It excludes startup, navigation, pauses, PDF extraction time and speech request failures. It appears at most once per app instance, never changes modes automatically, and offers **Buffer settings**, **Don't show again**, and a close button. Re-enable it under **Playback and interface > Advanced options**. The suggestion makes no network requests and stores no note text.
 
-Prepared audio and in-flight requests are reused within the reading session. The scheduler retains up to 256 ready part references; temporary files keep the existing cleanup policy. No cross-session persistent cache is added, and changing synthesis settings continues to follow the existing session snapshot behavior. Exports are unchanged.
+Prepared audio and in-flight requests are reused within the reading session. The scheduler retains up to 256 ready part references; temporary files keep the existing cleanup policy. Changing synthesis settings continues to follow the existing session snapshot behavior. Exports are unchanged.
+
+**Optional device audio reuse:** in Export and storage, **Reuse audio on this device** is off by default. It keeps online speech in device-local IndexedDB, outside the vault, for up to 24 hours / 64 MiB / 128 parts (8 MiB per part). Expired audio is removed on use, on enabled startup and every ten minutes while enabled. Matching text, model, voice, pronunciation and enabled context can reuse audio without another synthesis request. Keys are hashes; note text, titles, paths and credentials are not stored as records. The audio itself can contain sensitive content and is not encrypted by this plugin; OS backups may include it. Disabling the option or **Clear reusable device audio** clears this separate cache without deleting exports or stopping current playback. System/local-model speech and exports do not use it. Storage failure falls back to ordinary synthesis, which may incur fees. Cache reuse removes synthesis waiting on a hit, not audio loading or document parsing time.
 
 Run **Copy playback waiting-time summary** for bounded numeric, memory-only diagnostics. Nothing is uploaded or automatically saved; text, filenames and keys are excluded. `sessionToPlaying` starts at the playback loop, after text preparation; progressive PDF source waits are included and also measured separately. Queue, synthesis preparation, foreground wait, source wait, audio-load and part-gap timings help identify the bottleneck. Playback events approximate the first sound; they do not measure physical speaker output. First synthesis still depends on the provider and network.
 

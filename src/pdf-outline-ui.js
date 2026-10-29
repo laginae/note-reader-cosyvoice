@@ -1,7 +1,6 @@
 'use strict';
 const { Modal, Notice, loadPdfJs, setIcon, Setting } = require('obsidian');
 const { scanPdfOutline, inferOutline, sectionRange } = require('./pdf-outline');
-const { writePdfBookmarks } = require('./pdf-bookmarks');
 const { PdfOutlineCache } = require('./pdf-outline-cache');
 const { createHash } = require('crypto');
 const digest = bytes => createHash('sha256').update(new Uint8Array(bytes)).digest('hex');
@@ -175,6 +174,7 @@ class PdfOutlineModal extends Modal {
     const overwrite = this.overwrite ?? this.plugin.settings.pdfBookmarksOverwrite === true;
     const rows = this.entries.filter(e => e.enabled).map(e => ({ ...e }));
     if (!rows.length) throw new Error(this.t('请至少保留一个书签。', 'Include at least one bookmark.'));
+    const { writePdfBookmarks } = require('./pdf-bookmarks');
     const bytes = await writePdfBookmarks(this.bytes, rows, this.mode, this.model.bookmarks);
     if (this.closed) return;
     const target = overwrite ? this.path : await unusedPath(this.app.vault, this.file, '.bookmarks');

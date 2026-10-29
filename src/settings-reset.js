@@ -9,7 +9,7 @@ const PAGE_KEYS = {
     'webReadingHighlight', 'webReadingFollow', 'pdfReadingFollow', 'copilotChatEnabled', 'copilotChatScope', 'copilotIncludeQuestions'],
   academic: ['stripMarkdown', 'academicMathMode', 'academicMathStyle', 'academicTableMode', 'academicSkipNotice',
     'mathReadingLanguage', 'pdfBookmarksOverwrite', 'pdfFootnoteMode', 'pdfSkipHeaders', 'pdfIncludeGlossary', 'speechTermsEnabled', 'speechTerms'],
-  storage: ['audioExportLocation', 'audioExportFolder', 'cleanupCache', 'readingHistoryMode', 'rememberReadingPosition'],
+  storage: ['audioExportLocation', 'audioExportFolder', 'cleanupCache', 'persistentAudioCache', 'readingHistoryMode', 'rememberReadingPosition'],
   privacy: ['diagnosticLogging'],
 };
 

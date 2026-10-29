@@ -215,7 +215,7 @@ const testVaultPath = path.resolve('test-vault');
 const testAudioPath = path.join(testVaultPath, '.obsidian', 'plugins', 'note-reader-cosyvoice', 'cache', 'a.wav');
 assert.strictEqual(manifest.id, 'note-reader-cosyvoice');
 assert.strictEqual(manifest.name, 'Cozy Read Aloud');
-assert.strictEqual(manifest.version, '1.2.9');
+assert.strictEqual(manifest.version, '1.3.0');
 assert.strictEqual(
   moduleObject.exports.__test.sanitizeTextForSpeech('第一段的结尾。\n\n## 第二节标题\n\n下一节的正文。'),
   '第一段的结尾。\n第二节标题\n下一节的正文。'
@@ -341,6 +341,7 @@ assert.deepStrictEqual(moduleObject.exports.__test.createDefaultSettings(), {
   azureSpeechSecretName: '',
   azureSpeechVoice: 'en-GB-RyanNeural',
   cleanupCache: true,
+  persistentAudioCache: false,
   chunkLimits: '40,80,120,160,280,320',
   onlineChunkLimits: '200,400,800',
   onlinePrefetchChunks: 1,
@@ -1385,6 +1386,7 @@ assert.deepStrictEqual(chunkNavigationCalls, [-1, 1]);
   };
 
   await startupPlugin.onload();
+  await startupPlugin.startupCleanup;
 
   assert.strictEqual(startupDomEvents, 0);
   assert.strictEqual(startupPlugin.cacheDir, startupTempCacheDir);
@@ -2165,6 +2167,18 @@ assert.deepStrictEqual(chunkNavigationCalls, [-1, 1]);
   await credentialMigrationPlugin.loadSettings();
   assert.strictEqual(credentialMigrationPlugin.settings.azureSpeechCredentialSource, 'key-file');
   assert.strictEqual(credentialMigrationPlugin.settings.openRouterCredentialSource, 'key-file');
+  const freshPlugin = Object.create(PluginClass.prototype);
+  freshPlugin.loadData = async () => null;
+  freshPlugin.saveData = async () => {};
+  await freshPlugin.loadSettings();
+  assert.equal(freshPlugin.settings.speechEngine, 'system-tts');
+  freshPlugin.loadData = async () => ({ speechEngine: 'local-cosyvoice' });
+  await freshPlugin.loadSettings();
+  assert.equal(freshPlugin.settings.speechEngine, 'local-cosyvoice');
+  freshPlugin.loadData = async () => ({ speechEngine: 'mimo-tts', mimoConsent: true });
+  await freshPlugin.loadSettings();
+  assert.equal(freshPlugin.settings.speechEngine, 'mimo-tts');
+  assert.equal(freshPlugin.settings.mimoConsent, true);
   assert.strictEqual(migratedSettings.azureSpeechCredentialSource, 'key-file');
   assert.strictEqual(migratedSettings.openRouterCredentialSource, 'key-file');
   assert.strictEqual(migratedSettings.azureSpeechSecretName, '');
