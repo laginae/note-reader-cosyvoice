@@ -9,6 +9,7 @@ const { getOpenRouterPricing } = require('./openrouter-pricing');
 const { disclosure, renderEngineChoice, renderPreview } = require('./engine-setup');
 const { registerReadingMenu, syncEditingToolbar, addReadingMenuSettings } = require('./reading-menu');
 const { registerPdfReadingMenu, pdfSentenceStart } = require('./pdf-reading-menu');
+const { OCR_DEFAULTS, registerOcr, addOcrSettings, openOcr } = require('./ocr-entry');
 const { normalizedTerms, applyTerms, fitSpeechParts, contextOptions, adjacentContext } = require('./speech-options');
 const { addSpeechContextSetting, addSpeechTermsSettings } = require('./speech-options-settings');
 const { SettingsConfirmModal } = require('./settings-confirm');
@@ -1668,6 +1669,7 @@ function createDefaultSettings() {
     readingFloatingAction: 'selection',
     ...ACADEMIC_DEFAULTS,
     ...COPILOT_DEFAULTS,
+    ...OCR_DEFAULTS,
     ...MIMO_DEFAULTS,
     ...BYOK_DEFAULTS,
     byokProfiles: [],
@@ -2493,6 +2495,7 @@ class CosyVoiceReaderPlugin extends Plugin {
     this.statusBar = this.addStatusBarItem();
 
     await this.loadSettings();
+    registerOcr(this);
     startDeviceCacheMaintenance(this);
     registerReadingMenu(this, snapshot => this.runUserAction('Read context', () => this.startReading(
       snapshot.text, snapshot.file.basename || snapshot.file.name, {
@@ -2826,6 +2829,7 @@ class CosyVoiceReaderPlugin extends Plugin {
   }
 
   async onunload() {
+    this.ocrModal?.close();
     this.bufferingHint?.stop();
     this.systemSpeechUnloaded = true;
     this.htmlHighlights?.destroy();
@@ -2866,6 +2870,9 @@ class CosyVoiceReaderPlugin extends Plugin {
     const hadAzureCredentialSource = Object.prototype.hasOwnProperty.call(source, 'azureSpeechCredentialSource');
     const hadOpenRouterCredentialSource = Object.prototype.hasOwnProperty.call(source, 'openRouterCredentialSource');
     this.settings = selectKnownSettings(defaults, source);
+    this.settings.ocrEnabled = this.settings.ocrEnabled === true;
+    this.settings.ocrModel = this.settings.ocrModel === 'tiny' ? 'tiny' : 'small';
+    this.settings.ocrExecutable = typeof this.settings.ocrExecutable === 'string' ? this.settings.ocrExecutable.trim().slice(0, 4096) : '';
     this.settings.persistentAudioCache = this.settings.persistentAudioCache === true;
     if (this.firstInstallation) this.settings.speechEngine = 'system-tts';
     this.settings.openRouterContext = this.settings.openRouterContext === true;
@@ -4574,6 +4581,8 @@ class CosyVoiceReaderPlugin extends Plugin {
   }
 
   async readCurrentNote() {
+    const imageFile = this.app.workspace.getActiveFile?.();
+    if (/^(png|jpe?g|webp)$/i.test(imageFile?.extension || '')) { openOcr(this, imageFile); return; }
     const webView = this.getCurrentWebPageView();
     if (webView) { await this.readCurrentWebPage(webView); return; }
     const activeFile = this.getCurrentReadableFile();
@@ -8582,6 +8591,7 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
     addFootnoteSettings(containerEl, this.plugin, Setting);
     addAncillarySettings(containerEl, this.plugin, Setting);
     addPdfOutlineSettings(containerEl, this.plugin);
+    addOcrSettings(containerEl, this.plugin, Setting);
 
     containerEl = pages.storage;
     containerEl.createEl('h3', { text: translateInterface(settingsLanguage, 'Storage and maintenance', '存储与维护') });

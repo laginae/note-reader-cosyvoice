@@ -8,3 +8,5 @@ node_modules/
 Thumbs.db
 *.local
 *.log
+ocr-helper/bin/
+ocr-helper/obj/

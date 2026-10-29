@@ -26,7 +26,7 @@ test('quick start defaults to standard, saves all three modes and resets rapid m
 test('page reset has explicit ownership including hidden engines and preserves sensitive configuration', () => {
   const { dom, plugin } = settingsFixture();
   const defaults = plugin.settings;
-  const protectedKeys = ['settingsLanguage','readingPositions','scriptPath','edgeTtsExecutable','copilotChatFolder',
+  const protectedKeys = ['settingsLanguage','readingPositions','scriptPath','edgeTtsExecutable','copilotChatFolder','ocrExecutable',
     'azureSpeechCloud','azureSpeechRegion','azureSpeechCredentialSource','azureSpeechKeyPath','azureSpeechSecretName',
     'openRouterCredentialSource','openRouterKeyPath','openRouterSecretName','mimoCredentialSource','mimoKeyPath','mimoSecretName',
     'byokProfiles','byokActiveProfileId'];

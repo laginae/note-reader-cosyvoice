@@ -8,7 +8,7 @@ const PAGE_KEYS = {
     'continuousListening', 'bufferingHints', 'smartQuickStart', 'rapidQuickStart', 'highlightColor', 'highlightStrength', 'noteHighlightBorder', 'readerOpenMode', 'readingHighlight', 'readingFollow',
     'webReadingHighlight', 'webReadingFollow', 'pdfReadingFollow', 'copilotChatEnabled', 'copilotChatScope', 'copilotIncludeQuestions'],
   academic: ['stripMarkdown', 'academicMathMode', 'academicMathStyle', 'academicTableMode', 'academicSkipNotice',
-    'mathReadingLanguage', 'pdfBookmarksOverwrite', 'pdfFootnoteMode', 'pdfSkipHeaders', 'pdfIncludeGlossary', 'speechTermsEnabled', 'speechTerms'],
+    'mathReadingLanguage', 'pdfBookmarksOverwrite', 'pdfFootnoteMode', 'pdfSkipHeaders', 'pdfIncludeGlossary', 'speechTermsEnabled', 'speechTerms', 'ocrEnabled', 'ocrModel'],
   storage: ['audioExportLocation', 'audioExportFolder', 'cleanupCache', 'persistentAudioCache', 'readingHistoryMode', 'rememberReadingPosition'],
   privacy: ['diagnosticLogging'],
 };

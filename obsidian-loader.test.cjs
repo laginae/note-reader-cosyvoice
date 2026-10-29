@@ -297,6 +297,9 @@ assert.deepStrictEqual(moduleObject.exports.__test.createReaderState(), {
   totalChunks: 0,
 });
 assert.deepStrictEqual(moduleObject.exports.__test.createDefaultSettings(), {
+  ocrEnabled: false,
+  ocrExecutable: '',
+  ocrModel: 'small',
   readingContextMenu: true,
   readingFloatingToolbar: false,
   readingFloatingAction: 'selection',

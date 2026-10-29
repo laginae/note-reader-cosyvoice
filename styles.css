@@ -876,3 +876,41 @@
   .note-reader-settings-panel .setting-item-control { flex-wrap: wrap; min-width: 0; max-width: 100%; }
   .note-reader-settings-panel select, .note-reader-settings-panel input { max-width: 100%; }
 }
+.note-reader-ocr-modal {
+  width: min(760px, 94vw);
+}
+.note-reader-ocr-modal .modal-content {
+  overflow-y: auto;
+  max-height: 80vh;
+}
+.note-reader-ocr-fields {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.note-reader-ocr-fields label {
+  display: grid;
+  gap: 6px;
+}
+.note-reader-ocr-fields input, .note-reader-ocr-fields select {
+  width: 100%;
+  min-width: 0;
+}
+.note-reader-ocr-preference, .note-reader-ocr-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 12px 0;
+}
+.note-reader-ocr-preview {
+  width: 100%;
+  min-height: 220px;
+  height: 32vh;
+  resize: vertical;
+  display: block;
+  margin: 12px 0;
+  line-height: 1.6;
+}
+.note-reader-ocr-filename { overflow-wrap: anywhere; }

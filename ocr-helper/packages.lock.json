@@ -1,0 +1,50 @@
+{
+  "version": 1,
+  "dependencies": {
+    "net10.0": {
+      "Sdcb.SimdPaddleOCR": {
+        "type": "Direct",
+        "requested": "[2.0.0, )",
+        "resolved": "2.0.0",
+        "contentHash": "ewb0TEBisxHWF0Khkgllair9wZ+Nij25mXvtLtg0wPLCZI0/PKLNJxwuuqzX7Men98rr5d3qeLZ9m5sDdLpRwA==",
+        "dependencies": {
+          "Sdcb.SimdPaddleOCR.ModelProvider": "1.0.0"
+        }
+      },
+      "Sdcb.SimdPaddleOCR.Models.ChineseV6Small": {
+        "type": "Direct",
+        "requested": "[1.0.0, )",
+        "resolved": "1.0.0",
+        "contentHash": "Rvh/agKF/+NdblT1ku0B0dGaCWNnhdgdftTuiG4cfMYYLqJW4ELFCmK6kwumJTIhrt0oU+qBseD/vrZTzNf1ng==",
+        "dependencies": {
+          "Sdcb.SimdPaddleOCR.ModelProvider": "1.0.0",
+          "Sdcb.SimdPaddleOCR.Models.TextLineOrientation": "1.0.0"
+        }
+      },
+      "Sdcb.SimdPaddleOCR.Models.ChineseV6Tiny": {
+        "type": "Direct",
+        "requested": "[1.0.0, )",
+        "resolved": "1.0.0",
+        "contentHash": "P+u2b7ykP7ZhJoo7z3QO2DCcDCnhyxVtzTX1PEQcwLSNYWnqR1jOjU9W4qzbrOHSwMfjAg3x5ilwrL+Dfi3cJg==",
+        "dependencies": {
+          "Sdcb.SimdPaddleOCR.ModelProvider": "1.0.0",
+          "Sdcb.SimdPaddleOCR.Models.TextLineOrientation": "1.0.0"
+        }
+      },
+      "Sdcb.SimdPaddleOCR.ModelProvider": {
+        "type": "Transitive",
+        "resolved": "1.0.0",
+        "contentHash": "pVd52DFQ0J7Z6ThtCxrj3r0usMSmEUicKsTLsfhd658/eY8LhjFm9byagle9DlZeAghHI5KSaJZbS1p4To4+Zg=="
+      },
+      "Sdcb.SimdPaddleOCR.Models.TextLineOrientation": {
+        "type": "Transitive",
+        "resolved": "1.0.0",
+        "contentHash": "BYdvoOKPj4dmNrIdut8UZB76HyWWBIVYJoNmOoqmDA0dnUnw6niReXRox1WmXcxTZ/6jyijmOTJXmap1iWUTiw==",
+        "dependencies": {
+          "Sdcb.SimdPaddleOCR.ModelProvider": "1.0.0"
+        }
+      }
+    },
+    "net10.0/win-x64": {}
+  }
+}

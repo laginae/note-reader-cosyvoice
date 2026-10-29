@@ -1048,7 +1048,9 @@ var require_settings_reset = __commonJS({
         "pdfSkipHeaders",
         "pdfIncludeGlossary",
         "speechTermsEnabled",
-        "speechTerms"
+        "speechTerms",
+        "ocrEnabled",
+        "ocrModel"
       ],
       storage: ["audioExportLocation", "audioExportFolder", "cleanupCache", "persistentAudioCache", "readingHistoryMode", "rememberReadingPosition"],
       privacy: ["diagnosticLogging"]
@@ -1602,170 +1604,177 @@ var require_pdf_reading_menu = __commonJS({
   }
 });
 
-// src/speech-options.js
-var require_speech_options = __commonJS({
-  "src/speech-options.js"(exports2, module2) {
+// src/ocr-contract.js
+var require_ocr_contract = __commonJS({
+  "src/ocr-contract.js"(exports2, module2) {
     "use strict";
-    function parseTerms(value) {
-      const text = typeof value === "string" ? value : "";
-      if (text.length > 2e4) return { rules: [], error: "Maximum 20,000 characters. / \u6700\u591A 20,000 \u5B57\u7B26\u3002" };
-      const rules = [], seen = /* @__PURE__ */ new Set();
-      for (const [index, line] of text.split(/\r?\n/).entries()) {
-        if (!line.trim()) continue;
-        const separator = line.indexOf("=");
-        const from = line.slice(0, separator).trim(), to = line.slice(separator + 1).trim();
-        if (separator < 1 || !from || !to || from.length > 80 || to.length > 120 || /[\x00-\x1f]/.test(from + to) || seen.has(from) || rules.length >= 100) {
-          return { rules: [], error: `Invalid rule on line ${index + 1}. / \u7B2C ${index + 1} \u884C\u89C4\u5219\u65E0\u6548\u3002` };
-        }
-        seen.add(from);
-        rules.push({ from, to });
-      }
-      rules.sort((a, b) => b.from.length - a.from.length);
-      return { rules, error: "" };
+    var OCR_DEFAULTS2 = { ocrEnabled: false, ocrExecutable: "", ocrModel: "small" };
+    var MAX_PIXELS = 4e6;
+    var MAX_TEXT = 2e5;
+    var MAX_PAGES = 10;
+    function isOcrFile(file) {
+      return /^(pdf|png|jpg|jpeg|webp)$/i.test(file?.extension || "");
     }
-    function normalizedTerms2(value) {
-      return parseTerms(value).error ? "" : typeof value === "string" ? value : "";
+    function pageRange(start, end, total) {
+      const a = Number(start), b = Number(end);
+      if (![a, b, total].every(Number.isInteger) || a < 1 || b < a || b > total || b - a >= MAX_PAGES) throw new Error("OCR_RANGE");
+      return Array.from({ length: b - a + 1 }, (_, i) => a + i);
     }
-    function termTokens(text, settings = {}) {
-      const rules = settings.speechTermsEnabled === true ? parseTerms(settings.speechTerms).rules : [];
-      const source = String(text || ""), tokens = [];
-      const word = (value) => /[\p{L}\p{N}_]/u.test(value || "");
-      for (let i = 0; i < source.length; ) {
-        const before = Array.from(source.slice(Math.max(0, i - 2), i)).at(-1);
-        const rule = rules.find(({ from }) => source.startsWith(from, i) && !(/^[A-Za-z0-9_]/.test(from) && word(before)) && !(/[A-Za-z0-9_]$/.test(from) && word(String.fromCodePoint(source.codePointAt(i + from.length) || 0))));
-        const original = rule ? rule.from : String.fromCodePoint(source.codePointAt(i));
-        tokens.push({ source: original, text: rule ? rule.to : original });
-        i += original.length;
-      }
-      return tokens;
+    function rasterSize(width, height) {
+      if (![width, height].every((n) => Number.isFinite(n) && n > 0)) throw new Error("OCR_IMAGE");
+      const scale = Math.min(1, 2400 / Math.max(width, height), Math.sqrt(MAX_PIXELS / (width * height)));
+      return { width: Math.max(1, Math.floor(width * scale)), height: Math.max(1, Math.floor(height * scale)) };
     }
-    function applyTerms2(text, settings) {
-      return termTokens(text, settings).map((token) => token.text).join("");
-    }
-    function fitSpeechParts2(text, settings, limit = 800) {
-      const maximum = Math.max(120, Number(limit) || 800), parts = [];
-      let source = "", speech = "";
-      for (const token of termTokens(text, settings)) {
-        if (source && speech.length + token.text.length > maximum) {
-          parts.push({ source, text: speech });
-          source = "";
-          speech = "";
-        }
-        source += token.source;
-        speech += token.text;
-      }
-      if (source) parts.push({ source, text: speech });
-      return parts;
-    }
-    var CONTEXT_MODELS = /* @__PURE__ */ new Set([
-      "elevenlabs/eleven-multilingual-v2",
-      "elevenlabs/eleven-flash-v2.5",
-      "elevenlabs/eleven-v4",
-      "elevenlabs/eleven-v4-turbo"
-    ]);
-    function supportsSpeechContext(model) {
-      return CONTEXT_MODELS.has(model);
-    }
-    function contextOptions2(settings = {}, context = {}) {
-      if (settings.openRouterContext !== true || !supportsSpeechContext(settings.openRouterModel)) return {};
-      const adjacent = (value, previous2) => {
-        const sentences = String(value || "").trim().match(/[^。！？.!?\n]+[。！？.!?]?/gu) || [];
-        const sentence = previous2 ? sentences.at(-1) : sentences[0];
-        const chars = Array.from(applyTerms2(sentence || "", settings).trim());
-        return (previous2 ? chars.slice(-160) : chars.slice(0, 160)).join("");
-      };
-      const previous = adjacent(context.previous, true), next = adjacent(context.next, false);
-      const options = { ...previous ? { previous_text: previous } : {}, ...next ? { next_text: next } : {} };
-      return Object.keys(options).length ? { options: { elevenlabs: options } } : {};
-    }
-    function adjacentContext2(parts, index, previous = "", next = "") {
-      return {
-        previous: parts.slice(0, index).join("") || previous,
-        next: parts.slice(index + 1).join("") || next
-      };
-    }
-    module2.exports = { parseTerms, normalizedTerms: normalizedTerms2, applyTerms: applyTerms2, fitSpeechParts: fitSpeechParts2, supportsSpeechContext, contextOptions: contextOptions2, adjacentContext: adjacentContext2 };
-  }
-});
-
-// src/speech-options-settings.js
-var require_speech_options_settings = __commonJS({
-  "src/speech-options-settings.js"(exports2, module2) {
-    "use strict";
-    var { Setting } = require("obsidian");
-    var { parseTerms, supportsSpeechContext } = require_speech_options();
-    var { disclosure: disclosure2 } = require_engine_setup();
-    function addSpeechContextSetting2(container, plugin) {
-      if (!supportsSpeechContext(plugin.settings.openRouterModel)) return;
-      const zh = plugin.settings.settingsLanguage === "chinese";
-      const details = container.createEl("details", { cls: "reader-speech-options" });
-      details.createEl("summary", { text: zh ? "ElevenLabs \u9AD8\u7EA7\u9009\u9879" : "ElevenLabs advanced options" });
-      new Setting(details).setName(zh ? "\u6539\u5584\u5206\u6BB5\u8854\u63A5\uFF08\u5B9E\u9A8C\u6027\uFF09" : "Improve segment continuity (experimental)").setDesc(zh ? "\u9ED8\u8BA4\u5173\u95ED\u3002\u989D\u5916\u53D1\u9001\u5F53\u524D\u6717\u8BFB\u8303\u56F4\u5185\u7684\u76F8\u90BB\u53E5\u5B50\uFF0C\u6BCF\u4FA7\u6700\u591A 160 \u5B57\u7B26\uFF1B\u7EE7\u7EED\u5F3A\u5236 ZDR\u3002\u4E0D\u4F7F\u7528\u5386\u53F2\u8BF7\u6C42\u6216\u4E91\u7AEF\u8BCD\u5178\u3002\u4E0B\u6B21\u6717\u8BFB\u751F\u6548\uFF0C\u5B9E\u9645\u6548\u679C\u5C1A\u5F85\u8BD5\u542C\u9A8C\u8BC1\u3002" : "Off by default. Sends adjacent sentences within the reading range, up to 160 characters per side; ZDR remains required. No request history or cloud dictionary. Applies next session; listening validation is pending.").addToggle((toggle) => toggle.setValue(plugin.settings.openRouterContext === true).onChange(async (value) => {
-        plugin.settings.openRouterContext = value;
-        await plugin.saveSettings();
-      }));
-    }
-    function addSpeechTermsSettings2(container, plugin) {
-      const zh = plugin.settings.settingsLanguage === "chinese";
-      container = disclosure2(container, zh ? "\u53D1\u97F3\u8BCD\u5178\uFF08\u9AD8\u7EA7\uFF09" : "Pronunciation dictionary (advanced)");
-      new Setting(container).setName(zh ? "\u672C\u5730\u672F\u8BED\u8BFB\u6CD5" : "Local term pronunciations").setDesc(zh ? "\u9002\u7528\u4E8E\u6240\u6709\u8BED\u97F3\u5F15\u64CE\u3002\u53EA\u66FF\u6362\u5408\u6210\u6587\u672C\uFF0C\u4E0D\u4FEE\u6539\u539F\u6587\uFF1B\u89C4\u5219\u4FDD\u5B58\u5728\u672C\u5730\uFF0C\u4E0B\u6B21\u6717\u8BFB\u751F\u6548\u3002\u5728\u7EBF\u5F15\u64CE\u4ECD\u4F1A\u6536\u5230\u66FF\u6362\u540E\u7684\u6587\u672C\u3002" : "For all speech engines. Changes synthesis text, not the document. Rules stay local and apply next session; online engines still receive the substituted text.").addToggle((toggle) => toggle.setValue(plugin.settings.speechTermsEnabled === true).onChange(async (value) => {
-        plugin.settings.speechTermsEnabled = value;
-        await plugin.saveSettings();
-      }));
-      const description = zh ? "\u6BCF\u884C\uFF1A\u672F\u8BED = \u8BFB\u6CD5\uFF0C\u4F8B\u5982 AI = \u4EBA\u5DE5\u667A\u80FD\u3002\u533A\u5206\u5927\u5C0F\u5199\uFF0C\u4E0D\u652F\u6301\u6B63\u5219\uFF1B\u6700\u591A 100 \u6761\uFF0C\u672F\u8BED 80 \u5B57\u7B26\u3001\u8BFB\u6CD5 120 \u5B57\u7B26\u3002" : "One rule per line: term = pronunciation, e.g. AI = artificial intelligence. Case-sensitive, no regex. Up to 100 rules; 80 characters per term, 120 per pronunciation.";
-      const row = new Setting(container).setName(zh ? "\u672F\u8BED\u89C4\u5219" : "Term rules").setDesc(description);
-      row.settingEl.addClass("reader-speech-terms");
-      row.addTextArea((input) => {
-        input.setValue(plugin.settings.speechTerms || "").setPlaceholder(zh ? "AI = \u4EBA\u5DE5\u667A\u80FD" : "AI = artificial intelligence").onChange(async (value) => {
-          const { error } = parseTerms(value);
-          input.inputEl.setAttribute("aria-invalid", String(Boolean(error)));
-          row.setDesc(error || description);
-          if (error) return;
-          plugin.settings.speechTerms = value;
-          await plugin.saveSettings();
-        });
-        input.inputEl.rows = 4;
-        input.inputEl.maxLength = 2e4;
-        input.inputEl.setAttribute("aria-label", zh ? "\u672F\u8BED\u89C4\u5219" : "Term rules");
+    function validateResult(value, width, height) {
+      if (value?.version !== 1 || value.width !== width || value.height !== height || !Array.isArray(value.lines) || value.lines.length > 1e4) throw new Error("OCR_PROTOCOL");
+      let length = 0;
+      const lines = value.lines.map((line) => {
+        const box = line?.box;
+        if (typeof line?.text !== "string" || (length += line.text.length) > MAX_TEXT || !Array.isArray(box) || box.length !== 4 || !box.every(Number.isFinite) || box[0] < 0 || box[1] < 0 || box[2] > width || box[3] > height || box[2] <= box[0] || box[3] <= box[1] || !Number.isFinite(line.confidence) || line.confidence < 0 || line.confidence > 1) throw new Error("OCR_PROTOCOL");
+        return { text: line.text.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, "").normalize("NFKC"), box, confidence: line.confidence };
       });
+      return { width, height, lines };
     }
-    module2.exports = { addSpeechContextSetting: addSpeechContextSetting2, addSpeechTermsSettings: addSpeechTermsSettings2 };
+    function imageSize(input) {
+      const b = Buffer.from(input);
+      let width, height;
+      if (b.length >= 24 && b.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])) && b.toString("ascii", 12, 16) === "IHDR") {
+        width = b.readUInt32BE(16);
+        height = b.readUInt32BE(20);
+      } else if (b[0] === 255 && b[1] === 216) {
+        let p = 2;
+        while (p + 4 <= b.length) {
+          if (b[p++] !== 255) break;
+          while (b[p] === 255) p++;
+          const marker = b[p++];
+          if (marker === 218 || marker === 217) break;
+          if (marker === 1 || marker >= 208 && marker <= 215) continue;
+          if (p + 2 > b.length) break;
+          const len = b.readUInt16BE(p);
+          if (len < 2 || p + len > b.length) break;
+          if ([192, 193, 194].includes(marker) && len >= 8) {
+            height = b.readUInt16BE(p + 3);
+            width = b.readUInt16BE(p + 5);
+            break;
+          }
+          p += len;
+        }
+      } else if (b.length >= 30 && b.toString("ascii", 0, 4) === "RIFF" && b.toString("ascii", 8, 12) === "WEBP") {
+        const kind = b.toString("ascii", 12, 16);
+        if (kind === "VP8X") {
+          width = 1 + b.readUIntLE(24, 3);
+          height = 1 + b.readUIntLE(27, 3);
+        } else if (kind === "VP8 " && b[23] === 157 && b[24] === 1 && b[25] === 42) {
+          width = b.readUInt16LE(26) & 16383;
+          height = b.readUInt16LE(28) & 16383;
+        } else if (kind === "VP8L" && b[20] === 47) {
+          const bits = b.readUInt32LE(21);
+          width = 1 + (bits & 16383);
+          height = 1 + (bits >>> 14 & 16383);
+        }
+      }
+      if (!width || !height || width * height > 25e6) throw new Error("OCR_IMAGE");
+      return { width, height };
+    }
+    module2.exports = { OCR_DEFAULTS: OCR_DEFAULTS2, MAX_PIXELS, MAX_TEXT, MAX_PAGES, isOcrFile, pageRange, rasterSize, validateResult, imageSize };
   }
 });
 
-// src/settings-confirm.js
-var require_settings_confirm = __commonJS({
-  "src/settings-confirm.js"(exports2, module2) {
+// src/ocr-process.js
+var require_ocr_process = __commonJS({
+  "src/ocr-process.js"(exports2, module2) {
     "use strict";
-    var { Modal: Modal2, Setting } = require("obsidian");
-    var { translate } = require_i18n();
-    var SettingsConfirmModal2 = class extends Modal2 {
-      constructor(plugin, title, description, action) {
-        super(plugin.app);
-        this.plugin = plugin;
-        this.title = title;
-        this.description = description;
-        this.action = action;
+    var { spawn: spawn2 } = require("node:child_process");
+    var path2 = require("node:path");
+    var { env: systemEnvironment } = require("process");
+    var { MAX_PIXELS, validateResult } = require_ocr_contract();
+    var OcrProcess = class {
+      constructor(executable, model, options = {}) {
+        if (!path2.isAbsolute(executable) || /^\\\\/.test(executable) || /[\r\n\0]/.test(executable) || /\.(?:bat|cmd|ps1|sh)$/i.test(executable)) throw new Error("OCR_PATH");
+        this.executable = executable;
+        this.model = model === "tiny" ? "tiny" : "small";
+        this.spawn = options.spawn || spawn2;
+        this.timeout = options.timeout || 12e4;
       }
-      onOpen() {
-        const t = (en, zh) => translate(this.plugin.settings.settingsLanguage, en, zh);
-        this.contentEl.createEl("h2", { text: this.title });
-        this.contentEl.createEl("p", { text: this.description });
-        new Setting(this.contentEl).addButton((button) => button.setButtonText(t("Cancel", "\u53D6\u6D88")).onClick(() => this.close())).addButton((button) => button.setButtonText(t("Confirm", "\u786E\u8BA4")).onClick(async () => {
-          button.setDisabled(true);
-          try {
-            await this.plugin.runUserAction("Reset settings", this.action);
-            this.close();
-          } finally {
-            button.setDisabled(false);
+      start() {
+        if (this.closed) throw new Error("OCR_CANCELLED");
+        if (this.child) return;
+        this.output = "";
+        this.outputBytes = 0;
+        this.child = this.spawn(this.executable, ["--model", this.model], {
+          shell: false,
+          windowsHide: true,
+          stdio: ["pipe", "pipe", "pipe"],
+          env: {
+            ...Object.fromEntries(Object.entries(systemEnvironment).filter(([key]) => /^(SystemRoot|WINDIR|PATH|HOME|USERPROFILE|TEMP|TMP|TMPDIR|DOTNET_ROOT|DOTNET_ROOT_X64|LANG|LC_ALL)$/i.test(key))),
+            DOTNET_PROCESSOR_COUNT: "4",
+            DOTNET_CLI_TELEMETRY_OPTOUT: "1"
           }
-        }));
+        });
+        this.child.stdout.setEncoding("utf8");
+        this.child.stdout.on("data", (chunk) => {
+          if (!this.pending || (this.outputBytes += Buffer.byteLength(chunk)) > 2 * 1024 * 1024) {
+            this.close("OCR_PROTOCOL");
+            return;
+          }
+          this.output += chunk;
+          const end = this.output.indexOf("\n");
+          if (end < 0) return;
+          try {
+            if (this.output.slice(end + 1).trim()) throw new Error("OCR_PROTOCOL");
+            const { width, height } = this.pending;
+            const result = validateResult(JSON.parse(this.output.slice(0, end)), width, height);
+            const pending = this.pending;
+            this.pending = null;
+            this.output = "";
+            this.outputBytes = 0;
+            pending.finish(null, result);
+          } catch (_) {
+            this.close("OCR_PROTOCOL");
+          }
+        });
+        this.child.stderr.resume();
+        this.child.stdin.on("error", () => this.close("OCR_HELPER"));
+        this.child.on("error", () => this.close("OCR_HELPER"));
+        this.child.on("exit", () => this.close("OCR_HELPER"));
       }
-      onClose() {
-        this.contentEl.empty();
+      recognize(rgb, width, height, signal) {
+        if (this.pending) return Promise.reject(new Error("OCR_BUSY"));
+        if (signal?.aborted || this.closed) return Promise.reject(new Error("OCR_CANCELLED"));
+        if (!Number.isInteger(width) || !Number.isInteger(height) || width < 1 || height < 1 || width > 4096 || height > 4096 || width * height > MAX_PIXELS || rgb.length !== width * height * 3) return Promise.reject(new Error("OCR_IMAGE"));
+        return new Promise((resolve, reject) => {
+          const abort = () => this.close("OCR_CANCELLED");
+          const timer = setTimeout(() => this.close("OCR_TIMEOUT"), this.timeout);
+          this.pending = { width, height, finish: (error, result) => {
+            clearTimeout(timer);
+            signal?.removeEventListener("abort", abort);
+            if (error) reject(new Error(error));
+            else resolve(result);
+          } };
+          signal?.addEventListener("abort", abort, { once: true });
+          try {
+            this.start();
+            const header = Buffer.from(JSON.stringify({ version: 1, width, height }) + "\n");
+            this.child.stdin.write(header);
+            this.child.stdin.write(rgb);
+          } catch (_) {
+            this.close("OCR_HELPER");
+          }
+        });
+      }
+      close(reason = "OCR_CANCELLED") {
+        this.closed = true;
+        const pending = this.pending;
+        this.pending = null;
+        pending?.finish(reason);
+        const child = this.child;
+        this.child = null;
+        child?.kill();
+        this.output = "";
+        this.outputBytes = 0;
       }
     };
-    module2.exports = { SettingsConfirmModal: SettingsConfirmModal2 };
+    module2.exports = { OcrProcess };
   }
 });
 
@@ -2076,222 +2085,6 @@ var require_pdf_layout2 = __commonJS({
       return layout;
     }
     module2.exports = { ...core, extractPdfTextLayout: extractPdfTextLayout2 };
-  }
-});
-
-// src/pdf-footnotes.js
-var require_pdf_footnotes = __commonJS({
-  "src/pdf-footnotes.js"(exports2, module2) {
-    "use strict";
-    var { extractPdfTextLayout: extractPdfTextLayout2 } = require_pdf_layout2();
-    var MODES = ["body", "after", "inline", "footnotes"];
-    function normalizeFootnoteMode2(value) {
-      return MODES.includes(value) ? value : "body";
-    }
-    function textOf(lines) {
-      return lines.map((line) => line.text).join("\n").replace(/([A-Za-z])-\n(?=[a-z])/g, "$1").trim();
-    }
-    function partitionFootnotes2(items, viewport, rules = [], options = {}) {
-      const layout = extractPdfTextLayout2(items, { viewport });
-      const height = Number(viewport?.height), width = Number(viewport?.width);
-      if (!(height > 0 && width > 0) || !layout.lines.length) return { layout, body: layout, notes: { ...layout, text: "", lines: [] }, regions: [] };
-      const positioned = (items || []).filter((item) => item.str?.trim() && item.transform?.length >= 6).map((item) => ({ x: item.transform[4], y: item.transform[5], height: Math.abs(item.height || item.transform[3]), weight: item.str.trim().length }));
-      const upper = positioned.filter((item) => item.y > height * 0.22 && item.y < height * 0.92);
-      const counts = /* @__PURE__ */ new Map();
-      for (const item of upper) {
-        const size = Math.round(item.height * 10) / 10;
-        counts.set(size, (counts.get(size) || 0) + item.weight);
-      }
-      const bodySize = [...counts].sort((a, b) => b[1] - a[1])[0]?.[0];
-      if (!bodySize) return { layout, body: layout, notes: { ...layout, text: "", lines: [] }, regions: [] };
-      const regions = [];
-      if (options.pageNumber === 1) {
-        const ordered = [...layout.lines].sort((a, b) => b.y - a.y);
-        for (const line of ordered) {
-          if (line.y > height * 0.28 || line.y < height * 0.035 || !/^[*\u2217\u2020\u2021\s]*(?:corresponding author|correspondence|e[-\s]?mail address)\b/i.test(line.text)) continue;
-          const below = ordered.filter((candidate) => candidate.y <= line.y && candidate.y > height * 0.035);
-          const spans = positioned.filter((item) => item.y <= line.y + bodySize * 0.5 && item.y > height * 0.035 && item.weight > 2);
-          const small = spans.length && spans.every((item) => item.height <= bodySize * 0.96);
-          const metadata = below.some((candidate) => candidate !== line && /e[-\s]?mail address|doi\.org|received\b|accepted\b|available\s*online|copyright|\u00a9/i.test(candidate.text));
-          const rule = rules.some((rule2) => rule2.y > line.y && rule2.y - line.y < bodySize * 3 && rule2.x >= line.xMin - bodySize * 2 && rule2.x <= line.xMin + bodySize && rule2.width > 20 && rule2.width < width * 0.45);
-          const above = ordered.filter((candidate) => candidate.y > line.y + bodySize * 0.5);
-          const gap = above.length ? Math.min(...above.map((candidate) => candidate.y)) - line.y : 0;
-          if (!small || !metadata || !rule && gap < bodySize * 2) continue;
-          regions.push({
-            xMin: Math.min(...below.map((l) => l.xMin)) - 2,
-            xMax: Math.max(...below.map((l) => l.xMax)) + 2,
-            yMin: Math.min(...below.map((l) => l.y)) - bodySize * 0.6,
-            yMax: line.y + bodySize * 0.6
-          });
-          break;
-        }
-      }
-      for (const left of layout.twoColumn ? [true, false] : [true]) {
-        const column = layout.lines.filter((line) => !layout.twoColumn || line.xMin < width / 2 === left).sort((a, b) => b.y - a.y);
-        for (let i = 0; i < column.length; i++) {
-          const line = column[i];
-          if (regions.some((region) => line.y >= region.yMin && line.y <= region.yMax && line.xMin >= region.xMin && line.xMax <= region.xMax)) continue;
-          if (line.y > height * 0.28 || line.y < height * 0.035 || !/^\d{1,3}\s+\S/.test(line.text)) continue;
-          const nearby = positioned.filter((item) => Math.abs(item.y - line.y) <= bodySize * 0.6 && item.x >= line.xMin - 2 && item.x <= line.xMax + 2);
-          const letters = nearby.filter((item) => item.weight > 2);
-          if (!letters.length) continue;
-          const size = letters.reduce((sum, item) => sum + item.height * item.weight, 0) / letters.reduce((sum, item) => sum + item.weight, 0);
-          const rule = rules.some((rule2) => rule2.y > line.y && rule2.y - line.y < bodySize * 3 && rule2.x >= line.xMin - bodySize && rule2.x <= line.xMin + bodySize && rule2.width > 20 && rule2.width < width * 0.45);
-          const gap = i > 0 ? column[i - 1].y - line.y : 0;
-          if (size > bodySize * 0.94 || !rule && (size > bodySize * 0.91 || gap < bodySize * 1.7)) continue;
-          const below = column.slice(i).filter((candidate) => candidate.y > height * 0.035);
-          const consistent = below.every((candidate) => {
-            const spans = positioned.filter((item) => Math.abs(item.y - candidate.y) <= bodySize * 0.5 && item.x >= candidate.xMin - 2 && item.x <= candidate.xMax + 2 && item.weight > 2);
-            return !spans.length || spans.every((item) => item.height <= bodySize * 0.96);
-          });
-          if (!consistent) continue;
-          regions.push({
-            xMin: Math.min(...below.map((l) => l.xMin)) - 2,
-            xMax: Math.max(...below.map((l) => l.xMax)) + 2,
-            yMin: Math.min(...below.map((l) => l.y)) - bodySize * 0.6,
-            yMax: line.y + bodySize * 0.6
-          });
-          break;
-        }
-      }
-      const isNote = (line) => regions.some((region) => line.xMin >= region.xMin && line.xMax <= region.xMax && line.y >= region.yMin && line.y <= region.yMax);
-      const notes = layout.lines.filter(isNote), body = layout.lines.filter((line) => !isNote(line));
-      return { layout, body: { ...layout, lines: body, text: textOf(body) }, notes: { ...layout, lines: notes, text: textOf(notes) }, regions };
-    }
-    function splitFootnotesInRange2(text, partition) {
-      let body = text;
-      const notes = [];
-      for (let i = 0; i < partition.notes.lines.length; i++) {
-        const line = partition.notes.lines[i], next = partition.notes.lines[i + 1];
-        const value = /[A-Za-z]-$/.test(line.text) && /^[a-z]/.test(next?.text || "") ? line.text.slice(0, -1) : line.text;
-        const pattern = value.trim().split(/\s+/).map((word) => word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("\\s+");
-        const re = new RegExp(pattern, "g"), matches = [...body.matchAll(re)];
-        if (matches.length === 1) {
-          notes.push(matches[0][0]);
-          body = body.slice(0, matches[0].index) + "\n" + body.slice(matches[0].index + matches[0][0].length);
-        }
-      }
-      return { body: body.trim(), notes: notes.join("\n") };
-    }
-    async function footnoteRules2(page, OPS) {
-      if (!page.getOperatorList || !OPS) return [];
-      try {
-        const list = await page.getOperatorList(), rules = [];
-        for (let i = 0; i < list.fnArray.length; i++) {
-          if (list.fnArray[i] !== OPS.constructPath) continue;
-          const [ops, coords] = list.argsArray[i] || [];
-          if (!Array.isArray(ops) && !ArrayBuffer.isView(ops)) continue;
-          let index = 0, from = null;
-          for (const op of ops) {
-            if (op === OPS.moveTo) {
-              from = [coords[index++], coords[index++]];
-            } else if (op === OPS.lineTo) {
-              const to = [coords[index++], coords[index++]];
-              if (from && Math.abs(from[1] - to[1]) < 1) rules.push({ x: Math.min(from[0], to[0]), y: to[1], width: Math.abs(to[0] - from[0]) });
-              from = to;
-            } else if (op === OPS.curveTo) index += 6;
-            else if (op === OPS.rectangle) {
-              index += 4;
-              from = null;
-            } else if (op !== OPS.closePath) {
-              from = null;
-              break;
-            }
-          }
-        }
-        return rules;
-      } catch (_) {
-        return [];
-      }
-    }
-    function addFootnoteSettings2(container, plugin, Setting) {
-      const zh = plugin.settings.settingsLanguage === "chinese";
-      new Setting(container).setName(zh ? "PDF \u811A\u6CE8\u6717\u8BFB" : "PDF footnote reading").setDesc(zh ? "\u9ED8\u8BA4\u53EA\u8BFB\u6B63\u6587\u3002\u7ED3\u5408\u9875\u5E95\u7F16\u53F7\u3001\u5B57\u53F7\u548C\u95F4\u8DDD\u8BC6\u522B\u811A\u6CE8\u53CA\u9996\u9875\u4F5C\u8005\u3001\u51FA\u7248\u4FE1\u606F\uFF0C\u4E0D\u786E\u5B9A\u7684\u6587\u5B57\u4FDD\u7559\u3002\u4EC5\u6717\u8BFB\u9009\u4E2D\u6587\u5B57\u65F6\u4ECD\u8BFB\u5B8C\u6574\u6240\u9009\u5185\u5BB9\u3002" : "Body only by default. Detects bottom-page notes and first-page correspondence/publication blocks using size and spacing; uncertain text is retained. Selection-only reading preserves the selected text.").addDropdown((dropdown) => {
-        const labels = zh ? ["\u53EA\u8BFB\u6B63\u6587", "\u6B63\u6587\u7ED3\u675F\u540E\u8BFB\u811A\u6CE8", "\u4FDD\u7559\u539F\u987A\u5E8F\uFF08\u542B\u811A\u6CE8\uFF09", "\u53EA\u8BFB\u811A\u6CE8"] : ["Body only", "Footnotes after body", "Original order, including footnotes", "Footnotes only"];
-        MODES.forEach((mode, i) => dropdown.addOption(mode, labels[i]));
-        dropdown.setValue(normalizeFootnoteMode2(plugin.settings.pdfFootnoteMode)).onChange(async (value) => {
-          plugin.settings.pdfFootnoteMode = normalizeFootnoteMode2(value);
-          await plugin.saveSettings();
-        });
-      });
-    }
-    module2.exports = { partitionFootnotes: partitionFootnotes2, footnoteRules: footnoteRules2, normalizeFootnoteMode: normalizeFootnoteMode2, addFootnoteSettings: addFootnoteSettings2, splitFootnotesInRange: splitFootnotesInRange2 };
-  }
-});
-
-// src/pdf-ancillary.js
-var require_pdf_ancillary = __commonJS({
-  "src/pdf-ancillary.js"(exports2, module2) {
-    "use strict";
-    var { extractPdfTextLayout: extractPdfTextLayout2 } = require_pdf_layout2();
-    var inside = (line, region) => line.y >= region.yMin && line.y <= region.yMax && line.xMin >= region.xMin && line.xMax <= region.xMax;
-    var textOf = (lines) => lines.map((line) => line.text).join("\n").replace(/([A-Za-z])-\n(?=[a-z])/g, "$1").trim();
-    function edgeKey(line, viewport) {
-      const band = line.y > viewport.height * 0.93 ? "top" : line.y < viewport.height * 0.045 ? "bottom" : "";
-      if (!band) return "";
-      const value = line.text.toLowerCase().replace(/\d+/g, "#").replace(/\s+/g, " ").trim();
-      return `${band}:${Math.round(line.xMin / viewport.width * 10)}:${value}`;
-    }
-    function recurringEdges2(pages) {
-      const counts = /* @__PURE__ */ new Map();
-      for (const page of pages) {
-        if (!page.viewport?.height) continue;
-        const keys = new Set(extractPdfTextLayout2(page.items, { viewport: page.viewport }).lines.map((line) => edgeKey(line, page.viewport)).filter(Boolean));
-        for (const key of keys) counts.set(key, (counts.get(key) || 0) + 1);
-      }
-      return new Set([...counts].filter(([, count]) => count >= 2).map(([key]) => key));
-    }
-    function ancillaryLayout2(items, viewport, rules = [], repeated = /* @__PURE__ */ new Set()) {
-      const layout = extractPdfTextLayout2(items, { viewport });
-      const headers = [], glossary = [];
-      if (!viewport?.height || !viewport?.width) return { layout, headers, glossary };
-      for (const line of layout.lines) {
-        if (repeated.has(edgeKey(line, viewport)) || line.y < viewport.height * 0.045 && /^\d{1,4}$/.test(line.text.trim())) {
-          headers.push({ xMin: line.xMin - 2, xMax: line.xMax + 2, yMin: line.y - 2, yMax: line.y + 2 });
-        }
-      }
-      const heading = /^(?:(?:\d+(?:\.\d+)*|[A-Z])\.?\s+)?(?:list of (?:abbreviations|symbols)|abbreviations|nomenclature|glossary|symbols and abbreviations|术语表|缩略语表|缩写表|符号表)\s*[:：]?$/i;
-      const row = /^(?:[A-Z0-9][A-Z0-9/()+\-]{0,19}[:：]?\s+\S|[^\s:：]{1,20}[:：]\s*\S)/;
-      for (const title of layout.lines.filter((line) => heading.test(line.text.trim()))) {
-        const columnLeft = layout.twoColumn && title.xMax < viewport.width / 2;
-        const columnRight = layout.twoColumn && title.xMin > viewport.width / 2;
-        const xMin = columnRight ? viewport.width / 2 : 0;
-        const xMax = columnLeft ? viewport.width / 2 : viewport.width;
-        const candidates = layout.lines.filter((line) => line.y < title.y && line.xMin >= xMin && line.xMax <= xMax).sort((a, b) => b.y - a.y);
-        const selected = [title];
-        let previous = title, rows = 0;
-        const sizes = items.filter((item) => item.transform && Math.abs(item.transform[5] - title.y) < 5).map((item) => Math.abs(item.height || item.transform[3]));
-        const size = Math.max(5, ...sizes);
-        const bottomRule = rules.filter((rule) => rule.y < title.y && rule.width > (xMax - xMin) * 0.55 && rule.x <= title.xMin && rule.x + rule.width >= title.xMax).sort((a, b) => b.y - a.y)[0];
-        for (const line of candidates) {
-          if (bottomRule && line.y < bottomRule.y) break;
-          if (previous.y - line.y > size * 2.7 || !row.test(line.text) && (!bottomRule || rows === 0)) break;
-          if (row.test(line.text)) rows++;
-          selected.push(line);
-          previous = line;
-        }
-        if (rows < 2) continue;
-        glossary.push({
-          xMin: Math.min(...selected.map((line) => line.xMin)) - 2,
-          xMax: Math.max(...selected.map((line) => line.xMax)) + 2,
-          yMin: Math.min(...selected.map((line) => line.y)) - 2,
-          yMax: title.y + 2
-        });
-      }
-      return { layout, headers, glossary };
-    }
-    function addAncillarySettings2(container, plugin, Setting) {
-      const zh = plugin.settings.settingsLanguage === "chinese";
-      new Setting(container).setName(zh ? "\u8DF3\u8FC7 PDF \u9875\u7709\u9875\u811A" : "Skip PDF headers and footers").setDesc(zh ? "\u9ED8\u8BA4\u5F00\u542F\u3002\u62BD\u67E5\u5C11\u91CF\u9875\u9762\uFF0C\u6392\u9664\u8FB9\u7F18\u91CD\u590D\u7684\u4F5C\u8005\u3001\u671F\u520A\u4FE1\u606F\u548C\u9875\u7801\uFF0C\u4E0D\u6539\u52A8 PDF\u3002" : "On by default. Samples a few pages to omit recurring author/journal information at page edges and page numbers without changing the PDF.").addToggle((toggle) => toggle.setValue(plugin.settings.pdfSkipHeaders !== false).onChange(async (value) => {
-        plugin.settings.pdfSkipHeaders = value;
-        await plugin.saveSettings();
-      }));
-      new Setting(container).setName(zh ? "\u6B63\u6587\u6717\u8BFB\u65F6\u5305\u542B PDF \u672F\u8BED\u8868" : "Include PDF glossary in body reading").setDesc(zh ? "\u9ED8\u8BA4\u5173\u95ED\u3002\u4EC5\u6392\u9664\u6709\u660E\u786E\u6807\u9898\u548C\u8868\u683C\u6392\u5217\u7684\u672F\u8BED\u8868\uFF1B\u4E0D\u786E\u5B9A\u7684\u6587\u5B57\u4FDD\u7559\u3002\u53EF\u5728 PDF \u5DE5\u5177\u680F\u4E2D\u5355\u72EC\u6717\u8BFB\u6574\u7BC7 PDF \u7684\u672F\u8BED\u8868\u6216\u811A\u6CE8\uFF1B\u4EC5\u9009\u4E2D\u6587\u5B57\u65F6\u4E0D\u81EA\u52A8\u8FC7\u6EE4\u3002" : "Off by default. Omits confidently identified glossary tables; uncertain text is retained. The PDF toolbar can read the whole PDF's glossary or footnotes separately. Selection-only reading is not filtered.").addToggle((toggle) => toggle.setValue(plugin.settings.pdfIncludeGlossary === true).onChange(async (value) => {
-        plugin.settings.pdfIncludeGlossary = value;
-        await plugin.saveSettings();
-      }));
-    }
-    module2.exports = { recurringEdges: recurringEdges2, ancillaryLayout: ancillaryLayout2, inside, textOf, addAncillarySettings: addAncillarySettings2 };
   }
 });
 
@@ -2727,54 +2520,6 @@ var require_academic_speech = __commonJS({
   }
 });
 
-// src/pdf-academic.js
-var require_pdf_academic = __commonJS({
-  "src/pdf-academic.js"(exports2, module2) {
-    "use strict";
-    var { academicOptions: academicOptions2, numericCell } = require_academic_speech();
-    function numericTableRegions2(layout, viewport, settings = {}) {
-      const mode = academicOptions2(settings).academicTableMode;
-      if (mode === "all" || !viewport?.width) return [];
-      const regions = [];
-      for (const title of layout.lines.filter((line) => /^(?:Table\s+(?:\d+|[IVXLCDM]+)\b|表\s*[\d一二三四五六七八九十]+)/i.test(line.text.trim()))) {
-        const full = title.xMax - title.xMin > viewport.width * 0.55;
-        const left = title.xMin < viewport.width / 2;
-        const candidates = layout.lines.filter((line) => line.y < title.y && (full || !layout.twoColumn || line.xMin < viewport.width / 2 === left)).sort((a, b) => b.y - a.y);
-        let started = false, previous = title, rows = 0;
-        const selected = [], pending = [];
-        for (const line of candidates) {
-          if (previous.y - line.y > 30) break;
-          const cells = line.text.trim().split(/\s+/), digits = cells.filter(numericCell).length;
-          const numeric = digits >= 2 && digits / cells.length >= 0.6;
-          if (!started && !numeric) {
-            if (pending.length >= 3 || line.text.length > 120 || /[.!?。]$/.test(line.text)) break;
-            pending.push(line);
-            previous = line;
-            continue;
-          }
-          if (!numeric) break;
-          if (!started) {
-            selected.push(...pending);
-            started = true;
-          }
-          selected.push(line);
-          rows++;
-          previous = line;
-        }
-        if (rows < (mode === "skip" ? 2 : 8)) continue;
-        regions.push({
-          xMin: Math.min(...selected.map((l) => l.xMin)) - 2,
-          xMax: Math.max(...selected.map((l) => l.xMax)) + 2,
-          yMin: Math.min(...selected.map((l) => l.y)) - 2,
-          yMax: Math.max(...selected.map((l) => l.y)) + 2
-        });
-      }
-      return regions;
-    }
-    module2.exports = { numericTableRegions: numericTableRegions2 };
-  }
-});
-
 // src/pdf-math.js
 var require_pdf_math = __commonJS({
   "src/pdf-math.js"(exports2, module2) {
@@ -3057,39 +2802,6 @@ var require_pdf_math = __commonJS({
   }
 });
 
-// src/pdf-selection-source.js
-var require_pdf_selection_source = __commonJS({
-  "src/pdf-selection-source.js"(exports2, module2) {
-    "use strict";
-    function pdfSelectionSourceMap2(source) {
-      const characters = [];
-      const segments = new Intl.Segmenter(void 0, { granularity: "grapheme" }).segment(source);
-      for (const { segment, index } of segments) {
-        for (const char of segment.normalize("NFKC")) {
-          if (char === "\xAD") continue;
-          for (let i = 0; i < char.length; i++) characters.push({ char: char[i], offset: index });
-        }
-      }
-      let text = characters.map((item) => item.char).join("");
-      const removed = /* @__PURE__ */ new Set();
-      for (const match of text.matchAll(/([A-Za-z])-\s+(?=[a-z])/g)) {
-        for (let i = match.index + 1; i < match.index + match[0].length; i++) removed.add(i);
-      }
-      const kept = characters.filter((_, index) => !removed.has(index));
-      const normalized = [];
-      for (const item of kept) {
-        if (/\s/.test(item.char)) {
-          if (normalized.length && normalized.at(-1).char !== " ") normalized.push({ char: " ", offset: item.offset });
-        } else normalized.push(item);
-      }
-      if (normalized.at(-1)?.char === " ") normalized.pop();
-      text = normalized.map((item) => item.char).join("");
-      return { text, offsets: normalized.map((item) => item.offset) };
-    }
-    module2.exports = { pdfSelectionSourceMap: pdfSelectionSourceMap2 };
-  }
-});
-
 // src/pdf-selection.js
 var require_pdf_selection = __commonJS({
   "src/pdf-selection.js"(exports2, module2) {
@@ -3162,6 +2874,878 @@ var require_pdf_selection = __commonJS({
       }).join("\n\n");
     }
     module2.exports = { capturePdfSelectionLayout: capturePdfSelectionLayout2, preparePdfSelection: preparePdfSelection2, normalizePdfSpeechText: normalizePdfSpeechText2 };
+  }
+});
+
+// src/ocr-pages.js
+var require_ocr_pages = __commonJS({
+  "src/ocr-pages.js"(exports2, module2) {
+    "use strict";
+    var { loadPdfJs: loadPdfJs2 } = require("obsidian");
+    var { pageRange, rasterSize, imageSize, MAX_TEXT } = require_ocr_contract();
+    var { preparePdfSelection: preparePdfSelection2 } = require_pdf_selection();
+    function check(signal) {
+      if (signal.aborted) throw new Error("OCR_CANCELLED");
+    }
+    function ocrText(result, settings) {
+      const items = result.lines.map((line) => {
+        const [x, y, right, bottom] = line.box, height = bottom - y;
+        return { str: line.text, width: right - x, height, fontName: "OCR", transform: [height, 0, 0, height, x, result.height - bottom] };
+      });
+      return preparePdfSelection2({ selectionLayout: [{ items, viewport: result }] }, settings);
+    }
+    async function canvasResult(canvas, helper, signal, settings) {
+      check(signal);
+      const { width, height } = canvas, rgba = canvas.getContext("2d", { willReadFrequently: true }).getImageData(0, 0, width, height).data;
+      const rgb = Buffer.alloc(width * height * 3);
+      for (let i = 0, j = 0; i < rgba.length; i += 4) {
+        rgb[j++] = rgba[i];
+        rgb[j++] = rgba[i + 1];
+        rgb[j++] = rgba[i + 2];
+      }
+      try {
+        const result = await helper.recognize(rgb, width, height, signal);
+        check(signal);
+        return { text: ocrText(result, settings), lowConfidence: result.lines.filter((line) => line.confidence < 0.8).length, method: "ocr" };
+      } finally {
+        rgb.fill(0);
+      }
+    }
+    async function recognizeFile({ plugin, file, start, end, rotation, preferText, helper, signal, onPage, onStatus, document: document2 }) {
+      const pdf = file.extension.toLowerCase() === "pdf";
+      const limit = (pdf ? 100 : 20) * 1024 * 1024;
+      const stamp = { mtime: file.stat?.mtime, size: file.stat?.size };
+      if (!(stamp.size > 0) || stamp.size > limit) throw new Error("OCR_SIZE");
+      const fresh = () => {
+        check(signal);
+        if (file.stat?.mtime !== stamp.mtime || file.stat?.size !== stamp.size || plugin.app.vault.getAbstractFileByPath(file.path) !== file) throw new Error("OCR_CHANGED");
+      };
+      fresh();
+      const binary = await plugin.app.vault.readBinary(file);
+      fresh();
+      if (binary.byteLength > limit) throw new Error("OCR_SIZE");
+      let totalText = 0;
+      const emit = (result) => {
+        fresh();
+        totalText += result.text.length;
+        if (totalText > MAX_TEXT) throw new Error("OCR_TEXT");
+        onPage(result);
+      };
+      if (!pdf) {
+        imageSize(binary);
+        const win = document2.defaultView;
+        const image = await win.createImageBitmap(new win.Blob([binary]));
+        const canvas = document2.createElement("canvas");
+        try {
+          fresh();
+          const size = rasterSize(image.width, image.height);
+          const swap = rotation === 90 || rotation === 270;
+          canvas.width = swap ? size.height : size.width;
+          canvas.height = swap ? size.width : size.height;
+          const ctx = canvas.getContext("2d", { willReadFrequently: true });
+          ctx.fillStyle = "#fff";
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          ctx.translate(canvas.width / 2, canvas.height / 2);
+          ctx.rotate(rotation * Math.PI / 180);
+          ctx.drawImage(image, -size.width / 2, -size.height / 2, size.width, size.height);
+          emit({ ...await canvasResult(canvas, helper, signal, plugin.settings), page: 1 });
+        } finally {
+          image.close();
+          canvas.width = canvas.height = 1;
+        }
+        return;
+      }
+      const lib = await loadPdfJs2();
+      fresh();
+      const task = lib.getDocument({ data: new Uint8Array(binary), isEvalSupported: false });
+      const cancel = () => {
+        void Promise.resolve(task.destroy()).catch(() => {
+        });
+      };
+      signal.addEventListener("abort", cancel, { once: true });
+      try {
+        const pdfDocument = await task.promise;
+        fresh();
+        for (const number of pageRange(start, end, pdfDocument.numPages)) {
+          onStatus(number);
+          const page = await pdfDocument.getPage(number);
+          const canvas = document2.createElement("canvas");
+          let renderTask;
+          const cancelRender = () => renderTask?.cancel();
+          signal.addEventListener("abort", cancelRender, { once: true });
+          try {
+            fresh();
+            if (preferText) {
+              const content = await page.getTextContent();
+              fresh();
+              if (content.items.map((item) => item.str || "").join("").replace(/[^\p{L}\p{N}]/gu, "").length >= 80) {
+                emit({ page: number, method: "text", lowConfidence: 0, text: preparePdfSelection2({ selectionLayout: [{ items: content.items, viewport: page.getViewport({ scale: 1 }) }] }, plugin.settings) });
+                continue;
+              }
+            }
+            const angle = ((page.rotate || 0) + rotation) % 360;
+            const base = page.getViewport({ scale: 200 / 72, rotation: angle });
+            const size = rasterSize(base.width, base.height);
+            const viewport = page.getViewport({ scale: 200 / 72 * Math.min(size.width / base.width, size.height / base.height), rotation: angle });
+            canvas.width = Math.floor(viewport.width);
+            canvas.height = Math.floor(viewport.height);
+            renderTask = page.render({ canvasContext: canvas.getContext("2d", { willReadFrequently: true }), viewport, background: "#ffffff" });
+            await renderTask.promise;
+            fresh();
+            emit({ ...await canvasResult(canvas, helper, signal, plugin.settings), page: number });
+          } finally {
+            signal.removeEventListener("abort", cancelRender);
+            canvas.width = canvas.height = 1;
+            page.cleanup();
+          }
+        }
+      } finally {
+        signal.removeEventListener("abort", cancel);
+        await task.destroy();
+      }
+    }
+    module2.exports = { recognizeFile, ocrText };
+  }
+});
+
+// src/ocr-ui.js
+var require_ocr_ui = __commonJS({
+  "src/ocr-ui.js"(exports2, module2) {
+    "use strict";
+    var { Modal: Modal2, Notice: Notice2 } = require("obsidian");
+    var path2 = require("node:path");
+    var os2 = require("node:os");
+    var { OcrProcess } = require_ocr_process();
+    var { recognizeFile } = require_ocr_pages();
+    var { MAX_TEXT, pageRange } = require_ocr_contract();
+    var ERRORS = {
+      OCR_PATH: ["\u8BF7\u914D\u7F6E\u53EF\u4FE1 OCR \u52A9\u624B\u7684\u5B8C\u6574\u8DEF\u5F84\u3002", "Configure an absolute path to a trusted OCR helper."],
+      OCR_HELPER: ["OCR \u52A9\u624B\u65E0\u6CD5\u8FD0\u884C\u3002\u8BF7\u68C0\u67E5\u5B89\u88C5\u3001\u8DEF\u5F84\u548C\u9002\u7528\u5E73\u53F0\u3002", "OCR helper could not run. Check its installation, path and platform."],
+      OCR_PROTOCOL: ["OCR \u52A9\u624B\u8FD4\u56DE\u4E86\u65E0\u6548\u7ED3\u679C\uFF0C\u8BF7\u68C0\u67E5\u52A9\u624B\u7248\u672C\u3002", "Invalid OCR helper response. Check the helper version."],
+      OCR_RANGE: ["\u8BF7\u8F93\u5165\u6709\u6548\u9875\u7801\u8303\u56F4\uFF0C\u6BCF\u6B21\u6700\u591A 10 \u9875\u3002", "Enter a valid page range, up to 10 pages per job."],
+      OCR_IMAGE: ["\u56FE\u7247\u683C\u5F0F\u65E0\u6548\u6216\u8D85\u8FC7 2500 \u4E07\u50CF\u7D20\u3002\u8BF7\u4F7F\u7528\u8F83\u5C0F\u7684 PNG\u3001JPEG \u6216 WebP\u3002", "Invalid image or over 25 megapixels. Use a smaller PNG, JPEG or WebP."],
+      OCR_SIZE: ["PDF \u4E0D\u5F97\u8D85\u8FC7 100 MB\uFF0C\u56FE\u7247\u4E0D\u5F97\u8D85\u8FC7 20 MB\u3002", "PDF limit: 100 MB. Image limit: 20 MB."],
+      OCR_TEXT: ["\u8BC6\u522B\u6587\u5B57\u8D85\u8FC7 20 \u4E07\u5B57\u7B26\uFF0C\u8BF7\u7F29\u5C0F\u9875\u7801\u8303\u56F4\u3002", "Text exceeds 200,000 characters. Use a smaller page range."],
+      OCR_CHANGED: ["\u539F\u6587\u4EF6\u5DF2\u53D8\u5316\uFF0C\u8BF7\u5173\u95ED\u5E76\u91CD\u65B0\u8BC6\u522B\u3002", "The source file changed. Close and recognize again."],
+      OCR_TIMEOUT: ["\u8BC6\u522B\u8D85\u65F6\u3002\u8BF7\u7F29\u5C0F\u8303\u56F4\u6216\u5C1D\u8BD5 Tiny \u6A21\u578B\u3002", "Recognition timed out. Reduce the range or try Tiny."],
+      OCR_CANCELLED: ["\u5DF2\u53D6\u6D88\uFF0C\u5DF2\u5B8C\u6210\u9875\u53EF\u7EE7\u7EED\u6821\u5BF9\u3002", "Cancelled. Completed pages remain available for review."]
+    };
+    function node(parent, tag, text = "", cls = "") {
+      const el = parent.ownerDocument.createElement(tag);
+      el.textContent = text;
+      el.className = cls;
+      parent.append(el);
+      return el;
+    }
+    var OcrModal = class extends Modal2 {
+      constructor(plugin, file) {
+        super(plugin.app);
+        this.plugin = plugin;
+        this.file = file;
+        this.pages = [];
+        this.closed = false;
+      }
+      t(zh, en) {
+        return this.plugin.settings.settingsLanguage === "chinese" ? zh : en;
+      }
+      button(parent, zh, en, action) {
+        const el = node(parent, "button", this.t(zh, en));
+        el.type = "button";
+        el.addEventListener("click", () => {
+          void action();
+        });
+        return el;
+      }
+      onOpen() {
+        this.modalEl.classList.add("note-reader-ocr-modal");
+        node(this.contentEl, "h2", this.t("\u8BC6\u522B\u6587\u5B57\u5E76\u6717\u8BFB", "Recognize text and read"));
+        node(this.contentEl, "p", this.file.name, "note-reader-ocr-filename");
+        const fields = node(this.contentEl, "div", "", "note-reader-ocr-fields");
+        const input = (zh, en, type) => {
+          const label = node(fields, "label", this.t(zh, en));
+          return node(label, type);
+        };
+        this.from = input("\u8D77\u59CB\u9875", "First page", "input");
+        this.to = input("\u7ED3\u675F\u9875", "Last page", "input");
+        for (const el of [this.from, this.to]) {
+          el.type = "number";
+          el.min = "1";
+          el.step = "1";
+          el.value = "1";
+        }
+        this.rotation = input("\u987A\u65F6\u9488\u65CB\u8F6C", "Clockwise rotation", "select");
+        for (const value of [0, 90, 180, 270]) {
+          const option = node(this.rotation, "option", `${value}\xB0`);
+          option.value = String(value);
+        }
+        const preference = node(this.contentEl, "label", "", "note-reader-ocr-preference");
+        this.prefer = node(preference, "input");
+        this.prefer.type = "checkbox";
+        this.prefer.checked = true;
+        node(preference, "span", this.t("\u5DF2\u6709\u6587\u5B57\u7684\u9875\u9762\u76F4\u63A5\u63D0\u53D6", "Use existing page text when available"));
+        if (this.file.extension.toLowerCase() !== "pdf") {
+          this.from.parentElement.hidden = this.to.parentElement.hidden = preference.hidden = true;
+        }
+        const actions = node(this.contentEl, "div", "", "note-reader-ocr-actions");
+        this.recognizeButton = this.button(actions, "\u8BC6\u522B", "Recognize", () => this.recognize());
+        this.cancelButton = this.button(actions, "\u53D6\u6D88\u8BC6\u522B", "Cancel recognition", () => this.controller?.abort());
+        this.cancelButton.disabled = true;
+        this.clearButton = this.button(actions, "\u6E05\u9664\u7ED3\u679C", "Clear results", () => {
+          this.pages = [];
+          this.drawPages();
+        });
+        this.status = node(this.contentEl, "p");
+        this.status.setAttribute("role", "status");
+        this.pageSelect = node(this.contentEl, "select");
+        this.pageSelect.setAttribute("aria-label", this.t("\u7ED3\u679C\u9875", "Result page"));
+        this.pageSelect.addEventListener("change", () => this.showPage());
+        this.preview = node(this.contentEl, "textarea", "", "note-reader-ocr-preview");
+        this.preview.maxLength = MAX_TEXT;
+        this.preview.setAttribute("aria-label", this.t("\u53EF\u6821\u5BF9\u7684\u8BC6\u522B\u6587\u5B57", "Editable recognized text"));
+        this.preview.addEventListener("input", () => {
+          const page = this.pages[Number(this.pageSelect.value)];
+          if (page) page.text = this.preview.value;
+          this.updateButtons();
+        });
+        node(this.contentEl, "p", this.t("\u8BC6\u522B\u53EF\u80FD\u6F0F\u5B57\u6216\u8BEF\u8BFB\u516C\u5F0F\uFF0C\u8BF7\u5148\u6821\u5BF9\u3002OCR \u5728\u672C\u673A\u5B8C\u6210\uFF1B\u5728\u7EBF\u8BED\u97F3\u4F1A\u53D1\u9001\u6717\u8BFB\u6587\u5B57\u3002", "OCR may miss text or misread formulas. Review before reading. OCR is local; online voices transmit the text you read."), "setting-item-description");
+        const footer = node(this.contentEl, "div", "", "note-reader-ocr-actions");
+        this.readPage = this.button(footer, "\u6717\u8BFB\u672C\u9875", "Read page", () => this.read("page"));
+        this.readSelection = this.button(footer, "\u6717\u8BFB\u9009\u4E2D\u6587\u5B57", "Read selected text", () => this.read("selection"));
+        this.readAll = this.button(footer, "\u6717\u8BFB\u5168\u90E8\u7ED3\u679C", "Read all results", () => this.read("all"));
+        this.button(footer, "\u5173\u95ED", "Close", () => this.close());
+        this.drawPages();
+      }
+      updateButtons() {
+        const hasText = this.pages.some((page) => page.text.trim());
+        for (const el of [this.readAll, this.readPage, this.readSelection]) el.disabled = this.busy || !hasText;
+        this.recognizeButton.disabled = !!this.busy;
+        this.cancelButton.disabled = !this.busy;
+        for (const el of [this.from, this.to, this.rotation, this.prefer, this.clearButton]) el.disabled = !!this.busy;
+        this.preview.readOnly = !!this.busy;
+      }
+      drawPages() {
+        const index = this.pageSelect.value;
+        this.pageSelect.replaceChildren();
+        this.pages.forEach((page, i) => {
+          const el = node(this.pageSelect, "option", `${this.t("\u7B2C", "Page")} ${page.page}${page.method === "text" ? this.t("\uFF08\u539F\u6709\u6587\u5B57\uFF09", " (existing text)") : " (OCR)"}`);
+          el.value = String(i);
+        });
+        this.pageSelect.value = this.pages[Number(index)] ? String(Number(index)) : "0";
+        this.showPage();
+      }
+      showPage() {
+        this.preview.value = this.pages[Number(this.pageSelect.value)]?.text || "";
+        this.updateButtons();
+      }
+      async recognize() {
+        if (this.busy || this.closed) return;
+        let helper, timer;
+        try {
+          pageRange(this.from.value, this.to.value, 2e3);
+          const root = this.app.vault.adapter.getBasePath?.();
+          const configured = this.plugin.settings.ocrExecutable?.trim();
+          if (!configured && !root) throw new Error("OCR_PATH");
+          const executable = configured || path2.join(root, this.plugin.manifest.dir || `${this.app.vault.configDir}/plugins/${this.plugin.manifest.id}`, "ocr-helper", os2.platform() === "win32" ? "CozyOcr.exe" : "CozyOcr");
+          helper = new OcrProcess(executable, this.plugin.settings.ocrModel);
+          this.controller = new AbortController();
+          this.busy = true;
+          this.pages = [];
+          this.drawPages();
+          this.status.textContent = this.t("\u6B63\u5728\u51C6\u5907\u2026", "Preparing...");
+          let timedOut = false;
+          timer = setTimeout(() => {
+            timedOut = true;
+            this.controller.abort();
+          }, 5 * 60 * 1e3);
+          try {
+            await recognizeFile({
+              plugin: this.plugin,
+              file: this.file,
+              start: Number(this.from.value),
+              end: Number(this.to.value),
+              rotation: Number(this.rotation.value),
+              preferText: this.prefer.checked,
+              helper,
+              signal: this.controller.signal,
+              document: this.contentEl.ownerDocument,
+              onStatus: (number) => {
+                if (!this.closed) this.status.textContent = this.t(`\u6B63\u5728\u5904\u7406\u7B2C ${number} \u9875\u2026`, `Processing page ${number}...`);
+              },
+              onPage: (page) => {
+                if (!this.closed) {
+                  this.pages.push(page);
+                  this.drawPages();
+                }
+              }
+            });
+          } catch (error) {
+            if (timedOut) throw new Error("OCR_TIMEOUT");
+            throw error;
+          }
+          if (!this.closed) {
+            const low = this.pages.reduce((sum, page) => sum + page.lowConfidence, 0);
+            this.status.textContent = this.pages.some((page) => page.text.trim()) ? this.t(`\u5DF2\u5B8C\u6210 ${this.pages.length} \u9875\uFF0C${low} \u884C\u7F6E\u4FE1\u5EA6\u504F\u4F4E\u3002`, `${this.pages.length} page(s) complete; ${low} low-confidence line(s).`) : this.t("\u672A\u8BC6\u522B\u51FA\u6587\u5B57\u3002\u53EF\u68C0\u67E5\u65B9\u5411\u3001\u6E05\u6670\u5EA6\u6216\u53D6\u6D88\u201C\u5DF2\u6709\u6587\u5B57\u76F4\u63A5\u63D0\u53D6\u201D\u3002", "No text found. Check orientation, resolution or disable existing-text extraction.");
+          }
+        } catch (error) {
+          if (!this.closed) this.status.textContent = this.t(...ERRORS[this.controller?.signal.aborted && error.message !== "OCR_TIMEOUT" ? "OCR_CANCELLED" : error.message] || ["\u8BC6\u522B\u5931\u8D25\u3002\u6587\u4EF6\u53EF\u80FD\u635F\u574F\u3001\u53D7\u5BC6\u7801\u4FDD\u62A4\u6216\u683C\u5F0F\u4E0D\u53D7\u652F\u6301\u3002", "Recognition failed. The file may be damaged, password-protected or unsupported."]);
+          if (error.message === "OCR_CHANGED") {
+            this.pages = [];
+            this.drawPages();
+          }
+        } finally {
+          clearTimeout(timer);
+          helper?.close();
+          this.busy = false;
+          if (!this.closed) this.updateButtons();
+        }
+      }
+      async read(scope) {
+        if (this.busy || this.closed) return;
+        let text = scope === "all" ? this.pages.map((page) => page.text).join("\n\n") : this.preview.value;
+        if (scope === "selection") text = text.slice(this.preview.selectionStart, this.preview.selectionEnd);
+        if (!text.trim()) {
+          new Notice2(this.t("\u8BF7\u5148\u9009\u4E2D\u6587\u5B57\u3002", "Select some text first."));
+          return;
+        }
+        if (text.length > MAX_TEXT) {
+          new Notice2(this.t(...ERRORS.OCR_TEXT));
+          return;
+        }
+        if (this.plugin.activeSession?.kind === "audio-export") {
+          new Notice2(this.t("\u8BF7\u5148\u5B8C\u6210\u97F3\u9891\u5BFC\u51FA\u3002", "Wait for audio export to finish."));
+          return;
+        }
+        this.close();
+        await this.plugin.runUserAction("Read OCR text", async () => {
+          await this.plugin.activateControlView();
+          await this.plugin.startReading(text, `${this.file.basename || this.file.name} (OCR)`, { plainText: true, pdfText: true, sourceKind: "ocr", skipReadingPosition: true });
+        });
+      }
+      onClose() {
+        this.closed = true;
+        this.controller?.abort();
+        this.pages = [];
+        if (this.preview) this.preview.value = "";
+        if (this.plugin.ocrModal === this) this.plugin.ocrModal = null;
+        this.contentEl.replaceChildren();
+      }
+    };
+    module2.exports = { OcrModal };
+  }
+});
+
+// src/ocr-entry.js
+var require_ocr_entry = __commonJS({
+  "src/ocr-entry.js"(exports2, module2) {
+    "use strict";
+    var { Notice: Notice2 } = require("obsidian");
+    var { OCR_DEFAULTS: OCR_DEFAULTS2, isOcrFile } = require_ocr_contract();
+    var t = (plugin, zh, en) => plugin.settings.settingsLanguage === "chinese" ? zh : en;
+    function openOcr2(plugin, file = plugin.app.workspace.getActiveFile?.()) {
+      if (!plugin.settings.ocrEnabled) {
+        new Notice2(t(plugin, "\u8BF7\u5148\u5728\u201C\u5B66\u672F\u9605\u8BFB \u2192 \u672C\u673A OCR\u201D\u4E2D\u542F\u7528\u5E76\u914D\u7F6E OCR \u52A9\u624B\u3002", "Enable and configure Local OCR in Academic reading first."));
+        return;
+      }
+      if (!isOcrFile(file)) {
+        new Notice2(t(plugin, "\u8BF7\u6253\u5F00 PDF\u3001PNG\u3001JPEG \u6216 WebP \u56FE\u7247\u3002", "Open a PDF, PNG, JPEG or WebP image."));
+        return;
+      }
+      plugin.ocrModal?.close();
+      const { OcrModal } = require_ocr_ui();
+      plugin.ocrModal = new OcrModal(plugin, file);
+      plugin.ocrModal.open();
+    }
+    function registerOcr2(plugin) {
+      plugin.addCommand({ id: "ocr-read-current-file", name: "Recognize PDF or image text (local OCR)", icon: "scan-text", callback: () => openOcr2(plugin) });
+      plugin.registerEvent(plugin.app.workspace.on("file-menu", (menu, file) => {
+        if (plugin.settings.ocrEnabled && isOcrFile(file)) menu.addItem((item) => item.setTitle(t(plugin, "\u8BC6\u522B\u6587\u5B57\u5E76\u6717\u8BFB\uFF08OCR\uFF09", "Recognize text and read (OCR)")).setIcon("scan-text").onClick(() => openOcr2(plugin, file)));
+      }));
+      plugin.register(() => {
+        plugin.ocrModal?.close();
+        plugin.ocrModal = null;
+      });
+    }
+    function addOcrSettings2(container, plugin, Setting) {
+      container.createEl("h3", { text: t(plugin, "\u672C\u673A OCR\uFF08\u53EF\u9009\uFF09", "Local OCR (optional)") });
+      new Setting(container).setName(t(plugin, "\u626B\u63CF PDF \u4E0E\u56FE\u7247\u6717\u8BFB", "Scanned PDF and image reading")).setDesc(t(plugin, "\u9ED8\u8BA4\u5173\u95ED\u3002\u9700\u5355\u72EC\u5B89\u88C5\u53EF\u4FE1\u7684 Cozy OCR \u52A9\u624B\uFF1B\u53EA\u5728\u624B\u52A8\u8BC6\u522B\u65F6\u52A0\u8F7D\u672C\u673A\u6A21\u578B\uFF0C\u4E0D\u4E0A\u4F20\u56FE\u7247\u3002\u5728\u7EBF\u97F3\u8272\u4ECD\u4F1A\u6309\u73B0\u6709\u6388\u6743\u53D1\u9001\u8BC6\u522B\u540E\u7684\u6587\u5B57\u3002", "Off by default. Install a trusted Cozy OCR helper separately. Local models load only on manual recognition; images are not uploaded. Online voices still send recognized text under your existing consent.")).addToggle((toggle) => toggle.setValue(plugin.settings.ocrEnabled === true).onChange(async (value) => {
+        plugin.settings.ocrEnabled = value;
+        if (!value) plugin.ocrModal?.close();
+        await plugin.saveSettings();
+      }));
+      new Setting(container).setName(t(plugin, "OCR \u52A9\u624B\u7A0B\u5E8F", "OCR helper executable")).setDesc(t(plugin, "\u53EF\u4FE1\u52A9\u624B\u7684\u5B8C\u6574\u8DEF\u5F84\uFF0C\u4E0D\u662F\u811A\u672C\u6216\u547D\u4EE4\u884C\u3002\u7559\u7A7A\u4F7F\u7528\u63D2\u4EF6\u76EE\u5F55\u4E2D ocr-helper/CozyOcr.exe\uFF08\u5176\u4ED6\u684C\u9762\u5E73\u53F0\u4E3A CozyOcr\uFF09\u3002", "Absolute path to a trusted helper, not a script or command line. Empty uses ocr-helper/CozyOcr.exe in this plugin directory (CozyOcr on other desktop platforms).")).addText((text) => text.setValue(plugin.settings.ocrExecutable || "").onChange(async (value) => {
+        plugin.settings.ocrExecutable = value.trim();
+        await plugin.saveSettings();
+      }));
+      new Setting(container).setName(t(plugin, "OCR \u6A21\u578B", "OCR model")).addDropdown((select) => select.addOption("small", t(plugin, "Small\uFF1A\u4E2D\u82F1\u6587\u6B63\u6587\u8D28\u91CF\u4F18\u5148", "Small: prioritize Chinese/English prose quality")).addOption("tiny", t(plugin, "Tiny\uFF1A\u901F\u5EA6\u4F18\u5148", "Tiny: prioritize speed")).setValue(plugin.settings.ocrModel || "small").onChange(async (value) => {
+        plugin.settings.ocrModel = value;
+        await plugin.saveSettings();
+      }));
+    }
+    module2.exports = { OCR_DEFAULTS: OCR_DEFAULTS2, registerOcr: registerOcr2, addOcrSettings: addOcrSettings2, openOcr: openOcr2 };
+  }
+});
+
+// src/speech-options.js
+var require_speech_options = __commonJS({
+  "src/speech-options.js"(exports2, module2) {
+    "use strict";
+    function parseTerms(value) {
+      const text = typeof value === "string" ? value : "";
+      if (text.length > 2e4) return { rules: [], error: "Maximum 20,000 characters. / \u6700\u591A 20,000 \u5B57\u7B26\u3002" };
+      const rules = [], seen = /* @__PURE__ */ new Set();
+      for (const [index, line] of text.split(/\r?\n/).entries()) {
+        if (!line.trim()) continue;
+        const separator = line.indexOf("=");
+        const from = line.slice(0, separator).trim(), to = line.slice(separator + 1).trim();
+        if (separator < 1 || !from || !to || from.length > 80 || to.length > 120 || /[\x00-\x1f]/.test(from + to) || seen.has(from) || rules.length >= 100) {
+          return { rules: [], error: `Invalid rule on line ${index + 1}. / \u7B2C ${index + 1} \u884C\u89C4\u5219\u65E0\u6548\u3002` };
+        }
+        seen.add(from);
+        rules.push({ from, to });
+      }
+      rules.sort((a, b) => b.from.length - a.from.length);
+      return { rules, error: "" };
+    }
+    function normalizedTerms2(value) {
+      return parseTerms(value).error ? "" : typeof value === "string" ? value : "";
+    }
+    function termTokens(text, settings = {}) {
+      const rules = settings.speechTermsEnabled === true ? parseTerms(settings.speechTerms).rules : [];
+      const source = String(text || ""), tokens = [];
+      const word = (value) => /[\p{L}\p{N}_]/u.test(value || "");
+      for (let i = 0; i < source.length; ) {
+        const before = Array.from(source.slice(Math.max(0, i - 2), i)).at(-1);
+        const rule = rules.find(({ from }) => source.startsWith(from, i) && !(/^[A-Za-z0-9_]/.test(from) && word(before)) && !(/[A-Za-z0-9_]$/.test(from) && word(String.fromCodePoint(source.codePointAt(i + from.length) || 0))));
+        const original = rule ? rule.from : String.fromCodePoint(source.codePointAt(i));
+        tokens.push({ source: original, text: rule ? rule.to : original });
+        i += original.length;
+      }
+      return tokens;
+    }
+    function applyTerms2(text, settings) {
+      return termTokens(text, settings).map((token) => token.text).join("");
+    }
+    function fitSpeechParts2(text, settings, limit = 800) {
+      const maximum = Math.max(120, Number(limit) || 800), parts = [];
+      let source = "", speech = "";
+      for (const token of termTokens(text, settings)) {
+        if (source && speech.length + token.text.length > maximum) {
+          parts.push({ source, text: speech });
+          source = "";
+          speech = "";
+        }
+        source += token.source;
+        speech += token.text;
+      }
+      if (source) parts.push({ source, text: speech });
+      return parts;
+    }
+    var CONTEXT_MODELS = /* @__PURE__ */ new Set([
+      "elevenlabs/eleven-multilingual-v2",
+      "elevenlabs/eleven-flash-v2.5",
+      "elevenlabs/eleven-v4",
+      "elevenlabs/eleven-v4-turbo"
+    ]);
+    function supportsSpeechContext(model) {
+      return CONTEXT_MODELS.has(model);
+    }
+    function contextOptions2(settings = {}, context = {}) {
+      if (settings.openRouterContext !== true || !supportsSpeechContext(settings.openRouterModel)) return {};
+      const adjacent = (value, previous2) => {
+        const sentences = String(value || "").trim().match(/[^。！？.!?\n]+[。！？.!?]?/gu) || [];
+        const sentence = previous2 ? sentences.at(-1) : sentences[0];
+        const chars = Array.from(applyTerms2(sentence || "", settings).trim());
+        return (previous2 ? chars.slice(-160) : chars.slice(0, 160)).join("");
+      };
+      const previous = adjacent(context.previous, true), next = adjacent(context.next, false);
+      const options = { ...previous ? { previous_text: previous } : {}, ...next ? { next_text: next } : {} };
+      return Object.keys(options).length ? { options: { elevenlabs: options } } : {};
+    }
+    function adjacentContext2(parts, index, previous = "", next = "") {
+      return {
+        previous: parts.slice(0, index).join("") || previous,
+        next: parts.slice(index + 1).join("") || next
+      };
+    }
+    module2.exports = { parseTerms, normalizedTerms: normalizedTerms2, applyTerms: applyTerms2, fitSpeechParts: fitSpeechParts2, supportsSpeechContext, contextOptions: contextOptions2, adjacentContext: adjacentContext2 };
+  }
+});
+
+// src/speech-options-settings.js
+var require_speech_options_settings = __commonJS({
+  "src/speech-options-settings.js"(exports2, module2) {
+    "use strict";
+    var { Setting } = require("obsidian");
+    var { parseTerms, supportsSpeechContext } = require_speech_options();
+    var { disclosure: disclosure2 } = require_engine_setup();
+    function addSpeechContextSetting2(container, plugin) {
+      if (!supportsSpeechContext(plugin.settings.openRouterModel)) return;
+      const zh = plugin.settings.settingsLanguage === "chinese";
+      const details = container.createEl("details", { cls: "reader-speech-options" });
+      details.createEl("summary", { text: zh ? "ElevenLabs \u9AD8\u7EA7\u9009\u9879" : "ElevenLabs advanced options" });
+      new Setting(details).setName(zh ? "\u6539\u5584\u5206\u6BB5\u8854\u63A5\uFF08\u5B9E\u9A8C\u6027\uFF09" : "Improve segment continuity (experimental)").setDesc(zh ? "\u9ED8\u8BA4\u5173\u95ED\u3002\u989D\u5916\u53D1\u9001\u5F53\u524D\u6717\u8BFB\u8303\u56F4\u5185\u7684\u76F8\u90BB\u53E5\u5B50\uFF0C\u6BCF\u4FA7\u6700\u591A 160 \u5B57\u7B26\uFF1B\u7EE7\u7EED\u5F3A\u5236 ZDR\u3002\u4E0D\u4F7F\u7528\u5386\u53F2\u8BF7\u6C42\u6216\u4E91\u7AEF\u8BCD\u5178\u3002\u4E0B\u6B21\u6717\u8BFB\u751F\u6548\uFF0C\u5B9E\u9645\u6548\u679C\u5C1A\u5F85\u8BD5\u542C\u9A8C\u8BC1\u3002" : "Off by default. Sends adjacent sentences within the reading range, up to 160 characters per side; ZDR remains required. No request history or cloud dictionary. Applies next session; listening validation is pending.").addToggle((toggle) => toggle.setValue(plugin.settings.openRouterContext === true).onChange(async (value) => {
+        plugin.settings.openRouterContext = value;
+        await plugin.saveSettings();
+      }));
+    }
+    function addSpeechTermsSettings2(container, plugin) {
+      const zh = plugin.settings.settingsLanguage === "chinese";
+      container = disclosure2(container, zh ? "\u53D1\u97F3\u8BCD\u5178\uFF08\u9AD8\u7EA7\uFF09" : "Pronunciation dictionary (advanced)");
+      new Setting(container).setName(zh ? "\u672C\u5730\u672F\u8BED\u8BFB\u6CD5" : "Local term pronunciations").setDesc(zh ? "\u9002\u7528\u4E8E\u6240\u6709\u8BED\u97F3\u5F15\u64CE\u3002\u53EA\u66FF\u6362\u5408\u6210\u6587\u672C\uFF0C\u4E0D\u4FEE\u6539\u539F\u6587\uFF1B\u89C4\u5219\u4FDD\u5B58\u5728\u672C\u5730\uFF0C\u4E0B\u6B21\u6717\u8BFB\u751F\u6548\u3002\u5728\u7EBF\u5F15\u64CE\u4ECD\u4F1A\u6536\u5230\u66FF\u6362\u540E\u7684\u6587\u672C\u3002" : "For all speech engines. Changes synthesis text, not the document. Rules stay local and apply next session; online engines still receive the substituted text.").addToggle((toggle) => toggle.setValue(plugin.settings.speechTermsEnabled === true).onChange(async (value) => {
+        plugin.settings.speechTermsEnabled = value;
+        await plugin.saveSettings();
+      }));
+      const description = zh ? "\u6BCF\u884C\uFF1A\u672F\u8BED = \u8BFB\u6CD5\uFF0C\u4F8B\u5982 AI = \u4EBA\u5DE5\u667A\u80FD\u3002\u533A\u5206\u5927\u5C0F\u5199\uFF0C\u4E0D\u652F\u6301\u6B63\u5219\uFF1B\u6700\u591A 100 \u6761\uFF0C\u672F\u8BED 80 \u5B57\u7B26\u3001\u8BFB\u6CD5 120 \u5B57\u7B26\u3002" : "One rule per line: term = pronunciation, e.g. AI = artificial intelligence. Case-sensitive, no regex. Up to 100 rules; 80 characters per term, 120 per pronunciation.";
+      const row = new Setting(container).setName(zh ? "\u672F\u8BED\u89C4\u5219" : "Term rules").setDesc(description);
+      row.settingEl.addClass("reader-speech-terms");
+      row.addTextArea((input) => {
+        input.setValue(plugin.settings.speechTerms || "").setPlaceholder(zh ? "AI = \u4EBA\u5DE5\u667A\u80FD" : "AI = artificial intelligence").onChange(async (value) => {
+          const { error } = parseTerms(value);
+          input.inputEl.setAttribute("aria-invalid", String(Boolean(error)));
+          row.setDesc(error || description);
+          if (error) return;
+          plugin.settings.speechTerms = value;
+          await plugin.saveSettings();
+        });
+        input.inputEl.rows = 4;
+        input.inputEl.maxLength = 2e4;
+        input.inputEl.setAttribute("aria-label", zh ? "\u672F\u8BED\u89C4\u5219" : "Term rules");
+      });
+    }
+    module2.exports = { addSpeechContextSetting: addSpeechContextSetting2, addSpeechTermsSettings: addSpeechTermsSettings2 };
+  }
+});
+
+// src/settings-confirm.js
+var require_settings_confirm = __commonJS({
+  "src/settings-confirm.js"(exports2, module2) {
+    "use strict";
+    var { Modal: Modal2, Setting } = require("obsidian");
+    var { translate } = require_i18n();
+    var SettingsConfirmModal2 = class extends Modal2 {
+      constructor(plugin, title, description, action) {
+        super(plugin.app);
+        this.plugin = plugin;
+        this.title = title;
+        this.description = description;
+        this.action = action;
+      }
+      onOpen() {
+        const t = (en, zh) => translate(this.plugin.settings.settingsLanguage, en, zh);
+        this.contentEl.createEl("h2", { text: this.title });
+        this.contentEl.createEl("p", { text: this.description });
+        new Setting(this.contentEl).addButton((button) => button.setButtonText(t("Cancel", "\u53D6\u6D88")).onClick(() => this.close())).addButton((button) => button.setButtonText(t("Confirm", "\u786E\u8BA4")).onClick(async () => {
+          button.setDisabled(true);
+          try {
+            await this.plugin.runUserAction("Reset settings", this.action);
+            this.close();
+          } finally {
+            button.setDisabled(false);
+          }
+        }));
+      }
+      onClose() {
+        this.contentEl.empty();
+      }
+    };
+    module2.exports = { SettingsConfirmModal: SettingsConfirmModal2 };
+  }
+});
+
+// src/pdf-footnotes.js
+var require_pdf_footnotes = __commonJS({
+  "src/pdf-footnotes.js"(exports2, module2) {
+    "use strict";
+    var { extractPdfTextLayout: extractPdfTextLayout2 } = require_pdf_layout2();
+    var MODES = ["body", "after", "inline", "footnotes"];
+    function normalizeFootnoteMode2(value) {
+      return MODES.includes(value) ? value : "body";
+    }
+    function textOf(lines) {
+      return lines.map((line) => line.text).join("\n").replace(/([A-Za-z])-\n(?=[a-z])/g, "$1").trim();
+    }
+    function partitionFootnotes2(items, viewport, rules = [], options = {}) {
+      const layout = extractPdfTextLayout2(items, { viewport });
+      const height = Number(viewport?.height), width = Number(viewport?.width);
+      if (!(height > 0 && width > 0) || !layout.lines.length) return { layout, body: layout, notes: { ...layout, text: "", lines: [] }, regions: [] };
+      const positioned = (items || []).filter((item) => item.str?.trim() && item.transform?.length >= 6).map((item) => ({ x: item.transform[4], y: item.transform[5], height: Math.abs(item.height || item.transform[3]), weight: item.str.trim().length }));
+      const upper = positioned.filter((item) => item.y > height * 0.22 && item.y < height * 0.92);
+      const counts = /* @__PURE__ */ new Map();
+      for (const item of upper) {
+        const size = Math.round(item.height * 10) / 10;
+        counts.set(size, (counts.get(size) || 0) + item.weight);
+      }
+      const bodySize = [...counts].sort((a, b) => b[1] - a[1])[0]?.[0];
+      if (!bodySize) return { layout, body: layout, notes: { ...layout, text: "", lines: [] }, regions: [] };
+      const regions = [];
+      if (options.pageNumber === 1) {
+        const ordered = [...layout.lines].sort((a, b) => b.y - a.y);
+        for (const line of ordered) {
+          if (line.y > height * 0.28 || line.y < height * 0.035 || !/^[*\u2217\u2020\u2021\s]*(?:corresponding author|correspondence|e[-\s]?mail address)\b/i.test(line.text)) continue;
+          const below = ordered.filter((candidate) => candidate.y <= line.y && candidate.y > height * 0.035);
+          const spans = positioned.filter((item) => item.y <= line.y + bodySize * 0.5 && item.y > height * 0.035 && item.weight > 2);
+          const small = spans.length && spans.every((item) => item.height <= bodySize * 0.96);
+          const metadata = below.some((candidate) => candidate !== line && /e[-\s]?mail address|doi\.org|received\b|accepted\b|available\s*online|copyright|\u00a9/i.test(candidate.text));
+          const rule = rules.some((rule2) => rule2.y > line.y && rule2.y - line.y < bodySize * 3 && rule2.x >= line.xMin - bodySize * 2 && rule2.x <= line.xMin + bodySize && rule2.width > 20 && rule2.width < width * 0.45);
+          const above = ordered.filter((candidate) => candidate.y > line.y + bodySize * 0.5);
+          const gap = above.length ? Math.min(...above.map((candidate) => candidate.y)) - line.y : 0;
+          if (!small || !metadata || !rule && gap < bodySize * 2) continue;
+          regions.push({
+            xMin: Math.min(...below.map((l) => l.xMin)) - 2,
+            xMax: Math.max(...below.map((l) => l.xMax)) + 2,
+            yMin: Math.min(...below.map((l) => l.y)) - bodySize * 0.6,
+            yMax: line.y + bodySize * 0.6
+          });
+          break;
+        }
+      }
+      for (const left of layout.twoColumn ? [true, false] : [true]) {
+        const column = layout.lines.filter((line) => !layout.twoColumn || line.xMin < width / 2 === left).sort((a, b) => b.y - a.y);
+        for (let i = 0; i < column.length; i++) {
+          const line = column[i];
+          if (regions.some((region) => line.y >= region.yMin && line.y <= region.yMax && line.xMin >= region.xMin && line.xMax <= region.xMax)) continue;
+          if (line.y > height * 0.28 || line.y < height * 0.035 || !/^\d{1,3}\s+\S/.test(line.text)) continue;
+          const nearby = positioned.filter((item) => Math.abs(item.y - line.y) <= bodySize * 0.6 && item.x >= line.xMin - 2 && item.x <= line.xMax + 2);
+          const letters = nearby.filter((item) => item.weight > 2);
+          if (!letters.length) continue;
+          const size = letters.reduce((sum, item) => sum + item.height * item.weight, 0) / letters.reduce((sum, item) => sum + item.weight, 0);
+          const rule = rules.some((rule2) => rule2.y > line.y && rule2.y - line.y < bodySize * 3 && rule2.x >= line.xMin - bodySize && rule2.x <= line.xMin + bodySize && rule2.width > 20 && rule2.width < width * 0.45);
+          const gap = i > 0 ? column[i - 1].y - line.y : 0;
+          if (size > bodySize * 0.94 || !rule && (size > bodySize * 0.91 || gap < bodySize * 1.7)) continue;
+          const below = column.slice(i).filter((candidate) => candidate.y > height * 0.035);
+          const consistent = below.every((candidate) => {
+            const spans = positioned.filter((item) => Math.abs(item.y - candidate.y) <= bodySize * 0.5 && item.x >= candidate.xMin - 2 && item.x <= candidate.xMax + 2 && item.weight > 2);
+            return !spans.length || spans.every((item) => item.height <= bodySize * 0.96);
+          });
+          if (!consistent) continue;
+          regions.push({
+            xMin: Math.min(...below.map((l) => l.xMin)) - 2,
+            xMax: Math.max(...below.map((l) => l.xMax)) + 2,
+            yMin: Math.min(...below.map((l) => l.y)) - bodySize * 0.6,
+            yMax: line.y + bodySize * 0.6
+          });
+          break;
+        }
+      }
+      const isNote = (line) => regions.some((region) => line.xMin >= region.xMin && line.xMax <= region.xMax && line.y >= region.yMin && line.y <= region.yMax);
+      const notes = layout.lines.filter(isNote), body = layout.lines.filter((line) => !isNote(line));
+      return { layout, body: { ...layout, lines: body, text: textOf(body) }, notes: { ...layout, lines: notes, text: textOf(notes) }, regions };
+    }
+    function splitFootnotesInRange2(text, partition) {
+      let body = text;
+      const notes = [];
+      for (let i = 0; i < partition.notes.lines.length; i++) {
+        const line = partition.notes.lines[i], next = partition.notes.lines[i + 1];
+        const value = /[A-Za-z]-$/.test(line.text) && /^[a-z]/.test(next?.text || "") ? line.text.slice(0, -1) : line.text;
+        const pattern = value.trim().split(/\s+/).map((word) => word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("\\s+");
+        const re = new RegExp(pattern, "g"), matches = [...body.matchAll(re)];
+        if (matches.length === 1) {
+          notes.push(matches[0][0]);
+          body = body.slice(0, matches[0].index) + "\n" + body.slice(matches[0].index + matches[0][0].length);
+        }
+      }
+      return { body: body.trim(), notes: notes.join("\n") };
+    }
+    async function footnoteRules2(page, OPS) {
+      if (!page.getOperatorList || !OPS) return [];
+      try {
+        const list = await page.getOperatorList(), rules = [];
+        for (let i = 0; i < list.fnArray.length; i++) {
+          if (list.fnArray[i] !== OPS.constructPath) continue;
+          const [ops, coords] = list.argsArray[i] || [];
+          if (!Array.isArray(ops) && !ArrayBuffer.isView(ops)) continue;
+          let index = 0, from = null;
+          for (const op of ops) {
+            if (op === OPS.moveTo) {
+              from = [coords[index++], coords[index++]];
+            } else if (op === OPS.lineTo) {
+              const to = [coords[index++], coords[index++]];
+              if (from && Math.abs(from[1] - to[1]) < 1) rules.push({ x: Math.min(from[0], to[0]), y: to[1], width: Math.abs(to[0] - from[0]) });
+              from = to;
+            } else if (op === OPS.curveTo) index += 6;
+            else if (op === OPS.rectangle) {
+              index += 4;
+              from = null;
+            } else if (op !== OPS.closePath) {
+              from = null;
+              break;
+            }
+          }
+        }
+        return rules;
+      } catch (_) {
+        return [];
+      }
+    }
+    function addFootnoteSettings2(container, plugin, Setting) {
+      const zh = plugin.settings.settingsLanguage === "chinese";
+      new Setting(container).setName(zh ? "PDF \u811A\u6CE8\u6717\u8BFB" : "PDF footnote reading").setDesc(zh ? "\u9ED8\u8BA4\u53EA\u8BFB\u6B63\u6587\u3002\u7ED3\u5408\u9875\u5E95\u7F16\u53F7\u3001\u5B57\u53F7\u548C\u95F4\u8DDD\u8BC6\u522B\u811A\u6CE8\u53CA\u9996\u9875\u4F5C\u8005\u3001\u51FA\u7248\u4FE1\u606F\uFF0C\u4E0D\u786E\u5B9A\u7684\u6587\u5B57\u4FDD\u7559\u3002\u4EC5\u6717\u8BFB\u9009\u4E2D\u6587\u5B57\u65F6\u4ECD\u8BFB\u5B8C\u6574\u6240\u9009\u5185\u5BB9\u3002" : "Body only by default. Detects bottom-page notes and first-page correspondence/publication blocks using size and spacing; uncertain text is retained. Selection-only reading preserves the selected text.").addDropdown((dropdown) => {
+        const labels = zh ? ["\u53EA\u8BFB\u6B63\u6587", "\u6B63\u6587\u7ED3\u675F\u540E\u8BFB\u811A\u6CE8", "\u4FDD\u7559\u539F\u987A\u5E8F\uFF08\u542B\u811A\u6CE8\uFF09", "\u53EA\u8BFB\u811A\u6CE8"] : ["Body only", "Footnotes after body", "Original order, including footnotes", "Footnotes only"];
+        MODES.forEach((mode, i) => dropdown.addOption(mode, labels[i]));
+        dropdown.setValue(normalizeFootnoteMode2(plugin.settings.pdfFootnoteMode)).onChange(async (value) => {
+          plugin.settings.pdfFootnoteMode = normalizeFootnoteMode2(value);
+          await plugin.saveSettings();
+        });
+      });
+    }
+    module2.exports = { partitionFootnotes: partitionFootnotes2, footnoteRules: footnoteRules2, normalizeFootnoteMode: normalizeFootnoteMode2, addFootnoteSettings: addFootnoteSettings2, splitFootnotesInRange: splitFootnotesInRange2 };
+  }
+});
+
+// src/pdf-ancillary.js
+var require_pdf_ancillary = __commonJS({
+  "src/pdf-ancillary.js"(exports2, module2) {
+    "use strict";
+    var { extractPdfTextLayout: extractPdfTextLayout2 } = require_pdf_layout2();
+    var inside = (line, region) => line.y >= region.yMin && line.y <= region.yMax && line.xMin >= region.xMin && line.xMax <= region.xMax;
+    var textOf = (lines) => lines.map((line) => line.text).join("\n").replace(/([A-Za-z])-\n(?=[a-z])/g, "$1").trim();
+    function edgeKey(line, viewport) {
+      const band = line.y > viewport.height * 0.93 ? "top" : line.y < viewport.height * 0.045 ? "bottom" : "";
+      if (!band) return "";
+      const value = line.text.toLowerCase().replace(/\d+/g, "#").replace(/\s+/g, " ").trim();
+      return `${band}:${Math.round(line.xMin / viewport.width * 10)}:${value}`;
+    }
+    function recurringEdges2(pages) {
+      const counts = /* @__PURE__ */ new Map();
+      for (const page of pages) {
+        if (!page.viewport?.height) continue;
+        const keys = new Set(extractPdfTextLayout2(page.items, { viewport: page.viewport }).lines.map((line) => edgeKey(line, page.viewport)).filter(Boolean));
+        for (const key of keys) counts.set(key, (counts.get(key) || 0) + 1);
+      }
+      return new Set([...counts].filter(([, count]) => count >= 2).map(([key]) => key));
+    }
+    function ancillaryLayout2(items, viewport, rules = [], repeated = /* @__PURE__ */ new Set()) {
+      const layout = extractPdfTextLayout2(items, { viewport });
+      const headers = [], glossary = [];
+      if (!viewport?.height || !viewport?.width) return { layout, headers, glossary };
+      for (const line of layout.lines) {
+        if (repeated.has(edgeKey(line, viewport)) || line.y < viewport.height * 0.045 && /^\d{1,4}$/.test(line.text.trim())) {
+          headers.push({ xMin: line.xMin - 2, xMax: line.xMax + 2, yMin: line.y - 2, yMax: line.y + 2 });
+        }
+      }
+      const heading = /^(?:(?:\d+(?:\.\d+)*|[A-Z])\.?\s+)?(?:list of (?:abbreviations|symbols)|abbreviations|nomenclature|glossary|symbols and abbreviations|术语表|缩略语表|缩写表|符号表)\s*[:：]?$/i;
+      const row = /^(?:[A-Z0-9][A-Z0-9/()+\-]{0,19}[:：]?\s+\S|[^\s:：]{1,20}[:：]\s*\S)/;
+      for (const title of layout.lines.filter((line) => heading.test(line.text.trim()))) {
+        const columnLeft = layout.twoColumn && title.xMax < viewport.width / 2;
+        const columnRight = layout.twoColumn && title.xMin > viewport.width / 2;
+        const xMin = columnRight ? viewport.width / 2 : 0;
+        const xMax = columnLeft ? viewport.width / 2 : viewport.width;
+        const candidates = layout.lines.filter((line) => line.y < title.y && line.xMin >= xMin && line.xMax <= xMax).sort((a, b) => b.y - a.y);
+        const selected = [title];
+        let previous = title, rows = 0;
+        const sizes = items.filter((item) => item.transform && Math.abs(item.transform[5] - title.y) < 5).map((item) => Math.abs(item.height || item.transform[3]));
+        const size = Math.max(5, ...sizes);
+        const bottomRule = rules.filter((rule) => rule.y < title.y && rule.width > (xMax - xMin) * 0.55 && rule.x <= title.xMin && rule.x + rule.width >= title.xMax).sort((a, b) => b.y - a.y)[0];
+        for (const line of candidates) {
+          if (bottomRule && line.y < bottomRule.y) break;
+          if (previous.y - line.y > size * 2.7 || !row.test(line.text) && (!bottomRule || rows === 0)) break;
+          if (row.test(line.text)) rows++;
+          selected.push(line);
+          previous = line;
+        }
+        if (rows < 2) continue;
+        glossary.push({
+          xMin: Math.min(...selected.map((line) => line.xMin)) - 2,
+          xMax: Math.max(...selected.map((line) => line.xMax)) + 2,
+          yMin: Math.min(...selected.map((line) => line.y)) - 2,
+          yMax: title.y + 2
+        });
+      }
+      return { layout, headers, glossary };
+    }
+    function addAncillarySettings2(container, plugin, Setting) {
+      const zh = plugin.settings.settingsLanguage === "chinese";
+      new Setting(container).setName(zh ? "\u8DF3\u8FC7 PDF \u9875\u7709\u9875\u811A" : "Skip PDF headers and footers").setDesc(zh ? "\u9ED8\u8BA4\u5F00\u542F\u3002\u62BD\u67E5\u5C11\u91CF\u9875\u9762\uFF0C\u6392\u9664\u8FB9\u7F18\u91CD\u590D\u7684\u4F5C\u8005\u3001\u671F\u520A\u4FE1\u606F\u548C\u9875\u7801\uFF0C\u4E0D\u6539\u52A8 PDF\u3002" : "On by default. Samples a few pages to omit recurring author/journal information at page edges and page numbers without changing the PDF.").addToggle((toggle) => toggle.setValue(plugin.settings.pdfSkipHeaders !== false).onChange(async (value) => {
+        plugin.settings.pdfSkipHeaders = value;
+        await plugin.saveSettings();
+      }));
+      new Setting(container).setName(zh ? "\u6B63\u6587\u6717\u8BFB\u65F6\u5305\u542B PDF \u672F\u8BED\u8868" : "Include PDF glossary in body reading").setDesc(zh ? "\u9ED8\u8BA4\u5173\u95ED\u3002\u4EC5\u6392\u9664\u6709\u660E\u786E\u6807\u9898\u548C\u8868\u683C\u6392\u5217\u7684\u672F\u8BED\u8868\uFF1B\u4E0D\u786E\u5B9A\u7684\u6587\u5B57\u4FDD\u7559\u3002\u53EF\u5728 PDF \u5DE5\u5177\u680F\u4E2D\u5355\u72EC\u6717\u8BFB\u6574\u7BC7 PDF \u7684\u672F\u8BED\u8868\u6216\u811A\u6CE8\uFF1B\u4EC5\u9009\u4E2D\u6587\u5B57\u65F6\u4E0D\u81EA\u52A8\u8FC7\u6EE4\u3002" : "Off by default. Omits confidently identified glossary tables; uncertain text is retained. The PDF toolbar can read the whole PDF's glossary or footnotes separately. Selection-only reading is not filtered.").addToggle((toggle) => toggle.setValue(plugin.settings.pdfIncludeGlossary === true).onChange(async (value) => {
+        plugin.settings.pdfIncludeGlossary = value;
+        await plugin.saveSettings();
+      }));
+    }
+    module2.exports = { recurringEdges: recurringEdges2, ancillaryLayout: ancillaryLayout2, inside, textOf, addAncillarySettings: addAncillarySettings2 };
+  }
+});
+
+// src/pdf-academic.js
+var require_pdf_academic = __commonJS({
+  "src/pdf-academic.js"(exports2, module2) {
+    "use strict";
+    var { academicOptions: academicOptions2, numericCell } = require_academic_speech();
+    function numericTableRegions2(layout, viewport, settings = {}) {
+      const mode = academicOptions2(settings).academicTableMode;
+      if (mode === "all" || !viewport?.width) return [];
+      const regions = [];
+      for (const title of layout.lines.filter((line) => /^(?:Table\s+(?:\d+|[IVXLCDM]+)\b|表\s*[\d一二三四五六七八九十]+)/i.test(line.text.trim()))) {
+        const full = title.xMax - title.xMin > viewport.width * 0.55;
+        const left = title.xMin < viewport.width / 2;
+        const candidates = layout.lines.filter((line) => line.y < title.y && (full || !layout.twoColumn || line.xMin < viewport.width / 2 === left)).sort((a, b) => b.y - a.y);
+        let started = false, previous = title, rows = 0;
+        const selected = [], pending = [];
+        for (const line of candidates) {
+          if (previous.y - line.y > 30) break;
+          const cells = line.text.trim().split(/\s+/), digits = cells.filter(numericCell).length;
+          const numeric = digits >= 2 && digits / cells.length >= 0.6;
+          if (!started && !numeric) {
+            if (pending.length >= 3 || line.text.length > 120 || /[.!?。]$/.test(line.text)) break;
+            pending.push(line);
+            previous = line;
+            continue;
+          }
+          if (!numeric) break;
+          if (!started) {
+            selected.push(...pending);
+            started = true;
+          }
+          selected.push(line);
+          rows++;
+          previous = line;
+        }
+        if (rows < (mode === "skip" ? 2 : 8)) continue;
+        regions.push({
+          xMin: Math.min(...selected.map((l) => l.xMin)) - 2,
+          xMax: Math.max(...selected.map((l) => l.xMax)) + 2,
+          yMin: Math.min(...selected.map((l) => l.y)) - 2,
+          yMax: Math.max(...selected.map((l) => l.y)) + 2
+        });
+      }
+      return regions;
+    }
+    module2.exports = { numericTableRegions: numericTableRegions2 };
+  }
+});
+
+// src/pdf-selection-source.js
+var require_pdf_selection_source = __commonJS({
+  "src/pdf-selection-source.js"(exports2, module2) {
+    "use strict";
+    function pdfSelectionSourceMap2(source) {
+      const characters = [];
+      const segments = new Intl.Segmenter(void 0, { granularity: "grapheme" }).segment(source);
+      for (const { segment, index } of segments) {
+        for (const char of segment.normalize("NFKC")) {
+          if (char === "\xAD") continue;
+          for (let i = 0; i < char.length; i++) characters.push({ char: char[i], offset: index });
+        }
+      }
+      let text = characters.map((item) => item.char).join("");
+      const removed = /* @__PURE__ */ new Set();
+      for (const match of text.matchAll(/([A-Za-z])-\s+(?=[a-z])/g)) {
+        for (let i = match.index + 1; i < match.index + match[0].length; i++) removed.add(i);
+      }
+      const kept = characters.filter((_, index) => !removed.has(index));
+      const normalized = [];
+      for (const item of kept) {
+        if (/\s/.test(item.char)) {
+          if (normalized.length && normalized.at(-1).char !== " ") normalized.push({ char: " ", offset: item.offset });
+        } else normalized.push(item);
+      }
+      if (normalized.at(-1)?.char === " ") normalized.pop();
+      text = normalized.map((item) => item.char).join("");
+      return { text, offsets: normalized.map((item) => item.offset) };
+    }
+    module2.exports = { pdfSelectionSourceMap: pdfSelectionSourceMap2 };
   }
 });
 
@@ -38143,6 +38727,7 @@ var { getOpenRouterPricing } = require_openrouter_pricing();
 var { disclosure, renderEngineChoice, renderPreview } = require_engine_setup();
 var { registerReadingMenu, syncEditingToolbar, addReadingMenuSettings } = require_reading_menu();
 var { registerPdfReadingMenu, pdfSentenceStart } = require_pdf_reading_menu();
+var { OCR_DEFAULTS, registerOcr, addOcrSettings, openOcr } = require_ocr_entry();
 var { normalizedTerms, applyTerms, fitSpeechParts, contextOptions, adjacentContext } = require_speech_options();
 var { addSpeechContextSetting, addSpeechTermsSettings } = require_speech_options_settings();
 var { SettingsConfirmModal } = require_settings_confirm();
@@ -39583,6 +40168,7 @@ function createDefaultSettings() {
     readingFloatingAction: "selection",
     ...ACADEMIC_DEFAULTS,
     ...COPILOT_DEFAULTS,
+    ...OCR_DEFAULTS,
     ...MIMO_DEFAULTS,
     ...BYOK_DEFAULTS,
     byokProfiles: [],
@@ -40267,6 +40853,7 @@ var CosyVoiceReaderPlugin = class extends Plugin {
     this.logPath = null;
     this.statusBar = this.addStatusBarItem();
     await this.loadSettings();
+    registerOcr(this);
     startDeviceCacheMaintenance(this);
     registerReadingMenu(this, (snapshot) => this.runUserAction("Read context", () => this.startReading(
       snapshot.text,
@@ -40600,6 +41187,7 @@ var CosyVoiceReaderPlugin = class extends Plugin {
     });
   }
   async onunload() {
+    this.ocrModal?.close();
     this.bufferingHint?.stop();
     this.systemSpeechUnloaded = true;
     this.htmlHighlights?.destroy();
@@ -40641,6 +41229,9 @@ var CosyVoiceReaderPlugin = class extends Plugin {
     const hadAzureCredentialSource = Object.prototype.hasOwnProperty.call(source, "azureSpeechCredentialSource");
     const hadOpenRouterCredentialSource = Object.prototype.hasOwnProperty.call(source, "openRouterCredentialSource");
     this.settings = selectKnownSettings(defaults, source);
+    this.settings.ocrEnabled = this.settings.ocrEnabled === true;
+    this.settings.ocrModel = this.settings.ocrModel === "tiny" ? "tiny" : "small";
+    this.settings.ocrExecutable = typeof this.settings.ocrExecutable === "string" ? this.settings.ocrExecutable.trim().slice(0, 4096) : "";
     this.settings.persistentAudioCache = this.settings.persistentAudioCache === true;
     if (this.firstInstallation) this.settings.speechEngine = "system-tts";
     this.settings.openRouterContext = this.settings.openRouterContext === true;
@@ -42235,6 +42826,11 @@ ${embed}
     });
   }
   async readCurrentNote() {
+    const imageFile = this.app.workspace.getActiveFile?.();
+    if (/^(png|jpe?g|webp)$/i.test(imageFile?.extension || "")) {
+      openOcr(this, imageFile);
+      return;
+    }
     const webView = this.getCurrentWebPageView();
     if (webView) {
       await this.readCurrentWebPage(webView);
@@ -45764,6 +46360,7 @@ var CosyVoiceReaderSettingTab = class extends PluginSettingTab {
     addFootnoteSettings(containerEl, this.plugin, Setting);
     addAncillarySettings(containerEl, this.plugin, Setting);
     addPdfOutlineSettings(containerEl, this.plugin);
+    addOcrSettings(containerEl, this.plugin, Setting);
     containerEl = pages.storage;
     containerEl.createEl("h3", { text: translateInterface(settingsLanguage, "Storage and maintenance", "\u5B58\u50A8\u4E0E\u7EF4\u62A4") });
     addDeviceCacheSettings(containerEl, this.plugin, Setting, Notice);

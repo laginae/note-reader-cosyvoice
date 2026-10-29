@@ -37,7 +37,7 @@ No extra toolbar plugin is needed. New installations start with system speech an
 
 **Your voice, your processing choice.** Use installed offline system voices or a local model, or connect an online speech API. The plugin has no built-in usage telemetry or developer-operated text/key relay. Online voices send the chosen text to the selected service; provider fees and retention policies apply. Local temporary files follow your cleanup settings. See [the full privacy notes](#privacy).
 
-**Source notes:** PDFs need selectable text; scanned pages need OCR first. Local HTML's original-page controls require **HTML Reader**; web pages use Obsidian **Web viewer**. Highlighting and inferred outlines depend on source structure. Sentence-level highlighting requires reliable timing; other engines highlight segments.
+**Source notes:** Ordinary PDF reading uses selectable text. For scanned PDFs and text in PNG/JPEG/WebP images, enable the optional [local OCR helper](docs/local-ocr.md), recognize a page range, review the text and read it aloud. OCR models load only when requested; source-image highlighting is not yet supported. Local HTML's original-page controls require **HTML Reader**; web pages use Obsidian **Web viewer**. Highlighting and inferred outlines depend on source structure. Sentence-level highlighting requires reliable timing; other engines highlight segments.
 
 Formerly **Note and PDF Voice Reader**. Existing settings and updates are preserved; no reinstall is needed.
 

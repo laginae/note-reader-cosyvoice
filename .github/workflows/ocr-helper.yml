@@ -1,0 +1,77 @@
+name: Build optional Windows OCR helper
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ocr-helper-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  windows-helper:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24.15.0'
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        with:
+          dotnet-version: '10.0.403'
+      - name: Validate release source
+        id: version
+        env:
+          EVENT_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          $version = (Get-Content -Raw manifest.json | ConvertFrom-Json).version
+          if ($version -notmatch '^\d+\.\d+\.\d+$') { throw 'Invalid version' }
+          if ($env:EVENT_TAG -and $env:EVENT_TAG -ne $version) { throw 'Release tag mismatch' }
+          git diff --exit-code $version HEAD -- ocr-helper src/ocr-process.js src/ocr-contract.js scripts/test-ocr-helper.cjs scripts/test-ocr-helper-release.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'Helper inputs differ from release tag' }
+          "tag=$version" >> $env:GITHUB_OUTPUT
+      - name: Build locked self-contained helper
+        env:
+          DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+        run: |
+          dotnet publish ocr-helper/CozyOcr.csproj -c Release -r win-x64 --self-contained true -o dist/ocr-helper-win-x64 -p:RestoreLockedMode=true -p:ContinuousIntegrationBuild=true -p:DebugType=None -p:DebugSymbols=false
+          if ($LASTEXITCODE -ne 0) { throw 'Helper build failed' }
+      - name: Recognize an invented public sample with both models
+        run: ./scripts/test-ocr-helper-release.ps1 -Executable ./dist/ocr-helper-win-x64/CozyOcr.exe
+      - name: Package licenses and upload optional helper
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          $out = 'dist/ocr-helper-win-x64'
+          Copy-Item ocr-helper/APACHE-LICENSE.txt,ocr-helper/UPSTREAM-NOTICES.md,ocr-helper/THIRD-PARTY-NOTICES.md,LICENSE -Destination $out
+          foreach ($name in @('CozyOcr.exe','CozyOcr.dll','LICENSE.txt','ThirdPartyNotices.txt','APACHE-LICENSE.txt','UPSTREAM-NOTICES.md','THIRD-PARTY-NOTICES.md')) {
+            if (!(Test-Path -LiteralPath "$out/$name")) { throw "Missing helper file: $name" }
+          }
+          if (Get-ChildItem $out -Filter *.pdb) { throw 'Debug symbols must not be distributed' }
+          $zip = 'dist/cozy-ocr-helper-windows-x64.zip'
+          Compress-Archive -Path "$out/*" -DestinationPath $zip
+          $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  cozy-ocr-helper-windows-x64.zip" | Set-Content "$zip.sha256" -Encoding utf8
+          gh release upload $env:RELEASE_TAG --repo $env:REPOSITORY $zip "$zip.sha256"
+          if ($LASTEXITCODE -ne 0) { throw 'Helper upload failed' }
+      - name: Attest the independently built helper
+        uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661 # v3
+        with:
+          subject-path: dist/cozy-ocr-helper-windows-x64.zip
