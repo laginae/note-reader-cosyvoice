@@ -8335,9 +8335,9 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
     pages.engine.append(engineAdvanced);
     if (engineAdvanced.children.length === 1) engineAdvanced.hidden = true;
     containerEl = pages.playback;
-    addMiniOutlineSettings(this.plugin, containerEl, Setting);
     addReadingMenuSettings(containerEl, this.plugin, Setting);
-    containerEl.createEl('h3', { text: translateInterface(settingsLanguage, 'Playback', '播放') });
+    addMiniOutlineSettings(this.plugin, containerEl, Setting);
+    containerEl.createEl('h3', { cls: 'cozy-reader-settings-heading', text: translateInterface(settingsLanguage, 'Playback', '播放') });
     new Setting(containerEl)
       .setName(translateInterface(settingsLanguage, 'Smart quick start', '智能快速起读'))
       .setDesc(translateInterface(settingsLanguage,

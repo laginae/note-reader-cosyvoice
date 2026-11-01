@@ -70,20 +70,25 @@ async function syncEditingToolbar(plugin) {
 
 function addReadingMenuSettings(container, plugin, Setting) {
   const zh = plugin.settings.settingsLanguage === 'chinese';
+  container.createEl('h3', { cls: 'cozy-reader-settings-heading', text: zh ? '朗读快捷入口' : 'Reading shortcuts' });
   new Setting(container).setName(zh ? '显示朗读右键菜单' : 'Reading context menu')
     .setDesc(zh ? '在 Markdown 编辑器和 PDF 右键菜单中显示从此处朗读和朗读选中内容。' : 'Show read-from-here and selection actions in Markdown editor and PDF context menus.')
     .addToggle(toggle => toggle.setValue(plugin.settings.readingContextMenu !== false).onChange(async value => {
       plugin.settings.readingContextMenu = value; await plugin.saveSettings();
     }));
   const installed = Boolean(plugin.app.plugins?.plugins?.['editing-toolbar']);
-  let actionControl;
+  let actionControl, actionSetting;
+  const updateAction = () => {
+    const enabled = installed && plugin.settings.readingFloatingToolbar === true;
+    actionControl?.setDisabled(!enabled);
+    if (actionSetting) actionSetting.settingEl.hidden = !enabled;
+  };
   new Setting(container).setName(zh ? '悬浮工具栏朗读图标' : 'Floating toolbar reading icon')
     .setDesc(zh ? '需启用 Editing Toolbar。关闭只移除本插件的专用图标。重新选中文字后刷新。' : 'Requires Editing Toolbar. Disabling removes only this plugin\'s dedicated icon. Reselect text to refresh.')
     .addToggle(toggle => toggle.setValue(plugin.settings.readingFloatingToolbar === true).setDisabled(!installed).onChange(async value => {
-      plugin.settings.readingFloatingToolbar = value; await plugin.saveSettings();
-      actionControl?.setDisabled(!installed || !value);
+      plugin.settings.readingFloatingToolbar = value; updateAction(); await plugin.saveSettings();
     }));
-  new Setting(container).setName(zh ? '悬浮图标默认动作' : 'Floating icon action')
+  actionSetting = new Setting(container).setName(zh ? '悬浮图标默认动作' : 'Floating icon action')
     .setDesc(zh ? '仅在选中文字时执行，不会在没有选区时自动朗读。' : 'Requires selected text; never starts without a selection.')
     .addDropdown(dropdown => { actionControl = dropdown; return dropdown
       .addOption('selection', zh ? '朗读选中内容' : 'Read selected text')
@@ -91,6 +96,7 @@ function addReadingMenuSettings(container, plugin, Setting) {
       .setValue(plugin.settings.readingFloatingAction === 'from-selection' ? 'from-selection' : 'selection')
       .setDisabled(!installed || plugin.settings.readingFloatingToolbar !== true)
       .onChange(async value => { plugin.settings.readingFloatingAction = value; await plugin.saveSettings(); }); });
+  actionSetting.settingEl.addClass('cozy-reader-conditional'); updateAction();
 }
 
 module.exports = { registerReadingMenu, syncEditingToolbar, addReadingMenuSettings };

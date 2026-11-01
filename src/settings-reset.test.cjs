@@ -3,6 +3,19 @@ const assert = require('node:assert/strict');
 const { PAGE_KEYS, resetPageSettings } = require('./settings-reset');
 const { settingsFixture } = require('./test-helpers/settings-fixture.cjs');
 
+test('playback settings place shortcuts first and keep secondary outline preferences collapsed', () => {
+  const { dom, doc, rows } = settingsFixture();
+  const page=doc.querySelector('[data-settings-page="playback"]'), advanced=page.querySelector('.cozy-mini-settings-advanced');
+  assert.deepEqual([...page.querySelectorAll('.cozy-reader-settings-heading')].slice(0,2).map(el=>el.textContent),['Reading shortcuts','Mini outline']);
+  assert.equal(advanced.open,false);
+  for (const name of ['Outline side','Default expanded levels','Transparent background','Double-click heading to read','Open outline on hover']) {
+    assert.ok(advanced.contains(rows.find(row=>row.nameEl.textContent===name).settingEl),name);
+  }
+  const lines=rows.find(row=>row.nameEl.textContent==='Heading display lines');
+  assert.equal(advanced.contains(lines.settingEl),false); assert.equal(lines.controlEl.querySelector('select').value,'2');
+  dom.window.close();
+});
+
 test('quick start defaults to standard, saves all three modes and resets rapid mode', async () => {
   const { dom, plugin, rows } = settingsFixture();
   const row = rows.find(row => row.nameEl.textContent === 'Smart quick start');

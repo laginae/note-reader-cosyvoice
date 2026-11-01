@@ -5,7 +5,7 @@ const { getHtmlReaderDocument } = require('./html-text');
 const { captureHtmlOutline, htmlSectionText } = require('./html-outline');
 const { currentSourceRanges } = require('./markdown-source');
 const { pauseFollowing, kindFor } = require('./reading-follow');
-const { browsingIndex, elementHeading, pdfViewer } = require('./mini-outline-position');
+const { browsingIndex, elementHeading, pdfViewer, scrollDocumentEdge } = require('./mini-outline-position');
 const { htmlReadingTarget } = require('./html-highlights');
 const { currentDocumentHighlightElement } = require('./dom-highlights');
 
@@ -56,6 +56,14 @@ function desktopMiniAdapter(plugin) {
       return !stale() && data ? { ...data, file, mtime, size } : null;
     },
     pauseFollow: view => pauseFollowing(plugin, kindFor(plugin, view)),
+    async locateEdge(view, data, end, cancelled = () => false) {
+      if (cancelled()) return;
+      if (!valid(view, data)) throw Error('Changed');
+      await workspace.revealLeaf?.(view.leaf);
+      if (cancelled()) return;
+      if (!valid(view, data)) throw Error('Changed');
+      return scrollDocumentEdge(view, data, end, workspace);
+    },
     async returnReading(view) {
       await workspace.revealLeaf?.(view.leaf);
       const key = { markdown: 'readingFollow', pdf: 'pdfReadingFollow', html: 'webReadingFollow' }[kindFor(plugin, view)];

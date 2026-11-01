@@ -39,3 +39,22 @@ test('PDF reuses bounded outline cache without reading bytes, and cancelled load
   assert.equal(await f.adapter.load(f.view,()=>true),null);
   f.file.stat.mtime++; assert.equal(f.adapter.valid(f.view,data),false);
 });
+
+test('edge navigation uses the active source and rejects cancelled or changed targets after revealing its pane', async () => {
+  const f=fixture(),data=await f.adapter.load(f.view,()=>false),scrolls=[];
+  f.view.editor.scrollIntoView=range=>scrolls.push(range);
+  await f.adapter.locateEdge(f.view,data,false);await f.adapter.locateEdge(f.view,data,true);
+  assert.equal(scrolls.length,2);assert.equal(f.calls.some(call=>call[0]==='read'),false);
+  let cancelled=false;f.plugin.app.workspace.revealLeaf=async()=>{cancelled=true;};
+  await f.adapter.locateEdge(f.view,data,true,()=>cancelled);assert.equal(scrolls.length,2);
+  f.plugin.app.workspace.revealLeaf=async()=>{f.view.file={...f.file,path:'replacement-public.md'};};
+  await assert.rejects(f.adapter.locateEdge(f.view,data,true));assert.equal(scrolls.length,2);
+});
+
+test('explicit document navigation pauses only document auto-follow, not speech playback', () => {
+  const f=fixture();f.plugin.settings.readingFollow=true;
+  const session=f.plugin.activeSession={kind:'reading',paused:false};
+  f.adapter.pauseFollow(f.view);
+  assert.equal(f.plugin.readingFollowPaused.has('readingFollow'),true);
+  assert.equal(f.plugin.activeSession,session);assert.equal(session.paused,false);
+});

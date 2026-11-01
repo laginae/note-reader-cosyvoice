@@ -1014,6 +1014,11 @@ var require_settings_reset = __commonJS({
         "miniOutlineSide",
         "miniOutlineHover",
         "miniOutlineDepth",
+        "miniOutlineTransparent",
+        "miniOutlineDoubleClick",
+        "miniOutlineWidth",
+        "miniOutlineTitleLines",
+        "miniOutlineStartup",
         "readingContextMenu",
         "readingFloatingToolbar",
         "readingFloatingAction",
@@ -1423,24 +1428,32 @@ var require_reading_menu = __commonJS({
     }
     function addReadingMenuSettings2(container, plugin, Setting) {
       const zh = plugin.settings.settingsLanguage === "chinese";
+      container.createEl("h3", { cls: "cozy-reader-settings-heading", text: zh ? "\u6717\u8BFB\u5FEB\u6377\u5165\u53E3" : "Reading shortcuts" });
       new Setting(container).setName(zh ? "\u663E\u793A\u6717\u8BFB\u53F3\u952E\u83DC\u5355" : "Reading context menu").setDesc(zh ? "\u5728 Markdown \u7F16\u8F91\u5668\u548C PDF \u53F3\u952E\u83DC\u5355\u4E2D\u663E\u793A\u4ECE\u6B64\u5904\u6717\u8BFB\u548C\u6717\u8BFB\u9009\u4E2D\u5185\u5BB9\u3002" : "Show read-from-here and selection actions in Markdown editor and PDF context menus.").addToggle((toggle) => toggle.setValue(plugin.settings.readingContextMenu !== false).onChange(async (value) => {
         plugin.settings.readingContextMenu = value;
         await plugin.saveSettings();
       }));
       const installed = Boolean(plugin.app.plugins?.plugins?.["editing-toolbar"]);
-      let actionControl;
+      let actionControl, actionSetting;
+      const updateAction = () => {
+        const enabled = installed && plugin.settings.readingFloatingToolbar === true;
+        actionControl?.setDisabled(!enabled);
+        if (actionSetting) actionSetting.settingEl.hidden = !enabled;
+      };
       new Setting(container).setName(zh ? "\u60AC\u6D6E\u5DE5\u5177\u680F\u6717\u8BFB\u56FE\u6807" : "Floating toolbar reading icon").setDesc(zh ? "\u9700\u542F\u7528 Editing Toolbar\u3002\u5173\u95ED\u53EA\u79FB\u9664\u672C\u63D2\u4EF6\u7684\u4E13\u7528\u56FE\u6807\u3002\u91CD\u65B0\u9009\u4E2D\u6587\u5B57\u540E\u5237\u65B0\u3002" : "Requires Editing Toolbar. Disabling removes only this plugin's dedicated icon. Reselect text to refresh.").addToggle((toggle) => toggle.setValue(plugin.settings.readingFloatingToolbar === true).setDisabled(!installed).onChange(async (value) => {
         plugin.settings.readingFloatingToolbar = value;
+        updateAction();
         await plugin.saveSettings();
-        actionControl?.setDisabled(!installed || !value);
       }));
-      new Setting(container).setName(zh ? "\u60AC\u6D6E\u56FE\u6807\u9ED8\u8BA4\u52A8\u4F5C" : "Floating icon action").setDesc(zh ? "\u4EC5\u5728\u9009\u4E2D\u6587\u5B57\u65F6\u6267\u884C\uFF0C\u4E0D\u4F1A\u5728\u6CA1\u6709\u9009\u533A\u65F6\u81EA\u52A8\u6717\u8BFB\u3002" : "Requires selected text; never starts without a selection.").addDropdown((dropdown) => {
+      actionSetting = new Setting(container).setName(zh ? "\u60AC\u6D6E\u56FE\u6807\u9ED8\u8BA4\u52A8\u4F5C" : "Floating icon action").setDesc(zh ? "\u4EC5\u5728\u9009\u4E2D\u6587\u5B57\u65F6\u6267\u884C\uFF0C\u4E0D\u4F1A\u5728\u6CA1\u6709\u9009\u533A\u65F6\u81EA\u52A8\u6717\u8BFB\u3002" : "Requires selected text; never starts without a selection.").addDropdown((dropdown) => {
         actionControl = dropdown;
         return dropdown.addOption("selection", zh ? "\u6717\u8BFB\u9009\u4E2D\u5185\u5BB9" : "Read selected text").addOption("from-selection", zh ? "\u4ECE\u9009\u4E2D\u4F4D\u7F6E\u5F00\u59CB\u6717\u8BFB" : "Read from selection").setValue(plugin.settings.readingFloatingAction === "from-selection" ? "from-selection" : "selection").setDisabled(!installed || plugin.settings.readingFloatingToolbar !== true).onChange(async (value) => {
           plugin.settings.readingFloatingAction = value;
           await plugin.saveSettings();
         });
       });
+      actionSetting.settingEl.addClass("cozy-reader-conditional");
+      updateAction();
     }
     module2.exports = { registerReadingMenu: registerReadingMenu2, syncEditingToolbar: syncEditingToolbar2, addReadingMenuSettings: addReadingMenuSettings2 };
   }
@@ -15408,18 +15421,60 @@ var require_sidebar_outline = __commonJS({
   }
 });
 
+// src/mini-outline-title.js
+var require_mini_outline_title = __commonJS({
+  "src/mini-outline-title.js"(exports2, module2) {
+    "use strict";
+    function miniOutlineTitle(value, kind) {
+      const source = String(value ?? "").replace(/\s+/g, " ").trim();
+      if (kind !== "markdown") return source;
+      const protectedParts = [];
+      let prefix = "\0cozy";
+      while (source.includes(prefix)) prefix += "_";
+      const keep = (text2) => `${prefix}${protectedParts.push(text2) - 1}\0`;
+      let text = source.replace(
+        /(`+)([^\n]*?)\1(?!`)|\$\$([^\n]+?)\$\$|\$(?![\s$])([^\n$]*?\S)\$(?!\$)|\\\(([^\n]*?)\\\)|\\\[([^\n]*?)\\\]|\\[\\`*_{}\[\]#$~!|]/g,
+        (match, _ticks, code, block, inline, round, square, offset) => {
+          if (inline !== void 0 && source[offset - 1] === "$") return match;
+          if (code !== void 0) return keep(code);
+          const math = block ?? inline ?? round ?? square;
+          if (math !== void 0) return keep(math.replace(/\\(?:mathrm|mathbf|mathit|mathsf|mathtt|text)\s*\{([^{}]*)\}/g, "$1").replace(/\{\\(?:mathrm|mathbf|mathit|mathsf|mathtt)\s+([^{}]*)\}/g, "{$1}").trim());
+          return keep(match.slice(1));
+        }
+      );
+      text = text.replace(/<!--[\s\S]*?-->|%%[\s\S]*?%%/g, "").replace(/!?\[\[([^\]\n]+)\]\]/g, (_match, target) => target.split("|").at(-1)).replace(/!?\[([^\]\n]+)\]\((?:[^()\n]|\([^()\n]*\))*\)/g, "$1").replace(/<\/?(?:span|em|strong|b|i|s|del|mark|small|sub|sup|code)(?:\s[^>]*|\s*)>/gi, "");
+      for (let pass = 0; pass < 2; pass++) {
+        text = text.replace(
+          /\*\*(?=\S)(.+?)\*\*|__(?=\S)(.+?)__|~~(?=\S)(.+?)~~|==(?=\S)(.+?)==/g,
+          (_match, bold, strong, strike, highlight) => bold ?? strong ?? strike ?? highlight
+        ).replace(/(^|[^*])\*(?![\s*])([^*]*?\S)\*(?!\*)/g, "$1$2").replace(/(^|[^\p{L}\p{N}_])_(?!\s)([^_]*?\S)_(?![\p{L}\p{N}_])/gu, "$1$2");
+      }
+      return text.replace(new RegExp(`${prefix}(\\d+)\0`, "g"), (_match, index) => protectedParts[Number(index)]).replace(/\s+/g, " ").trim();
+    }
+    module2.exports = { miniOutlineTitle };
+  }
+});
+
 // src/mini-outline.js
 var require_mini_outline = __commonJS({
   "src/mini-outline.js"(exports2, module2) {
     "use strict";
-    var MINI_DEFAULTS2 = Object.freeze({ miniOutlineMode: "auto", miniOutlineSide: "right", miniOutlineHover: false, miniOutlineDepth: 2 });
+    var MINI_DEFAULTS2 = Object.freeze({ miniOutlineMode: "auto", miniOutlineSide: "right", miniOutlineHover: false, miniOutlineDepth: 2, miniOutlineTransparent: false, miniOutlineDoubleClick: false, miniOutlineWidth: 0, miniOutlineTitleLines: 2, miniOutlineStartup: false });
+    var PANE_BARS = ".note-reader-native-toolbar,.note-reader-mobile-dock,.view-header,.pdf-toolbar,#editingToolbarModalBar,#editingToolbarPopoverBar";
+    var FLOATING_BARS = "#editingToolbarModalBar,#editingToolbarPopoverBar";
     var OTHER_OUTLINES = ["floating-toc", "dynamic-outline", "subtle-toc", "heading-scroller", "slick-outline", "hovered-table-of-content", "ink-floating-toc", "gogoga-outline"];
     function normalizeMiniSettings2(settings = {}) {
+      const width = ["number", "string"].includes(typeof settings.miniOutlineWidth) ? Number(settings.miniOutlineWidth) : NaN;
       return {
         miniOutlineMode: ["auto", "always", "off"].includes(settings.miniOutlineMode) ? settings.miniOutlineMode : "auto",
         miniOutlineSide: settings.miniOutlineSide === "left" ? "left" : "right",
         miniOutlineHover: settings.miniOutlineHover === true,
-        miniOutlineDepth: [1, 2, 3, 6].includes(Number(settings.miniOutlineDepth)) ? Number(settings.miniOutlineDepth) : 2
+        miniOutlineDepth: [1, 2, 3, 6].includes(Number(settings.miniOutlineDepth)) ? Number(settings.miniOutlineDepth) : 2,
+        miniOutlineTransparent: settings.miniOutlineTransparent === true,
+        miniOutlineDoubleClick: settings.miniOutlineDoubleClick === true,
+        miniOutlineWidth: Number.isFinite(width) && width > 0 ? Math.max(260, Math.min(600, Math.round(width / 10) * 10)) : 0,
+        miniOutlineTitleLines: [1, 2, 3, 4, "1", "2", "3", "4"].includes(settings.miniOutlineTitleLines) ? Number(settings.miniOutlineTitleLines) : 2,
+        miniOutlineStartup: settings.miniOutlineStartup === true
       };
     }
     function otherOutlineEnabled(app) {
@@ -15461,22 +15516,42 @@ var require_mini_outline = __commonJS({
         this.panel.hidden = true;
         this.panel.setAttribute("aria-label", this.t("\u8FF7\u4F60\u76EE\u5F55", "Mini outline"));
         const header = this.el(this.panel, "div", "cozy-mini-header");
-        this.el(header, "strong").textContent = this.t("\u6587\u6863\u76EE\u5F55", "Document outline");
+        header.setAttribute("role", "toolbar");
+        header.setAttribute("aria-label", this.t("\u76EE\u5F55\u64CD\u4F5C", "Outline controls"));
         this.pin = this.button(header, "pin", this.t("\u56FA\u5B9A\u76EE\u5F55", "Pin outline"), () => {
           if (this.state) {
             this.state.pinned = !this.state.pinned;
-            this.pin.setAttribute("aria-pressed", String(this.state.pinned));
+            this.updatePin();
+            if (!this.state.pinned) this.close(true);
           }
         });
-        this.back = this.button(header, "locate-fixed", this.t("\u56DE\u5230\u6717\u8BFB\u4F4D\u7F6E", "Return to reading"), async () => {
+        this.searchToggle = this.button(header, "search", this.t("\u641C\u7D22\u7AE0\u8282", "Search headings"), () => this.toggleSearch());
+        this.searchToggle.setAttribute("aria-expanded", "false");
+        this.back = this.button(header, "corner-up-left", this.t("\u56DE\u5230\u6717\u8BFB\u4F4D\u7F6E", "Return to reading"), async () => {
           if (!await this.valid()) return;
           this.state.manual = false;
           await this.adapter.returnReading(this.view, this.data);
           this.update(true);
         });
-        this.button(header, "x", this.t("\u5173\u95ED\u76EE\u5F55", "Close outline"), () => this.close(true));
+        this.edgeButtons = [];
+        const addEdges = (parent, cls) => {
+          for (const [end, icon, label] of [[false, "arrow-up-to-line", this.t("\u5230\u6587\u6863\u9876\u90E8", "Go to document top")], [true, "arrow-down-to-line", this.t("\u5230\u6587\u6863\u5E95\u90E8", "Go to document bottom")]]) {
+            const button = this.button(parent, icon, label, () => this.locateEdge(end));
+            button.classList.add(cls);
+            this.edgeButtons.push(button);
+          }
+        };
+        addEdges(header, "cozy-mini-edge-primary");
+        this.optionsToggle = this.button(header, "ellipsis", this.t("\u76EE\u5F55\u9009\u9879", "Outline options"), () => {
+          this.tools.hidden = !this.tools.hidden;
+          this.optionsToggle.setAttribute("aria-expanded", String(!this.tools.hidden));
+        });
+        this.optionsToggle.setAttribute("aria-expanded", "false");
+        this.closeButton = this.button(header, "x", this.t("\u5173\u95ED\u76EE\u5F55", "Close outline"), () => this.close(true));
+        this.closeButton.classList.add("cozy-mini-close");
         this.search = this.el(this.panel, "input", "cozy-mini-search");
         this.search.type = "search";
+        this.search.hidden = true;
         this.search.placeholder = this.t("\u641C\u7D22\u7AE0\u8282", "Search headings");
         this.search.setAttribute("aria-label", this.search.placeholder);
         this.search.addEventListener("input", () => {
@@ -15486,7 +15561,8 @@ var require_mini_outline = __commonJS({
             this.draw();
           }
         });
-        const tools = this.el(this.panel, "div", "cozy-mini-tools");
+        const tools = this.tools = this.el(this.panel, "div", "cozy-mini-tools");
+        tools.hidden = true;
         this.depth = this.el(tools, "select");
         this.depth.setAttribute("aria-label", this.t("\u5C55\u5F00\u5C42\u7EA7", "Expanded levels"));
         for (const [value, label] of [[1, this.t("\u4E00\u7EA7", "One level")], [2, this.t("\u4E24\u7EA7", "Two levels")], [3, this.t("\u4E09\u7EA7", "Three levels")], [6, this.t("\u5168\u90E8", "All levels")]]) {
@@ -15502,6 +15578,9 @@ var require_mini_outline = __commonJS({
           }
         });
         this.button(tools, "refresh-cw", this.t("\u5237\u65B0\u76EE\u5F55", "Refresh outline"), () => this.load(true));
+        addEdges(tools, "cozy-mini-edge-secondary");
+        this.optionsClose = this.button(tools, "x", this.t("\u5173\u95ED\u76EE\u5F55", "Close outline"), () => this.close(true));
+        this.optionsClose.classList.add("cozy-mini-close-secondary");
         this.status = this.el(this.panel, "div", "cozy-mini-status");
         this.status.setAttribute("role", "status");
         this.list = this.el(this.panel, "div", "cozy-mini-list");
@@ -15518,10 +15597,21 @@ var require_mini_outline = __commonJS({
         for (const name of ["wheel", "touchstart", "pointerdown"]) this.list.addEventListener(name, () => {
           if (this.state) this.state.manual = true;
         }, { passive: true });
+        this.touchControls = false;
+        this.pointerMode = (event) => {
+          if (!["mouse", "touch", "pen"].includes(event.pointerType)) return;
+          const touch = event.pointerType !== "mouse";
+          if (touch === this.touchControls) return;
+          this.touchControls = touch;
+          this.panel.classList.toggle("is-touch-controls", touch);
+        };
         this.outside = (event) => {
+          this.pointerMode(event);
+          if (this.actionMenu && event.target?.closest?.(".menu")) return;
           if (this.opened && !this.state?.pinned && !this.root.contains(event.target) && !event.target?.closest?.("[data-cozy-mini-toggle]")) this.close();
         };
         this.doc.addEventListener("pointerdown", this.outside, true);
+        this.doc.addEventListener("pointerover", this.pointerMode, { capture: true, passive: true });
         this.panel.addEventListener("keydown", (event) => this.keydown(event));
         this.launcher.addEventListener("pointerenter", (event) => {
           if (event.pointerType === "mouse" && this.settings().miniOutlineHover) this.hoverTimer = setTimeout(() => this.open(), 350);
@@ -15530,20 +15620,30 @@ var require_mini_outline = __commonJS({
           clearTimeout(this.hoverTimer);
         });
         this.scroll = (event) => {
-          if (this.root.contains(event.target) || !this.opened || this.scrollTimer) return;
+          if (this.root.contains(event.target) || this.scrollTimer) return;
           this.scrollTimer = setTimeout(() => {
             this.scrollTimer = null;
+            this.layout();
             this.update();
           }, 100);
         };
         this.view.containerEl.addEventListener("scroll", this.scroll, true);
-        this.resize = () => this.layout();
+        this.resize = () => this.scheduleLayout();
         this.doc.defaultView?.addEventListener("resize", this.resize);
         this.doc.defaultView?.visualViewport?.addEventListener("resize", this.resize);
         const Observer = this.doc.defaultView?.ResizeObserver;
         if (Observer) {
           this.resizeObserver = new Observer(this.resize);
           this.resizeObserver.observe(view.containerEl);
+        }
+        const Mutations = this.doc.defaultView?.MutationObserver;
+        if (Mutations) {
+          this.barObserver = new Mutations(() => this.scheduleLayout());
+          this.structureObserver = new Mutations((records) => {
+            if (records.some((record) => !this.root.contains(record.target) && [...record.addedNodes, ...record.removedNodes].some((node) => node.nodeType === 1 && (node.matches(PANE_BARS) || node.querySelector(PANE_BARS))))) this.scheduleLayout(true);
+          });
+          this.structureObserver.observe(view.containerEl, { childList: true, subtree: true });
+          if (this.doc.body !== view.containerEl) this.structureObserver.observe(this.doc.body, { childList: true });
         }
         this.setLoading(true);
         this.configure();
@@ -15574,61 +15674,124 @@ var require_mini_outline = __commonJS({
       error() {
         this.status.textContent = this.t("\u6587\u6863\u53EF\u80FD\u5DF2\u53D8\u5316\uFF0C\u8BF7\u5237\u65B0\u76EE\u5F55\u540E\u91CD\u8BD5\u3002", "The document may have changed. Refresh the outline and retry.");
       }
+      updatePin() {
+        this.pin.setAttribute("aria-pressed", String(this.state.pinned));
+        this.pin.setAttribute("aria-label", this.state.pinned ? this.t("\u53D6\u6D88\u56FA\u5B9A\u5E76\u6536\u8D77\u76EE\u5F55", "Unpin and close outline") : this.t("\u56FA\u5B9A\u76EE\u5F55", "Pin outline"));
+      }
+      mouseDoubleClick(pointerType) {
+        return this.settings().miniOutlineDoubleClick && pointerType === "mouse" && !this.doc.body.classList.contains("is-mobile") && this.doc.defaultView.matchMedia?.("(hover: hover) and (pointer: fine)")?.matches === true;
+      }
       configure() {
         const settings = this.settings();
         this.root.dataset.side = settings.miniOutlineSide;
-        this.launcher.hidden = settings.miniOutlineMode === "off" || settings.miniOutlineMode === "auto" && otherOutlineEnabled(this.plugin.app);
-        const headers = [...this.view.containerEl.querySelectorAll(".note-reader-native-toolbar,.note-reader-mobile-dock,.view-header")];
-        if (this.resizeObserver && (headers.length !== this.observedHeaders?.length || headers.some((el, i) => el !== this.observedHeaders?.[i]))) {
-          this.resizeObserver.disconnect();
-          this.resizeObserver.observe(this.view.containerEl);
-          headers.forEach((el) => this.resizeObserver.observe(el));
+        this.root.dataset.background = settings.miniOutlineTransparent ? "transparent" : "solid";
+        this.root.style.setProperty("--cozy-mini-title-lines", String(settings.miniOutlineTitleLines));
+        if (settings.miniOutlineWidth) this.root.style.setProperty("--cozy-mini-width", `${settings.miniOutlineWidth}px`);
+        else this.root.style.removeProperty("--cozy-mini-width");
+        this.launcher.hidden = settings.miniOutlineStartup || settings.miniOutlineMode === "off" || settings.miniOutlineMode === "auto" && otherOutlineEnabled(this.plugin.app);
+        const headers = [...this.view.containerEl.querySelectorAll(PANE_BARS), ...[...this.doc.querySelectorAll(FLOATING_BARS)].filter((el) => !this.view.containerEl.contains(el) && !el.closest(".workspace-leaf-content"))];
+        if (headers.length !== this.observedHeaders?.length || headers.some((el, i) => el !== this.observedHeaders?.[i])) {
+          this.resizeObserver?.disconnect();
+          this.resizeObserver?.observe(this.view.containerEl);
+          this.barObserver?.disconnect();
+          headers.forEach((el) => {
+            this.resizeObserver?.observe(el);
+            this.barObserver?.observe(el, { attributes: true, attributeFilter: ["class", "style", "hidden"] });
+          });
           this.observedHeaders = headers;
         }
         this.layout();
+      }
+      scheduleLayout(configure = false) {
+        if (this.destroyed) return;
+        this.needsConfigure || (this.needsConfigure = configure);
+        if (this.layoutTimer) return;
+        this.layoutTimer = setTimeout(() => {
+          this.layoutTimer = null;
+          const refresh = this.needsConfigure;
+          this.needsConfigure = false;
+          if (refresh) this.configure();
+          else this.layout();
+        }, 40);
+      }
+      toggleSearch() {
+        this.search.hidden = !this.search.hidden;
+        this.searchToggle.setAttribute("aria-expanded", String(!this.search.hidden));
+        if (this.state) this.state.searchOpen = !this.search.hidden;
+        if (!this.search.hidden) this.search.focus({ preventScroll: true });
+        else {
+          this.search.value = "";
+          if (this.data) {
+            this.state.query = "";
+            this.limit = 200;
+            this.draw();
+          }
+          this.searchToggle.focus({ preventScroll: true });
+        }
       }
       toggle() {
         if (this.opened) this.close(true);
         else return this.open();
       }
-      async open() {
-        if (this.destroyed) return;
+      async open({ pin = false } = {}) {
+        if (this.destroyed || !this.view.file) return;
+        this.manager.cancelStartup();
+        if (pin) {
+          this.state = this.manager.state(this.view.file.path);
+          this.state.pinned = true;
+          this.updatePin();
+        }
         this.opened = true;
         this.panel.hidden = false;
         this.launcher.setAttribute("aria-expanded", "true");
         this.layout();
+        if (this.loading && this.loadingFile === this.view.file) return;
         if (!this.data || this.file !== this.view.file || this.invalid || !this.adapter.valid(this.view, this.data)) await this.load();
         else this.update();
       }
-      close(focus = false) {
+      close(focus = false, cancelStartup = true) {
+        if (this.opened && cancelStartup) this.manager.cancelStartup();
+        this.headingAction = (this.headingAction || 0) + 1;
         clearTimeout(this.hoverTimer);
         clearTimeout(this.reloadTimer);
+        this.dismissMenu();
         this.opened = false;
         this.panel.hidden = true;
         this.launcher.setAttribute("aria-expanded", "false");
+        this.tools.hidden = true;
+        this.optionsToggle.setAttribute("aria-expanded", "false");
         if (this.loading) {
           this.generation++;
           this.loading = false;
           this.invalid = true;
         }
+        this.layout();
         if (focus && !this.launcher.hidden) this.launcher.focus({ preventScroll: true });
       }
       layout() {
+        if (this.destroyed) return;
         const host = this.view.containerEl.getBoundingClientRect(), win = this.doc.defaultView;
         const viewport = win.visualViewport, bottom = Math.min(host.bottom, (viewport?.offsetTop || 0) + (viewport?.height || win.innerHeight));
         let top = Math.max(host.top + 44, (viewport?.offsetTop || 0) + 12);
-        for (const el of this.view.containerEl.querySelectorAll(".note-reader-native-toolbar,.note-reader-mobile-dock,.view-header")) {
-          const rect = el.getBoundingClientRect();
-          if (rect.height && rect.top < top + 100) top = Math.max(top, rect.bottom + 8);
+        const entryHeight = this.launcher.hidden ? 0 : this.launcher.getBoundingClientRect().height;
+        const width = this.opened ? this.panel.getBoundingClientRect().width : this.launcher.getBoundingClientRect().width || 32;
+        const left = this.settings().miniOutlineSide === "left" ? host.left + 10 : host.right - 10 - width;
+        const bars = (this.observedHeaders || []).map((el) => {
+          const rect = el.getBoundingClientRect(), style = win.getComputedStyle(el);
+          return rect.width && rect.height && style.display !== "none" && style.visibility !== "hidden" && style.visibility !== "collapse" ? rect : null;
+        }).filter(Boolean).sort((a, b) => a.top - b.top);
+        for (const rect of bars) {
+          if (rect.left < left + width && rect.right > left && rect.bottom > top - 8 && rect.top < top + Math.max(entryHeight, 44) + 8) top = Math.max(top, rect.bottom + 8);
         }
         this.root.style.setProperty("--cozy-mini-top", `${Math.max(8, top - host.top)}px`);
-        const entryHeight = this.launcher.hidden ? 0 : this.launcher.getBoundingClientRect().height;
         this.root.style.setProperty("--cozy-mini-height", `${Math.max(80, bottom - top - entryHeight - 100)}px`);
       }
       async load(force = false) {
+        this.dismissMenu();
         const generation = ++this.generation, file = this.view.file;
         const cancelled = () => this.destroyed || !this.opened || generation !== this.generation || file !== this.view.file;
         this.loading = true;
+        this.loadingFile = file;
         this.invalid = false;
         this.data = null;
         this.rows.clear();
@@ -15647,6 +15810,9 @@ var require_mini_outline = __commonJS({
           this.data = data;
           this.file = file;
           this.limit = 200;
+          this.expandedTitles = /* @__PURE__ */ new Set();
+          const { miniOutlineTitle } = require_mini_outline_title();
+          this.titles = data.entries.map((entry) => miniOutlineTitle(entry.title, data.kind) || this.t("\u672A\u547D\u540D\u7AE0\u8282", "Untitled section"));
           this.parents = headingParents(data.entries);
           this.state = this.manager.state(file.path);
           const shape = JSON.stringify(data.entries.map((e) => [e.title, e.level]));
@@ -15656,7 +15822,9 @@ var require_mini_outline = __commonJS({
           }
           this.search.value = this.state.query;
           this.depth.value = String(this.state.depth);
-          this.pin.setAttribute("aria-pressed", String(this.state.pinned));
+          this.search.hidden = !this.state.query && !this.state.searchOpen;
+          this.searchToggle.setAttribute("aria-expanded", String(!this.search.hidden));
+          this.updatePin();
           this.setLoading(false);
           this.status.textContent = data.entries.length ? data.entries.some((e) => e.inferred || e.approximate) ? this.t("\u5305\u542B\u81EA\u52A8\u8BC6\u522B\u6216\u6309\u9875\u5B9A\u4F4D\u7684\u7AE0\u8282", "Includes detected or page-level headings") : "" : this.t("\u672A\u627E\u5230\u53EF\u7528\u7AE0\u8282", "No headings available");
           this.draw();
@@ -15670,13 +15838,17 @@ var require_mini_outline = __commonJS({
         }
       }
       setLoading(loading) {
-        this.pin.disabled = this.search.disabled = this.depth.disabled = loading;
+        this.pin.disabled = this.searchToggle.disabled = this.search.disabled = this.depth.disabled = loading;
+        this.edgeButtons.forEach((button) => {
+          button.disabled = loading;
+        });
         if (loading) this.back.disabled = true;
       }
       applyDepth() {
         this.state.collapsed = new Set(this.data.entries.map((_, i) => i).filter((i) => this.parents[i].length >= this.state.depth - 1));
       }
       invalidate() {
+        this.dismissMenu();
         this.invalid = true;
         this.generation++;
         this.loading = false;
@@ -15694,7 +15866,7 @@ var require_mini_outline = __commonJS({
         if (!this.data) return;
         const query = this.state.query.trim().toLocaleLowerCase(), visible = /* @__PURE__ */ new Set(), top = this.state.scroll;
         if (query) this.data.entries.forEach((entry, i) => {
-          if (entry.title.toLocaleLowerCase().includes(query)) {
+          if (this.titles[i].toLocaleLowerCase().includes(query) || entry.title.toLocaleLowerCase().includes(query)) {
             visible.add(i);
             this.parents[i].forEach((p) => visible.add(p));
           }
@@ -15702,9 +15874,11 @@ var require_mini_outline = __commonJS({
         this.list.replaceChildren();
         this.rows.clear();
         const indices = this.data.entries.map((_, i) => i).filter((i) => query ? visible.has(i) : !this.parents[i].some((p) => this.state.collapsed.has(p)));
+        this.list.classList.toggle("cozy-mini-flat", !this.parents.some((parents) => parents.length));
         for (const index of indices.slice(0, this.limit)) {
           const entry = this.data.entries[index], row = this.el(this.list, "div", "cozy-mini-row");
           row.style.setProperty("--cozy-mini-depth", String(Math.min(6, this.parents[index].length)));
+          row.classList.toggle("is-expanded", this.expandedTitles.has(index));
           const children = this.data.entries[index + 1]?.level > entry.level;
           const toggle = this.button(row, this.state.collapsed.has(index) ? "chevron-right" : "chevron-down", this.t("\u5C55\u5F00\u6216\u6298\u53E0\u7AE0\u8282", "Expand or collapse section"), () => {
             if (this.state.collapsed.has(index)) this.state.collapsed.delete(index);
@@ -15714,26 +15888,107 @@ var require_mini_outline = __commonJS({
           toggle.disabled = !children || Boolean(query);
           toggle.classList.toggle("cozy-mini-leaf", !children);
           toggle.setAttribute("aria-expanded", String(!this.state.collapsed.has(index)));
-          const title = this.button(row, "heading", this.t("\u5B9A\u4F4D\uFF1A", "Go to: ") + entry.title, async () => {
-            if (!await this.valid()) return;
-            this.state.manual = true;
-            this.adapter.pauseFollow(this.view);
-            await this.adapter.locate(this.view, this.data, index);
-            if (!this.state.pinned) this.close();
+          const data = this.data;
+          let pointerType = "mouse", navigation, startingRead = false;
+          const current = () => !this.destroyed && this.opened && this.data === data && title.isConnected;
+          const title = this.button(row, "heading", this.t("\u5B9A\u4F4D\uFF1A", "Go to: ") + this.titles[index], (event) => {
+            if (event.detail > 1) return;
+            const action = this.headingAction = (this.headingAction || 0) + 1;
+            const keepOpen = event.detail > 0 && this.mouseDoubleClick(event.pointerType || pointerType);
+            navigation = (async () => {
+              if (!current() || !await this.valid()) return;
+              this.state.manual = true;
+              this.adapter.pauseFollow(this.view);
+              await this.adapter.locate(this.view, data, index);
+              if (current() && action === this.headingAction && !this.state.pinned && !keepOpen) this.close();
+            })();
+            return navigation;
           });
           title.classList.add("cozy-mini-title");
-          title.textContent = entry.title;
-          const read = this.button(row, "play", this.t("\u4ECE\u672C\u8282\u6717\u8BFB\uFF1A", "Read from: ") + entry.title, () => this.read(index, true));
-          const more = this.button(row, "ellipsis", this.t("\u7AE0\u8282\u64CD\u4F5C", "Section actions"), (event) => {
-            this.manager.menu(event, [{ label: this.t("\u53EA\u6717\u8BFB\u672C\u8282", "Read this section only"), action: () => this.read(index, false).catch(() => this.error()) }]);
+          title.replaceChildren();
+          this.el(title, "span", "cozy-mini-label").textContent = this.titles[index];
+          title.addEventListener("pointerdown", (event) => {
+            pointerType = event.pointerType || "mouse";
           });
-          this.rows.set(index, { row, title, read, more });
+          title.addEventListener("dblclick", (event) => {
+            if (!current() || startingRead || !this.mouseDoubleClick(event.pointerType || pointerType)) return;
+            event.preventDefault();
+            event.stopPropagation();
+            startingRead = true;
+            const action = this.headingAction;
+            Promise.resolve(navigation).then(async () => {
+              if (current() && action === this.headingAction && this.mouseDoubleClick(event.pointerType || pointerType)) await this.read(index, true);
+            }).catch(() => this.error()).finally(() => {
+              startingRead = false;
+            });
+          });
+          const more = this.button(row, "ellipsis", this.t("\u7AE0\u8282\u64CD\u4F5C", "Section actions"), (event) => {
+            this.sectionMenu(event, index, more);
+          });
+          more.classList.add("cozy-mini-action");
+          more.setAttribute("aria-haspopup", "menu");
+          row.addEventListener("contextmenu", (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            this.sectionMenu(event, index, more);
+          });
+          this.rows.set(index, { row, title, more });
         }
         if (query && !indices.length) this.el(this.list, "p").textContent = this.t("\u6CA1\u6709\u5339\u914D\u7684\u7AE0\u8282", "No matching headings");
         this.more.hidden = indices.length <= this.limit;
         this.list.scrollTop = top;
         this.positionKey = null;
         this.update();
+      }
+      dismissMenu() {
+        const menu = this.actionMenu;
+        this.actionMenu = null;
+        menu?.hide();
+        clearTimeout(this.menuCloseTimer);
+        this.panel.classList.remove("has-open-menu");
+      }
+      sectionMenu(event, index, anchor) {
+        if (!this.data || this.invalid) return;
+        this.dismissMenu();
+        const data = this.data, expanded = this.expandedTitles.has(index);
+        const scoped = (action) => async () => {
+          if (this.destroyed || this.data !== data || !await this.valid()) return;
+          try {
+            await action();
+          } catch {
+            this.error();
+          }
+        };
+        let menu;
+        menu = this.manager.menu(event, [
+          { label: this.t("\u4ECE\u672C\u8282\u6717\u8BFB", "Read from this section"), icon: "play", disabled: this.adapter.busy(), action: scoped(() => this.read(index, true)) },
+          { label: this.t("\u53EA\u6717\u8BFB\u672C\u8282", "Read this section only"), icon: "audio-lines", disabled: this.adapter.busy(), action: scoped(() => this.read(index, false)) },
+          { label: expanded ? this.t("\u6536\u8D77\u6807\u9898", "Collapse heading") : this.t("\u5C55\u5F00\u5B8C\u6574\u6807\u9898", "Show full heading"), icon: "wrap-text", action: scoped(async () => {
+            if (expanded) this.expandedTitles.delete(index);
+            else this.expandedTitles.add(index);
+            this.rows.get(index)?.row.classList.toggle("is-expanded", !expanded);
+            if (!this.opened) await this.open();
+            this.rows.get(index)?.more.focus({ preventScroll: true });
+          }) }
+        ], anchor, () => {
+          this.menuCloseTimer = setTimeout(() => {
+            if (this.actionMenu === menu) {
+              this.actionMenu = null;
+              this.panel.classList.remove("has-open-menu");
+            }
+          }, 0);
+        });
+        this.actionMenu = menu;
+        this.panel.classList.add("has-open-menu");
+      }
+      async locateEdge(end) {
+        const data = this.data, action = this.headingAction = (this.headingAction || 0) + 1;
+        const current = () => !this.destroyed && this.opened && this.data === data && action === this.headingAction;
+        if (!current() || !await this.valid()) return;
+        this.state.manual = true;
+        this.adapter.pauseFollow(this.view);
+        await this.adapter.locateEdge(this.view, data, end, () => !current());
+        if (current() && !this.state.pinned) this.close();
       }
       async valid() {
         if (this.data && !this.invalid && this.file === this.view.file && this.adapter.valid(this.view, this.data)) return true;
@@ -15760,8 +16015,7 @@ var require_mini_outline = __commonJS({
           refs.row.classList.toggle("is-browsing", i === browsing);
           if (i === browsing) refs.title.setAttribute("aria-current", "location");
           else refs.title.removeAttribute("aria-current");
-          refs.title.setAttribute("aria-label", (i === reading ? this.t("\u6B63\u5728\u6717\u8BFB\uFF1B\u5B9A\u4F4D\uFF1A", "Speaking; go to: ") : this.t("\u5B9A\u4F4D\uFF1A", "Go to: ")) + this.data.entries[i].title);
-          refs.read.disabled = refs.more.disabled = busy;
+          refs.title.setAttribute("aria-label", (i === reading ? this.t("\u6B63\u5728\u6717\u8BFB\uFF1B\u5B9A\u4F4D\uFF1A", "Speaking; go to: ") : this.t("\u5B9A\u4F4D\uFF1A", "Go to: ")) + this.titles[i]);
         }
         if ((changed || force) && reading >= 0 && !this.state.manual && !this.state.query) {
           if (reading >= this.limit) {
@@ -15797,12 +16051,16 @@ var require_mini_outline = __commonJS({
       destroy() {
         this.destroyed = true;
         this.generation++;
-        for (const timer of [this.hoverTimer, this.scrollTimer, this.reloadTimer]) clearTimeout(timer);
+        this.dismissMenu();
+        for (const timer of [this.hoverTimer, this.scrollTimer, this.reloadTimer, this.layoutTimer]) clearTimeout(timer);
         this.doc.removeEventListener("pointerdown", this.outside, true);
         this.view.containerEl.removeEventListener("scroll", this.scroll, true);
+        this.doc.removeEventListener("pointerover", this.pointerMode, true);
         this.doc.defaultView?.removeEventListener("resize", this.resize);
         this.doc.defaultView?.visualViewport?.removeEventListener("resize", this.resize);
         this.resizeObserver?.disconnect();
+        this.barObserver?.disconnect();
+        this.structureObserver?.disconnect();
         this.root.remove();
         this.data = null;
         this.rows.clear();
@@ -15816,6 +16074,9 @@ var require_mini_outline = __commonJS({
         this.Menu = Menu2;
         this.panels = /* @__PURE__ */ new Map();
         this.states = /* @__PURE__ */ new Map();
+        this.layoutReady = false;
+        this.startupEnabled = false;
+        this.startupPending = false;
       }
       state(path2) {
         const state = this.states.get(path2) || { query: "", collapsed: /* @__PURE__ */ new Set(), scroll: 0, depth: normalizeMiniSettings2(this.plugin.settings).miniOutlineDepth, pinned: false, manual: false };
@@ -15824,11 +16085,18 @@ var require_mini_outline = __commonJS({
         while (this.states.size > 40) this.states.delete(this.states.keys().next().value);
         return state;
       }
-      menu(event, items) {
+      menu(event, items, anchor, onHide) {
         const menu = new this.Menu();
-        for (const item of items) menu.addItem((row) => row.setTitle(item.label).setIcon("audio-lines").onClick(() => Promise.resolve(item.action()).catch(() => {
-        })));
-        menu.showAtMouseEvent(event);
+        for (const item of items) menu.addItem((row) => {
+          row.setTitle(item.label).setIcon(item.icon || "audio-lines").setDisabled(Boolean(item.disabled)).onClick(() => Promise.resolve(item.action()).catch(() => {
+          }));
+        });
+        if (onHide) menu.onHide(onHide);
+        if (anchor && event.detail === 0 && event.type !== "contextmenu") {
+          const rect = anchor.getBoundingClientRect();
+          menu.showAtPosition({ x: rect.left, y: rect.bottom });
+        } else menu.showAtMouseEvent(event);
+        return menu;
       }
       schedule() {
         if (this.destroyed || this.timer) return;
@@ -15837,8 +16105,54 @@ var require_mini_outline = __commonJS({
           this.sync();
         }, 150);
       }
+      ready() {
+        if (!this.destroyed) {
+          this.layoutReady = true;
+          this.schedule();
+        }
+      }
+      cancelStartup() {
+        clearTimeout(this.startupTimer);
+        this.startupTimer = null;
+        this.startupPending = false;
+      }
+      startupView() {
+        const workspace = this.plugin.app.workspace;
+        const view = workspace ? workspace.activeLeaf?.view : this.adapter.activeView();
+        return this.panels.has(view) && view.containerEl.isConnected ? view : null;
+      }
+      queueStartup() {
+        if (this.destroyed || !this.layoutReady || !this.startupPending || this.startupTimer || !this.startupEnabled || this.adapter.busy()) return;
+        const view = this.startupView();
+        if (!view?.file) return;
+        const file = view.file;
+        this.startupTimer = setTimeout(() => {
+          this.startupTimer = null;
+          void this.openStartup(view, file);
+        }, 350);
+      }
+      async openStartup(view, file) {
+        if (this.destroyed || !this.layoutReady || !this.startupPending || !normalizeMiniSettings2(this.plugin.settings).miniOutlineStartup) return;
+        if (this.startupView() !== view || view.file !== file || this.adapter.busy()) {
+          this.queueStartup();
+          return;
+        }
+        const panel = this.panels.get(view);
+        this.cancelStartup();
+        try {
+          await panel.open({ pin: true });
+        } catch {
+          if (!panel.destroyed && panel.opened && view.file === file) panel.error();
+        }
+      }
       sync() {
         if (this.destroyed) return;
+        const startup = normalizeMiniSettings2(this.plugin.settings).miniOutlineStartup;
+        if (startup !== this.startupEnabled) {
+          this.cancelStartup();
+          this.startupEnabled = startup;
+          this.startupPending = startup;
+        }
         const views = this.adapter.views().filter((view) => view?.file && view.containerEl?.ownerDocument);
         for (const [view, panel] of this.panels) if (!views.includes(view) || !view.containerEl.isConnected) {
           panel.destroy();
@@ -15853,11 +16167,13 @@ var require_mini_outline = __commonJS({
           if (!this.panels.has(view)) this.panels.set(view, new MiniOutlinePanel(this, view));
           const panel = this.panels.get(view);
           panel.configure();
-          if (panel.file && panel.file !== view.file) {
-            panel.close();
+          const sourceFile = panel.loading ? panel.loadingFile : panel.file;
+          if (sourceFile && sourceFile !== view.file) {
+            panel.close(false, false);
             panel.invalidate();
           }
         }
+        this.queueStartup();
       }
       toggle(view = this.adapter.activeView()) {
         this.sync();
@@ -15869,6 +16185,7 @@ var require_mini_outline = __commonJS({
         for (const [view, panel] of this.panels) if (!file || view.file?.path === file.path) panel.invalidate();
       }
       update() {
+        if (this.startupPending) this.queueStartup();
         for (const panel of this.panels.values()) {
           try {
             panel.update();
@@ -15881,6 +16198,7 @@ var require_mini_outline = __commonJS({
       destroy() {
         this.destroyed = true;
         clearTimeout(this.timer);
+        this.cancelStartup();
         for (const panel of this.panels.values()) panel.destroy();
         this.panels.clear();
         this.states.clear();
@@ -15895,7 +16213,7 @@ var require_mini_outline = __commonJS({
       plugin.registerEvent(plugin.app.workspace.on("editor-change", (_editor, view) => manager.invalidate(view?.file)));
       if (plugin.app.metadataCache?.on) plugin.registerEvent(plugin.app.metadataCache.on("changed", (file) => manager.invalidate(file)));
       if (plugin.app.vault?.on) plugin.registerEvent(plugin.app.vault.on("modify", (file) => manager.invalidate(file)));
-      plugin.app.workspace.onLayoutReady?.(() => manager.schedule());
+      plugin.app.workspace.onLayoutReady?.(() => manager.ready());
       return manager;
     }
     function addMiniOutlineSettings2(plugin, container, Setting) {
@@ -15909,10 +16227,54 @@ var require_mini_outline = __commonJS({
         await plugin.saveSettings();
         plugin.miniOutline?.sync();
       };
-      new Setting(container).setName(t("\u8FF7\u4F60\u76EE\u5F55", "Mini outline")).setDesc(t("\u672A\u6717\u8BFB\u65F6\u4E5F\u53EF\u5BFC\u822A\u3002\u81EA\u52A8\u6A21\u5F0F\u5728\u68C0\u6D4B\u5230\u5DF2\u542F\u7528\u7684\u6D6E\u52A8\u76EE\u5F55\u63D2\u4EF6\u65F6\u9690\u85CF\u8FB9\u7F18\u5165\u53E3\uFF1B\u4ECD\u53EF\u4ECE\u6717\u8BFB\u680F\u6216\u547D\u4EE4\u6253\u5F00\u3002\u4E0D\u4FEE\u6539\u5176\u4ED6\u63D2\u4EF6\u3002", "Navigate without playback. Auto hides the edge button when a known floating outline is enabled; toolbar and command access remain. Other plugins are unchanged.")).addDropdown((d) => options(d, { auto: t("\u81EA\u52A8\uFF08\u63A8\u8350\uFF09", "Auto (recommended)"), always: t("\u59CB\u7EC8\u663E\u793A\u5165\u53E3", "Always show entry"), off: t("\u5173\u95ED\u8FB9\u7F18\u5165\u53E3", "Hide edge entry") }).setValue(normalizeMiniSettings2(plugin.settings).miniOutlineMode).onChange((v) => save("miniOutlineMode", v)));
-      new Setting(container).setName(t("\u76EE\u5F55\u4F4D\u7F6E", "Outline side")).addDropdown((d) => options(d, { left: t("\u5DE6\u4FA7", "Left"), right: t("\u53F3\u4FA7", "Right") }).setValue(normalizeMiniSettings2(plugin.settings).miniOutlineSide).onChange((v) => save("miniOutlineSide", v)));
-      new Setting(container).setName(t("\u9F20\u6807\u60AC\u505C\u5C55\u5F00\u76EE\u5F55", "Open outline on hover")).setDesc(t("\u9ED8\u8BA4\u5173\u95ED\uFF1B\u89E6\u5C4F\u59CB\u7EC8\u901A\u8FC7\u70B9\u51FB\u5C55\u5F00\u3002", "Off by default; touch devices always use tap.")).addToggle((tg) => tg.setValue(plugin.settings.miniOutlineHover === true).onChange((v) => save("miniOutlineHover", v)));
-      new Setting(container).setName(t("\u9ED8\u8BA4\u5C55\u5F00\u5C42\u7EA7", "Default expanded levels")).addDropdown((d) => options(d, { 1: "1", 2: "2", 3: "3", 6: t("\u5168\u90E8", "All") }).setValue(String(normalizeMiniSettings2(plugin.settings).miniOutlineDepth)).onChange((v) => save("miniOutlineDepth", Number(v))));
+      container.createEl("h3", { cls: "cozy-reader-settings-heading", text: t("\u8FF7\u4F60\u76EE\u5F55", "Mini outline") });
+      let buttonSetting, buttonDropdown;
+      const updateButtonSetting = () => {
+        const startup = plugin.settings.miniOutlineStartup === true;
+        buttonSetting.settingEl.hidden = startup;
+        buttonDropdown.setDisabled(startup);
+      };
+      new Setting(container).setName(t("\u542F\u52A8\u65F6\u6253\u5F00\u8FF7\u4F60\u76EE\u5F55", "Open mini outline on startup")).setDesc(t("\u9ED8\u8BA4\u5173\u95ED\u3002\u5DE5\u4F5C\u533A\u6062\u590D\u540E\uFF0C\u4E3A\u5F53\u524D\u6587\u6863\u81EA\u52A8\u6253\u5F00\u5E76\u56FA\u5B9A\u76EE\u5F55\uFF0C\u540C\u65F6\u9690\u85CF\u4FA7\u8FB9\u76EE\u5F55\u6309\u94AE\u3002\u4E0D\u542F\u52A8\u6717\u8BFB\uFF1B\u624B\u52A8\u6536\u8D77\u540E\u672C\u6B21\u4E0D\u518D\u81EA\u52A8\u5F39\u51FA\u3002", "Off by default. After the workspace restores, open and pin the current document outline and hide its edge button. Does not start speech. Dismissing it prevents further automatic opening during this session.")).addToggle((toggle) => toggle.setValue(plugin.settings.miniOutlineStartup === true).onChange(async (value) => {
+        plugin.settings.miniOutlineStartup = value;
+        updateButtonSetting();
+        await save("miniOutlineStartup", value);
+      }));
+      buttonSetting = new Setting(container).setName(t("\u8FF7\u4F60\u76EE\u5F55\u6309\u94AE", "Mini outline button")).setDesc(t("\u5728\u6587\u6863\u4FA7\u8FB9\u663E\u793A\u76EE\u5F55\u6309\u94AE\uFF0C\u70B9\u51FB\u6253\u5F00\u8FF7\u4F60\u76EE\u5F55\u3002\u81EA\u52A8\u6A21\u5F0F\u4E0B\uFF0C\u542F\u7528 Floating TOC \u7B49\u6D6E\u52A8\u76EE\u5F55\u63D2\u4EF6\u65F6\u9690\u85CF\u6B64\u6309\u94AE\uFF1B\u4ECD\u53EF\u901A\u8FC7\u6717\u8BFB\u5DE5\u5177\u680F\u6216\u547D\u4EE4\u6253\u5F00\u8FF7\u4F60\u76EE\u5F55\uFF0C\u4E0D\u5F71\u54CD\u5176\u4ED6\u63D2\u4EF6\u3002", "Show a button at the document edge to open the mini outline. Auto hides it when Floating TOC or another supported floating outline is enabled. The reading toolbar and command can still open the mini outline; other plugins are unaffected.")).addDropdown((d) => {
+        buttonDropdown = d;
+        options(d, { auto: t("\u81EA\u52A8\uFF08\u63A8\u8350\uFF09", "Auto (recommended)"), always: t("\u59CB\u7EC8\u663E\u793A", "Always show"), off: t("\u9690\u85CF\u6309\u94AE", "Hide button") }).setValue(normalizeMiniSettings2(plugin.settings).miniOutlineMode).onChange((v) => save("miniOutlineMode", v));
+      });
+      buttonSetting.settingEl.addClass("cozy-reader-conditional");
+      updateButtonSetting();
+      const widthSetting = new Setting(container).setName(t("\u76EE\u5F55\u5BBD\u5EA6", "Outline width")).setDesc(t("260\u2013600 \u50CF\u7D20\uFF0C\u8D85\u51FA\u5F53\u524D\u6587\u6863\u7A97\u683C\u65F6\u81EA\u52A8\u7F29\u5C0F\u3002\u6062\u590D\u9ED8\u8BA4\u540E\uFF0C\u684C\u9762\u4F7F\u7528 300 \u50CF\u7D20\uFF0C\u89E6\u5C4F\u6216\u7A84\u7A97\u53E3\u4F7F\u7528 340 \u50CF\u7D20\u3002", "260\u2013600 pixels, limited to the current document pane. Reset restores 300 pixels on desktop and 340 on touch screens or narrow windows."));
+      widthSetting.settingEl.addClass("cozy-mini-width-setting");
+      let widthSlider;
+      const defaultWidth = () => container.ownerDocument?.defaultView?.matchMedia?.("(pointer: coarse), (max-width: 600px)")?.matches ? 340 : 300;
+      widthSetting.addSlider((slider) => {
+        widthSlider = slider;
+        slider.setLimits(260, 600, 10).setValue(normalizeMiniSettings2(plugin.settings).miniOutlineWidth || defaultWidth()).setDynamicTooltip().onChange((value) => changeWidth(value));
+      });
+      const widthLabel = widthSetting.controlEl.createEl("span", { cls: "cozy-mini-width-value" });
+      const updateWidthLabel = (width) => {
+        widthLabel.textContent = width ? `${width} px` : t("\u9ED8\u8BA4", "Default");
+      };
+      const changeWidth = async (value) => {
+        const width = normalizeMiniSettings2({ miniOutlineWidth: value }).miniOutlineWidth;
+        updateWidthLabel(width);
+        widthSlider.setValue(width || defaultWidth());
+        plugin.settings.miniOutlineWidth = width;
+        plugin.miniOutline?.sync();
+        await plugin.saveSettings();
+      };
+      updateWidthLabel(normalizeMiniSettings2(plugin.settings).miniOutlineWidth);
+      widthSetting.addExtraButton((button) => button.setIcon("rotate-ccw").setTooltip(t("\u6062\u590D\u9ED8\u8BA4\u5BBD\u5EA6", "Reset outline width")).onClick(() => changeWidth(0)));
+      new Setting(container).setName(t("\u6807\u9898\u663E\u793A\u884C\u6570", "Heading display lines")).setDesc(t("\u8D85\u51FA\u7684\u6587\u5B57\u7701\u7565\uFF1B\u4ECD\u53EF\u5728\u7AE0\u8282\u83DC\u5355\u4E2D\u5C55\u5F00\u5B8C\u6574\u6807\u9898\u3002", "Longer titles are truncated; the section menu can still reveal the full heading.")).addDropdown((d) => options(d, { 1: t("\u4E00\u884C\uFF08\u7D27\u51D1\uFF09", "One line (compact)"), 2: t("\u4E24\u884C\uFF08\u9ED8\u8BA4\uFF09", "Two lines (default)"), 3: t("\u4E09\u884C", "Three lines"), 4: t("\u56DB\u884C", "Four lines") }).setValue(String(normalizeMiniSettings2(plugin.settings).miniOutlineTitleLines)).onChange((v) => save("miniOutlineTitleLines", Number(v))));
+      const advanced = container.createEl("details", { cls: "cozy-mini-settings-advanced" });
+      advanced.createEl("summary", { text: t("\u66F4\u591A\u76EE\u5F55\u9009\u9879", "More outline options") });
+      new Setting(advanced).setName(t("\u76EE\u5F55\u4F4D\u7F6E", "Outline side")).addDropdown((d) => options(d, { left: t("\u5DE6\u4FA7", "Left"), right: t("\u53F3\u4FA7", "Right") }).setValue(normalizeMiniSettings2(plugin.settings).miniOutlineSide).onChange((v) => save("miniOutlineSide", v)));
+      new Setting(advanced).setName(t("\u9ED8\u8BA4\u5C55\u5F00\u5C42\u7EA7", "Default expanded levels")).addDropdown((d) => options(d, { 1: "1", 2: "2", 3: "3", 6: t("\u5168\u90E8", "All") }).setValue(String(normalizeMiniSettings2(plugin.settings).miniOutlineDepth)).onChange((v) => save("miniOutlineDepth", Number(v))));
+      new Setting(advanced).setName(t("\u900F\u660E\u80CC\u666F", "Transparent background")).setDesc(t("\u9002\u5408\u684C\u9762\u7AEF\u6587\u6863\u7559\u767D\u8F83\u5BBD\u65F6\u4F7F\u7528\u3002\u64CD\u4F5C\u76EE\u5F55\u65F6\u589E\u5F3A\u5E95\u8272\uFF1B\u624B\u673A\u548C\u5E73\u677F\u4ECD\u4FDD\u7559\u5B9E\u8272\u80CC\u666F\uFF0C\u4E0D\u964D\u4F4E\u6587\u5B57\u548C\u56FE\u6807\u7684\u6E05\u6670\u5EA6\u3002", "For wider document margins on desktop. The background becomes more opaque while interacting. Phones and tablets retain a solid background; text and icons stay fully opaque.")).addToggle((tg) => tg.setValue(plugin.settings.miniOutlineTransparent === true).onChange((v) => save("miniOutlineTransparent", v)));
+      new Setting(advanced).setName(t("\u53CC\u51FB\u6807\u9898\u5F00\u59CB\u6717\u8BFB", "Double-click heading to read")).setDesc(t("\u9ED8\u8BA4\u5173\u95ED\uFF0C\u4EC5\u9F20\u6807\u64CD\u4F5C\u751F\u6548\u3002\u5F00\u542F\u540E\uFF0C\u5355\u51FB\u76EE\u5F55\u6807\u9898\u53EA\u5B9A\u4F4D\u5E76\u4FDD\u7559\u76EE\u5F55\uFF0C\u53CC\u51FB\u4ECE\u8BE5\u8282\u7EE7\u7EED\u6717\u8BFB\uFF1B\u70B9\u51FB\u76EE\u5F55\u5916\u53EF\u6536\u8D77\u672A\u56FA\u5B9A\u7684\u76EE\u5F55\u3002\u89E6\u5C4F\u8BF7\u4F7F\u7528\u7AE0\u8282\u83DC\u5355\u3002", "Off by default; mouse only. When enabled, a single click navigates and keeps the outline open; a double-click starts reading from that section onward. Click outside to dismiss an unpinned outline. Use the section menu on touch screens.")).addToggle((tg) => tg.setValue(plugin.settings.miniOutlineDoubleClick === true).onChange((v) => save("miniOutlineDoubleClick", v)));
+      new Setting(advanced).setName(t("\u9F20\u6807\u60AC\u505C\u5C55\u5F00\u76EE\u5F55", "Open outline on hover")).setDesc(t("\u9ED8\u8BA4\u5173\u95ED\uFF1B\u89E6\u5C4F\u59CB\u7EC8\u901A\u8FC7\u70B9\u51FB\u5C55\u5F00\u3002", "Off by default; touch devices always use tap.")).addToggle((tg) => tg.setValue(plugin.settings.miniOutlineHover === true).onChange((v) => save("miniOutlineHover", v)));
     }
     module2.exports = { MINI_DEFAULTS: MINI_DEFAULTS2, normalizeMiniSettings: normalizeMiniSettings2, otherOutlineEnabled, headingParents, headingAt, MiniOutlinePanel, MiniOutlineManager, registerMiniOutline, addMiniOutlineSettings: addMiniOutlineSettings2 };
   }
@@ -15964,7 +16326,37 @@ var require_mini_outline_position = __commonJS({
       });
       return current;
     }
-    module2.exports = { pdfViewer, browsingIndex, elementHeading };
+    function scrollDocumentEdge(view, data, end, workspace) {
+      if (data.kind === "markdown") {
+        const lines = data.text.split("\n"), line = end ? lines.length - 1 : 0;
+        if (view.getMode?.() === "preview" && view.previewMode?.applyScroll) return view.previewMode.applyScroll(line);
+        if (!view.editor?.scrollIntoView) throw Error("Document view unavailable");
+        const pos = view.editor.offsetToPos?.(end ? data.text.length : 0) || { line, ch: end ? lines[line].length : 0 };
+        return view.editor.scrollIntoView({ from: pos, to: pos }, true);
+      }
+      if (data.kind === "html") {
+        const doc = data.doc, root = doc?.scrollingElement || doc?.documentElement || doc?.body;
+        if (!root) throw Error("Document view unavailable");
+        root.scrollTop = end ? Math.max(root.scrollHeight, doc.body?.scrollHeight || 0) : 0;
+        return;
+      }
+      const viewer = pdfViewer(view), count = viewer?.pagesCount || data.model?.pages?.length || data.pages?.length;
+      const pageNumber = end ? count : 1;
+      if (!Number.isInteger(pageNumber) || pageNumber < 1) throw Error("PDF page unavailable");
+      if (!viewer?.scrollPageIntoView) {
+        if (!workspace?.openLinkText) throw Error("PDF view unavailable");
+        return workspace.openLinkText(`${data.file.path}#page=${pageNumber}${end ? "&offset=0,0,0" : ""}`, "", false);
+      }
+      const target = { pageNumber };
+      if (end) {
+        const page = viewer.getPageView?.(pageNumber - 1), viewport = page?.viewport;
+        const point = viewport?.convertToPdfPoint?.(0, viewport.height) || page?.pdfPage?.view?.slice(0, 2) || [0, 0];
+        if (!point.every(Number.isFinite)) throw Error("PDF position unavailable");
+        target.destArray = [null, { name: "XYZ" }, point[0], point[1], null];
+      }
+      return viewer.scrollPageIntoView(target);
+    }
+    module2.exports = { pdfViewer, browsingIndex, elementHeading, scrollDocumentEdge };
   }
 });
 
@@ -15978,7 +16370,7 @@ var require_mini_outline_adapter = __commonJS({
     var { captureHtmlOutline, htmlSectionText } = require_html_outline();
     var { currentSourceRanges } = require_markdown_source();
     var { pauseFollowing, kindFor: kindFor2 } = require_reading_follow();
-    var { browsingIndex, elementHeading, pdfViewer } = require_mini_outline_position();
+    var { browsingIndex, elementHeading, pdfViewer, scrollDocumentEdge } = require_mini_outline_position();
     var { htmlReadingTarget } = require_html_highlights();
     var { currentDocumentHighlightElement } = require_dom_highlights();
     async function pdfData(plugin, file, cancelled, force) {
@@ -16037,6 +16429,14 @@ var require_mini_outline_adapter = __commonJS({
           return !stale() && data ? { ...data, file, mtime, size } : null;
         },
         pauseFollow: (view) => pauseFollowing(plugin, kindFor2(plugin, view)),
+        async locateEdge(view, data, end, cancelled = () => false) {
+          if (cancelled()) return;
+          if (!valid(view, data)) throw Error("Changed");
+          await workspace.revealLeaf?.(view.leaf);
+          if (cancelled()) return;
+          if (!valid(view, data)) throw Error("Changed");
+          return scrollDocumentEdge(view, data, end, workspace);
+        },
         async returnReading(view) {
           await workspace.revealLeaf?.(view.leaf);
           const key = { markdown: "readingFollow", pdf: "pdfReadingFollow", html: "webReadingFollow" }[kindFor2(plugin, view)];
@@ -46896,9 +47296,9 @@ var CosyVoiceReaderSettingTab = class extends PluginSettingTab {
     pages.engine.append(engineAdvanced);
     if (engineAdvanced.children.length === 1) engineAdvanced.hidden = true;
     containerEl = pages.playback;
-    addMiniOutlineSettings(this.plugin, containerEl, Setting);
     addReadingMenuSettings(containerEl, this.plugin, Setting);
-    containerEl.createEl("h3", { text: translateInterface(settingsLanguage, "Playback", "\u64AD\u653E") });
+    addMiniOutlineSettings(this.plugin, containerEl, Setting);
+    containerEl.createEl("h3", { cls: "cozy-reader-settings-heading", text: translateInterface(settingsLanguage, "Playback", "\u64AD\u653E") });
     new Setting(containerEl).setName(translateInterface(settingsLanguage, "Smart quick start", "\u667A\u80FD\u5FEB\u901F\u8D77\u8BFB")).setDesc(translateInterface(
       settingsLanguage,
       "Standard uses complete sentences at 20 then 40 characters. Rapid lets a complete first sentence of 5\u201319 non-whitespace characters play sooner, then uses 40; otherwise it follows Standard. No extra prefetch or splitting of existing requests. Exports are unchanged. Applies to the next reading session; latency varies by provider.",
