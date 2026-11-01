@@ -96,11 +96,11 @@ const DEFAULT_CHUNK_LIMITS = [40, 80, 120, 160, 280, 320];
 const DEFAULT_ONLINE_CHUNK_LIMITS = [200, 400, 800];
 const MAX_ONLINE_PREFETCH_CHUNKS = 1;
 const DEFAULT_MATH_READING_LANGUAGE = 'english';
-const DEFAULT_EDGE_TTS_VOICE = 'en-GB-RyanNeural';
+const DEFAULT_EDGE_TTS_VOICE = 'en-GB-SoniaNeural';
 const DEFAULT_EDGE_TTS_EXECUTABLE = 'edge-tts';
-const DEFAULT_AZURE_SPEECH_VOICE = 'en-GB-RyanNeural';
+const DEFAULT_AZURE_SPEECH_VOICE = 'en-GB-SoniaNeural';
 const DEFAULT_OPENROUTER_TTS_MODEL = 'fish-audio/s2.1-pro';
-const DEFAULT_OPENROUTER_TTS_VOICE = 'b7f1aae6de274690b20cfe990b953b67';
+const DEFAULT_OPENROUTER_TTS_VOICE = '7fe3682ee0e44dc88d1b12000cc15268';
 const AZURE_SPEECH_OUTPUT_FORMAT = 'audio-24khz-48kbitrate-mono-mp3';
 const OPENROUTER_TTS_ENDPOINT = 'https://openrouter.ai/api/v1/audio/speech';
 const RECOMMENDED_SCRIPT_PATH = '%LOCALAPPDATA%\\note-reader-cosyvoice\\cosyvoice-wrapper.ps1';
@@ -151,47 +151,47 @@ const OPENROUTER_TTS_MODELS = [
   ...ELEVENLABS_MODELS,
   [
     'microsoft/mai-voice-2.1-flash',
-    'en-GB-Harry:MAI-Voice-2.1-Flash',
-    'Microsoft MAI-Voice-2.1 Flash - low latency, UK English male default',
-    'Microsoft MAI-Voice-2.1 Flash - 低延迟、默认英式英语男声',
-    'A low-latency Microsoft model with 23 languages and 97 OpenRouter-listed voices. Defaults to UK English male Harry. Curated presets cover Mandarin, UK English and US English, with male and female choices. Currently $15 per million characters; every request still requires ZDR.',
-    '微软低延迟语音模型，支持 23 种语言，OpenRouter 列出 97 个音色。默认使用英式英语男声 Harry；精选音色覆盖中文、英式和美式英语的男女声。当前每百万字符 $15；每次请求仍强制 ZDR。',
+    'en-GB-Emily:MAI-Voice-2.1-Flash',
+    'Microsoft MAI-Voice-2.1 Flash - low latency, UK English female default',
+    'Microsoft MAI-Voice-2.1 Flash - 低延迟、默认英式英语女声',
+    'A low-latency Microsoft model with 23 languages and 97 OpenRouter-listed voices. Defaults to UK English female Emily. Curated presets cover Mandarin, UK English and US English, with male and female choices. Currently $15 per million characters; every request still requires ZDR.',
+    '微软低延迟语音模型，支持 23 种语言，OpenRouter 列出 97 个音色。默认使用英式英语女声 Emily；精选音色覆盖中文、英式和美式英语的男女声。当前每百万字符 $15；每次请求仍强制 ZDR。',
   ],
   [
     'microsoft/mai-voice-2-flash',
-    'en-US-Ethan:MAI-Voice-2-Flash',
-    'Microsoft MAI-Voice-2 Flash - low latency, US English male default',
-    'Microsoft MAI-Voice-2 Flash - 低延迟、默认美式英语男声',
-    'A low-latency Microsoft model for responsive playback. Ethan is the US English male default from Microsoft\'s MAI catalog. It and the additional Microsoft-published voices are compatibility presets because OpenRouter does not list them all. For UK English presets, select MAI-Voice-2.1 Flash.',
-    '微软低延迟语音模型，适合快速开始播放。默认使用微软 MAI 官方目录中的美式英语男声 Ethan；Ethan 及其他微软官方音色属于兼容预设，因为 OpenRouter 未完整列出。需要英式英语预设时，可选择 MAI-Voice-2.1 Flash。',
+    'en-US-Harper:MAI-Voice-2',
+    'Microsoft MAI-Voice-2 Flash - low latency, US English female default',
+    'Microsoft MAI-Voice-2 Flash - 低延迟、默认美式英语女声',
+    'A low-latency Microsoft model for responsive playback. Defaults to US English female Harper using the ID listed by OpenRouter for this model. Other Microsoft-published voices are compatibility presets whose availability may vary. For UK English presets, select MAI-Voice-2.1 Flash.',
+    '微软低延迟语音模型，适合快速开始播放。默认使用 OpenRouter 为此模型列出的美式英语女声 Harper；其他微软官方音色为兼容预设，可用性可能变化。需要英式英语预设时，可选择 MAI-Voice-2.1 Flash。',
   ],
   [
     'microsoft/mai-voice-2',
-    'en-US-Ethan:MAI-Voice-2',
-    'Microsoft MAI-Voice-2 - expressive, US English male default',
-    'Microsoft MAI-Voice-2 - 表现力强、默认美式英语男声',
-    'An expressive Microsoft model for natural long-form narration. Ethan is the US English male default. The plugin also offers other Microsoft-published English and Mandarin ShortNames as compatibility presets even when OpenRouter metadata omits them. For UK English presets, select MAI-Voice-2.1 Flash.',
-    '微软表现力语音模型，适合自然长文叙述。默认使用美式英语男声 Ethan；插件还提供 OpenRouter 元数据未列出、但由微软官方发布的其他英文和普通话 ShortName 作为兼容预设。需要英式英语预设时，可选择 MAI-Voice-2.1 Flash。',
+    'en-US-Harper:MAI-Voice-2',
+    'Microsoft MAI-Voice-2 - expressive, US English female default',
+    'Microsoft MAI-Voice-2 - 表现力强、默认美式英语女声',
+    'An expressive Microsoft model for natural long-form narration. Defaults to US English female Harper. The plugin also offers other Microsoft-published English and Mandarin ShortNames as compatibility presets even when OpenRouter metadata omits them. For UK English presets, select MAI-Voice-2.1 Flash.',
+    '微软表现力语音模型，适合自然长文叙述。默认使用美式英语女声 Harper；插件还提供 OpenRouter 元数据未列出、但由微软官方发布的其他英文和普通话 ShortName 作为兼容预设。需要英式英语预设时，可选择 MAI-Voice-2.1 Flash。',
   ],
   [
     'google/gemini-3.1-flash-tts-preview',
-    'Charon',
+    'Sulafat',
     'Google Gemini 3.1 Flash TTS Preview - 30 multilingual voices',
     'Google Gemini 3.1 Flash TTS 预览版 - 30 个多语言音色',
-    'OpenRouter lists 30 multilingual voices. Charon is the informative default for academic reading. Google describes voices by delivery style rather than fixed gender or US/UK accent, so the plugin does not make an unsupported male or accent claim.',
-    'OpenRouter 列出 30 个多语言音色。默认使用更适合学术朗读的信息型 Charon。Google 按朗读风格而非固定性别或英美口音描述音色，因此插件不会把某个音色无依据地标为男声或特定口音。',
+    'OpenRouter lists 30 multilingual voices. Defaults to Sulafat, described as warm by Google AI and listed as female by Google Cloud. Delivery and accent can vary by language and provider.',
+    'OpenRouter 列出 30 个多语言音色。默认使用 Sulafat；Google AI 将其描述为温暖型，Google Cloud 音色表将其列为女声。实际语气和口音可能因语言及供应商而异。',
   ],
   [
     'fish-audio/s2.1-pro',
     DEFAULT_OPENROUTER_TTS_VOICE,
     'Fish Audio S2.1 Pro - expressive multilingual narration, 6 voice presets',
     'Fish Audio S2.1 Pro - 多语言表现力朗读，提供 6 种音色预设',
-    'Expressive multilingual narration with Fish Audio public voice IDs. Defaults to a measured UK English male voice. OpenRouter currently bills this model per UTF-8 byte, not per character.',
-    '多语言表现力朗读，使用 Fish Audio 公开音色 ID。默认选择沉稳的英式英语男声。OpenRouter 当前按 UTF-8 字节而非字符计费。',
+    'Expressive multilingual narration with Fish Audio public voice IDs. Defaults to a UK English female voice. OpenRouter currently bills this model per UTF-8 byte, not per character.',
+    '多语言表现力朗读，使用 Fish Audio 公开音色 ID。默认选择英式英语女声。OpenRouter 当前按 UTF-8 字节而非字符计费。',
   ],
   [
     'hexgrad/kokoro-82m',
-    'bm_george',
+    'bf_emma',
     'Kokoro 82M - low-cost multilingual TTS, 12 curated voices',
     'Kokoro 82M - 低成本多语言语音，提供 12 种精选音色',
     'A lightweight, low-cost model with preset voices for Chinese, US English, and UK English. OpenRouter lists provider-dependent rates; the lowest currently shown is about $0.62 per million characters, but the ZDR-eligible route may cost more.',
@@ -205,8 +205,8 @@ const OPENROUTER_TTS_MODELS = [
 const OPENROUTER_TTS_PRESETS = [
   ...ELEVENLABS_MODELS.flatMap(([model]) => ELEVENLABS_VOICES.map(voice => [model, ...voice])),
   // IDs verified in OpenRouter's speech + ZDR catalog on 2026-10-02.
-  ['microsoft/mai-voice-2.1-flash', 'en-GB-Harry:MAI-Voice-2.1-Flash', 'Harry (UK English male, default)', 'Harry（英式英语男声，默认）'],
-  ['microsoft/mai-voice-2.1-flash', 'en-GB-Emily:MAI-Voice-2.1-Flash', 'Emily (UK English female)', 'Emily（英式英语女声）'],
+  ['microsoft/mai-voice-2.1-flash', 'en-GB-Harry:MAI-Voice-2.1-Flash', 'Harry (UK English male)', 'Harry（英式英语男声）'],
+  ['microsoft/mai-voice-2.1-flash', 'en-GB-Emily:MAI-Voice-2.1-Flash', 'Emily (UK English female, default)', 'Emily（英式英语女声，默认）'],
   ['microsoft/mai-voice-2.1-flash', 'en-US-Ethan:MAI-Voice-2.1-Flash', 'Ethan (US English male)', 'Ethan（美式英语男声）'],
   ['microsoft/mai-voice-2.1-flash', 'en-US-Grant:MAI-Voice-2.1-Flash', 'Grant (US English male)', 'Grant（美式英语男声）'],
   ['microsoft/mai-voice-2.1-flash', 'en-US-Harper:MAI-Voice-2.1-Flash', 'Harper (US English female)', 'Harper（美式英语女声）'],
@@ -251,8 +251,8 @@ const OPENROUTER_TTS_PRESETS = [
   ['fish-audio/s2.1-pro', '89ca9f5f239946d6b20cdc49bdd40ff7', 'Mandarin female - calm storytelling', '中文女声 - 平静叙述'],
   ['fish-audio/s2.1-pro', '653bbd5adbe34b3d8c867a5311f461c4', 'US English male - calm, measured narrator', '美式英语男声 - 沉稳、语速平缓'],
   ['fish-audio/s2.1-pro', '552756381a5044ba916aeb596ed443bb', 'US English female - clear, measured narrator', '美式英语女声 - 清晰、语速平缓'],
-  ['fish-audio/s2.1-pro', 'b7f1aae6de274690b20cfe990b953b67', 'UK English male - measured narrator (default)', '英式英语男声 - 沉稳旁白（默认）'],
-  ['fish-audio/s2.1-pro', '7fe3682ee0e44dc88d1b12000cc15268', 'UK English female - calm, informative narrator', '英式英语女声 - 平静、信息型旁白'],
+  ['fish-audio/s2.1-pro', 'b7f1aae6de274690b20cfe990b953b67', 'UK English male - measured narrator', '英式英语男声 - 沉稳旁白'],
+  ['fish-audio/s2.1-pro', '7fe3682ee0e44dc88d1b12000cc15268', 'UK English female - calm, informative narrator (default)', '英式英语女声 - 平静、信息型旁白（默认）'],
   ['hexgrad/kokoro-82m', 'zf_xiaoxiao', 'Xiaoxiao (Chinese female)', '小晓（中文女声）'],
   ['hexgrad/kokoro-82m', 'zf_xiaoyi', 'Xiaoyi (Chinese female)', '小艺（中文女声）'],
   ['hexgrad/kokoro-82m', 'zm_yunjian', 'Yunjian (Chinese male)', '云健（中文男声）'],
@@ -1373,9 +1373,9 @@ function normalizeOpenRouterModel(value) {
     : DEFAULT_OPENROUTER_TTS_MODEL;
 }
 
-function normalizeOpenRouterVoice(value) {
+function normalizeOpenRouterVoice(value, model = DEFAULT_OPENROUTER_TTS_MODEL) {
   const voice = String(value || '').trim();
-  return /^[a-z0-9][a-z0-9._:-]{0,199}$/i.test(voice) ? voice : DEFAULT_OPENROUTER_TTS_VOICE;
+  return /^[a-z0-9][a-z0-9._:-]{0,199}$/i.test(voice) ? voice : getDefaultOpenRouterVoiceForModel(model);
 }
 
 function hasObsidianSecretStorage(app) {
@@ -1508,7 +1508,7 @@ function getOpenRouterConfigurationError(settings = {}, vaultBasePath = '', app 
   if (normalizeOpenRouterModel(settings.openRouterModel) !== String(settings.openRouterModel || '').trim()) {
     return 'Set a valid OpenRouter TTS model ID in the plugin settings.';
   }
-  if (normalizeOpenRouterVoice(settings.openRouterVoice) !== String(settings.openRouterVoice || '').trim()) {
+  if (normalizeOpenRouterVoice(settings.openRouterVoice, settings.openRouterModel) !== String(settings.openRouterVoice || '').trim()) {
     return 'Set a valid OpenRouter TTS voice ID in the plugin settings.';
   }
 
@@ -1530,10 +1530,11 @@ function effectiveSynthesisSpeed(settings = {}) {
 }
 
 function buildOpenRouterTtsRequestBody(text, settings = {}, context = {}) {
+  const model = normalizeOpenRouterModel(settings.openRouterModel);
   return JSON.stringify({
-    model: normalizeOpenRouterModel(settings.openRouterModel),
+    model,
     input: String(text || ''),
-    voice: normalizeOpenRouterVoice(settings.openRouterVoice),
+    voice: normalizeOpenRouterVoice(settings.openRouterVoice, model),
     response_format: 'mp3',
     speed: isElevenLabsModel(settings.openRouterModel) ? 1 : normalizeSpeed(settings.speed),
     provider: {
@@ -2921,7 +2922,10 @@ class CosyVoiceReaderPlugin extends Plugin {
     this.settings.openRouterKeyPath = String(this.settings.openRouterKeyPath || '').trim();
     this.settings.openRouterModel = normalizeOpenRouterModel(this.settings.openRouterModel);
     this.settings.openRouterSecretName = String(this.settings.openRouterSecretName || '').trim();
-    this.settings.openRouterVoice = normalizeOpenRouterVoice(this.settings.openRouterVoice);
+    this.settings.openRouterVoice = normalizeOpenRouterVoice(
+      Object.prototype.hasOwnProperty.call(source, 'openRouterVoice') ? source.openRouterVoice : '',
+      this.settings.openRouterModel
+    );
     this.settings.settingsLanguage = normalizeSettingsLanguage(this.settings.settingsLanguage);
     this.settings.scriptPath = String(this.settings.scriptPath || defaults.scriptPath);
     this.settings.chunkLimits = parseChunkLimits(this.settings.chunkLimits).join(',');
@@ -2981,7 +2985,7 @@ class CosyVoiceReaderPlugin extends Plugin {
     this.settings.openRouterKeyPath = String(this.settings.openRouterKeyPath || '').trim();
     this.settings.openRouterModel = normalizeOpenRouterModel(this.settings.openRouterModel);
     this.settings.openRouterSecretName = String(this.settings.openRouterSecretName || '').trim();
-    this.settings.openRouterVoice = normalizeOpenRouterVoice(this.settings.openRouterVoice);
+    this.settings.openRouterVoice = normalizeOpenRouterVoice(this.settings.openRouterVoice, this.settings.openRouterModel);
     this.settings.settingsLanguage = normalizeSettingsLanguage(this.settings.settingsLanguage);
     this.settings.chunkLimits = parseChunkLimits(this.settings.chunkLimits).join(',');
     this.settings.onlineChunkLimits = parseChunkLimits(
@@ -7936,8 +7940,8 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
           }));
       }
       new Setting(containerEl).setName(label('MiMo voice', 'MiMo 音色'))
-        .setDesc(label('Eight official voices. English accents are not specified by Xiaomi. Default: Bai Hua (Chinese male).',
-          '8 种官方音色。官方未明确区分英语音色的英式或美式口音。默认白桦（中文男声）。'))
+        .setDesc(label('Eight official voices. English accents are not specified by Xiaomi. Default: Bing Tang (Chinese female).',
+          '8 种官方音色。官方未明确区分英语音色的英式或美式口音。默认冰糖（中文女声）。'))
         .addDropdown(dropdown => {
           for (const [id, en, cn] of MIMO_VOICES) dropdown.addOption(id, `${id} - ${label(en, cn)}`);
           dropdown.setValue(this.plugin.settings.mimoVoice || MIMO_DEFAULTS.mimoVoice).onChange(async value => {
@@ -8214,7 +8218,7 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
       }
 
       const currentOpenRouterModel = normalizeOpenRouterModel(this.plugin.settings.openRouterModel);
-      const currentOpenRouterVoice = normalizeOpenRouterVoice(this.plugin.settings.openRouterVoice);
+      const currentOpenRouterVoice = normalizeOpenRouterVoice(this.plugin.settings.openRouterVoice, currentOpenRouterModel);
       const openRouterModels = getOpenRouterTtsModels(settingsLanguage);
       const selectedOpenRouterModel = openRouterModels.find(([model]) => model === currentOpenRouterModel);
       let openRouterPriceSetting;
@@ -8296,7 +8300,7 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
             .setPlaceholder(getDefaultOpenRouterVoiceForModel(currentOpenRouterModel))
             .setValue(currentOpenRouterVoice)
             .onChange(async (value) => {
-              this.plugin.settings.openRouterVoice = normalizeOpenRouterVoice(value);
+              this.plugin.settings.openRouterVoice = normalizeOpenRouterVoice(value, currentOpenRouterModel);
               await this.plugin.saveSettings();
             });
         });

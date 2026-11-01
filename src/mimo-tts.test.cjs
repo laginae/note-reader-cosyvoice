@@ -2,15 +2,18 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { MIMO_DEFAULTS, MIMO_VOICES, buildMimoRequestBody, decodeMimoAudio, normalizeMimoSettings } = require('./mimo-tts');
 
-test('MiMo requires explicit consent and defaults to a documented male voice', () => {
+test('MiMo requires explicit consent and defaults to a documented female voice', () => {
   assert.equal(MIMO_DEFAULTS.mimoConsent, false);
-  assert.equal(MIMO_DEFAULTS.mimoVoice, '白桦');
+  assert.equal(MIMO_DEFAULTS.mimoVoice, '冰糖');
   assert.equal(new Set(MIMO_VOICES.map(([id]) => id)).size, 8);
   const settings = { mimoConsent: 'true', mimoVoice: 'unknown', mimoCredentialSource: 'unknown' };
   normalizeMimoSettings(settings);
   assert.equal(settings.mimoConsent, false);
-  assert.equal(settings.mimoVoice, '白桦');
+  assert.equal(settings.mimoVoice, '冰糖');
   assert.equal(settings.mimoCredentialSource, 'obsidian-secret');
+  const existing = { mimoVoice: '白桦', mimoConsent: true };
+  normalizeMimoSettings(existing);
+  assert.equal(existing.mimoVoice, '白桦'); assert.equal(existing.mimoConsent, true);
 });
 
 test('MiMo preserves target text in the assistant role, never in style instructions', () => {

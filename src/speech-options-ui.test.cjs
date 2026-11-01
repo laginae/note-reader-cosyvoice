@@ -48,8 +48,8 @@ test('voice guidance and placeholders follow model switches in English and Chine
         assert.match(help().descEl.textContent, /george/);
         assert.doesNotMatch(voices().descEl.textContent + help().descEl.textContent, /MAI|Microsoft|微软/);
         const input = rowNamed('OpenRouter TTS voice', 'OpenRouter TTS 音色').controlEl.querySelector('input');
-        assert.equal(input.placeholder, 'george');
-        assert.equal(input.value, 'george');
+        assert.equal(input.placeholder, 'sarah');
+        assert.equal(input.value, 'sarah');
       }
       await model().change('fish-audio/s2.1-pro');
       assert.doesNotMatch(voices().descEl.textContent + help().descEl.textContent, /MAI|ElevenLabs|george/);

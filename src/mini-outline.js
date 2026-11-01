@@ -11,7 +11,7 @@ function normalizeMiniSettings(settings = {}) {
     miniOutlineSide: settings.miniOutlineSide === 'left' ? 'left' : 'right', miniOutlineHover: settings.miniOutlineHover === true,
     miniOutlineDepth: [1, 2, 3, 6].includes(Number(settings.miniOutlineDepth)) ? Number(settings.miniOutlineDepth) : 2,
     miniOutlineTransparent: settings.miniOutlineTransparent === true, miniOutlineDoubleClick: settings.miniOutlineDoubleClick === true,
-    miniOutlineWidth: Number.isFinite(width) && width > 0 ? Math.max(260, Math.min(600, Math.round(width / 10) * 10)) : 0,
+    miniOutlineWidth: Number.isFinite(width) && width > 0 ? Math.max(180, Math.min(600, Math.round(width / 10) * 10)) : 0,
     miniOutlineTitleLines: [1, 2, 3, 4, '1', '2', '3', '4'].includes(settings.miniOutlineTitleLines) ? Number(settings.miniOutlineTitleLines) : 2,
     miniOutlineStartup: settings.miniOutlineStartup === true };
 }
@@ -223,6 +223,7 @@ class MiniOutlinePanel {
     let top = Math.max(host.top + 44, (viewport?.offsetTop || 0) + 12);
     const entryHeight = this.launcher.hidden ? 0 : this.launcher.getBoundingClientRect().height;
     const width = this.opened ? this.panel.getBoundingClientRect().width : (this.launcher.getBoundingClientRect().width || 32);
+    if (this.opened) this.panel.classList.toggle('is-compact', width < 240);
     const left = this.settings().miniOutlineSide === 'left' ? host.left + 10 : host.right - 10 - width;
     const bars = (this.observedHeaders || []).map(el => {
       const rect = el.getBoundingClientRect(), style = win.getComputedStyle(el);
@@ -530,13 +531,13 @@ function addMiniOutlineSettings(plugin, container, Setting) {
     });
   buttonSetting.settingEl.addClass('cozy-reader-conditional'); updateButtonSetting();
   const widthSetting = new Setting(container).setName(t('目录宽度', 'Outline width'))
-    .setDesc(t('260–600 像素，超出当前文档窗格时自动缩小。恢复默认后，桌面使用 300 像素，触屏或窄窗口使用 340 像素。', '260–600 pixels, limited to the current document pane. Reset restores 300 pixels on desktop and 340 on touch screens or narrow windows.'));
+    .setDesc(t('180–600 像素，超出当前文档窗格时自动缩小。较窄时，顶部／底部按钮移至目录选项。恢复默认后，桌面使用 300 像素，触屏或窄窗口使用 340 像素。', '180–600 pixels, limited to the current document pane. In narrow outlines, top/bottom actions move into Outline options. Reset restores 300 pixels on desktop and 340 on touch screens or narrow windows.'));
   widthSetting.settingEl.addClass('cozy-mini-width-setting');
   let widthSlider;
   const defaultWidth = () => container.ownerDocument?.defaultView?.matchMedia?.('(pointer: coarse), (max-width: 600px)')?.matches ? 340 : 300;
   widthSetting.addSlider(slider => {
     widthSlider = slider;
-    slider.setLimits(260, 600, 10).setValue(normalizeMiniSettings(plugin.settings).miniOutlineWidth || defaultWidth()).setDynamicTooltip()
+    slider.setLimits(180, 600, 10).setValue(normalizeMiniSettings(plugin.settings).miniOutlineWidth || defaultWidth()).setDynamicTooltip()
       .onChange(value => changeWidth(value));
   });
   const widthLabel = widthSetting.controlEl.createEl('span', { cls: 'cozy-mini-width-value' });

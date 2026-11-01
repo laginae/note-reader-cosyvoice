@@ -123,3 +123,14 @@ Desktop 1.5.1 and mobile 0.6.1, checked on 2026-11-01:
 - Re-ran both editions at 1280x900, 390x844, 320x568, 768x1024 and 1024x768 in isolated Chromium. Startup opening, one-to-four title lines, width limits, top/bottom actions, hover/keyboard visibility, hybrid input transitions and touch controls passed. Idle/hover desktop and narrow touch screenshots were inspected using public headings.
 - Preserved the historical checks above rather than relabeling them as new physical-device tests. iPhone/iPad/Android validation remains pending; background playback and OCR remain experimental and off by default.
 - Version metadata and bilingual documentation describe the same feature set. No speech service was called for these checks; private documents, settings, credentials, screenshots and local diagnostic logs are excluded from the release files.
+
+## Local Narrow-Width and Scrollbar Checks
+
+Unreleased refinement after desktop 1.5.1 / mobile 0.6.1, checked on 2026-11-01:
+
+- Lowered the configurable width floor to 180 pixels without changing the responsive defaults or existing saved widths. Below 240 actual pixels, desktop top/bottom actions move into Options. Touch headers and options wrap instead of shrinking hit targets.
+- Desktop core, export and loader checks plus 591 Node tests passed. Mobile passed 287 Node tests and the 40-file compatibility check. Tests verify normalization, the settings slider, 180-pixel persistence and actual-width layout changes without replacing rows, reading files or starting speech.
+- Both editions passed isolated Chromium checks at 1280x900, 390x844, 320x568, 768x1024 and 1024x768. Tested 180, 200, 230, 260, 420 and 600 pixels on both sides, narrow split panes, touch targets, visible Close and usable options.
+- The browser's default hidden-scrollbar launch argument was removed for a second pass. Desktop idle/hover screenshots visibly hide/reveal the scrollbar; measured list size and heading geometry stay unchanged. Wheel scrolling, keyboard focus, mouse-click focus, touch/pen transitions, high-contrast mode and mobile native scrollbar behavior passed.
+- The local desktop program files were backed up, copied and hash-verified; the saved settings file was unchanged. The running reading session was not reloaded or interrupted. Source changes are synchronized across desktop and mobile; no new GitHub release is part of this check.
+- All fixtures are public invented examples. No speech service was called, and no private note, credential or diagnostic screenshot was published. Physical mobile-device acceptance remains pending.

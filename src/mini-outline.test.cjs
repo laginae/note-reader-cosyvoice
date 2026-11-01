@@ -45,7 +45,7 @@ test('preferences normalize and skipped heading levels still have a usable tree'
   for (const [value, lines] of [[1,1],['1',1],[2,2],[3,3],['3',3],[4,4],['4',4],[0,2],[5,2],[true,2],[undefined,2],['bad',2]]) {
     assert.equal(normalizeMiniSettings({miniOutlineTitleLines:value}).miniOutlineTitleLines,lines,String(value));
   }
-  for (const [value, width] of [[0,0],[undefined,0],['',0],[NaN,0],[Infinity,0],[true,0],['300px',0],[-10,0],[10,260],[427,430],['480',480],[999,600]]) {
+  for (const [value, width] of [[0,0],[undefined,0],['',0],[NaN,0],[Infinity,0],[true,0],['300px',0],[-10,0],[10,180],[180,180],['190',190],[235,240],[260,260],[427,430],['480',480],[999,600]]) {
     assert.equal(normalizeMiniSettings({miniOutlineWidth:value}).miniOutlineWidth,width,String(value));
   }
   assert.deepEqual(headingParents([{level:2},{level:4},{level:6},{level:2}]), [[],[0],[0,1],[]]);
@@ -412,6 +412,8 @@ test('background preference updates existing UI without reloading headings or ch
 test('width updates existing layout without replacing headings, loading documents or starting playback', async t => {
   const f=fixture(); t.after(f.cleanup); await f.panel.open(); const p=f.panel,row=p.rows.get(1).row;
   assert.equal(p.root.style.getPropertyValue('--cozy-mini-width'),'');
+  f.plugin.settings.miniOutlineWidth=180; f.manager.sync();
+  assert.equal(p.root.style.getPropertyValue('--cozy-mini-width'),'180px'); assert.equal(p.rows.get(1).row,row);
   f.plugin.settings.miniOutlineWidth=420; f.manager.sync();
   assert.equal(p.root.style.getPropertyValue('--cozy-mini-width'),'420px'); assert.equal(p.rows.get(1).row,row);
   f.plugin.settings.miniOutlineWidth=999; f.manager.sync(); assert.equal(p.root.style.getPropertyValue('--cozy-mini-width'),'600px');
@@ -419,6 +421,20 @@ test('width updates existing layout without replacing headings, loading document
   assert.deepEqual(f.calls,['load']);
   p.close(); f.plugin.settings.miniOutlineWidth=360; f.manager.sync(); await p.open();
   assert.equal(p.root.style.getPropertyValue('--cozy-mini-width'),'360px'); assert.deepEqual(f.calls,['load']);
+});
+
+test('compact outline controls follow actual pane-constrained width without changing saved preferences or reading state', async t => {
+  const f=fixture(undefined,{miniOutlineWidth:420}); t.after(f.cleanup); const p=f.panel;
+  let width=420; p.panel.getBoundingClientRect=()=>({left:0,top:0,right:width,bottom:300,width,height:300});
+  await p.open(); const row=p.rows.get(1).row, state=p.state;
+  assert.equal(p.panel.classList.contains('is-compact'),false);
+  for(const [actual,compact] of [[180,true],[230,true],[239,true],[240,false],[420,false]]) {
+    width=actual; p.layout(); assert.equal(p.panel.classList.contains('is-compact'),compact);
+    assert.equal(p.rows.get(1).row,row); assert.equal(p.state,state); assert.equal(f.plugin.settings.miniOutlineWidth,420);
+  }
+  assert.deepEqual(f.calls,['load']);
+  p.close(); width=180; await p.open();
+  assert.equal(p.panel.classList.contains('is-compact'),true); assert.deepEqual(f.calls,['load']);
 });
 
 test('heading line limits update in place and preserve explicitly expanded titles and full labels', async t => {

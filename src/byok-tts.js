@@ -5,7 +5,7 @@ const { extractMp3Frames } = require('./audio-export');
 
 const BYOK_DEFAULTS = { byokProfiles: [], byokActiveProfileId: '' };
 const BYOK_PROVIDERS = {
-  'openai-compatible': { name: 'OpenAI-compatible', endpoint: 'https://api.openai.com/v1/audio/speech', model: 'gpt-4o-mini-tts', voice: 'onyx', docs: 'https://developers.openai.com/api/docs/guides/text-to-speech' },
+  'openai-compatible': { name: 'OpenAI-compatible', endpoint: 'https://api.openai.com/v1/audio/speech', model: 'gpt-4o-mini-tts', voice: 'coral', docs: 'https://developers.openai.com/api/docs/guides/text-to-speech' },
   elevenlabs: { name: 'ElevenLabs', endpoint: 'https://api.elevenlabs.io/v1/text-to-speech', model: 'eleven_multilingual_v2', voice: '', docs: 'https://elevenlabs.io/docs/api-reference/text-to-speech/convert' },
   minimax: { name: 'MiniMax', endpoint: 'https://api.minimax.io/v1/t2a_v2', model: 'speech-2.8-hd', voice: '', docs: 'https://platform.minimax.io/docs/api-reference/speech-t2a-http' },
 };

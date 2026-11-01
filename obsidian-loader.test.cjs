@@ -340,7 +340,7 @@ assert.deepStrictEqual(moduleObject.exports.__test.createDefaultSettings(), {
   mimoCredentialSource: 'obsidian-secret',
   mimoSecretName: '',
   mimoKeyPath: '',
-  mimoVoice: '白桦',
+  mimoVoice: '冰糖',
   byokProfiles: [],
   byokActiveProfileId: '',
   audioExportFolder: '',
@@ -351,7 +351,7 @@ assert.deepStrictEqual(moduleObject.exports.__test.createDefaultSettings(), {
   azureSpeechKeyPath: '',
   azureSpeechRegion: '',
   azureSpeechSecretName: '',
-  azureSpeechVoice: 'en-GB-RyanNeural',
+  azureSpeechVoice: 'en-GB-SoniaNeural',
   cleanupCache: true,
   persistentAudioCache: false,
   chunkLimits: '40,80,120,160,280,320',
@@ -367,7 +367,7 @@ assert.deepStrictEqual(moduleObject.exports.__test.createDefaultSettings(), {
   diagnosticLogging: false,
   edgeTtsConsent: false,
   edgeTtsExecutable: 'edge-tts',
-  edgeTtsVoice: 'en-GB-RyanNeural',
+  edgeTtsVoice: 'en-GB-SoniaNeural',
   mathReadingLanguage: 'english',
   openRouterConsent: false,
   openRouterContext: false,
@@ -377,7 +377,7 @@ assert.deepStrictEqual(moduleObject.exports.__test.createDefaultSettings(), {
   openRouterKeyPath: '',
   openRouterModel: 'fish-audio/s2.1-pro',
   openRouterSecretName: '',
-  openRouterVoice: 'b7f1aae6de274690b20cfe990b953b67',
+  openRouterVoice: '7fe3682ee0e44dc88d1b12000cc15268',
   settingsLanguage: 'english',
   scriptPath: '',
   speechEngine: 'local-cosyvoice',
@@ -477,7 +477,7 @@ assert.strictEqual(moduleObject.exports.__test.normalizeOnlinePrefetchChunks(99)
 assert.strictEqual(moduleObject.exports.__test.normalizeOnlinePrefetchChunks('invalid'), 1);
 assert.strictEqual(moduleObject.exports.__test.normalizeEdgeTtsExecutable('  '), 'edge-tts');
 assert.strictEqual(moduleObject.exports.__test.normalizeEdgeTtsExecutable(' C:\\Tools\\edge-tts.exe '), 'C:\\Tools\\edge-tts.exe');
-assert.strictEqual(moduleObject.exports.__test.normalizeEdgeTtsVoice('  '), 'en-GB-RyanNeural');
+assert.strictEqual(moduleObject.exports.__test.normalizeEdgeTtsVoice('  '), 'en-GB-SoniaNeural');
 assert.strictEqual(moduleObject.exports.__test.hasEdgeTtsConsent({ speechEngine: 'local-cosyvoice' }), true);
 assert.strictEqual(moduleObject.exports.__test.hasEdgeTtsConsent({ speechEngine: 'edge-tts' }), false);
 assert.strictEqual(moduleObject.exports.__test.hasEdgeTtsConsent({ speechEngine: 'edge-tts', edgeTtsConsent: true }), true);
@@ -620,7 +620,7 @@ for (const model of ['elevenlabs/eleven-multilingual-v2', 'elevenlabs/eleven-fla
     provider:{data_collection:'deny', zdr:true}});
   assert.strictEqual(moduleObject.exports.__test.effectiveSynthesisSpeed(settings), 1);
   assert.strictEqual(moduleObject.exports.__test.usesNormalSynthesisSpeed(settings), true);
-  assert.strictEqual(moduleObject.exports.__test.getDefaultOpenRouterVoiceForModel(model), 'george');
+  assert.strictEqual(moduleObject.exports.__test.getDefaultOpenRouterVoiceForModel(model), 'sarah');
   assert.ok(moduleObject.exports.__test.getOpenRouterTtsVoicePresets(model, 'english').some(([,id])=>id==='sarah'));
 }
 assert.strictEqual(moduleObject.exports.__test.effectiveSynthesisSpeed({
@@ -662,6 +662,15 @@ for (const [model, presets] of openRouterVoicesByModel) {
   assert.ok(voiceIds.includes(
     moduleObject.exports.__test.getDefaultOpenRouterVoiceForModel(model)
   ), `${model} is missing its default voice preset`);
+  for (const missing of [undefined, '', 'invalid voice']) {
+    const expectedVoice = moduleObject.exports.__test.getDefaultOpenRouterVoiceForModel(model);
+    const body = JSON.parse(moduleObject.exports.__test.buildOpenRouterTtsRequestBody('Public sample.', {
+      openRouterModel: model, openRouterVoice: missing,
+    }));
+    assert.strictEqual(body.voice, expectedVoice, model);
+    assert.strictEqual(body.provider.zdr, true);
+    assert.strictEqual(body.provider.data_collection, 'deny');
+  }
 }
 const expectedMaiFlashVoices = [
   'en-US-Ethan:MAI-Voice-2-Flash',
@@ -714,17 +723,17 @@ for (const prefix of ['zf_', 'zm_', 'af_', 'am_', 'bf_', 'bm_']) {
 assert.ok(moduleObject.exports.__test.getOpenRouterTtsModels('chinese').find(
   ([model, , , info]) => model === 'microsoft/mai-voice-2-flash'
     && info.includes('低延迟')
-    && info.includes('Ethan')
+    && info.includes('Harper')
     && info.includes('MAI-Voice-2.1 Flash')
 ));
 assert.ok(moduleObject.exports.__test.getOpenRouterTtsModels('chinese').find(
   ([model, , , info]) => model === 'microsoft/mai-voice-2'
-    && info.includes('美式英语男声 Ethan')
+    && info.includes('美式英语女声 Harper')
     && info.includes('兼容预设')
 ));
 assert.strictEqual(
   moduleObject.exports.__test.getDefaultOpenRouterVoiceForModel('microsoft/mai-voice-2.1-flash'),
-  'en-GB-Harry:MAI-Voice-2.1-Flash'
+  'en-GB-Emily:MAI-Voice-2.1-Flash'
 );
 const mai21Presets = openRouterVoicesByModel.get('microsoft/mai-voice-2.1-flash');
 assert.strictEqual(mai21Presets.length, 10);
@@ -751,19 +760,19 @@ assert.strictEqual(moduleObject.exports.__test.getOpenRouterVoiceHelpLinks('fish
   'https://fish.audio/discovery/');
 assert.strictEqual(
   moduleObject.exports.__test.getDefaultOpenRouterVoiceForModel('microsoft/mai-voice-2'),
-  'en-US-Ethan:MAI-Voice-2'
+  'en-US-Harper:MAI-Voice-2'
 );
 assert.strictEqual(
   moduleObject.exports.__test.getDefaultOpenRouterVoiceForModel('microsoft/mai-voice-2-flash'),
-  'en-US-Ethan:MAI-Voice-2-Flash'
+  'en-US-Harper:MAI-Voice-2'
 );
 assert.strictEqual(
   moduleObject.exports.__test.getDefaultOpenRouterVoiceForModel('google/gemini-3.1-flash-tts-preview'),
-  'Charon'
+  'Sulafat'
 );
 assert.strictEqual(
   moduleObject.exports.__test.getDefaultOpenRouterVoiceForModel('hexgrad/kokoro-82m'),
-  'bm_george'
+  'bf_emma'
 );
 assert.ok(moduleObject.exports.__test.getOpenRouterTtsVoicePresets(
   'microsoft/mai-voice-2-flash',
@@ -2191,6 +2200,18 @@ assert.deepStrictEqual(chunkNavigationCalls, [-1, 1]);
   await freshPlugin.loadSettings();
   assert.equal(freshPlugin.settings.speechEngine, 'mimo-tts');
   assert.equal(freshPlugin.settings.mimoConsent, true);
+  assert.equal(freshPlugin.settings.mimoVoice, '冰糖');
+  freshPlugin.loadData = async () => ({ openRouterModel: 'elevenlabs/eleven-v4' });
+  await freshPlugin.loadSettings();
+  assert.equal(freshPlugin.settings.openRouterVoice, 'sarah');
+  freshPlugin.loadData = async () => ({ speechEngine: 'mimo-tts', mimoVoice: '白桦', mimoConsent: true,
+    edgeTtsVoice: 'en-GB-RyanNeural', azureSpeechVoice: 'en-GB-RyanNeural',
+    openRouterModel: 'hexgrad/kokoro-82m', openRouterVoice: 'bm_george', openRouterConsent: true });
+  await freshPlugin.loadSettings();
+  assert.equal(freshPlugin.settings.mimoVoice, '白桦'); assert.equal(freshPlugin.settings.mimoConsent, true);
+  assert.equal(freshPlugin.settings.edgeTtsVoice, 'en-GB-RyanNeural');
+  assert.equal(freshPlugin.settings.azureSpeechVoice, 'en-GB-RyanNeural');
+  assert.equal(freshPlugin.settings.openRouterVoice, 'bm_george'); assert.equal(freshPlugin.settings.openRouterConsent, true);
   assert.strictEqual(migratedSettings.azureSpeechCredentialSource, 'key-file');
   assert.strictEqual(migratedSettings.openRouterCredentialSource, 'key-file');
   assert.strictEqual(migratedSettings.azureSpeechSecretName, '');

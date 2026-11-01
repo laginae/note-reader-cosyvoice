@@ -71,9 +71,10 @@ test('width slider displays the saved value, applies immediately and resets to r
   const f=fixture(true,{miniOutlineWidth:420}); t.after(()=>f.dom.window.close()); const row=f.row('目录宽度');
   const label=row.controlEl.querySelector('.cozy-mini-width-value');
   assert.equal(row.control.value,420); assert.equal(label.textContent,'420 px');
-  assert.deepEqual(row.control.limits,{min:260,max:600,step:10}); assert.equal(row.reset.icon,'rotate-ccw');
+  assert.deepEqual(row.control.limits,{min:180,max:600,step:10}); assert.equal(row.reset.icon,'rotate-ccw');
+  await row.control.change(180); assert.equal(f.plugin.settings.miniOutlineWidth,180); assert.equal(label.textContent,'180 px');
   await row.control.change(480); assert.equal(f.plugin.settings.miniOutlineWidth,480); assert.equal(label.textContent,'480 px');
-  assert.deepEqual(f.counts(),{saves:1,syncs:1});
+  assert.deepEqual(f.counts(),{saves:2,syncs:2});
   await row.reset.click(); assert.equal(f.plugin.settings.miniOutlineWidth,0); assert.equal(label.textContent,'默认'); assert.equal(row.control.value,300);
   f.dom.window.matchMedia=()=>({matches:true}); await row.reset.click(); assert.equal(row.control.value,340);
   assert.equal(f.plugin.settings.readingFloatingAction,'from-selection');

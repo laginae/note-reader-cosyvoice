@@ -1085,7 +1085,7 @@ var require_openrouter_elevenlabs = __commonJS({
     var ELEVENLABS_MODELS2 = [
       [
         "elevenlabs/eleven-multilingual-v2",
-        "george",
+        "sarah",
         "ElevenLabs Multilingual v2 - long-form narration",
         "ElevenLabs Multilingual v2 - \u957F\u6587\u6717\u8BFB",
         "Long-form narration candidate. Normal-speed synthesis; adjust playback speed in the player. ZDR and denial of data collection are required. Adjacent context is off by default.",
@@ -1093,7 +1093,7 @@ var require_openrouter_elevenlabs = __commonJS({
       ],
       [
         "elevenlabs/eleven-flash-v2.5",
-        "george",
+        "sarah",
         "ElevenLabs Flash v2.5 - fast synthesis",
         "ElevenLabs Flash v2.5 - \u5FEB\u901F\u5408\u6210",
         "Speed-focused speech model. Normal-speed synthesis; adjust playback speed in the player. Requests require ZDR and deny data collection.",
@@ -1101,7 +1101,7 @@ var require_openrouter_elevenlabs = __commonJS({
       ],
       [
         "elevenlabs/eleven-v4",
-        "george",
+        "sarah",
         "ElevenLabs Eleven v4 - expressive narration",
         "ElevenLabs Eleven v4 - \u8868\u73B0\u529B\u6717\u8BFB",
         "Expressive narration with support for audio tags in the input. The plugin adds no tags; existing tags may affect delivery. Normal-speed synthesis with local playback speed control. ZDR is required.",
@@ -1109,7 +1109,7 @@ var require_openrouter_elevenlabs = __commonJS({
       ],
       [
         "elevenlabs/eleven-v4-turbo",
-        "george",
+        "sarah",
         "ElevenLabs Eleven v4 Turbo - responsive narration",
         "ElevenLabs Eleven v4 Turbo - \u5FEB\u901F\u54CD\u5E94\u6717\u8BFB",
         "Responsive expressive speech. No automatic performance tags; adjacent context is off by default. Normal-speed synthesis with local playback speed control. ZDR is required.",
@@ -15472,7 +15472,7 @@ var require_mini_outline = __commonJS({
         miniOutlineDepth: [1, 2, 3, 6].includes(Number(settings.miniOutlineDepth)) ? Number(settings.miniOutlineDepth) : 2,
         miniOutlineTransparent: settings.miniOutlineTransparent === true,
         miniOutlineDoubleClick: settings.miniOutlineDoubleClick === true,
-        miniOutlineWidth: Number.isFinite(width) && width > 0 ? Math.max(260, Math.min(600, Math.round(width / 10) * 10)) : 0,
+        miniOutlineWidth: Number.isFinite(width) && width > 0 ? Math.max(180, Math.min(600, Math.round(width / 10) * 10)) : 0,
         miniOutlineTitleLines: [1, 2, 3, 4, "1", "2", "3", "4"].includes(settings.miniOutlineTitleLines) ? Number(settings.miniOutlineTitleLines) : 2,
         miniOutlineStartup: settings.miniOutlineStartup === true
       };
@@ -15775,6 +15775,7 @@ var require_mini_outline = __commonJS({
         let top = Math.max(host.top + 44, (viewport?.offsetTop || 0) + 12);
         const entryHeight = this.launcher.hidden ? 0 : this.launcher.getBoundingClientRect().height;
         const width = this.opened ? this.panel.getBoundingClientRect().width : this.launcher.getBoundingClientRect().width || 32;
+        if (this.opened) this.panel.classList.toggle("is-compact", width < 240);
         const left = this.settings().miniOutlineSide === "left" ? host.left + 10 : host.right - 10 - width;
         const bars = (this.observedHeaders || []).map((el) => {
           const rect = el.getBoundingClientRect(), style = win.getComputedStyle(el);
@@ -16245,13 +16246,13 @@ var require_mini_outline = __commonJS({
       });
       buttonSetting.settingEl.addClass("cozy-reader-conditional");
       updateButtonSetting();
-      const widthSetting = new Setting(container).setName(t("\u76EE\u5F55\u5BBD\u5EA6", "Outline width")).setDesc(t("260\u2013600 \u50CF\u7D20\uFF0C\u8D85\u51FA\u5F53\u524D\u6587\u6863\u7A97\u683C\u65F6\u81EA\u52A8\u7F29\u5C0F\u3002\u6062\u590D\u9ED8\u8BA4\u540E\uFF0C\u684C\u9762\u4F7F\u7528 300 \u50CF\u7D20\uFF0C\u89E6\u5C4F\u6216\u7A84\u7A97\u53E3\u4F7F\u7528 340 \u50CF\u7D20\u3002", "260\u2013600 pixels, limited to the current document pane. Reset restores 300 pixels on desktop and 340 on touch screens or narrow windows."));
+      const widthSetting = new Setting(container).setName(t("\u76EE\u5F55\u5BBD\u5EA6", "Outline width")).setDesc(t("180\u2013600 \u50CF\u7D20\uFF0C\u8D85\u51FA\u5F53\u524D\u6587\u6863\u7A97\u683C\u65F6\u81EA\u52A8\u7F29\u5C0F\u3002\u8F83\u7A84\u65F6\uFF0C\u9876\u90E8\uFF0F\u5E95\u90E8\u6309\u94AE\u79FB\u81F3\u76EE\u5F55\u9009\u9879\u3002\u6062\u590D\u9ED8\u8BA4\u540E\uFF0C\u684C\u9762\u4F7F\u7528 300 \u50CF\u7D20\uFF0C\u89E6\u5C4F\u6216\u7A84\u7A97\u53E3\u4F7F\u7528 340 \u50CF\u7D20\u3002", "180\u2013600 pixels, limited to the current document pane. In narrow outlines, top/bottom actions move into Outline options. Reset restores 300 pixels on desktop and 340 on touch screens or narrow windows."));
       widthSetting.settingEl.addClass("cozy-mini-width-setting");
       let widthSlider;
       const defaultWidth = () => container.ownerDocument?.defaultView?.matchMedia?.("(pointer: coarse), (max-width: 600px)")?.matches ? 340 : 300;
       widthSetting.addSlider((slider) => {
         widthSlider = slider;
-        slider.setLimits(260, 600, 10).setValue(normalizeMiniSettings2(plugin.settings).miniOutlineWidth || defaultWidth()).setDynamicTooltip().onChange((value) => changeWidth(value));
+        slider.setLimits(180, 600, 10).setValue(normalizeMiniSettings2(plugin.settings).miniOutlineWidth || defaultWidth()).setDynamicTooltip().onChange((value) => changeWidth(value));
       });
       const widthLabel = widthSetting.controlEl.createEl("span", { cls: "cozy-mini-width-value" });
       const updateWidthLabel = (width) => {
@@ -39074,7 +39075,7 @@ var require_mimo_tts = __commonJS({
       mimoCredentialSource: "obsidian-secret",
       mimoSecretName: "",
       mimoKeyPath: "",
-      mimoVoice: "\u767D\u6866"
+      mimoVoice: "\u51B0\u7CD6"
     };
     var MIMO_VOICES2 = [
       ["Dean", "English male", "\u82F1\u6587\u7537\u58F0"],
@@ -39152,7 +39153,7 @@ var require_byok_tts = __commonJS({
     var { extractMp3Frames } = require_audio_export();
     var BYOK_DEFAULTS2 = { byokProfiles: [], byokActiveProfileId: "" };
     var BYOK_PROVIDERS = {
-      "openai-compatible": { name: "OpenAI-compatible", endpoint: "https://api.openai.com/v1/audio/speech", model: "gpt-4o-mini-tts", voice: "onyx", docs: "https://developers.openai.com/api/docs/guides/text-to-speech" },
+      "openai-compatible": { name: "OpenAI-compatible", endpoint: "https://api.openai.com/v1/audio/speech", model: "gpt-4o-mini-tts", voice: "coral", docs: "https://developers.openai.com/api/docs/guides/text-to-speech" },
       elevenlabs: { name: "ElevenLabs", endpoint: "https://api.elevenlabs.io/v1/text-to-speech", model: "eleven_multilingual_v2", voice: "", docs: "https://elevenlabs.io/docs/api-reference/text-to-speech/convert" },
       minimax: { name: "MiniMax", endpoint: "https://api.minimax.io/v1/t2a_v2", model: "speech-2.8-hd", voice: "", docs: "https://platform.minimax.io/docs/api-reference/speech-t2a-http" }
     };
@@ -39923,11 +39924,11 @@ var DEFAULT_CHUNK_LIMITS = [40, 80, 120, 160, 280, 320];
 var DEFAULT_ONLINE_CHUNK_LIMITS = [200, 400, 800];
 var MAX_ONLINE_PREFETCH_CHUNKS = 1;
 var DEFAULT_MATH_READING_LANGUAGE = "english";
-var DEFAULT_EDGE_TTS_VOICE = "en-GB-RyanNeural";
+var DEFAULT_EDGE_TTS_VOICE = "en-GB-SoniaNeural";
 var DEFAULT_EDGE_TTS_EXECUTABLE = "edge-tts";
-var DEFAULT_AZURE_SPEECH_VOICE = "en-GB-RyanNeural";
+var DEFAULT_AZURE_SPEECH_VOICE = "en-GB-SoniaNeural";
 var DEFAULT_OPENROUTER_TTS_MODEL = "fish-audio/s2.1-pro";
-var DEFAULT_OPENROUTER_TTS_VOICE = "b7f1aae6de274690b20cfe990b953b67";
+var DEFAULT_OPENROUTER_TTS_VOICE = "7fe3682ee0e44dc88d1b12000cc15268";
 var AZURE_SPEECH_OUTPUT_FORMAT = "audio-24khz-48kbitrate-mono-mp3";
 var OPENROUTER_TTS_ENDPOINT = "https://openrouter.ai/api/v1/audio/speech";
 var RECOMMENDED_SCRIPT_PATH = "%LOCALAPPDATA%\\note-reader-cosyvoice\\cosyvoice-wrapper.ps1";
@@ -39978,47 +39979,47 @@ var OPENROUTER_TTS_MODELS = [
   ...ELEVENLABS_MODELS,
   [
     "microsoft/mai-voice-2.1-flash",
-    "en-GB-Harry:MAI-Voice-2.1-Flash",
-    "Microsoft MAI-Voice-2.1 Flash - low latency, UK English male default",
-    "Microsoft MAI-Voice-2.1 Flash - \u4F4E\u5EF6\u8FDF\u3001\u9ED8\u8BA4\u82F1\u5F0F\u82F1\u8BED\u7537\u58F0",
-    "A low-latency Microsoft model with 23 languages and 97 OpenRouter-listed voices. Defaults to UK English male Harry. Curated presets cover Mandarin, UK English and US English, with male and female choices. Currently $15 per million characters; every request still requires ZDR.",
-    "\u5FAE\u8F6F\u4F4E\u5EF6\u8FDF\u8BED\u97F3\u6A21\u578B\uFF0C\u652F\u6301 23 \u79CD\u8BED\u8A00\uFF0COpenRouter \u5217\u51FA 97 \u4E2A\u97F3\u8272\u3002\u9ED8\u8BA4\u4F7F\u7528\u82F1\u5F0F\u82F1\u8BED\u7537\u58F0 Harry\uFF1B\u7CBE\u9009\u97F3\u8272\u8986\u76D6\u4E2D\u6587\u3001\u82F1\u5F0F\u548C\u7F8E\u5F0F\u82F1\u8BED\u7684\u7537\u5973\u58F0\u3002\u5F53\u524D\u6BCF\u767E\u4E07\u5B57\u7B26 $15\uFF1B\u6BCF\u6B21\u8BF7\u6C42\u4ECD\u5F3A\u5236 ZDR\u3002"
+    "en-GB-Emily:MAI-Voice-2.1-Flash",
+    "Microsoft MAI-Voice-2.1 Flash - low latency, UK English female default",
+    "Microsoft MAI-Voice-2.1 Flash - \u4F4E\u5EF6\u8FDF\u3001\u9ED8\u8BA4\u82F1\u5F0F\u82F1\u8BED\u5973\u58F0",
+    "A low-latency Microsoft model with 23 languages and 97 OpenRouter-listed voices. Defaults to UK English female Emily. Curated presets cover Mandarin, UK English and US English, with male and female choices. Currently $15 per million characters; every request still requires ZDR.",
+    "\u5FAE\u8F6F\u4F4E\u5EF6\u8FDF\u8BED\u97F3\u6A21\u578B\uFF0C\u652F\u6301 23 \u79CD\u8BED\u8A00\uFF0COpenRouter \u5217\u51FA 97 \u4E2A\u97F3\u8272\u3002\u9ED8\u8BA4\u4F7F\u7528\u82F1\u5F0F\u82F1\u8BED\u5973\u58F0 Emily\uFF1B\u7CBE\u9009\u97F3\u8272\u8986\u76D6\u4E2D\u6587\u3001\u82F1\u5F0F\u548C\u7F8E\u5F0F\u82F1\u8BED\u7684\u7537\u5973\u58F0\u3002\u5F53\u524D\u6BCF\u767E\u4E07\u5B57\u7B26 $15\uFF1B\u6BCF\u6B21\u8BF7\u6C42\u4ECD\u5F3A\u5236 ZDR\u3002"
   ],
   [
     "microsoft/mai-voice-2-flash",
-    "en-US-Ethan:MAI-Voice-2-Flash",
-    "Microsoft MAI-Voice-2 Flash - low latency, US English male default",
-    "Microsoft MAI-Voice-2 Flash - \u4F4E\u5EF6\u8FDF\u3001\u9ED8\u8BA4\u7F8E\u5F0F\u82F1\u8BED\u7537\u58F0",
-    "A low-latency Microsoft model for responsive playback. Ethan is the US English male default from Microsoft's MAI catalog. It and the additional Microsoft-published voices are compatibility presets because OpenRouter does not list them all. For UK English presets, select MAI-Voice-2.1 Flash.",
-    "\u5FAE\u8F6F\u4F4E\u5EF6\u8FDF\u8BED\u97F3\u6A21\u578B\uFF0C\u9002\u5408\u5FEB\u901F\u5F00\u59CB\u64AD\u653E\u3002\u9ED8\u8BA4\u4F7F\u7528\u5FAE\u8F6F MAI \u5B98\u65B9\u76EE\u5F55\u4E2D\u7684\u7F8E\u5F0F\u82F1\u8BED\u7537\u58F0 Ethan\uFF1BEthan \u53CA\u5176\u4ED6\u5FAE\u8F6F\u5B98\u65B9\u97F3\u8272\u5C5E\u4E8E\u517C\u5BB9\u9884\u8BBE\uFF0C\u56E0\u4E3A OpenRouter \u672A\u5B8C\u6574\u5217\u51FA\u3002\u9700\u8981\u82F1\u5F0F\u82F1\u8BED\u9884\u8BBE\u65F6\uFF0C\u53EF\u9009\u62E9 MAI-Voice-2.1 Flash\u3002"
+    "en-US-Harper:MAI-Voice-2",
+    "Microsoft MAI-Voice-2 Flash - low latency, US English female default",
+    "Microsoft MAI-Voice-2 Flash - \u4F4E\u5EF6\u8FDF\u3001\u9ED8\u8BA4\u7F8E\u5F0F\u82F1\u8BED\u5973\u58F0",
+    "A low-latency Microsoft model for responsive playback. Defaults to US English female Harper using the ID listed by OpenRouter for this model. Other Microsoft-published voices are compatibility presets whose availability may vary. For UK English presets, select MAI-Voice-2.1 Flash.",
+    "\u5FAE\u8F6F\u4F4E\u5EF6\u8FDF\u8BED\u97F3\u6A21\u578B\uFF0C\u9002\u5408\u5FEB\u901F\u5F00\u59CB\u64AD\u653E\u3002\u9ED8\u8BA4\u4F7F\u7528 OpenRouter \u4E3A\u6B64\u6A21\u578B\u5217\u51FA\u7684\u7F8E\u5F0F\u82F1\u8BED\u5973\u58F0 Harper\uFF1B\u5176\u4ED6\u5FAE\u8F6F\u5B98\u65B9\u97F3\u8272\u4E3A\u517C\u5BB9\u9884\u8BBE\uFF0C\u53EF\u7528\u6027\u53EF\u80FD\u53D8\u5316\u3002\u9700\u8981\u82F1\u5F0F\u82F1\u8BED\u9884\u8BBE\u65F6\uFF0C\u53EF\u9009\u62E9 MAI-Voice-2.1 Flash\u3002"
   ],
   [
     "microsoft/mai-voice-2",
-    "en-US-Ethan:MAI-Voice-2",
-    "Microsoft MAI-Voice-2 - expressive, US English male default",
-    "Microsoft MAI-Voice-2 - \u8868\u73B0\u529B\u5F3A\u3001\u9ED8\u8BA4\u7F8E\u5F0F\u82F1\u8BED\u7537\u58F0",
-    "An expressive Microsoft model for natural long-form narration. Ethan is the US English male default. The plugin also offers other Microsoft-published English and Mandarin ShortNames as compatibility presets even when OpenRouter metadata omits them. For UK English presets, select MAI-Voice-2.1 Flash.",
-    "\u5FAE\u8F6F\u8868\u73B0\u529B\u8BED\u97F3\u6A21\u578B\uFF0C\u9002\u5408\u81EA\u7136\u957F\u6587\u53D9\u8FF0\u3002\u9ED8\u8BA4\u4F7F\u7528\u7F8E\u5F0F\u82F1\u8BED\u7537\u58F0 Ethan\uFF1B\u63D2\u4EF6\u8FD8\u63D0\u4F9B OpenRouter \u5143\u6570\u636E\u672A\u5217\u51FA\u3001\u4F46\u7531\u5FAE\u8F6F\u5B98\u65B9\u53D1\u5E03\u7684\u5176\u4ED6\u82F1\u6587\u548C\u666E\u901A\u8BDD ShortName \u4F5C\u4E3A\u517C\u5BB9\u9884\u8BBE\u3002\u9700\u8981\u82F1\u5F0F\u82F1\u8BED\u9884\u8BBE\u65F6\uFF0C\u53EF\u9009\u62E9 MAI-Voice-2.1 Flash\u3002"
+    "en-US-Harper:MAI-Voice-2",
+    "Microsoft MAI-Voice-2 - expressive, US English female default",
+    "Microsoft MAI-Voice-2 - \u8868\u73B0\u529B\u5F3A\u3001\u9ED8\u8BA4\u7F8E\u5F0F\u82F1\u8BED\u5973\u58F0",
+    "An expressive Microsoft model for natural long-form narration. Defaults to US English female Harper. The plugin also offers other Microsoft-published English and Mandarin ShortNames as compatibility presets even when OpenRouter metadata omits them. For UK English presets, select MAI-Voice-2.1 Flash.",
+    "\u5FAE\u8F6F\u8868\u73B0\u529B\u8BED\u97F3\u6A21\u578B\uFF0C\u9002\u5408\u81EA\u7136\u957F\u6587\u53D9\u8FF0\u3002\u9ED8\u8BA4\u4F7F\u7528\u7F8E\u5F0F\u82F1\u8BED\u5973\u58F0 Harper\uFF1B\u63D2\u4EF6\u8FD8\u63D0\u4F9B OpenRouter \u5143\u6570\u636E\u672A\u5217\u51FA\u3001\u4F46\u7531\u5FAE\u8F6F\u5B98\u65B9\u53D1\u5E03\u7684\u5176\u4ED6\u82F1\u6587\u548C\u666E\u901A\u8BDD ShortName \u4F5C\u4E3A\u517C\u5BB9\u9884\u8BBE\u3002\u9700\u8981\u82F1\u5F0F\u82F1\u8BED\u9884\u8BBE\u65F6\uFF0C\u53EF\u9009\u62E9 MAI-Voice-2.1 Flash\u3002"
   ],
   [
     "google/gemini-3.1-flash-tts-preview",
-    "Charon",
+    "Sulafat",
     "Google Gemini 3.1 Flash TTS Preview - 30 multilingual voices",
     "Google Gemini 3.1 Flash TTS \u9884\u89C8\u7248 - 30 \u4E2A\u591A\u8BED\u8A00\u97F3\u8272",
-    "OpenRouter lists 30 multilingual voices. Charon is the informative default for academic reading. Google describes voices by delivery style rather than fixed gender or US/UK accent, so the plugin does not make an unsupported male or accent claim.",
-    "OpenRouter \u5217\u51FA 30 \u4E2A\u591A\u8BED\u8A00\u97F3\u8272\u3002\u9ED8\u8BA4\u4F7F\u7528\u66F4\u9002\u5408\u5B66\u672F\u6717\u8BFB\u7684\u4FE1\u606F\u578B Charon\u3002Google \u6309\u6717\u8BFB\u98CE\u683C\u800C\u975E\u56FA\u5B9A\u6027\u522B\u6216\u82F1\u7F8E\u53E3\u97F3\u63CF\u8FF0\u97F3\u8272\uFF0C\u56E0\u6B64\u63D2\u4EF6\u4E0D\u4F1A\u628A\u67D0\u4E2A\u97F3\u8272\u65E0\u4F9D\u636E\u5730\u6807\u4E3A\u7537\u58F0\u6216\u7279\u5B9A\u53E3\u97F3\u3002"
+    "OpenRouter lists 30 multilingual voices. Defaults to Sulafat, described as warm by Google AI and listed as female by Google Cloud. Delivery and accent can vary by language and provider.",
+    "OpenRouter \u5217\u51FA 30 \u4E2A\u591A\u8BED\u8A00\u97F3\u8272\u3002\u9ED8\u8BA4\u4F7F\u7528 Sulafat\uFF1BGoogle AI \u5C06\u5176\u63CF\u8FF0\u4E3A\u6E29\u6696\u578B\uFF0CGoogle Cloud \u97F3\u8272\u8868\u5C06\u5176\u5217\u4E3A\u5973\u58F0\u3002\u5B9E\u9645\u8BED\u6C14\u548C\u53E3\u97F3\u53EF\u80FD\u56E0\u8BED\u8A00\u53CA\u4F9B\u5E94\u5546\u800C\u5F02\u3002"
   ],
   [
     "fish-audio/s2.1-pro",
     DEFAULT_OPENROUTER_TTS_VOICE,
     "Fish Audio S2.1 Pro - expressive multilingual narration, 6 voice presets",
     "Fish Audio S2.1 Pro - \u591A\u8BED\u8A00\u8868\u73B0\u529B\u6717\u8BFB\uFF0C\u63D0\u4F9B 6 \u79CD\u97F3\u8272\u9884\u8BBE",
-    "Expressive multilingual narration with Fish Audio public voice IDs. Defaults to a measured UK English male voice. OpenRouter currently bills this model per UTF-8 byte, not per character.",
-    "\u591A\u8BED\u8A00\u8868\u73B0\u529B\u6717\u8BFB\uFF0C\u4F7F\u7528 Fish Audio \u516C\u5F00\u97F3\u8272 ID\u3002\u9ED8\u8BA4\u9009\u62E9\u6C89\u7A33\u7684\u82F1\u5F0F\u82F1\u8BED\u7537\u58F0\u3002OpenRouter \u5F53\u524D\u6309 UTF-8 \u5B57\u8282\u800C\u975E\u5B57\u7B26\u8BA1\u8D39\u3002"
+    "Expressive multilingual narration with Fish Audio public voice IDs. Defaults to a UK English female voice. OpenRouter currently bills this model per UTF-8 byte, not per character.",
+    "\u591A\u8BED\u8A00\u8868\u73B0\u529B\u6717\u8BFB\uFF0C\u4F7F\u7528 Fish Audio \u516C\u5F00\u97F3\u8272 ID\u3002\u9ED8\u8BA4\u9009\u62E9\u82F1\u5F0F\u82F1\u8BED\u5973\u58F0\u3002OpenRouter \u5F53\u524D\u6309 UTF-8 \u5B57\u8282\u800C\u975E\u5B57\u7B26\u8BA1\u8D39\u3002"
   ],
   [
     "hexgrad/kokoro-82m",
-    "bm_george",
+    "bf_emma",
     "Kokoro 82M - low-cost multilingual TTS, 12 curated voices",
     "Kokoro 82M - \u4F4E\u6210\u672C\u591A\u8BED\u8A00\u8BED\u97F3\uFF0C\u63D0\u4F9B 12 \u79CD\u7CBE\u9009\u97F3\u8272",
     "A lightweight, low-cost model with preset voices for Chinese, US English, and UK English. OpenRouter lists provider-dependent rates; the lowest currently shown is about $0.62 per million characters, but the ZDR-eligible route may cost more.",
@@ -40028,8 +40029,8 @@ var OPENROUTER_TTS_MODELS = [
 var OPENROUTER_TTS_PRESETS = [
   ...ELEVENLABS_MODELS.flatMap(([model]) => ELEVENLABS_VOICES.map((voice) => [model, ...voice])),
   // IDs verified in OpenRouter's speech + ZDR catalog on 2026-10-02.
-  ["microsoft/mai-voice-2.1-flash", "en-GB-Harry:MAI-Voice-2.1-Flash", "Harry (UK English male, default)", "Harry\uFF08\u82F1\u5F0F\u82F1\u8BED\u7537\u58F0\uFF0C\u9ED8\u8BA4\uFF09"],
-  ["microsoft/mai-voice-2.1-flash", "en-GB-Emily:MAI-Voice-2.1-Flash", "Emily (UK English female)", "Emily\uFF08\u82F1\u5F0F\u82F1\u8BED\u5973\u58F0\uFF09"],
+  ["microsoft/mai-voice-2.1-flash", "en-GB-Harry:MAI-Voice-2.1-Flash", "Harry (UK English male)", "Harry\uFF08\u82F1\u5F0F\u82F1\u8BED\u7537\u58F0\uFF09"],
+  ["microsoft/mai-voice-2.1-flash", "en-GB-Emily:MAI-Voice-2.1-Flash", "Emily (UK English female, default)", "Emily\uFF08\u82F1\u5F0F\u82F1\u8BED\u5973\u58F0\uFF0C\u9ED8\u8BA4\uFF09"],
   ["microsoft/mai-voice-2.1-flash", "en-US-Ethan:MAI-Voice-2.1-Flash", "Ethan (US English male)", "Ethan\uFF08\u7F8E\u5F0F\u82F1\u8BED\u7537\u58F0\uFF09"],
   ["microsoft/mai-voice-2.1-flash", "en-US-Grant:MAI-Voice-2.1-Flash", "Grant (US English male)", "Grant\uFF08\u7F8E\u5F0F\u82F1\u8BED\u7537\u58F0\uFF09"],
   ["microsoft/mai-voice-2.1-flash", "en-US-Harper:MAI-Voice-2.1-Flash", "Harper (US English female)", "Harper\uFF08\u7F8E\u5F0F\u82F1\u8BED\u5973\u58F0\uFF09"],
@@ -40074,8 +40075,8 @@ var OPENROUTER_TTS_PRESETS = [
   ["fish-audio/s2.1-pro", "89ca9f5f239946d6b20cdc49bdd40ff7", "Mandarin female - calm storytelling", "\u4E2D\u6587\u5973\u58F0 - \u5E73\u9759\u53D9\u8FF0"],
   ["fish-audio/s2.1-pro", "653bbd5adbe34b3d8c867a5311f461c4", "US English male - calm, measured narrator", "\u7F8E\u5F0F\u82F1\u8BED\u7537\u58F0 - \u6C89\u7A33\u3001\u8BED\u901F\u5E73\u7F13"],
   ["fish-audio/s2.1-pro", "552756381a5044ba916aeb596ed443bb", "US English female - clear, measured narrator", "\u7F8E\u5F0F\u82F1\u8BED\u5973\u58F0 - \u6E05\u6670\u3001\u8BED\u901F\u5E73\u7F13"],
-  ["fish-audio/s2.1-pro", "b7f1aae6de274690b20cfe990b953b67", "UK English male - measured narrator (default)", "\u82F1\u5F0F\u82F1\u8BED\u7537\u58F0 - \u6C89\u7A33\u65C1\u767D\uFF08\u9ED8\u8BA4\uFF09"],
-  ["fish-audio/s2.1-pro", "7fe3682ee0e44dc88d1b12000cc15268", "UK English female - calm, informative narrator", "\u82F1\u5F0F\u82F1\u8BED\u5973\u58F0 - \u5E73\u9759\u3001\u4FE1\u606F\u578B\u65C1\u767D"],
+  ["fish-audio/s2.1-pro", "b7f1aae6de274690b20cfe990b953b67", "UK English male - measured narrator", "\u82F1\u5F0F\u82F1\u8BED\u7537\u58F0 - \u6C89\u7A33\u65C1\u767D"],
+  ["fish-audio/s2.1-pro", "7fe3682ee0e44dc88d1b12000cc15268", "UK English female - calm, informative narrator (default)", "\u82F1\u5F0F\u82F1\u8BED\u5973\u58F0 - \u5E73\u9759\u3001\u4FE1\u606F\u578B\u65C1\u767D\uFF08\u9ED8\u8BA4\uFF09"],
   ["hexgrad/kokoro-82m", "zf_xiaoxiao", "Xiaoxiao (Chinese female)", "\u5C0F\u6653\uFF08\u4E2D\u6587\u5973\u58F0\uFF09"],
   ["hexgrad/kokoro-82m", "zf_xiaoyi", "Xiaoyi (Chinese female)", "\u5C0F\u827A\uFF08\u4E2D\u6587\u5973\u58F0\uFF09"],
   ["hexgrad/kokoro-82m", "zm_yunjian", "Yunjian (Chinese male)", "\u4E91\u5065\uFF08\u4E2D\u6587\u7537\u58F0\uFF09"],
@@ -41030,9 +41031,9 @@ function normalizeOpenRouterModel(value) {
   const model = String(value || "").trim();
   return /^[a-z0-9][a-z0-9._-]{0,79}\/[a-z0-9][a-z0-9._-]{1,149}(?::[a-z0-9._-]+)?$/i.test(model) ? model : DEFAULT_OPENROUTER_TTS_MODEL;
 }
-function normalizeOpenRouterVoice(value) {
+function normalizeOpenRouterVoice(value, model = DEFAULT_OPENROUTER_TTS_MODEL) {
   const voice = String(value || "").trim();
-  return /^[a-z0-9][a-z0-9._:-]{0,199}$/i.test(voice) ? voice : DEFAULT_OPENROUTER_TTS_VOICE;
+  return /^[a-z0-9][a-z0-9._:-]{0,199}$/i.test(voice) ? voice : getDefaultOpenRouterVoiceForModel(model);
 }
 function hasObsidianSecretStorage(app) {
   return Boolean(app && app.secretStorage && typeof app.secretStorage.getSecret === "function");
@@ -41143,7 +41144,7 @@ function getOpenRouterConfigurationError(settings = {}, vaultBasePath = "", app 
   if (normalizeOpenRouterModel(settings.openRouterModel) !== String(settings.openRouterModel || "").trim()) {
     return "Set a valid OpenRouter TTS model ID in the plugin settings.";
   }
-  if (normalizeOpenRouterVoice(settings.openRouterVoice) !== String(settings.openRouterVoice || "").trim()) {
+  if (normalizeOpenRouterVoice(settings.openRouterVoice, settings.openRouterModel) !== String(settings.openRouterVoice || "").trim()) {
     return "Set a valid OpenRouter TTS voice ID in the plugin settings.";
   }
   return getRemoteCredentialConfigurationError({
@@ -41160,10 +41161,11 @@ function effectiveSynthesisSpeed(settings = {}) {
   return usesNormalSynthesisSpeed(settings) ? 1 : normalizeSpeed(settings.speed);
 }
 function buildOpenRouterTtsRequestBody(text, settings = {}, context = {}) {
+  const model = normalizeOpenRouterModel(settings.openRouterModel);
   return JSON.stringify({
-    model: normalizeOpenRouterModel(settings.openRouterModel),
+    model,
     input: String(text || ""),
-    voice: normalizeOpenRouterVoice(settings.openRouterVoice),
+    voice: normalizeOpenRouterVoice(settings.openRouterVoice, model),
     response_format: "mp3",
     speed: isElevenLabsModel(settings.openRouterModel) ? 1 : normalizeSpeed(settings.speed),
     provider: {
@@ -42385,7 +42387,10 @@ var CosyVoiceReaderPlugin = class extends Plugin {
     this.settings.openRouterKeyPath = String(this.settings.openRouterKeyPath || "").trim();
     this.settings.openRouterModel = normalizeOpenRouterModel(this.settings.openRouterModel);
     this.settings.openRouterSecretName = String(this.settings.openRouterSecretName || "").trim();
-    this.settings.openRouterVoice = normalizeOpenRouterVoice(this.settings.openRouterVoice);
+    this.settings.openRouterVoice = normalizeOpenRouterVoice(
+      Object.prototype.hasOwnProperty.call(source, "openRouterVoice") ? source.openRouterVoice : "",
+      this.settings.openRouterModel
+    );
     this.settings.settingsLanguage = normalizeSettingsLanguage(this.settings.settingsLanguage);
     this.settings.scriptPath = String(this.settings.scriptPath || defaults.scriptPath);
     this.settings.chunkLimits = parseChunkLimits(this.settings.chunkLimits).join(",");
@@ -42444,7 +42449,7 @@ var CosyVoiceReaderPlugin = class extends Plugin {
     this.settings.openRouterKeyPath = String(this.settings.openRouterKeyPath || "").trim();
     this.settings.openRouterModel = normalizeOpenRouterModel(this.settings.openRouterModel);
     this.settings.openRouterSecretName = String(this.settings.openRouterSecretName || "").trim();
-    this.settings.openRouterVoice = normalizeOpenRouterVoice(this.settings.openRouterVoice);
+    this.settings.openRouterVoice = normalizeOpenRouterVoice(this.settings.openRouterVoice, this.settings.openRouterModel);
     this.settings.settingsLanguage = normalizeSettingsLanguage(this.settings.settingsLanguage);
     this.settings.chunkLimits = parseChunkLimits(this.settings.chunkLimits).join(",");
     this.settings.onlineChunkLimits = parseChunkLimits(
@@ -47045,8 +47050,8 @@ var CosyVoiceReaderSettingTab = class extends PluginSettingTab {
         }));
       }
       new Setting(containerEl).setName(label("MiMo voice", "MiMo \u97F3\u8272")).setDesc(label(
-        "Eight official voices. English accents are not specified by Xiaomi. Default: Bai Hua (Chinese male).",
-        "8 \u79CD\u5B98\u65B9\u97F3\u8272\u3002\u5B98\u65B9\u672A\u660E\u786E\u533A\u5206\u82F1\u8BED\u97F3\u8272\u7684\u82F1\u5F0F\u6216\u7F8E\u5F0F\u53E3\u97F3\u3002\u9ED8\u8BA4\u767D\u6866\uFF08\u4E2D\u6587\u7537\u58F0\uFF09\u3002"
+        "Eight official voices. English accents are not specified by Xiaomi. Default: Bing Tang (Chinese female).",
+        "8 \u79CD\u5B98\u65B9\u97F3\u8272\u3002\u5B98\u65B9\u672A\u660E\u786E\u533A\u5206\u82F1\u8BED\u97F3\u8272\u7684\u82F1\u5F0F\u6216\u7F8E\u5F0F\u53E3\u97F3\u3002\u9ED8\u8BA4\u51B0\u7CD6\uFF08\u4E2D\u6587\u5973\u58F0\uFF09\u3002"
       )).addDropdown((dropdown) => {
         for (const [id, en, cn] of MIMO_VOICES) dropdown.addOption(id, `${id} - ${label(en, cn)}`);
         dropdown.setValue(this.plugin.settings.mimoVoice || MIMO_DEFAULTS.mimoVoice).onChange(async (value) => {
@@ -47210,7 +47215,7 @@ var CosyVoiceReaderSettingTab = class extends PluginSettingTab {
         });
       }
       const currentOpenRouterModel = normalizeOpenRouterModel(this.plugin.settings.openRouterModel);
-      const currentOpenRouterVoice = normalizeOpenRouterVoice(this.plugin.settings.openRouterVoice);
+      const currentOpenRouterVoice = normalizeOpenRouterVoice(this.plugin.settings.openRouterVoice, currentOpenRouterModel);
       const openRouterModels = getOpenRouterTtsModels(settingsLanguage);
       const selectedOpenRouterModel = openRouterModels.find(([model]) => model === currentOpenRouterModel);
       let openRouterPriceSetting;
@@ -47265,7 +47270,7 @@ var CosyVoiceReaderSettingTab = class extends PluginSettingTab {
       });
       new Setting(engineAdvanced).setName(ui.openRouterVoiceName).setDesc(ui.openRouterVoiceDesc).addText((text) => {
         text.setPlaceholder(getDefaultOpenRouterVoiceForModel(currentOpenRouterModel)).setValue(currentOpenRouterVoice).onChange(async (value) => {
-          this.plugin.settings.openRouterVoice = normalizeOpenRouterVoice(value);
+          this.plugin.settings.openRouterVoice = normalizeOpenRouterVoice(value, currentOpenRouterModel);
           await this.plugin.saveSettings();
         });
       });

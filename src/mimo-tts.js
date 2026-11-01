@@ -8,7 +8,7 @@ const MIMO_DEFAULTS = {
   mimoCredentialSource: 'obsidian-secret',
   mimoSecretName: '',
   mimoKeyPath: '',
-  mimoVoice: '白桦',
+  mimoVoice: '冰糖',
 };
 const MIMO_VOICES = [
   ['Dean', 'English male', '英文男声'],

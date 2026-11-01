@@ -8,6 +8,8 @@
 
 **语言：** [English](README.md) | 简体中文 | [Deutsch](README.de.md) | [Français](README.fr.md) | [Русский](README.ru.md) | [한국어](README.ko.md) | [日本語](README.ja.md) | [Español](README.es.md) | [Italiano](README.it.md) | [Português](README.pt.md)
 
+> **开发版说明：** 下文的新默认音色和迷你目录 180 像素宽度下限尚未包含在已发布版本中；已有音色选择不受影响。
+
 ### 看一次实际操作
 
 [![选中文字、开始朗读、暂停与继续，再按标题定位](docs/images/cozy-quick-tour.gif)](docs/media/cozy-quick-tour.mp4)
@@ -75,7 +77,7 @@
 1. 在 [MiMo 控制台](https://platform.xiaomimimo.com/)创建**普通 API 密钥**，不要使用 Token Plan 密钥。
 2. 将语音引擎设为 **Xiaomi MiMo TTS**，通过 **Obsidian SecretStorage** 保存密钥。
 3. 阅读隐私提示，开启“允许 MiMo 在线处理”。
-4. 保留默认的**白桦男声（支持中文和英文）**或选择其他音色，先朗读一小段选中文字。
+4. 保留默认的**冰糖中文女声**或选择其他音色，先朗读一小段选中文字；**白桦**仍可用于中文和英文，已有音色选择不会被覆盖。
 
 MiMo 会将文字发送给小米。[隐私政策](https://privacy.mi.com/XiaomiMiMoPlatform/zh_CN/)说明未经事先同意不将所提供文本用于训练，但这**不等于零数据留存保证**。
 
@@ -99,7 +101,7 @@ MiMo 会将文字发送给小米。[隐私政策](https://privacy.mi.com/XiaomiM
 
 **价格参考：** 设置中按所选模型显示已核对的 ElevenLabs、MAI 参考价、字符计费单位、一万字符估算及官方价格链接。这是带核对日期的离线快照，不是实时报价。已记录的 ElevenLabs 优惠截止北京时间 2026-10-19 23:00；到期后打开设置，仅显示上次核对的原价并提示核实。未核对价格的模型不显示数值估算。重复合成、手续费及税费可能增加最终费用。
 
-**通过 OpenRouter 使用 ElevenLabs：** 提供 Multilingual v2、Flash v2.5、Eleven v4 和 v4 Turbo，以及 George、Sarah、Daniel、Alice、Brian、Lily 六个音色，原有默认值不变。以 MP3、正常语速合成，收听时在播放器调整倍速。仍强制 ZDR 并禁止数据收集，无可用路由时失败，不降低隐私限制。已于 2026-10-08 核对 [语音目录](https://openrouter.ai/api/v1/models?output_modalities=speech)和 [ZDR 端点列表](https://openrouter.ai/api/v1/endpoints/zdr)，价格与可用性可能变化。
+**通过 OpenRouter 使用 ElevenLabs：** 提供 Multilingual v2、Flash v2.5、Eleven v4 和 v4 Turbo，以及 George、Sarah、Daniel、Alice、Brian、Lily 六个音色，默认 Sarah，已有音色选择不变。以 MP3、正常语速合成，收听时在播放器调整倍速。仍强制 ZDR 并禁止数据收集，无可用路由时失败，不降低隐私限制。已于 2026-10-08 核对 [语音目录](https://openrouter.ai/api/v1/models?output_modalities=speech)和 [ZDR 端点列表](https://openrouter.ai/api/v1/endpoints/zdr)，价格与可用性可能变化。
 
 **可选分段衔接：** 选择以上四个模型后，显示“ElevenLabs 高级选项”，其中“改善分段衔接”为默认关闭的实验功能。开启后，通过 `provider.options.elevenlabs` 发送当前朗读范围内的相邻句子，每侧最多 160 字符；不会读取选区外内容，也不使用历史请求。切换到其他模型时隐藏此项、不发送相关参数，但保留偏好。不上传云端发音词典，不自动添加表演标签；原文已有语音标签可能影响语气。参数依据 [OpenRouter 官方公告](https://openrouter.ai/blog/announcements/elevenlabs-on-openrouter/)，尚未进行付费试听，不保证改善效果。
 
@@ -115,6 +117,8 @@ MiMo 会将文字发送给小米。[隐私政策](https://privacy.mi.com/XiaomiM
 ### 5. 自带语音 API（BYOK）
 
 选择 **自定义语音 API（BYOK）**，添加配置，再选择 **OpenAI-compatible、ElevenLabs 或 MiniMax**。每个配置单独保存模型、音色 ID 和密钥关联。OpenAI 兼容服务必须兼容**语音合成接口**，仅兼容聊天接口不能使用；请填写完整 HTTPS 语音地址。ElevenLabs 使用官方地址，MiniMax 可选国际站或国内站，需使用对应账户的密钥。
+
+OpenAI 兼容示例默认音色为 `coral`。[OpenAI 公告](https://developers.openai.com/api/docs/deprecations)称其 `gpt-4o-mini-tts` 模型将于 2027 年 1 月 6 日停用；官方推荐的替代模型使用不同的 Realtime 接口，不能仅在此配置中替换模型名。其他兼容服务的模型和音色由各自提供商决定。
 
 1. 填写模型和账户可用的音色 ID；旁边的文档按钮可打开官方接口说明。
 2. 选择 Obsidian 秘密存储中的密钥，或指定库外单行密钥文件。不要把密钥粘贴到地址或模型字段。
@@ -220,7 +224,7 @@ Markdown 高亮跟随当前实际播放的音频片段，逻辑分段编号保�
 
 工具栏的大纲图标现在打开**迷你目录**，也可通过文档边缘按钮或“打开/关闭迷你目录”命令使用，不必先开始朗读。支持搜索、展开层级与固定显示。标题默认两行，可设置为一至四行，行末菜单可展开完整标题、从本节继续或只朗读本节及其子节；点击标题只跳转。常见 Markdown 格式仅在目录标签中清理，不改原文。文字强调色表示浏览位置，小播放标记表示可靠定位的朗读章节；手动浏览目录暂停目录跟随，可通过“回到朗读位置”回转箭头返回。更多控制中仍可选择全文、选中文字或从选中位置开始；导出需要确认。文档变化后旧定位失效。
 
-**布局与操作：** 宽度可设 260–600 像素，并自动适配窄窗口。设置中“朗读快捷入口”在前，次要目录偏好放入“更多目录选项”。桌面顶栏在悬停或键盘操作时显示，空闲时保留固定提示；触屏保持常显。顶部／底部箭头只跳转正文，不启动朗读（触屏放在目录选项中）。鼠标双击标题朗读可选开启，默认关闭。取消固定即可收起，或使用目录选项中的关闭操作；触屏保留可见关闭按钮。
+**布局与操作：** 宽度可设 180–600 像素，并自动适配窄窗口。设置中“朗读快捷入口”在前，次要目录偏好放入“更多目录选项”。桌面顶栏和滚动条滑块在悬停或键盘操作时显示，空闲时保留固定提示；触屏保持操作按钮常显和原生滚动反馈。顶部／底部箭头只跳转正文，不启动朗读（触屏或较窄目录放在目录选项中）。鼠标双击标题朗读可选开启，默认关闭。取消固定即可收起，或使用目录选项中的关闭操作；触屏保留可见关闭按钮。
 
 **与 Floating TOC 共存：** 在“播放与界面 → 迷你目录”的“迷你目录按钮”中选择“自动／始终显示／隐藏按钮”。自动模式检测到 Floating TOC 等已知浮动目录插件已启用时，会隐藏文档侧边的目录按钮，仍可从朗读工具栏或命令打开；不修改或禁用其他插件。可设置左右位置和桌面端可选透明背景，轻量图标栏按需展开搜索和层级选项；手机和平板保持实色底色及较大的点击区域。悬停展开默认关闭，触屏通过点击展开。可替代基本的浮动章节导航，但不承诺覆盖专业 TOC 插件的全部功能。最多在内存中保留 40 个文档的搜索、折叠和固定状态；不扫描整个库，首次打开 PDF 目录仍可能需要等待。[行为与限制](docs/mini-outline.md)。
 
@@ -278,7 +282,7 @@ MiMo 默认每段最多 200 字符，可在设置中调整（客户端保守措�
 
 1. 在 [MiMo 控制台](https://platform.xiaomimimo.com/)创建普通 API Key，不是 Token Plan 密钥。
 2. 在插件设置中选择 **Xiaomi MiMo TTS**，使用 Obsidian SecretStorage 保存密钥；旧版 Obsidian 可使用库外单行密钥文件。
-3. 阅读隐私说明，开启 **允许 MiMo 在线处理**。提供 8 种官方音色，默认 **白桦男声（支持中文和英文）**；官方未明确区分这些音色朗读英语时的英式或美式口音。
+3. 阅读隐私说明，开启 **允许 MiMo 在线处理**。提供 8 种官方音色，默认 **冰糖中文女声**；官方未明确区分这些音色朗读英语时的英式或美式口音。
 4. 使用现有按钮朗读或导出笔记/PDF。模型为 `mimo-v2.5-tts`，输出 WAV 音频，沿用在线分块与所选播放缓冲模式。合成语速通过自然语言指令控制，不保证精确倍率。
 
 截至 2026-10-04，[官方价格页](https://mimo.mi.com/docs/zh-CN/price/pay-as-you-go)列为**限时免费**，价格及额度可能变化。[隐私政策](https://privacy.mi.com/XiaomiMiMoPlatform/zh_CN/)声明未经事先同意不会将提供的文本用于训练，但**未确认零数据保留（ZDR）**。插件开关仅授权在线合成，不授权训练。MiMo 为独立直连接口，不属于 OpenRouter ZDR 路由；本次不包含音色克隆或音色设计。
@@ -470,7 +474,7 @@ edge-tts --list-voices
 4. 从常用音色中选择，或填写自定义 Voice ID。
 5. 按需调整 `Speed`。插件会把它转换为 `edge-tts --rate` 参数。
 
-常用音色包括中文女声 `zh-CN-XiaoxiaoNeural`、`zh-CN-XiaoyiNeural`，中文男声 `zh-CN-YunxiNeural`、`zh-CN-YunyangNeural`，粤语 `zh-HK-HiuMaanNeural`，台湾中文 `zh-TW-HsiaoChenNeural`，以及英文 `en-US-JennyNeural`、`en-US-GuyNeural`、`en-US-AriaNeural`、`en-GB-SoniaNeural`、`en-GB-RyanNeural`。Edge 与 Azure 的新默认音色均为英式男声 `en-GB-RyanNeural`，更偏克制的长文与学术朗读。完整 Edge 音色列表以本机 `edge-tts --list-voices` 输出为准。
+常用音色包括中文女声 `zh-CN-XiaoxiaoNeural`、`zh-CN-XiaoyiNeural`，中文男声 `zh-CN-YunxiNeural`、`zh-CN-YunyangNeural`，粤语 `zh-HK-HiuMaanNeural`，台湾中文 `zh-TW-HsiaoChenNeural`，以及英文 `en-US-JennyNeural`、`en-US-GuyNeural`、`en-US-AriaNeural`、`en-GB-SoniaNeural`、`en-GB-RyanNeural`。Edge 与 Azure 默认使用英式女声 `en-GB-SoniaNeural`，不覆盖已有选择。完整 Edge 音色列表以本机 `edge-tts --list-voices` 输出为准。
 
 如果 Obsidian 找不到 `edge-tts`，请在插件设置中填写绝对可执行文件路径并完全重启 Obsidian。除非你明确决定信任并维护该安装，否则不要依赖其他应用的私有虚拟环境。
 
@@ -533,15 +537,15 @@ OpenRouter 提供与 OpenAI Audio Speech 兼容的专用 TTS 接口，输入文�
 4. 选择内置的 ZDR 兼容模型及其音色，或填写自定义模型 ID 与音色 ID。
 5. 确认 OpenRouter 账户中的输入输出日志和输入输出数据共享保持关闭。
 
-整体默认模型为 `fish-audio/s2.1-pro`，默认使用沉稳的英式英语男声，适合长文和学术朗读。Fish 提供六个精选预设，覆盖中文、美式英语和英式英语的男女声。切换到其他内置模型时，插件会在发布方明确标注性别的前提下优先使用英语男声：MAI-Voice-2.1 Flash 默认使用英式英语男声 `Harry`，旧版 MAI 默认使用美式英语男声 `Ethan`；Gemini 因 Google 未公开固定性别或英美口音标签，改用信息型 `Charon`，但不把它标为已确认男声。不同模型的音色 ID 不能混用。
+整体默认模型为 `fish-audio/s2.1-pro`，默认使用英式英语女声。Fish 提供六个精选预设，覆盖中文、美式英语和英式英语的男女声。其他内置模型默认选择女声：MAI-Voice-2.1 Flash 为英式英语 `Emily`，旧版 MAI 为美式英语 `Harper`，ElevenLabs 为 `Sarah`，Gemini 为 `Sulafat`。更新不会覆盖已保存的音色；切换模型时使用新模型的默认音色。不同模型的音色 ID 不能混用。
 
-- `microsoft/mai-voice-2.1-flash`：默认使用英式英语男声 `en-GB-Harry:MAI-Voice-2.1-Flash`。提供 10 个 OpenRouter 已列出的精选音色，覆盖中文、英式英语和美式英语的男女声。OpenRouter 列出 23 种语言、97 个音色，价格为每百万字符 `$15`；该模型在 2026-10-02 的 speech + ZDR 目录中有出现。参见[模型页面](https://openrouter.ai/microsoft/mai-voice-2.1-flash)。
+- `microsoft/mai-voice-2.1-flash`：默认使用英式英语女声 `en-GB-Emily:MAI-Voice-2.1-Flash`。提供 10 个 OpenRouter 已列出的精选音色，覆盖中文、英式英语和美式英语的男女声。OpenRouter 列出 23 种语言、97 个音色，价格为每百万字符 `$15`；该模型在 2026-10-02 的 speech + ZDR 目录中有出现。参见[模型页面](https://openrouter.ai/microsoft/mai-voice-2.1-flash)。
 
-- `microsoft/mai-voice-2-flash`：默认使用微软官方发布的美式英语男声 `en-US-Ethan:MAI-Voice-2-Flash`；除 OpenRouter 当前公开的 4 个 ID 外，还加入微软官方发布的美式英语和普通话音色作为兼容预设。
-- `microsoft/mai-voice-2`：默认使用微软官方发布的美式英语男声 `en-US-Ethan:MAI-Voice-2`；其他美式英语男声及普通话 ShortName 也作为兼容预设提供，因为 OpenRouter 可能接受其元数据没有列出的音色。
-- `google/gemini-3.1-flash-tts-preview`：默认使用信息型 `Charon`，并从 OpenRouter 当前公开的 30 个音色中精选 12 个。Google 按朗读风格而非固定性别或英美口音描述这些多语言音色，因此插件不会把 Gemini 预设无依据地标为男声或特定口音。
-- `fish-audio/s2.1-pro`：提供 6 个 Fish Audio 公开音色 ID 预设，包含中文女声和男声、美式英语女声和男声、英式英语女声和男声；默认使用沉稳的英式英语男声。
-- `hexgrad/kokoro-82m`：低价备选，提供 12 个预设，覆盖中文、美式英语和英式英语的男女声；默认音色为英式英语男声 `bm_george`。
+- `microsoft/mai-voice-2-flash`：默认使用 OpenRouter 为此模型列出的美式英语女声 `en-US-Harper:MAI-Voice-2`；其他微软官方美式英语及普通话音色仍为兼容预设。
+- `microsoft/mai-voice-2`：默认使用美式英语女声 `en-US-Harper:MAI-Voice-2`；OpenRouter 元数据未列出的其他微软美式英语及普通话音色仍为兼容预设。
+- `google/gemini-3.1-flash-tts-preview`：从 OpenRouter 公开的 30 个音色中精选 12 个，默认使用 `Sulafat`。Google 将其描述为温暖型，并在 [Cloud TTS 音色表](https://docs.cloud.google.com/text-to-speech/docs/gemini-tts)中标为女声；实际语气和口音可能有所差异。
+- `fish-audio/s2.1-pro`：提供 6 个 Fish Audio 公开音色 ID 预设，包含中文、美式英语和英式英语的男女声；默认使用英式英语女声。
+- `hexgrad/kokoro-82m`：低价备选，提供 12 个预设，覆盖中文、美式英语和英式英语的男女声；默认音色为英式英语女声 `bf_emma`。
 
 Fish 音色预设使用 32 位 Fish Audio 公开音色参考 ID；Kokoro 则使用自己的短音色 ID。OpenRouter 模型元数据没有逐项列出 Fish 音色，因此插件精选了 Fish Audio 公开音色库中的 ID；若上游端点拒绝某个预设，仍可在自定义音色字段中填写其他自行验证过的 ID。Fish 音色可能有各自的使用许可，个人朗读以外的用途请先查看对应音色页面。
 

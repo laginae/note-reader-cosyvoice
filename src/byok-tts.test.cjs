@@ -19,6 +19,7 @@ function mp3() { const bytes = Buffer.alloc(417, 0x11); Buffer.from([0xff, 0xfb,
 
 test('BYOK starts unauthorized, normalizes profile data without raw keys and bounds counts and lengths', () => {
   const profile = createByokProfile();
+  assert.equal(profile.voice, 'coral');
   assert.equal(hasByokConsent(profile), false);
   assert.match(getByokConfigurationError(profile), /confirm/);
   const value = settings({ ...profile, apiKey: 'must-not-persist', headers: { Authorization: 'must-not-persist' }, chunkLimit: 99999 });
@@ -28,6 +29,14 @@ test('BYOK starts unauthorized, normalizes profile data without raw keys and bou
   const damaged = { byokProfiles: [null, ...Array.from({ length: 30 }, () => createByokProfile())], byokActiveProfileId: 'missing' };
   normalizeByokSettings(damaged); assert.equal(damaged.byokProfiles.length, 20); assert.equal(damaged.byokActiveProfileId, '');
   const duplicate = { byokProfiles: [profile, profile] }; normalizeByokSettings(duplicate); assert.equal(duplicate.byokProfiles.length, 1);
+});
+
+test('existing BYOK voice and its authorization are not replaced by the new preset', () => {
+  const old = configured(); old.voice = 'onyx'; old.consent = byokConsentFingerprint(old);
+  const value = settings(old); normalizeByokSettings(value);
+  assert.equal(getByokProfile(value).voice, 'onyx');
+  assert.equal(getByokProfile(value).consent, old.consent);
+  assert.ok(hasByokConsent(getByokProfile(value)));
 });
 
 test('legacy default profile names are corrected without overwriting custom names or privacy consent', () => {
