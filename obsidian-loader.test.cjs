@@ -297,6 +297,10 @@ assert.deepStrictEqual(moduleObject.exports.__test.createReaderState(), {
   totalChunks: 0,
 });
 assert.deepStrictEqual(moduleObject.exports.__test.createDefaultSettings(), {
+  miniOutlineMode: 'auto',
+  miniOutlineSide: 'right',
+  miniOutlineHover: false,
+  miniOutlineDepth: 2,
   ocrEnabled: false,
   ocrExecutable: '',
   ocrModel: 'small',

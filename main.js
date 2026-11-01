@@ -1010,6 +1010,10 @@ var require_settings_reset = __commonJS({
         "openRouterContext"
       ],
       playback: [
+        "miniOutlineMode",
+        "miniOutlineSide",
+        "miniOutlineHover",
+        "miniOutlineDepth",
         "readingContextMenu",
         "readingFloatingToolbar",
         "readingFloatingAction",
@@ -12917,6 +12921,7 @@ var require_native_toolbar = __commonJS({
         this.locate = this.button(controls, "locate-fixed", ["Locate current reading", "\u5B9A\u4F4D\u6B63\u5728\u6717\u8BFB\u7684\u4F4D\u7F6E"], () => plugin.locateCurrentReading());
         this.follow = this.button(controls, "move-vertical", ["Auto-follow", "\u81EA\u52A8\u8DDF\u968F"], () => toggleFollowing2(plugin, kindFor2(plugin, view)));
         this.outlineButton = this.button(controls, "list-tree", ["Outline", "\u5927\u7EB2"], () => {
+          if (plugin.miniOutline && !this.isWeb) return plugin.miniOutline.toggle(view);
           if (this.isPdf) {
             plugin.openPdfOutline(view.file);
             return;
@@ -12939,6 +12944,7 @@ var require_native_toolbar = __commonJS({
         this.outline = node(this.root, "div", "note-reader-native-options");
         this.outline.hidden = true;
         this.outlineButton.hidden = this.isWeb;
+        this.outlineButton.setAttribute("data-cozy-mini-toggle", "");
         this.heading = node(this.outline, "select", "note-reader-native-heading");
         this.heading.addEventListener("change", () => this.locateHeading());
         this.section = this.button(this.outline, "audio-lines", ["Read this section", "\u53EA\u6717\u8BFB\u8FD9\u4E00\u8282"], () => this.readHeading(false));
@@ -13230,6 +13236,7 @@ var require_native_toolbar = __commonJS({
           this.toolbars.delete(view);
         } else this.toolbars.set(view, new NativeReaderToolbar(this.plugin, view, () => this.toggle(view)));
         this.render();
+        this.plugin.miniOutline?.schedule();
       }
       render() {
         for (const toolbar of this.toolbars.values()) toolbar.render();
@@ -15398,6 +15405,709 @@ var require_sidebar_outline = __commonJS({
       }
     };
     module2.exports = { SidebarOutline: SidebarOutline2 };
+  }
+});
+
+// src/mini-outline.js
+var require_mini_outline = __commonJS({
+  "src/mini-outline.js"(exports2, module2) {
+    "use strict";
+    var MINI_DEFAULTS2 = Object.freeze({ miniOutlineMode: "auto", miniOutlineSide: "right", miniOutlineHover: false, miniOutlineDepth: 2 });
+    var OTHER_OUTLINES = ["floating-toc", "dynamic-outline", "subtle-toc", "heading-scroller", "slick-outline", "hovered-table-of-content", "ink-floating-toc", "gogoga-outline"];
+    function normalizeMiniSettings2(settings = {}) {
+      return {
+        miniOutlineMode: ["auto", "always", "off"].includes(settings.miniOutlineMode) ? settings.miniOutlineMode : "auto",
+        miniOutlineSide: settings.miniOutlineSide === "left" ? "left" : "right",
+        miniOutlineHover: settings.miniOutlineHover === true,
+        miniOutlineDepth: [1, 2, 3, 6].includes(Number(settings.miniOutlineDepth)) ? Number(settings.miniOutlineDepth) : 2
+      };
+    }
+    function otherOutlineEnabled(app) {
+      const enabled = app?.plugins?.enabledPlugins;
+      return OTHER_OUTLINES.some((id) => enabled?.has?.(id) || !enabled && app?.plugins?.plugins?.[id]);
+    }
+    function headingParents(entries) {
+      const stack = [];
+      return entries.map((entry, i) => {
+        while (stack.length && entries[stack.at(-1)].level >= entry.level) stack.pop();
+        const parents = stack.slice();
+        stack.push(i);
+        return parents;
+      });
+    }
+    function headingAt(entries, offset, field = "offset") {
+      if (!Number.isFinite(offset)) return -1;
+      let result = -1;
+      entries.forEach((entry, i) => {
+        if (Number.isFinite(entry[field]) && entry[field] <= offset) result = i;
+      });
+      return result;
+    }
+    var MiniOutlinePanel = class {
+      constructor(manager, view) {
+        this.manager = manager;
+        this.plugin = manager.plugin;
+        this.adapter = manager.adapter;
+        this.view = view;
+        this.doc = view.containerEl.ownerDocument;
+        this.language = this.plugin.settings.settingsLanguage;
+        this.generation = 0;
+        this.rows = /* @__PURE__ */ new Map();
+        this.root = this.el(view.containerEl, "div", "cozy-mini-toc");
+        this.launcher = this.button(this.root, "list-tree", this.t("\u6253\u5F00\u8FF7\u4F60\u76EE\u5F55", "Open mini outline"), () => this.toggle());
+        this.launcher.classList.add("cozy-mini-launcher");
+        this.launcher.setAttribute("aria-expanded", "false");
+        this.panel = this.el(this.root, "section", "cozy-mini-panel");
+        this.panel.hidden = true;
+        this.panel.setAttribute("aria-label", this.t("\u8FF7\u4F60\u76EE\u5F55", "Mini outline"));
+        const header = this.el(this.panel, "div", "cozy-mini-header");
+        this.el(header, "strong").textContent = this.t("\u6587\u6863\u76EE\u5F55", "Document outline");
+        this.pin = this.button(header, "pin", this.t("\u56FA\u5B9A\u76EE\u5F55", "Pin outline"), () => {
+          if (this.state) {
+            this.state.pinned = !this.state.pinned;
+            this.pin.setAttribute("aria-pressed", String(this.state.pinned));
+          }
+        });
+        this.back = this.button(header, "locate-fixed", this.t("\u56DE\u5230\u6717\u8BFB\u4F4D\u7F6E", "Return to reading"), async () => {
+          if (!await this.valid()) return;
+          this.state.manual = false;
+          await this.adapter.returnReading(this.view, this.data);
+          this.update(true);
+        });
+        this.button(header, "x", this.t("\u5173\u95ED\u76EE\u5F55", "Close outline"), () => this.close(true));
+        this.search = this.el(this.panel, "input", "cozy-mini-search");
+        this.search.type = "search";
+        this.search.placeholder = this.t("\u641C\u7D22\u7AE0\u8282", "Search headings");
+        this.search.setAttribute("aria-label", this.search.placeholder);
+        this.search.addEventListener("input", () => {
+          if (this.data) {
+            this.state.query = this.search.value;
+            this.limit = 200;
+            this.draw();
+          }
+        });
+        const tools = this.el(this.panel, "div", "cozy-mini-tools");
+        this.depth = this.el(tools, "select");
+        this.depth.setAttribute("aria-label", this.t("\u5C55\u5F00\u5C42\u7EA7", "Expanded levels"));
+        for (const [value, label] of [[1, this.t("\u4E00\u7EA7", "One level")], [2, this.t("\u4E24\u7EA7", "Two levels")], [3, this.t("\u4E09\u7EA7", "Three levels")], [6, this.t("\u5168\u90E8", "All levels")]]) {
+          const option = this.el(this.depth, "option");
+          option.value = String(value);
+          option.textContent = label;
+        }
+        this.depth.addEventListener("change", () => {
+          if (this.data) {
+            this.state.depth = Number(this.depth.value);
+            this.applyDepth();
+            this.draw();
+          }
+        });
+        this.button(tools, "refresh-cw", this.t("\u5237\u65B0\u76EE\u5F55", "Refresh outline"), () => this.load(true));
+        this.status = this.el(this.panel, "div", "cozy-mini-status");
+        this.status.setAttribute("role", "status");
+        this.list = this.el(this.panel, "div", "cozy-mini-list");
+        this.list.setAttribute("role", "group");
+        this.list.setAttribute("aria-label", this.t("\u7AE0\u8282", "Sections"));
+        this.more = this.button(this.panel, "chevrons-down", this.t("\u663E\u793A\u66F4\u591A\u7AE0\u8282", "Show more headings"), () => {
+          this.limit += 200;
+          this.draw();
+        });
+        this.more.hidden = true;
+        this.list.addEventListener("scroll", () => {
+          if (this.state) this.state.scroll = this.list.scrollTop;
+        });
+        for (const name of ["wheel", "touchstart", "pointerdown"]) this.list.addEventListener(name, () => {
+          if (this.state) this.state.manual = true;
+        }, { passive: true });
+        this.outside = (event) => {
+          if (this.opened && !this.state?.pinned && !this.root.contains(event.target) && !event.target?.closest?.("[data-cozy-mini-toggle]")) this.close();
+        };
+        this.doc.addEventListener("pointerdown", this.outside, true);
+        this.panel.addEventListener("keydown", (event) => this.keydown(event));
+        this.launcher.addEventListener("pointerenter", (event) => {
+          if (event.pointerType === "mouse" && this.settings().miniOutlineHover) this.hoverTimer = setTimeout(() => this.open(), 350);
+        });
+        this.root.addEventListener("pointerleave", () => {
+          clearTimeout(this.hoverTimer);
+        });
+        this.scroll = (event) => {
+          if (this.root.contains(event.target) || !this.opened || this.scrollTimer) return;
+          this.scrollTimer = setTimeout(() => {
+            this.scrollTimer = null;
+            this.update();
+          }, 100);
+        };
+        this.view.containerEl.addEventListener("scroll", this.scroll, true);
+        this.resize = () => this.layout();
+        this.doc.defaultView?.addEventListener("resize", this.resize);
+        this.doc.defaultView?.visualViewport?.addEventListener("resize", this.resize);
+        const Observer = this.doc.defaultView?.ResizeObserver;
+        if (Observer) {
+          this.resizeObserver = new Observer(this.resize);
+          this.resizeObserver.observe(view.containerEl);
+        }
+        this.setLoading(true);
+        this.configure();
+      }
+      settings() {
+        return normalizeMiniSettings2(this.plugin.settings);
+      }
+      t(zh, en) {
+        return this.plugin.settings.settingsLanguage === "chinese" ? zh : en;
+      }
+      el(parent, tag, cls) {
+        const el = this.doc.createElement(tag);
+        if (cls) el.className = cls;
+        parent.appendChild(el);
+        return el;
+      }
+      button(parent, icon, label, action) {
+        const el = this.el(parent, "button", "clickable-icon");
+        el.type = "button";
+        this.manager.setIcon(el, icon);
+        el.setAttribute("aria-label", label);
+        el.addEventListener("click", (event) => {
+          event.stopPropagation();
+          Promise.resolve().then(() => action(event)).catch(() => this.error());
+        });
+        return el;
+      }
+      error() {
+        this.status.textContent = this.t("\u6587\u6863\u53EF\u80FD\u5DF2\u53D8\u5316\uFF0C\u8BF7\u5237\u65B0\u76EE\u5F55\u540E\u91CD\u8BD5\u3002", "The document may have changed. Refresh the outline and retry.");
+      }
+      configure() {
+        const settings = this.settings();
+        this.root.dataset.side = settings.miniOutlineSide;
+        this.launcher.hidden = settings.miniOutlineMode === "off" || settings.miniOutlineMode === "auto" && otherOutlineEnabled(this.plugin.app);
+        const headers = [...this.view.containerEl.querySelectorAll(".note-reader-native-toolbar,.note-reader-mobile-dock,.view-header")];
+        if (this.resizeObserver && (headers.length !== this.observedHeaders?.length || headers.some((el, i) => el !== this.observedHeaders?.[i]))) {
+          this.resizeObserver.disconnect();
+          this.resizeObserver.observe(this.view.containerEl);
+          headers.forEach((el) => this.resizeObserver.observe(el));
+          this.observedHeaders = headers;
+        }
+        this.layout();
+      }
+      toggle() {
+        if (this.opened) this.close(true);
+        else return this.open();
+      }
+      async open() {
+        if (this.destroyed) return;
+        this.opened = true;
+        this.panel.hidden = false;
+        this.launcher.setAttribute("aria-expanded", "true");
+        this.layout();
+        if (!this.data || this.file !== this.view.file || this.invalid || !this.adapter.valid(this.view, this.data)) await this.load();
+        else this.update();
+      }
+      close(focus = false) {
+        clearTimeout(this.hoverTimer);
+        clearTimeout(this.reloadTimer);
+        this.opened = false;
+        this.panel.hidden = true;
+        this.launcher.setAttribute("aria-expanded", "false");
+        if (this.loading) {
+          this.generation++;
+          this.loading = false;
+          this.invalid = true;
+        }
+        if (focus && !this.launcher.hidden) this.launcher.focus({ preventScroll: true });
+      }
+      layout() {
+        const host = this.view.containerEl.getBoundingClientRect(), win = this.doc.defaultView;
+        const viewport = win.visualViewport, bottom = Math.min(host.bottom, (viewport?.offsetTop || 0) + (viewport?.height || win.innerHeight));
+        let top = Math.max(host.top + 44, (viewport?.offsetTop || 0) + 12);
+        for (const el of this.view.containerEl.querySelectorAll(".note-reader-native-toolbar,.note-reader-mobile-dock,.view-header")) {
+          const rect = el.getBoundingClientRect();
+          if (rect.height && rect.top < top + 100) top = Math.max(top, rect.bottom + 8);
+        }
+        this.root.style.setProperty("--cozy-mini-top", `${Math.max(8, top - host.top)}px`);
+        const entryHeight = this.launcher.hidden ? 0 : this.launcher.getBoundingClientRect().height;
+        this.root.style.setProperty("--cozy-mini-height", `${Math.max(80, bottom - top - entryHeight - 100)}px`);
+      }
+      async load(force = false) {
+        const generation = ++this.generation, file = this.view.file;
+        const cancelled = () => this.destroyed || !this.opened || generation !== this.generation || file !== this.view.file;
+        this.loading = true;
+        this.invalid = false;
+        this.data = null;
+        this.rows.clear();
+        this.list.replaceChildren();
+        this.more.hidden = true;
+        this.setLoading(true);
+        this.status.textContent = this.t("\u6B63\u5728\u8BFB\u53D6\u76EE\u5F55\u2026", "Loading outline\u2026");
+        try {
+          const data = await this.adapter.load(this.view, cancelled, force);
+          if (cancelled()) return;
+          if (!data) {
+            this.invalid = true;
+            this.error();
+            return;
+          }
+          this.data = data;
+          this.file = file;
+          this.limit = 200;
+          this.parents = headingParents(data.entries);
+          this.state = this.manager.state(file.path);
+          const shape = JSON.stringify(data.entries.map((e) => [e.title, e.level]));
+          if (this.state.shape !== shape) {
+            this.state.shape = shape;
+            this.applyDepth();
+          }
+          this.search.value = this.state.query;
+          this.depth.value = String(this.state.depth);
+          this.pin.setAttribute("aria-pressed", String(this.state.pinned));
+          this.setLoading(false);
+          this.status.textContent = data.entries.length ? data.entries.some((e) => e.inferred || e.approximate) ? this.t("\u5305\u542B\u81EA\u52A8\u8BC6\u522B\u6216\u6309\u9875\u5B9A\u4F4D\u7684\u7AE0\u8282", "Includes detected or page-level headings") : "" : this.t("\u672A\u627E\u5230\u53EF\u7528\u7AE0\u8282", "No headings available");
+          this.draw();
+        } catch {
+          if (!cancelled()) {
+            this.invalid = true;
+            this.error();
+          }
+        } finally {
+          if (generation === this.generation) this.loading = false;
+        }
+      }
+      setLoading(loading) {
+        this.pin.disabled = this.search.disabled = this.depth.disabled = loading;
+        if (loading) this.back.disabled = true;
+      }
+      applyDepth() {
+        this.state.collapsed = new Set(this.data.entries.map((_, i) => i).filter((i) => this.parents[i].length >= this.state.depth - 1));
+      }
+      invalidate() {
+        this.invalid = true;
+        this.generation++;
+        this.loading = false;
+        this.data = null;
+        this.rows.clear();
+        this.list.replaceChildren();
+        this.more.hidden = true;
+        this.setLoading(true);
+        if (this.opened) {
+          clearTimeout(this.reloadTimer);
+          this.reloadTimer = setTimeout(() => this.load(), 180);
+        }
+      }
+      draw() {
+        if (!this.data) return;
+        const query = this.state.query.trim().toLocaleLowerCase(), visible = /* @__PURE__ */ new Set(), top = this.state.scroll;
+        if (query) this.data.entries.forEach((entry, i) => {
+          if (entry.title.toLocaleLowerCase().includes(query)) {
+            visible.add(i);
+            this.parents[i].forEach((p) => visible.add(p));
+          }
+        });
+        this.list.replaceChildren();
+        this.rows.clear();
+        const indices = this.data.entries.map((_, i) => i).filter((i) => query ? visible.has(i) : !this.parents[i].some((p) => this.state.collapsed.has(p)));
+        for (const index of indices.slice(0, this.limit)) {
+          const entry = this.data.entries[index], row = this.el(this.list, "div", "cozy-mini-row");
+          row.style.setProperty("--cozy-mini-depth", String(Math.min(6, this.parents[index].length)));
+          const children = this.data.entries[index + 1]?.level > entry.level;
+          const toggle = this.button(row, this.state.collapsed.has(index) ? "chevron-right" : "chevron-down", this.t("\u5C55\u5F00\u6216\u6298\u53E0\u7AE0\u8282", "Expand or collapse section"), () => {
+            if (this.state.collapsed.has(index)) this.state.collapsed.delete(index);
+            else this.state.collapsed.add(index);
+            this.draw();
+          });
+          toggle.disabled = !children || Boolean(query);
+          toggle.classList.toggle("cozy-mini-leaf", !children);
+          toggle.setAttribute("aria-expanded", String(!this.state.collapsed.has(index)));
+          const title = this.button(row, "heading", this.t("\u5B9A\u4F4D\uFF1A", "Go to: ") + entry.title, async () => {
+            if (!await this.valid()) return;
+            this.state.manual = true;
+            this.adapter.pauseFollow(this.view);
+            await this.adapter.locate(this.view, this.data, index);
+            if (!this.state.pinned) this.close();
+          });
+          title.classList.add("cozy-mini-title");
+          title.textContent = entry.title;
+          const read = this.button(row, "play", this.t("\u4ECE\u672C\u8282\u6717\u8BFB\uFF1A", "Read from: ") + entry.title, () => this.read(index, true));
+          const more = this.button(row, "ellipsis", this.t("\u7AE0\u8282\u64CD\u4F5C", "Section actions"), (event) => {
+            this.manager.menu(event, [{ label: this.t("\u53EA\u6717\u8BFB\u672C\u8282", "Read this section only"), action: () => this.read(index, false).catch(() => this.error()) }]);
+          });
+          this.rows.set(index, { row, title, read, more });
+        }
+        if (query && !indices.length) this.el(this.list, "p").textContent = this.t("\u6CA1\u6709\u5339\u914D\u7684\u7AE0\u8282", "No matching headings");
+        this.more.hidden = indices.length <= this.limit;
+        this.list.scrollTop = top;
+        this.positionKey = null;
+        this.update();
+      }
+      async valid() {
+        if (this.data && !this.invalid && this.file === this.view.file && this.adapter.valid(this.view, this.data)) return true;
+        this.invalidate();
+        this.error();
+        return false;
+      }
+      async read(index, remaining) {
+        if (this.adapter.busy() || !await this.valid()) return;
+        this.state.manual = false;
+        await this.adapter.read(this.view, this.data, index, remaining);
+      }
+      update(force = false) {
+        if (!this.opened || !this.data || this.invalid || this.destroyed) return;
+        const { reading = -1, browsing = -1 } = this.adapter.positions(this.view, this.data);
+        const busy = this.adapter.busy(), key = `${reading}/${browsing}/${busy}`;
+        if (!force && key === this.positionKey) return;
+        const changed = this.reading !== reading;
+        this.reading = reading;
+        this.positionKey = key;
+        this.back.disabled = reading < 0;
+        for (const [i, refs] of this.rows) {
+          refs.row.classList.toggle("is-reading", i === reading);
+          refs.row.classList.toggle("is-browsing", i === browsing);
+          if (i === browsing) refs.title.setAttribute("aria-current", "location");
+          else refs.title.removeAttribute("aria-current");
+          refs.title.setAttribute("aria-label", (i === reading ? this.t("\u6B63\u5728\u6717\u8BFB\uFF1B\u5B9A\u4F4D\uFF1A", "Speaking; go to: ") : this.t("\u5B9A\u4F4D\uFF1A", "Go to: ")) + this.data.entries[i].title);
+          refs.read.disabled = refs.more.disabled = busy;
+        }
+        if ((changed || force) && reading >= 0 && !this.state.manual && !this.state.query) {
+          if (reading >= this.limit) {
+            this.limit = Math.ceil((reading + 1) / 200) * 200;
+            this.draw();
+            return;
+          }
+          const ancestors = this.parents[reading] || [];
+          if (ancestors.some((i) => this.state.collapsed.has(i))) {
+            ancestors.forEach((i) => this.state.collapsed.delete(i));
+            this.draw();
+            return;
+          }
+          const row = this.rows.get(reading)?.row;
+          if (row && (row.offsetTop < this.list.scrollTop || row.offsetTop + row.offsetHeight > this.list.scrollTop + this.list.clientHeight)) this.list.scrollTop = Math.max(0, row.offsetTop - this.list.clientHeight / 2);
+        }
+      }
+      keydown(event) {
+        if (event.key === "Escape") {
+          event.preventDefault();
+          event.stopPropagation();
+          this.close(true);
+          return;
+        }
+        if (event.target === this.search || event.target === this.depth || !["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+        const buttons = [...this.rows.values()].map((r) => r.title), index = buttons.indexOf(this.doc.activeElement);
+        if (!buttons.length) return;
+        event.preventDefault();
+        event.stopPropagation();
+        this.state.manual = true;
+        buttons[event.key === "Home" ? 0 : event.key === "End" ? buttons.length - 1 : Math.max(0, Math.min(buttons.length - 1, index + (event.key === "ArrowDown" ? 1 : -1)))].focus();
+      }
+      destroy() {
+        this.destroyed = true;
+        this.generation++;
+        for (const timer of [this.hoverTimer, this.scrollTimer, this.reloadTimer]) clearTimeout(timer);
+        this.doc.removeEventListener("pointerdown", this.outside, true);
+        this.view.containerEl.removeEventListener("scroll", this.scroll, true);
+        this.doc.defaultView?.removeEventListener("resize", this.resize);
+        this.doc.defaultView?.visualViewport?.removeEventListener("resize", this.resize);
+        this.resizeObserver?.disconnect();
+        this.root.remove();
+        this.data = null;
+        this.rows.clear();
+      }
+    };
+    var MiniOutlineManager = class {
+      constructor(plugin, adapter, { setIcon: setIcon2, Menu: Menu2 }) {
+        this.plugin = plugin;
+        this.adapter = adapter;
+        this.setIcon = setIcon2;
+        this.Menu = Menu2;
+        this.panels = /* @__PURE__ */ new Map();
+        this.states = /* @__PURE__ */ new Map();
+      }
+      state(path2) {
+        const state = this.states.get(path2) || { query: "", collapsed: /* @__PURE__ */ new Set(), scroll: 0, depth: normalizeMiniSettings2(this.plugin.settings).miniOutlineDepth, pinned: false, manual: false };
+        this.states.delete(path2);
+        this.states.set(path2, state);
+        while (this.states.size > 40) this.states.delete(this.states.keys().next().value);
+        return state;
+      }
+      menu(event, items) {
+        const menu = new this.Menu();
+        for (const item of items) menu.addItem((row) => row.setTitle(item.label).setIcon("audio-lines").onClick(() => Promise.resolve(item.action()).catch(() => {
+        })));
+        menu.showAtMouseEvent(event);
+      }
+      schedule() {
+        if (this.destroyed || this.timer) return;
+        this.timer = setTimeout(() => {
+          this.timer = null;
+          this.sync();
+        }, 150);
+      }
+      sync() {
+        if (this.destroyed) return;
+        const views = this.adapter.views().filter((view) => view?.file && view.containerEl?.ownerDocument);
+        for (const [view, panel] of this.panels) if (!views.includes(view) || !view.containerEl.isConnected) {
+          panel.destroy();
+          this.panels.delete(view);
+        }
+        for (const view of views) {
+          const previous = this.panels.get(view);
+          if (previous && previous.language !== this.plugin.settings.settingsLanguage) {
+            previous.destroy();
+            this.panels.delete(view);
+          }
+          if (!this.panels.has(view)) this.panels.set(view, new MiniOutlinePanel(this, view));
+          const panel = this.panels.get(view);
+          panel.configure();
+          if (panel.file && panel.file !== view.file) {
+            panel.close();
+            panel.invalidate();
+          }
+        }
+      }
+      toggle(view = this.adapter.activeView()) {
+        this.sync();
+        const panel = this.panels.get(view);
+        for (const other of this.panels.values()) if (other !== panel && !other.state?.pinned) other.close();
+        if (panel) return panel.toggle();
+      }
+      invalidate(file) {
+        for (const [view, panel] of this.panels) if (!file || view.file?.path === file.path) panel.invalidate();
+      }
+      update() {
+        for (const panel of this.panels.values()) {
+          try {
+            panel.update();
+          } catch {
+            panel.invalidate();
+            panel.error();
+          }
+        }
+      }
+      destroy() {
+        this.destroyed = true;
+        clearTimeout(this.timer);
+        for (const panel of this.panels.values()) panel.destroy();
+        this.panels.clear();
+        this.states.clear();
+      }
+    };
+    function registerMiniOutline(plugin, adapter) {
+      const { setIcon: setIcon2, Menu: Menu2 } = require("obsidian");
+      const manager = plugin.miniOutline = new MiniOutlineManager(plugin, adapter, { setIcon: setIcon2, Menu: Menu2 });
+      plugin.register(() => manager.destroy());
+      plugin.addCommand({ id: "toggle-mini-outline", name: plugin.settings.settingsLanguage === "chinese" ? "\u6253\u5F00/\u5173\u95ED\u8FF7\u4F60\u76EE\u5F55" : "Toggle mini outline", icon: "list-tree", callback: () => manager.toggle() });
+      for (const event of ["layout-change", "active-leaf-change", "file-open"]) plugin.registerEvent(plugin.app.workspace.on(event, () => manager.schedule()));
+      plugin.registerEvent(plugin.app.workspace.on("editor-change", (_editor, view) => manager.invalidate(view?.file)));
+      if (plugin.app.metadataCache?.on) plugin.registerEvent(plugin.app.metadataCache.on("changed", (file) => manager.invalidate(file)));
+      if (plugin.app.vault?.on) plugin.registerEvent(plugin.app.vault.on("modify", (file) => manager.invalidate(file)));
+      plugin.app.workspace.onLayoutReady?.(() => manager.schedule());
+      return manager;
+    }
+    function addMiniOutlineSettings2(plugin, container, Setting) {
+      const zh = plugin.settings.settingsLanguage === "chinese", t = (cn, en) => zh ? cn : en;
+      const options = (dropdown, entries) => {
+        for (const [key, label] of Object.entries(entries)) dropdown.addOption(key, label);
+        return dropdown;
+      };
+      const save = async (key, value) => {
+        plugin.settings[key] = value;
+        await plugin.saveSettings();
+        plugin.miniOutline?.sync();
+      };
+      new Setting(container).setName(t("\u8FF7\u4F60\u76EE\u5F55", "Mini outline")).setDesc(t("\u672A\u6717\u8BFB\u65F6\u4E5F\u53EF\u5BFC\u822A\u3002\u81EA\u52A8\u6A21\u5F0F\u5728\u68C0\u6D4B\u5230\u5DF2\u542F\u7528\u7684\u6D6E\u52A8\u76EE\u5F55\u63D2\u4EF6\u65F6\u9690\u85CF\u8FB9\u7F18\u5165\u53E3\uFF1B\u4ECD\u53EF\u4ECE\u6717\u8BFB\u680F\u6216\u547D\u4EE4\u6253\u5F00\u3002\u4E0D\u4FEE\u6539\u5176\u4ED6\u63D2\u4EF6\u3002", "Navigate without playback. Auto hides the edge button when a known floating outline is enabled; toolbar and command access remain. Other plugins are unchanged.")).addDropdown((d) => options(d, { auto: t("\u81EA\u52A8\uFF08\u63A8\u8350\uFF09", "Auto (recommended)"), always: t("\u59CB\u7EC8\u663E\u793A\u5165\u53E3", "Always show entry"), off: t("\u5173\u95ED\u8FB9\u7F18\u5165\u53E3", "Hide edge entry") }).setValue(normalizeMiniSettings2(plugin.settings).miniOutlineMode).onChange((v) => save("miniOutlineMode", v)));
+      new Setting(container).setName(t("\u76EE\u5F55\u4F4D\u7F6E", "Outline side")).addDropdown((d) => options(d, { left: t("\u5DE6\u4FA7", "Left"), right: t("\u53F3\u4FA7", "Right") }).setValue(normalizeMiniSettings2(plugin.settings).miniOutlineSide).onChange((v) => save("miniOutlineSide", v)));
+      new Setting(container).setName(t("\u9F20\u6807\u60AC\u505C\u5C55\u5F00\u76EE\u5F55", "Open outline on hover")).setDesc(t("\u9ED8\u8BA4\u5173\u95ED\uFF1B\u89E6\u5C4F\u59CB\u7EC8\u901A\u8FC7\u70B9\u51FB\u5C55\u5F00\u3002", "Off by default; touch devices always use tap.")).addToggle((tg) => tg.setValue(plugin.settings.miniOutlineHover === true).onChange((v) => save("miniOutlineHover", v)));
+      new Setting(container).setName(t("\u9ED8\u8BA4\u5C55\u5F00\u5C42\u7EA7", "Default expanded levels")).addDropdown((d) => options(d, { 1: "1", 2: "2", 3: "3", 6: t("\u5168\u90E8", "All") }).setValue(String(normalizeMiniSettings2(plugin.settings).miniOutlineDepth)).onChange((v) => save("miniOutlineDepth", Number(v))));
+    }
+    module2.exports = { MINI_DEFAULTS: MINI_DEFAULTS2, normalizeMiniSettings: normalizeMiniSettings2, otherOutlineEnabled, headingParents, headingAt, MiniOutlinePanel, MiniOutlineManager, registerMiniOutline, addMiniOutlineSettings: addMiniOutlineSettings2 };
+  }
+});
+
+// src/mini-outline-position.js
+var require_mini_outline_position = __commonJS({
+  "src/mini-outline-position.js"(exports2, module2) {
+    "use strict";
+    var { headingAt } = require_mini_outline();
+    function pdfViewer(view) {
+      const child = view.viewer?.child || view.pdfViewer?.child;
+      return [child?.pdfViewer?.pdfViewer, child?.pdfViewer, child?.pdfViewerApplication?.pdfViewer].find((v) => v?.getPageView || v?.scrollPageIntoView);
+    }
+    function browsingIndex(view, data) {
+      if (data.kind === "markdown") {
+        const line = view.currentMode?.getScroll?.() ?? view.previewMode?.getScroll?.();
+        if (Number.isFinite(line)) return headingAt(data.entries, line, "line");
+        const cm = view.editor?.cm;
+        if (cm?.viewport && cm.state?.doc?.lineAt) return headingAt(data.entries, cm.state.doc.lineAt(cm.viewport.from).number - 1, "line");
+        return -1;
+      }
+      if (data.kind === "html") {
+        let current2 = -1;
+        data.entries.forEach((entry, i) => {
+          if (entry.element?.isConnected && entry.element.getBoundingClientRect().top <= 100) current2 = i;
+        });
+        return current2;
+      }
+      const viewer = pdfViewer(view), page = viewer?.currentPageNumber;
+      if (!page) return -1;
+      const pageView = viewer.getPageView?.(page - 1), top = viewer.container?.getBoundingClientRect?.().top;
+      const singleHeadingOnPage = data.entries.filter((e) => e.page === page).length === 1;
+      let current = -1;
+      data.entries.forEach((entry, i) => {
+        if (entry.page < page) current = i;
+        if (entry.page !== page) return;
+        const point = pageView?.viewport?.convertToViewportPoint?.(entry.x || 0, entry.y);
+        if (point && Number.isFinite(top) && pageView.div.getBoundingClientRect().top + point[1] <= top + 80) current = i;
+        else if (!point && singleHeadingOnPage) current = i;
+      });
+      return current;
+    }
+    function elementHeading(entries, element) {
+      if (!element?.isConnected) return -1;
+      let current = -1;
+      entries.forEach((entry, i) => {
+        if (entry.element?.isConnected && (entry.element === element || entry.element.contains(element) || entry.element.compareDocumentPosition(element) & 4)) current = i;
+      });
+      return current;
+    }
+    module2.exports = { pdfViewer, browsingIndex, elementHeading };
+  }
+});
+
+// src/mini-outline-adapter.js
+var require_mini_outline_adapter = __commonJS({
+  "src/mini-outline-adapter.js"(exports2, module2) {
+    "use strict";
+    var { registerMiniOutline, headingAt } = require_mini_outline();
+    var { outlineSections } = require_reader_selection();
+    var { getHtmlReaderDocument: getHtmlReaderDocument2 } = require_html_text();
+    var { captureHtmlOutline, htmlSectionText } = require_html_outline();
+    var { currentSourceRanges } = require_markdown_source();
+    var { pauseFollowing, kindFor: kindFor2 } = require_reading_follow();
+    var { browsingIndex, elementHeading, pdfViewer } = require_mini_outline_position();
+    var { htmlReadingTarget } = require_html_highlights();
+    var { currentDocumentHighlightElement } = require_dom_highlights();
+    async function pdfData(plugin, file, cancelled, force) {
+      const { PdfOutlineCache } = require_pdf_outline_cache();
+      const cache = plugin.pdfOutlineCache || (plugin.pdfOutlineCache = new PdfOutlineCache());
+      if (force) cache.delete(file.path);
+      let cached = cache.get(file);
+      if (!cached) {
+        if (file.stat.size > 200 * 1024 * 1024) throw Error("PDF too large");
+        const bytes = await plugin.app.vault.readBinary(file);
+        if (cancelled()) return null;
+        const { loadPdfJs: loadPdfJs2 } = require("obsidian"), { scanPdfOutline } = require_pdf_outline();
+        const lib = await loadPdfJs2();
+        if (cancelled()) return null;
+        const task = lib.getDocument({ data: new Uint8Array(bytes.slice(0)) });
+        let pdf;
+        try {
+          pdf = await task.promise;
+          const model = await scanPdfOutline(pdf, { isCurrent: () => !cancelled() });
+          if (cancelled()) return null;
+          cached = { model, entries: model.entries.map((entry) => ({ ...entry, enabled: true })), sourceDigest: require("crypto").createHash("sha256").update(new Uint8Array(bytes)).digest("hex") };
+          cache.set(file, cached);
+        } finally {
+          try {
+            if (pdf) await pdf.destroy();
+            else await task.destroy();
+          } catch {
+          }
+        }
+      }
+      return { kind: "pdf", entries: cached.model.entries, model: cached.model };
+    }
+    function desktopMiniAdapter(plugin) {
+      const workspace = plugin.app.workspace;
+      const valid = (view, data) => view.file === data.file && view.file.stat?.mtime === data.mtime && view.file.stat?.size === data.size && (data.kind !== "markdown" || view.editor?.getValue() === data.text) && (data.kind !== "html" || getHtmlReaderDocument2(view) === data.doc && data.entries.every((entry) => entry.element?.isConnected && entry.element.textContent.replace(/\s+/g, " ").trim() === entry.title));
+      const adapter = {
+        views: () => ["markdown", "pdf", "html-view"].flatMap((type) => (workspace.getLeavesOfType?.(type) || []).map((leaf) => leaf.view)),
+        activeView: () => {
+          const views = adapter.views(), active = workspace.activeLeaf?.view;
+          return views.includes(active) ? active : views.find((view) => view.file === plugin.getCurrentReadableFile?.());
+        },
+        busy: () => plugin.activeSession?.kind === "audio-export",
+        valid,
+        async load(view, cancelled, force) {
+          const file = view.file, mtime = file.stat?.mtime, size = file.stat?.size;
+          const stale = () => cancelled() || view.file !== file || file.stat?.mtime !== mtime || file.stat?.size !== size;
+          let data;
+          if (file.extension === "pdf") data = await pdfData(plugin, file, stale, force);
+          else if (/^html?$/.test(file.extension)) {
+            const doc = getHtmlReaderDocument2(view);
+            data = { kind: "html", doc, entries: captureHtmlOutline(doc) };
+          } else {
+            const text = view.editor?.getValue() ?? await plugin.app.vault.cachedRead(file);
+            data = { kind: "markdown", text, entries: outlineSections(text, plugin.app.metadataCache?.getFileCache(file)?.headings).map((e) => ({ ...e, offset: e.from })) };
+          }
+          return !stale() && data ? { ...data, file, mtime, size } : null;
+        },
+        pauseFollow: (view) => pauseFollowing(plugin, kindFor2(plugin, view)),
+        async returnReading(view) {
+          await workspace.revealLeaf?.(view.leaf);
+          const key = { markdown: "readingFollow", pdf: "pdfReadingFollow", html: "webReadingFollow" }[kindFor2(plugin, view)];
+          plugin.readingFollowPaused?.delete(key);
+          plugin.followRevision = (plugin.followRevision || 0) + 1;
+          await plugin.locateCurrentReading();
+        },
+        async locate(view, data, index) {
+          if (!valid(view, data)) throw Error("Changed");
+          await workspace.revealLeaf?.(view.leaf);
+          if (!valid(view, data)) throw Error("Changed");
+          const entry = data.entries[index];
+          if (data.kind === "markdown") {
+            if (view.getMode?.() === "preview") view.previewMode?.applyScroll(entry.line);
+            else {
+              const from = view.editor.offsetToPos(entry.from);
+              view.editor.scrollIntoView({ from, to: from }, true);
+            }
+          } else if (data.kind === "html") {
+            if (!entry.element?.isConnected) throw Error("Changed");
+            entry.element.scrollIntoView({ block: "start" });
+          } else {
+            const viewer = pdfViewer(view);
+            if (viewer?.scrollPageIntoView) viewer.scrollPageIntoView({ pageNumber: entry.page, destArray: [null, { name: "XYZ" }, entry.x || 0, entry.y, null] });
+            else await workspace.openLinkText(data.file.path + "#page=" + entry.page + "&offset=" + Math.round(entry.x) + "," + Math.round(entry.y) + ",0", "", false);
+          }
+        },
+        async read(view, data, index, remaining) {
+          if (!valid(view, data) || adapter.busy()) throw Error("Changed");
+          await workspace.revealLeaf?.(view.leaf);
+          if (!valid(view, data)) throw Error("Changed");
+          const entry = data.entries[index];
+          if (data.kind === "pdf") return plugin.readCurrentPdf(data.file, { outlineRange: {
+            ...require_pdf_outline().sectionRange(data.entries, index, data.model.pages, remaining),
+            fileMtime: data.mtime,
+            title: entry.title
+          } });
+          if (data.kind === "html") return plugin.startReading(htmlSectionText(data.doc, entry, captureHtmlOutline(data.doc), remaining), entry.title, { file: data.file, sourceKind: "html", plainText: true });
+          return plugin.startReading(
+            data.text.slice(entry.from, remaining ? void 0 : entry.to),
+            entry.title,
+            { file: data.file, sourceKind: "markdown", sourceText: data.text, sourceOffset: entry.from }
+          );
+        },
+        positions(view, data) {
+          let reading = -1;
+          const session = plugin.activeSession;
+          if (session?.kind !== "audio-export" && session?.filePath === data.file.path && (session.fileMtime == null || session.fileMtime === data.mtime)) {
+            if (data.kind === "markdown" && (session.markdownSource?.text === void 0 || session.markdownSource.text === data.text)) {
+              const ranges = currentSourceRanges(session.markdownSource, { index: session.currentChunkIndex });
+              reading = headingAt(data.entries, ranges[0]?.from);
+            } else if (data.kind === "html" && data.doc) {
+              const target = htmlReadingTarget(session, plugin.getCurrentReadingHighlight?.() || { index: session.currentChunkIndex }, plugin.settings);
+              reading = elementHeading(data.entries, currentDocumentHighlightElement(data.doc, target?.text));
+            } else if (data.kind === "pdf") {
+              const page = session.chunkPageNumbers?.[session.currentChunkIndex], text = data.model.pages.find((p) => p.number === page)?.text || "";
+              const prefix = session.chunks?.[session.currentChunkIndex]?.trim().slice(0, 80), offset = prefix ? text.indexOf(prefix) : -1;
+              if (prefix?.length >= 12 && offset >= 0 && text.indexOf(prefix, offset + 1) < 0) data.entries.forEach((e, i) => {
+                if (e.page < page || e.page === page && e.offset <= offset) reading = i;
+              });
+            }
+          }
+          return { reading, browsing: browsingIndex(view, data) };
+        }
+      };
+      return adapter;
+    }
+    function installMiniOutline2(plugin) {
+      return registerMiniOutline(plugin, desktopMiniAdapter(plugin));
+    }
+    module2.exports = { desktopMiniAdapter, installMiniOutline: installMiniOutline2 };
   }
 });
 
@@ -38766,6 +39476,8 @@ var { CopilotChatModal, addCopilotChatSettings, readLatestCopilotReply } = requi
 var { createPdfSpeechChunker, splitPdfSpeechChunks } = require_pdf_chunker();
 var { APPEARANCE_DEFAULTS, normalizeAppearance, applyAppearance, clearAppearance } = require_reader_appearance();
 var { SidebarOutline } = require_sidebar_outline();
+var { MINI_DEFAULTS, normalizeMiniSettings, addMiniOutlineSettings } = require_mini_outline();
+var { installMiniOutline } = require_mini_outline_adapter();
 var { PdfOutlineModal, addPdfOutlineSettings } = require_pdf_outline_ui();
 var { readerRange } = require_reader_selection();
 var { getSpeechParts, planSpeechParts, adjacentSpeechPart, getSpeechPartTiming } = require_speech_parts();
@@ -40163,6 +40875,7 @@ function selectKnownSettings(defaults, candidate) {
 }
 function createDefaultSettings() {
   return {
+    ...MINI_DEFAULTS,
     readingContextMenu: true,
     readingFloatingToolbar: false,
     readingFloatingAction: "selection",
@@ -40882,6 +41595,7 @@ var CosyVoiceReaderPlugin = class extends Plugin {
     this.registerView(VIEW_TYPE, (leaf) => new CosyVoiceReaderView(leaf, this));
     this.registerView(DOCUMENT_VIEW_TYPE, (leaf) => new AccessibleReaderView(leaf, this));
     this.nativeToolbars = new NativeToolbarManager(this);
+    installMiniOutline(this);
     this.pdfHighlights = new PdfReadingHighlights(this);
     this.htmlHighlights = new HtmlReadingHighlights(this);
     this.register(() => this.htmlHighlights?.destroy());
@@ -41229,6 +41943,7 @@ var CosyVoiceReaderPlugin = class extends Plugin {
     const hadAzureCredentialSource = Object.prototype.hasOwnProperty.call(source, "azureSpeechCredentialSource");
     const hadOpenRouterCredentialSource = Object.prototype.hasOwnProperty.call(source, "openRouterCredentialSource");
     this.settings = selectKnownSettings(defaults, source);
+    Object.assign(this.settings, normalizeMiniSettings(this.settings));
     this.settings.ocrEnabled = this.settings.ocrEnabled === true;
     this.settings.ocrModel = this.settings.ocrModel === "tiny" ? "tiny" : "small";
     this.settings.ocrExecutable = typeof this.settings.ocrExecutable === "string" ? this.settings.ocrExecutable.trim().slice(0, 4096) : "";
@@ -41292,6 +42007,8 @@ var CosyVoiceReaderPlugin = class extends Plugin {
     this.settings.readingHighlight = normalizeReadingHighlight(this.settings.readingHighlight);
     this.settings.readingFollow = this.settings.readingFollow === true;
     this.settings = selectKnownSettings(createDefaultSettings(), this.settings);
+    Object.assign(this.settings, normalizeMiniSettings(this.settings));
+    this.miniOutline?.sync();
     this.settings.persistentAudioCache = this.settings.persistentAudioCache === true;
     this.settings.openRouterContext = this.settings.openRouterContext === true;
     this.settings.speechTermsEnabled = this.settings.speechTermsEnabled === true;
@@ -41479,6 +42196,7 @@ var CosyVoiceReaderPlugin = class extends Plugin {
     this.readerViews.delete(view);
   }
   renderReaderViews() {
+    this.miniOutline?.update();
     this.nativeToolbars?.render();
     for (const view of this.readerViews) {
       view.render();
@@ -46178,6 +46896,7 @@ var CosyVoiceReaderSettingTab = class extends PluginSettingTab {
     pages.engine.append(engineAdvanced);
     if (engineAdvanced.children.length === 1) engineAdvanced.hidden = true;
     containerEl = pages.playback;
+    addMiniOutlineSettings(this.plugin, containerEl, Setting);
     addReadingMenuSettings(containerEl, this.plugin, Setting);
     containerEl.createEl("h3", { text: translateInterface(settingsLanguage, "Playback", "\u64AD\u653E") });
     new Setting(containerEl).setName(translateInterface(settingsLanguage, "Smart quick start", "\u667A\u80FD\u5FEB\u901F\u8D77\u8BFB")).setDesc(translateInterface(

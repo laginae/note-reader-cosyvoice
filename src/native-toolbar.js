@@ -87,6 +87,7 @@ class NativeReaderToolbar {
     this.locate = this.button(controls, 'locate-fixed', ['Locate current reading', '定位正在朗读的位置'], () => plugin.locateCurrentReading());
     this.follow = this.button(controls, 'move-vertical', ['Auto-follow', '自动跟随'], () => toggleFollowing(plugin, kindFor(plugin, view)));
     this.outlineButton = this.button(controls, 'list-tree', ['Outline', '大纲'], () => {
+      if (plugin.miniOutline && !this.isWeb) return plugin.miniOutline.toggle(view);
       if (this.isPdf) { plugin.openPdfOutline(view.file); return; }
       this.outline.hidden = !this.outline.hidden; this.outlineButton.setAttribute('aria-expanded', String(!this.outline.hidden));
       if (!this.outline.hidden) this.refreshOutline();
@@ -102,6 +103,7 @@ class NativeReaderToolbar {
     this.button(controls, 'x', ['Hide reading toolbar', '隐藏朗读工具栏'], close);
     this.outline = node(this.root, 'div', 'note-reader-native-options'); this.outline.hidden = true;
     this.outlineButton.hidden = this.isWeb;
+    this.outlineButton.setAttribute('data-cozy-mini-toggle', '');
     this.heading = node(this.outline, 'select', 'note-reader-native-heading');
     this.heading.addEventListener('change', () => this.locateHeading());
     this.section = this.button(this.outline, 'audio-lines', ['Read this section', '只朗读这一节'], () => this.readHeading(false));
@@ -322,6 +324,7 @@ class NativeToolbarManager {
     if (old) { old.destroy(); this.toolbars.delete(view); }
     else this.toolbars.set(view, new NativeReaderToolbar(this.plugin, view, () => this.toggle(view)));
     this.render();
+    this.plugin.miniOutline?.schedule();
   }
   render() {
     for (const toolbar of this.toolbars.values()) toolbar.render();

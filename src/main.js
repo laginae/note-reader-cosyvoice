@@ -48,6 +48,8 @@ const { CopilotChatModal, addCopilotChatSettings, readLatestCopilotReply } = req
 const { createPdfSpeechChunker, splitPdfSpeechChunks } = require('./pdf-chunker');
 const { APPEARANCE_DEFAULTS, normalizeAppearance, applyAppearance, clearAppearance } = require('./reader-appearance');
 const { SidebarOutline } = require('./sidebar-outline');
+const { MINI_DEFAULTS, normalizeMiniSettings, addMiniOutlineSettings } = require('./mini-outline');
+const { installMiniOutline } = require('./mini-outline-adapter');
 const { PdfOutlineModal, addPdfOutlineSettings } = require('./pdf-outline-ui');
 const { readerRange } = require('./reader-selection');
 const { getSpeechParts, planSpeechParts, adjacentSpeechPart, getSpeechPartTiming } = require('./speech-parts');
@@ -1664,6 +1666,7 @@ function selectKnownSettings(defaults, candidate) {
 
 function createDefaultSettings() {
   return {
+    ...MINI_DEFAULTS,
     readingContextMenu: true,
     readingFloatingToolbar: false,
     readingFloatingAction: 'selection',
@@ -2514,6 +2517,7 @@ class CosyVoiceReaderPlugin extends Plugin {
     this.registerView(VIEW_TYPE, (leaf) => new CosyVoiceReaderView(leaf, this));
     this.registerView(DOCUMENT_VIEW_TYPE, leaf => new AccessibleReaderView(leaf, this));
     this.nativeToolbars = new NativeToolbarManager(this);
+    installMiniOutline(this);
     this.pdfHighlights = new PdfReadingHighlights(this);
     this.htmlHighlights = new HtmlReadingHighlights(this);
     this.register(() => this.htmlHighlights?.destroy());
@@ -2870,6 +2874,7 @@ class CosyVoiceReaderPlugin extends Plugin {
     const hadAzureCredentialSource = Object.prototype.hasOwnProperty.call(source, 'azureSpeechCredentialSource');
     const hadOpenRouterCredentialSource = Object.prototype.hasOwnProperty.call(source, 'openRouterCredentialSource');
     this.settings = selectKnownSettings(defaults, source);
+    Object.assign(this.settings, normalizeMiniSettings(this.settings));
     this.settings.ocrEnabled = this.settings.ocrEnabled === true;
     this.settings.ocrModel = this.settings.ocrModel === 'tiny' ? 'tiny' : 'small';
     this.settings.ocrExecutable = typeof this.settings.ocrExecutable === 'string' ? this.settings.ocrExecutable.trim().slice(0, 4096) : '';
@@ -2939,6 +2944,8 @@ class CosyVoiceReaderPlugin extends Plugin {
     this.settings.readingHighlight = normalizeReadingHighlight(this.settings.readingHighlight);
     this.settings.readingFollow = this.settings.readingFollow === true;
     this.settings = selectKnownSettings(createDefaultSettings(), this.settings);
+    Object.assign(this.settings, normalizeMiniSettings(this.settings));
+    this.miniOutline?.sync();
     this.settings.persistentAudioCache = this.settings.persistentAudioCache === true;
     this.settings.openRouterContext = this.settings.openRouterContext === true;
     this.settings.speechTermsEnabled = this.settings.speechTermsEnabled === true;
@@ -3151,6 +3158,7 @@ class CosyVoiceReaderPlugin extends Plugin {
   }
 
   renderReaderViews() {
+    this.miniOutline?.update();
     this.nativeToolbars?.render();
     for (const view of this.readerViews) {
       view.render();
@@ -8327,6 +8335,7 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
     pages.engine.append(engineAdvanced);
     if (engineAdvanced.children.length === 1) engineAdvanced.hidden = true;
     containerEl = pages.playback;
+    addMiniOutlineSettings(this.plugin, containerEl, Setting);
     addReadingMenuSettings(containerEl, this.plugin, Setting);
     containerEl.createEl('h3', { text: translateInterface(settingsLanguage, 'Playback', '播放') });
     new Setting(containerEl)
