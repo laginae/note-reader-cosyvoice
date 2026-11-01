@@ -8,8 +8,6 @@
 
 **语言：** [English](README.md) | 简体中文 | [Deutsch](README.de.md) | [Français](README.fr.md) | [Русский](README.ru.md) | [한국어](README.ko.md) | [日本語](README.ja.md) | [Español](README.es.md) | [Italiano](README.it.md) | [Português](README.pt.md)
 
-> **开发版说明：** 下文的新默认音色和迷你目录 180 像素宽度下限尚未包含在已发布版本中；已有音色选择不受影响。
-
 ### 看一次实际操作
 
 [![选中文字、开始朗读、暂停与继续，再按标题定位](docs/images/cozy-quick-tour.gif)](docs/media/cozy-quick-tour.mp4)
@@ -118,7 +116,7 @@ MiMo 会将文字发送给小米。[隐私政策](https://privacy.mi.com/XiaomiM
 
 选择 **自定义语音 API（BYOK）**，添加配置，再选择 **OpenAI-compatible、ElevenLabs 或 MiniMax**。每个配置单独保存模型、音色 ID 和密钥关联。OpenAI 兼容服务必须兼容**语音合成接口**，仅兼容聊天接口不能使用；请填写完整 HTTPS 语音地址。ElevenLabs 使用官方地址，MiniMax 可选国际站或国内站，需使用对应账户的密钥。
 
-OpenAI 兼容示例默认音色为 `coral`。[OpenAI 公告](https://developers.openai.com/api/docs/deprecations)称其 `gpt-4o-mini-tts` 模型将于 2027 年 1 月 6 日停用；官方推荐的替代模型使用不同的 Realtime 接口，不能仅在此配置中替换模型名。其他兼容服务的模型和音色由各自提供商决定。
+OpenAI 兼容示例默认音色为 `coral`。[OpenAI 公告](https://developers.openai.com/api/docs/deprecations)称其 `gpt-4o-mini-tts` 模型将于 2027 年 1 月 6 日停用；设置仅对受影响的 OpenAI 官方配置显示提醒。请另建配置选择 **OpenAI Realtime（实验性）**，重新选择秘密并明确授权，不能只在旧 Speech 配置中替换模型名，也不会自动迁移已有配置。新接口逐段缓冲、核对生成转写后才播放，导出 WAV；数字读法差异也可能触发保守拦截。尚未通过真实 OpenAI 账户验证，不保证更快或音频逐字无误。[配置与限制](docs/openai-realtime.zh-CN.md)。其他兼容服务的模型和音色由各自提供商决定。
 
 1. 填写模型和账户可用的音色 ID；旁边的文档按钮可打开官方接口说明。
 2. 选择 Obsidian 秘密存储中的密钥，或指定库外单行密钥文件。不要把密钥粘贴到地址或模型字段。

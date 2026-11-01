@@ -14,6 +14,26 @@ function setup(authorized = false) {
   return fixture;
 }
 
+test('OpenAI warning updates only for official legacy profiles; Realtime selection requires fresh credentials and consent', async () => {
+  const { dom, plugin, row } = setup(true);
+  try {
+    const notice = row('OpenAI API notice');
+    assert.equal(notice.settingEl.hidden, false);
+    assert.match(notice.descEl.textContent, /2027-01-06/);
+    await row('Speech endpoint').change('https://custom.example.org/v1/audio/speech');
+    assert.equal(notice.settingEl.hidden, true);
+    await row('API type').change('openai-realtime');
+    const p = plugin.settings.byokProfiles[0];
+    assert.equal(p.provider, 'openai-realtime');
+    assert.equal(p.chunkLimit, 200); assert.equal(p.secretName, ''); assert.equal(p.consent, '');
+    assert.equal(row('Model ID').controlEl.querySelector('input').disabled, true);
+    assert.equal(row('Voice ID').controlEl.querySelector('select').value, 'coral');
+    assert.match(row('Experimental Realtime reading').descEl.textContent, /no microphone/);
+    assert.equal(row('OpenAI API notice').settingEl.hidden, true);
+    assert.equal(hasByokConsent(p), false);
+  } finally { dom.window.close(); }
+});
+
 test('BYOK consent is explicit, cancellable and bound to the exact configuration shown in its dialog', async () => {
   const { dom, plugin, row, modals, rows } = setup();
   try {

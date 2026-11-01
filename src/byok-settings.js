@@ -5,6 +5,7 @@ const { translate } = require('./i18n');
 const { disclosure } = require('./engine-setup');
 const { BYOK_PROVIDERS, MAX_BYOK_PROFILES, createByokProfile, getByokProfile, updateByokProfile,
   getByokConfigurationError, byokConsentFingerprint, hasByokConsent } = require('./byok-tts');
+const { openAiSpeechNotice, REALTIME_VOICES } = require('./openai-speech-policy');
 
 class ByokConfirmModal extends Modal {
   constructor(plugin, title, description, action, closed = () => {}) {
@@ -50,8 +51,8 @@ function displayByokSettings(tab, containerEl, { canUseSecrets, credentialError,
   };
 
   new Setting(containerEl).setName(t('Custom speech API (BYOK)', '自定义语音 API（BYOK）'))
-    .setDesc(t('OpenAI-compatible speech, ElevenLabs and MiniMax. HTTPS only; MP3 output. Chat-only compatibility is not enough. Credentials are sent directly to the configured service.',
-      '支持 OpenAI 兼容语音接口、ElevenLabs、MiniMax。仅限 HTTPS 和 MP3 输出；仅兼容聊天接口不能用于朗读。密钥直接发送到配置的服务。'));
+    .setDesc(t('OpenAI-compatible speech, ElevenLabs, MiniMax, or experimental OpenAI Realtime (WAV). Chat-only compatibility is not enough. Credentials go directly to the configured service.',
+      '支持 OpenAI 兼容语音接口、ElevenLabs、MiniMax，以及实验性 OpenAI Realtime（WAV）。仅兼容聊天接口不能用于朗读；密钥直接发送到配置的服务。'));
   new Setting(containerEl).setName(t('API profile', '接口配置'))
     .addDropdown(dropdown => {
       profileDropdown = dropdown;
@@ -75,6 +76,11 @@ function displayByokSettings(tab, containerEl, { canUseSecrets, credentialError,
       }));
   if (!profile) return;
   const consentHost = containerEl.createDiv({ cls: 'note-reader-byok-consent' });
+  const apiNotice = new Setting(containerEl).setName(t('OpenAI API notice', 'OpenAI 接口提醒'));
+  if (profile.provider === 'openai-realtime') new Setting(containerEl)
+    .setName(t('Experimental Realtime reading', '实验性 Realtime 朗读'))
+    .setDesc(t('Separate short-lived session per segment; no microphone or tools. Audio is checked against its transcript before playback and WAV export. Mismatches stop reading. Numbers may fail this conservative check. Audio-token billing applies; no automatic retry or privacy guarantee. Live account and mobile-device validation is still required.',
+      '每段独立短期会话，不使用麦克风或工具。音频转写通过核对后才播放或导出 WAV，不一致则停止；数字读法差异也可能被拦截。按音频 token 计费，不自动重试、不保证 ZDR。仍需真实账户和移动真机验证。'));
 
   new Setting(containerEl).setName(t('Profile name', '配置名称'))
     .setDesc(t('Default names follow the API type. A name you enter is kept.', '默认名称随接口类型更新；手动命名后保留自定义名称。'))
@@ -93,7 +99,7 @@ function displayByokSettings(tab, containerEl, { canUseSecrets, credentialError,
       for (const [id, preset] of Object.entries(BYOK_PROVIDERS)) dropdown.addOption(id, preset.name);
       dropdown.setValue(profile.provider).onChange(provider => {
         const preset = BYOK_PROVIDERS[provider];
-        return update({ provider, endpoint: preset.endpoint, model: preset.model, voice: preset.voice }, true);
+        return update({ provider, endpoint: preset.endpoint, model: preset.model, voice: preset.voice, chunkLimit: preset.chunkLimit || 800 }, true);
       });
     });
   const endpointSetting = new Setting(containerEl).setName(t('Speech endpoint', '语音接口地址'))
@@ -106,16 +112,19 @@ function displayByokSettings(tab, containerEl, { canUseSecrets, credentialError,
     endpointSetting.addDropdown(dropdown => {
       if (profile.provider === 'minimax') dropdown.addOption('https://api.minimax.io/v1/t2a_v2', t('International', '国际站'))
         .addOption('https://api.minimaxi.com/v1/t2a_v2', t('Mainland China', '国内站'));
-      else dropdown.addOption(BYOK_PROVIDERS.elevenlabs.endpoint, 'api.elevenlabs.io');
+      else dropdown.addOption(BYOK_PROVIDERS[profile.provider].endpoint, profile.provider === 'openai-realtime' ? 'api.openai.com' : 'api.elevenlabs.io');
       dropdown.setValue(profile.endpoint).onChange(endpoint => update({ endpoint }, true));
     });
   }
   new Setting(containerEl).setName(t('Model ID', '模型 ID'))
-    .addText(text => text.setValue(profile.model).onChange(value => update({ model: value })));
+    .addText(text => text.setValue(profile.model).setDisabled(profile.provider === 'openai-realtime').onChange(value => update({ model: value })));
   new Setting(containerEl).setName(t('Voice ID', '音色 ID'))
     .setDesc(t('Use a voice ID available to your account; a display name may not work. This voice is AI-generated.',
       '填写当前账户可用的音色 ID，不一定是音色显示名称。此音色为 AI 合成。'))
-    .addText(text => text.setValue(profile.voice).onChange(value => update({ voice: value })))
+    [profile.provider === 'openai-realtime' ? 'addDropdown' : 'addText'](control => {
+      if (profile.provider === 'openai-realtime') for (const voice of REALTIME_VOICES) control.addOption(voice, voice);
+      control.setValue(profile.voice).onChange(value => update({ voice: value }));
+    })
     .addExtraButton(button => button.setIcon('external-link').setTooltip(t('Official API documentation', '官方接口文档'))
       .onClick(() => window.open(BYOK_PROVIDERS[profile.provider]?.docs || BYOK_PROVIDERS['openai-compatible'].docs, '_blank', 'noopener,noreferrer')));
   new Setting(containerEl).setName(t('Credential source', '密钥来源'))
@@ -140,10 +149,12 @@ function displayByokSettings(tab, containerEl, { canUseSecrets, credentialError,
   }
   const advanced = disclosure(containerEl, t('API advanced options', '接口高级选项'));
   new Setting(advanced).setName(t('Maximum characters per chunk', '每段字符上限'))
-    .setDesc(t('50-2000, default 800. Also capped by online chunk settings; reduce for services with lower limits. Playback speed is adjusted locally.',
-      '50–2000，默认 800。与在线分段设置取较小值；服务限制更低时请调小。播放倍速在本地调整。'))
+    .setDesc(profile.provider === 'openai-realtime'
+      ? t('50-800, default 200. Each segment uses a separate session; playback speed is adjusted locally.', '50–800，默认 200。每段使用独立会话，播放倍速在本地调整。')
+      : t('50-2000, default 800. Also capped by online chunk settings; reduce for services with lower limits. Playback speed is adjusted locally.',
+        '50–2000，默认 800。与在线分段设置取较小值；服务限制更低时请调小。播放倍速在本地调整。'))
     .addText(text => text.setValue(String(profile.chunkLimit)).onChange(value => {
-      if (/^\d+$/.test(value) && Number(value) >= 50 && Number(value) <= 2000) return update({ chunkLimit: Number(value) });
+      if (/^\d+$/.test(value) && Number(value) >= 50 && Number(value) <= (profile.provider === 'openai-realtime' ? 800 : 2000)) return update({ chunkLimit: Number(value) });
     }));
 
   let consentToggle;
@@ -177,6 +188,9 @@ function displayByokSettings(tab, containerEl, { canUseSecrets, credentialError,
   });
   refresh = () => {
     const current = find();
+    const notice = openAiSpeechNotice(current, plugin.settings.settingsLanguage === 'chinese');
+    apiNotice.settingEl.hidden = !notice;
+    apiNotice.setDesc(notice);
     const allowed = hasByokConsent(current);
     consentToggle?.setValue(allowed);
     const state = allowed ? t('Authorized for this configuration.', '已授权此配置。')

@@ -2,9 +2,11 @@
 
 const { createHash, randomUUID } = require('crypto');
 const { extractMp3Frames } = require('./audio-export');
+const { REALTIME_ENDPOINT, REALTIME_MODEL, realtimeConfigurationError } = require('./openai-speech-policy');
 
 const BYOK_DEFAULTS = { byokProfiles: [], byokActiveProfileId: '' };
 const BYOK_PROVIDERS = {
+  'openai-realtime': { name: 'OpenAI Realtime (experimental)', endpoint: REALTIME_ENDPOINT, model: REALTIME_MODEL, voice: 'coral', chunkLimit: 200, docs: 'https://developers.openai.com/api/docs/guides/realtime' },
   'openai-compatible': { name: 'OpenAI-compatible', endpoint: 'https://api.openai.com/v1/audio/speech', model: 'gpt-4o-mini-tts', voice: 'coral', docs: 'https://developers.openai.com/api/docs/guides/text-to-speech' },
   elevenlabs: { name: 'ElevenLabs', endpoint: 'https://api.elevenlabs.io/v1/text-to-speech', model: 'eleven_multilingual_v2', voice: '', docs: 'https://elevenlabs.io/docs/api-reference/text-to-speech/convert' },
   minimax: { name: 'MiniMax', endpoint: 'https://api.minimax.io/v1/t2a_v2', model: 'speech-2.8-hd', voice: '', docs: 'https://platform.minimax.io/docs/api-reference/speech-t2a-http' },
@@ -37,7 +39,7 @@ function normalizeProfile(value = {}) {
     model: clean(value.model), voice: clean(value.voice),
     credentialSource: value.credentialSource === 'key-file' ? 'key-file' : 'obsidian-secret',
     secretName: clean(value.secretName), keyPath: clean(value.keyPath, 2048),
-    chunkLimit: Math.max(50, Math.min(2000, Math.floor(Number(value.chunkLimit) || 800))),
+    chunkLimit: Math.max(50, Math.min(provider === 'openai-realtime' ? 800 : 2000, Math.floor(Number(value.chunkLimit) || preset?.chunkLimit || 800))),
     consent: /^[a-f0-9]{64}$/.test(value.consent || '') ? value.consent : '',
   };
 }
@@ -64,6 +66,7 @@ function validateByokEndpoint(profile) {
     throw byokError('Only HTTPS addresses without embedded credentials, query parameters or fragments are allowed. / 地址须为 HTTPS，不能含密钥、查询参数或片段。');
   }
   if (!Object.hasOwn(BYOK_PROVIDERS, profile.provider)) throw byokError('Choose a supported API type. / 请选择支持的接口类型。');
+  if (profile.provider === 'openai-realtime' && url.href !== REALTIME_ENDPOINT) throw byokError('Use the fixed official OpenAI Realtime endpoint. / 请使用固定的 OpenAI Realtime 官方接口。');
   if (profile.provider === 'elevenlabs' && url.href !== BYOK_PROVIDERS.elevenlabs.endpoint) {
     throw byokError('Use the ElevenLabs text-to-speech endpoint shown in the preset. / 请使用预设的 ElevenLabs 语音接口。');
   }
@@ -91,6 +94,8 @@ function hasByokConsent(profile) {
 function getByokConfigurationError(profile, requireConsent = true) {
   if (!profile) return 'BYOK: add and select an API profile. / 请添加并选择接口配置。';
   try { validateByokEndpoint(profile); } catch (error) { return error.message; }
+  const realtimeError = realtimeConfigurationError(profile);
+  if (realtimeError) return realtimeError;
   if (!profile.model || !profile.voice || /[\r\n]/.test(profile.model + profile.voice)) return 'BYOK: enter a model and voice ID. / 请填写模型和音色 ID。';
   if (requireConsent && !hasByokConsent(profile)) return 'BYOK: confirm data processing and billing risks for this configuration in settings. / 请在设置中确认当前配置的数据处理与费用风险。';
   return null;
@@ -142,6 +147,7 @@ function decodeMinimaxAudio(bytes) {
 }
 
 function buildByokRequest(profile, text, apiKey) {
+  if (profile?.provider === 'openai-realtime') throw byokError('Use the separate Realtime transport. / 请使用独立的 Realtime 连接。');
   const error = getByokConfigurationError(profile);
   if (error) throw byokError(error.replace(/^BYOK: /, ''));
   if (typeof apiKey !== 'string' || !apiKey.trim() || /[\r\n]/.test(apiKey)) throw byokError('Invalid API credential. / API 密钥无效。');
@@ -165,7 +171,7 @@ function buildByokRequest(profile, text, apiKey) {
 }
 
 function safeByokRequestError(error) {
-  if (error?.byokSafe) return error;
+  if (error?.byokSafe || error?.realtimeSafe) return error;
   const status = Number(error?.statusCode);
   const detail = status === 401 || status === 403 ? 'Check the API key and account permissions. / 请检查密钥和账户权限。'
     : status === 402 ? 'Insufficient balance or billing quota. / 余额不足或计费额度已用尽。'

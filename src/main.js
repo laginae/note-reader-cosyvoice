@@ -2097,7 +2097,9 @@ function isMarkdownFile(file) {
   return Boolean(file && String(file.extension || '').toLowerCase() === 'md');
 }
 
-function getAudioExportExtension(speechEngine) {
+function getAudioExportExtension(speechEngine, settings = {}) {
+  if (normalizeSpeechEngine(speechEngine) === 'byok-tts'
+    && (settings.byokProfile || getByokProfile(settings))?.provider === 'openai-realtime') return 'wav';
   return ['local-cosyvoice', 'system-tts', 'mimo-tts'].includes(normalizeSpeechEngine(speechEngine)) ? 'wav' : 'mp3';
 }
 
@@ -4380,7 +4382,7 @@ class CosyVoiceReaderPlugin extends Plugin {
     if (!configuration) {
       return null;
     }
-    const extension = getAudioExportExtension(configuration.speechEngine);
+    const extension = getAudioExportExtension(configuration.speechEngine, configuration);
     const exportPlan = await this.getAudioExportTargetPlan(context.file, extension, scope);
     let text = '';
     if (context.documentKind === 'markdown') {
@@ -4892,6 +4894,7 @@ class CosyVoiceReaderPlugin extends Plugin {
       systemVoice: configuration.systemVoice || '',
       speechPartLimit: Math.max(...(configuration.chunkLimits || [800])),
       systemSpeechControllers: new Set(),
+      realtimeControllers: new Set(),
       speechStarted: false,
       stopped: false,
       taskState: createTaskState(id, options.kind === 'pdf-progressive' ? 'extracting' : 'queued'),
@@ -5824,7 +5827,7 @@ class CosyVoiceReaderPlugin extends Plugin {
     assertPermission();
     if (!this.isActive(session)) throw new Error('Reading stopped.');
     if (cached) {
-      const outputPath = path.join(this.cacheDir, `${Date.now()}-${session.id}-${index}-${part}.${getAudioExportExtension(session.speechEngine)}`);
+      const outputPath = path.join(this.cacheDir, `${Date.now()}-${session.id}-${index}-${part}.${getAudioExportExtension(session.speechEngine, session.synthesisSettings)}`);
       session.files.push(outputPath);
       await fs.promises.writeFile(outputPath, Buffer.from(cached.arrayBuffer), { mode: 0o600 });
       if (!this.isActive(session)) {
@@ -5855,7 +5858,7 @@ class CosyVoiceReaderPlugin extends Plugin {
     const speechEngine = normalizeSpeechEngine(session.speechEngine || this.settings.speechEngine);
     session.synthesisSpeeds[index] = effectiveSynthesisSpeed({ ...(session.synthesisSettings || this.settings), speechEngine });
     const engineLabel = session.engineLabel || getSpeechEngineLabel(this.settings);
-    const outputExtension = getAudioExportExtension(speechEngine);
+    const outputExtension = getAudioExportExtension(speechEngine, session.synthesisSettings || this.settings);
     const basename = `${Date.now()}-${session.id}-${index}-${part}`;
     const inputPath = path.join(this.cacheDir, `${basename}.txt`);
     const outputPath = path.join(this.cacheDir, `${basename}.${outputExtension}`);
@@ -6419,6 +6422,23 @@ class CosyVoiceReaderPlugin extends Plugin {
     const text = await fs.promises.readFile(inputPath, 'utf8');
     assertByokAuthorized(profile, this.settings);
     if (!this.isActive(session)) throw new Error('Reading stopped.');
+    if (profile.provider === 'openai-realtime') {
+      const controller = new AbortController();
+      session.realtimeControllers ||= new Set();
+      session.realtimeControllers.add(controller);
+      try {
+        const { synthesizeRealtimeWav } = require('./openai-realtime-desktop');
+        const assertAuthorized = () => {
+          assertByokAuthorized(profile, this.settings);
+          if (!this.isActive(session)) throw new Error('Reading stopped.');
+        };
+        const audio = await synthesizeRealtimeWav({ profile, text, apiKey, signal: controller.signal, assertAuthorized });
+        assertAuthorized();
+        await fs.promises.writeFile(outputPath, audio, { mode: 0o600 });
+        assertAuthorized();
+      } finally { session.realtimeControllers.delete(controller); controller.abort(); }
+      return;
+    }
     const request = buildByokRequest(profile, text, apiKey);
     try {
       await this.requestRemoteAudio({ ...request, outputPath, session,
@@ -7109,6 +7129,7 @@ class CosyVoiceReaderPlugin extends Plugin {
       session.preparationPool?.clear();
       this.playbackTimings?.suspend();
       for (const controller of session.systemSpeechControllers || []) controller.abort();
+      for (const controller of session.realtimeControllers || []) controller.abort();
       this.notifySessionNavigation(session);
     }
 

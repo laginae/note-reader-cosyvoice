@@ -28,6 +28,8 @@ With the toolbar or one of its buttons focused, press **Space** to pause/resume 
 
 Open `Settings -> Cozy Read Aloud` and choose `Speech engine`.
 
+For direct OpenAI accounts, **Custom speech API (BYOK) -> OpenAI Realtime (experimental)** uses a separate protocol with explicit new authorization and WAV output. It is not a model-ID-only migration from the deprecated Speech models. Read the [setup and validation limits](docs/openai-realtime.md) before enabling; real OpenAI account validation is still pending.
+
 - New installations start with system speech; existing users keep their configured engine. `Local CosyVoice` remains available with your configured PowerShell wrapper.
 - `System local speech (Windows/macOS)` uses installed Windows SAPI or macOS `say` voices without an API key, automatic downloads or cloud fallback. Select a detected voice, or keep the installed system default; refresh after downloading more voices. The settings page includes optional platform-specific download steps and official help links. Narrator natural voices and Siri-only voices may not be exposed to these interfaces. Synthesis and exported WAV use normal pace; adjust playback rate in the reader panel. See the bilingual README for privacy boundaries and macOS testing limitations.
 - `Microsoft Edge online voice` calls the configured `edge-tts` command-line tool and sends text to Microsoft Edge TTS after explicit consent. Its default voice is UK English female `en-GB-SoniaNeural`.

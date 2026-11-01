@@ -8,8 +8,6 @@ Read aloud **notes, PDFs, HTML files, web pages and saved Copilot chats** with l
 
 **Language:** English | [简体中文](README.zh-CN.md) | [Deutsch](README.de.md) | [Français](README.fr.md) | [Русский](README.ru.md) | [한국어](README.ko.md) | [日本語](README.ja.md) | [Español](README.es.md) | [Italiano](README.it.md) | [Português](README.pt.md)
 
-> **Development branch:** The new voice defaults and 180-pixel mini-outline minimum described below are not yet included in a published release. Existing voice choices are preserved.
-
 ### See it in action
 
 [![Select a passage, read it aloud, pause and resume, then navigate by heading](docs/images/cozy-quick-tour.gif)](docs/media/cozy-quick-tour.mp4)
@@ -125,7 +123,7 @@ Changing the API type/address clears credential references; changing the model, 
 
 Protocol references: [OpenAI speech](https://developers.openai.com/api/docs/guides/text-to-speech), [ElevenLabs speech](https://elevenlabs.io/docs/api-reference/text-to-speech/convert), [MiniMax speech](https://platform.minimax.io/docs/api-reference/speech-t2a-http).
 
-The OpenAI-compatible example uses the `coral` voice. OpenAI has announced that its `gpt-4o-mini-tts` model will shut down on January 6, 2027; its recommended replacement uses a different Realtime API and cannot simply be substituted in this profile. See [OpenAI's deprecation notice](https://developers.openai.com/api/docs/deprecations). Other OpenAI-compatible services set their own model and voice availability.
+The OpenAI-compatible example uses the `coral` voice. OpenAI has announced that its `gpt-4o-mini-tts` model will shut down on January 6, 2027; settings show a reminder only for affected official OpenAI profiles. Its replacement uses a different API: create a separate **OpenAI Realtime (experimental)** profile rather than replacing the model ID in the old Speech profile. Re-select a secret and explicitly authorize that configuration. Existing profiles are not migrated. Realtime buffers each segment, checks its generated transcript before playback, and exports WAV; numeric wording differences can cause conservative rejection. Live OpenAI account testing is still pending; no lower latency or verbatim audio guarantee is made. [Setup and limitations](docs/openai-realtime.md) · [OpenAI's deprecation notice](https://developers.openai.com/api/docs/deprecations). Other OpenAI-compatible services set their own model and voice availability.
 
 The authorization switch sits directly below profile selection, with the current permission status and destination. Expand **BYOK processing and billing risks** for this mode's notice, or use **View general privacy information** to open **Privacy and help**. The common disclosure there applies to every speech engine, not just BYOK. Default profile names follow the API type; manually named profiles keep their name and display the type alongside it.
 
