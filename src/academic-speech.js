@@ -2,6 +2,7 @@
 const { structuredMathSpeech, replacePlainStructuredMath } = require('./structured-math');
 const { greekMathCommands, greekNames } = require('./math-symbols');
 const { simpleFunctionCalls, speakSimpleFunctions } = require('./math-functions');
+const { conciseMathLabels } = require('./math-variable-labels');
 
 const ACADEMIC_DEFAULTS = { academicMathMode: 'smart', academicMathStyle: 'concise', academicTableMode: 'smart', academicSkipNotice: true };
 function academicOptions(settings = {}) {
@@ -130,6 +131,7 @@ function mathSpeech(content, inputOptions = {}) {
   if (options.mathReadingLanguage === 'skip' || options.academicMathMode === 'skip') return omission('formula', options);
   let value = normalizeMathPresentation(content);
   if (value === null) return omission('formula', options);
+  if (brief) value = value.replace(/\\widehat\b/g, '\\hat').replace(/\\widetilde\b/g, '\\tilde');
   if (/^\s*(?:\\?(?:min|max)\b|\\[lr](?:ceil|floor)\b|[⌈⌊])/.test(value)) {
     return structuredMathSpeech(value, zh, options.academicMathMode !== 'all') ?? omission('formula', options);
   }
@@ -139,6 +141,7 @@ function mathSpeech(content, inputOptions = {}) {
   if (semantic.length > limit || /\\(?:begin|end|sum|prod|int|iint|oint|cases|matrix)\b|\\\\/.test(value)) return omission('formula', options);
   const symbols = { ell:'ell', ...Object.fromEntries(Object.values(greekNames).map(name => [name, name])) };
   const known = new Set([...Object.keys(symbols), 'Gamma','Delta','Theta','Lambda','Sigma','Omega','Phi','Pi','Psi','psi','frac','dfrac','tfrac','sqrt','bar','overline','hat','tilde','vec','dot','ddot','text','mathrm','mathbf','mathbb','boldsymbol','operatorname','left','right','lvert','rvert','vert','leq','geq','le','ge','lt','gt','neq','ne','approx','times','cdot','pm','mp','infty','to','rightarrow','leftarrow','in','notin','partial']);
+  if (brief) for (const command of ['prime', 'ast', 'star', 'top']) known.add(command);
   if (commands.some(c => !known.has(c.slice(1)))) return omission('formula', options);
   let depth = 0, maxDepth = 0;
   for (const c of value) { if (c === '{') maxDepth = Math.max(maxDepth, ++depth); if (c === '}' && --depth < 0) return omission('formula',options); }
@@ -163,6 +166,8 @@ function mathSpeech(content, inputOptions = {}) {
   }
   if (options.academicMathMode === 'smart' && complexListeningMath(value)) return omission('formula', options);
   if (brief) {
+    value = conciseMathLabels(value, zh).text;
+    if (/\\(?:prime|ast|star|top)\b|['′″]/.test(value)) return omission('formula', options);
     const call = value.match(/^(\\[A-Za-z]+|[A-Za-z])\s*(?:\[([A-Za-z])\]|\(([A-Za-z])\))$/);
     if (call) return `${mathSpeech(call[1], options)} of ${call[2] || call[3]}`;
     value = speakSimpleFunctions(value.replace(/\\(?:left|right)\b/g, ''),

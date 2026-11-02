@@ -2,6 +2,8 @@
 
 const { academicOptions, contextualMathOptions, mathSpeech, omission, formulaNoticeWithPause, formulaNoticeEnding, complexListeningMath } = require('./academic-speech');
 const { structuredMathSpeech } = require('./structured-math');
+const { conciseMathLabels } = require('./math-variable-labels');
+const { greekMathCommands } = require('./math-symbols');
 
 const mathGlyph = /[\u{1d400}-\u{1d7ff}\u220f\u2211\u221a\u222b-\u2233]|(?<![\p{Script=Greek}\p{M}])[\u0391-\u03c9](?![\p{Script=Greek}\p{M}])/u;
 const mathOperator = /[=+\-\u2212<>\u2264\u2265\u2248\u2260\u00d7\u00f7\u00b1\u2213*/|]/;
@@ -100,7 +102,8 @@ function pdfMathChanges(layout, items, settings = {}, names = {}, encodingContex
     mapped.forEach((token, i) => {
       const previous = mapped[i - 1];
       const label = token.item.str.trim();
-      if (!previous || label.length > 12 || !/^[A-Za-z0-9]+(?:\s*[,+−-]\s*[A-Za-z0-9]+)*$/.test(label)) return;
+      const shortMark = options.academicMathStyle === 'concise' && /^(?:[*∗⋆⊤′″]|'{1,2})$/.test(label);
+      if (!previous || label.length > 12 || (!shortMark && !/^[A-Za-z0-9]+(?:\s*[,+−-]\s*[A-Za-z0-9]+)*$/.test(label))) return;
       const base = previous.item, script = token.item;
       const baseHeight = Math.abs(base.height || base.transform[3]);
       const scriptHeight = Math.abs(script.height || script.transform[3]);
@@ -227,7 +230,8 @@ function pdfMathChanges(layout, items, settings = {}, names = {}, encodingContex
       run.omit = row.skipDisplay || tokens.some(token => token.unsafe) || (skipAll && row.supported !== false)
         || (filtering && !row.display && complex(expression));
       if (run.omit) return true;
-      if (!mathOperator.test(source) && !tokens.some(token => token.repaired || token.script)) return false;
+      const shortLabel = options.academicMathStyle === 'concise' && conciseMathLabels(greekMathCommands(source)).changed;
+      if (!mathOperator.test(source) && !tokens.some(token => token.repaired || token.script) && !shortLabel) return false;
       const local = contextualMathOptions(options, line.text.slice(0, run.start) || row.noticeContext, line.text.slice(run.end));
       const spoken = mathSpeech(expression, { ...local, academicMathMode:'all', academicSkipNotice:true });
       if (!spoken || spoken === 'Formula.' || spoken === '公式。') return false;
