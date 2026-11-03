@@ -17,7 +17,8 @@ test('concise math preserves fraction order, short commands, bounds, subscripts 
   assert.equal(mathSpeech('x_i', { academicMathStyle:'verbose', mathReadingLanguage:'chinese' }), 'x 下标 i');
   assert.equal(mathSpeech(String.raw`|Y\_{k,h}|`), 'absolute value of Y k h');
   assert.equal(mathSpeech(String.raw`\sqrt{x}`), 'square root of x');
-  assert.match(mathSpeech(String.raw`\frac{1}{a-b}`), /open parenthesis a minus b close parenthesis/);
+  assert.equal(mathSpeech(String.raw`\frac{1}{a-b}`), '1 divided by the difference of a and b');
+  assert.match(mathSpeech(String.raw`\frac{1}{a-b}`, { academicMathStyle:'verbose' }), /open parenthesis a minus b close parenthesis/);
   assert.equal(citations(academicLatex('Bounds $[1,2]$ and $x<y$; $z>w$.')), 'Bounds  1 to 2  and  x less than y ;  z greater than w .');
 });
 

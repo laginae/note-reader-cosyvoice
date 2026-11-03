@@ -96,7 +96,8 @@ test('concise arithmetic keeps grouping in natural language and full mode keeps 
   assert.equal(mathSpeech('f(a,b)', zh), 'f，参数为 a、b');
   assert.equal(mathSpeech('[x_i,y_j]', zh), 'x i、y j');
   assert.match(mathSpeech('f(a+b)'), /open parenthesis/);
-  assert.match(mathSpeech('(a+b)/c'), /open parenthesis/);
+  assert.equal(mathSpeech('(a+b)/c'), 'the sum of a and b, divided by c');
+  assert.match(mathSpeech('(a+b)/c', { academicMathStyle: 'verbose' }), /open parenthesis/);
   assert.equal(mathSpeech('a-b', zh), 'a 减 b');
 });
 

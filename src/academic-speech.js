@@ -4,6 +4,16 @@ const { greekMathCommands, greekNames } = require('./math-symbols');
 const { simpleFunctionCalls, speakSimpleFunctions } = require('./math-functions');
 const { conciseMathLabels } = require('./math-variable-labels');
 const { intervalProse, bracketMathSpeech, conciseBracketSpeech } = require('./math-collections');
+const { conciseFractionSpeech } = require('./math-fractions');
+
+const GREEK_NAMES = new Set(Object.values(greekNames));
+const MATH_SYMBOLS = { ell: 'ell', ...Object.fromEntries([...GREEK_NAMES].map(name => [name, name])) };
+const MATH_COMMANDS = new Set([...Object.keys(MATH_SYMBOLS), 'Gamma','Delta','Theta','Lambda','Sigma','Omega','Phi','Pi','Psi','psi','frac','dfrac','tfrac','sqrt','bar','overline','hat','tilde','vec','dot','ddot','text','mathrm','mathbf','mathbb','boldsymbol','operatorname','left','right','lvert','rvert','vert','leq','geq','le','ge','lt','gt','neq','ne','approx','times','cdot','pm','mp','infty','to','rightarrow','leftarrow','in','notin','partial','lbrace','rbrace']);
+const CONCISE_COMMANDS = new Set(['prime', 'ast', 'star', 'top']);
+const SCRIPT_SYMBOL = new RegExp('([_^])\\s*(\\\\(?:' + [...GREEK_NAMES, 'ell', 'infty'].join('|') + '))(?![A-Za-z])', 'g');
+const GREEK_FACTOR = new RegExp('(?<![A-Za-z\\\\])([A-Za-z](?:_\\{[A-Za-z0-9]+\\})?)\\s*(?=\\\\(?:' + [...GREEK_NAMES].join('|') + ')\\b)', 'g');
+const MATH_OPERATORS = {leq:['less than or equal to','小于等于'],geq:['greater than or equal to','大于等于'],neq:['not equal to','不等于'],approx:['approximately equal to','约等于'],times:['times','乘以'],cdot:['times','乘以'],pm:['plus or minus','正负'],mp:['minus or plus','负正'],infty:['infinity','无穷'],to:['to','到'],rightarrow:['to','到'],leftarrow:['from','来自'],in:['belongs to','属于'],notin:['does not belong to','不属于'],partial:['partial','偏导']};
+Object.assign(MATH_OPERATORS, {le:MATH_OPERATORS.leq,ge:MATH_OPERATORS.geq,ne:MATH_OPERATORS.neq,lt:['less than','小于'],gt:['greater than','大于']});
 
 const ACADEMIC_DEFAULTS = { academicMathMode: 'smart', academicMathStyle: 'concise', academicTableMode: 'smart', academicSkipNotice: true };
 function academicOptions(settings = {}) {
@@ -90,8 +100,7 @@ function normalizeMathPresentation(content) {
   }
   // min/max are labels only inside a simple script, not general operator support.
   value = value.replace(/([_^])\s*\{\s*\\(min|max)\s*\}/g, '$1{$2}');
-  const scriptSymbol = new RegExp('([_^])\\s*(\\\\(?:' + [...new Set(Object.values(greekNames)), 'ell', 'infty'].join('|') + '))(?![A-Za-z])', 'g');
-  return value.replace(scriptSymbol, '$1{$2}')
+  return value.replace(SCRIPT_SYMBOL, '$1{$2}')
     .replace(/([_^])\s*\\(min|max)\b/g, '$1{$2}');
 }
 // Only conventional lower/upper labels imply ranges without additional context.
@@ -109,6 +118,9 @@ function namedBounds(value) {
 function complexListeningMath(content) {
   const normalized = normalizeMathPresentation(content);
   if (normalized === null) return true;
+  return complexNormalizedMath(normalized);
+}
+function complexNormalizedMath(normalized) {
   const value = normalized.replace(/[_^]\s*(?:\{[^{}]*\}|\\[A-Za-z]+|[A-Za-z0-9])/g, '')
     .replace(/\\(?:left|right)\b/g, '')
     .replace(/\\(?:leq?|geq?|neq?|approx|times|cdot|pm|mp|to|rightarrow)\b/g, '+');
@@ -129,12 +141,50 @@ function complexListeningMath(content) {
     || (groups >= 3 && operations >= 2)
     || (commas >= 3 && /[\[\{]/.test(value)) || (transpose && commas > 0);
 }
+
+const STANDALONE_MATH_OPERATORS = {
+  max: ['max', 'max'], min: ['min', 'min'], argmax: ['arg max', 'arg max'], argmin: ['arg min', 'arg min'],
+  sup: ['supremum', '上确界'], inf: ['infimum', '下确界'], lim: ['limit', '极限'],
+  log: ['log', '对数'], ln: ['natural log', '自然对数'], exp: ['exponential', '指数函数'],
+  sin: ['sine', '正弦'], cos: ['cosine', '余弦'], tan: ['tangent', '正切'],
+  det: ['determinant', '行列式'], sum: ['summation', '求和'], prod: ['product', '连乘'], int: ['integral', '积分'],
+};
+const SIMPLE_MATH_ATOM = '(?:[A-Za-z](?:_\\s*(?:\\{[A-Za-z0-9]{1,8}\\}|[A-Za-z0-9]))?|\\\\[A-Za-z]+|\\d+(?:\\.\\d+)?)';
+const SIMPLE_UNARY_MATH = new RegExp(
+  '^\\\\(sin|cos|tan|log|ln|exp)(?:\\s+(' + SIMPLE_MATH_ATOM + ')|\\s*\\(\\s*('
+  + SIMPLE_MATH_ATOM + ')\\s*\\)|\\s*\\{\\s*(' + SIMPLE_MATH_ATOM + ')\\s*\\}|\\s*(\\\\[A-Za-z]+))$'
+);
+
+// Only isolated operators and a single unambiguous argument bypass complex-math parsing.
+function shortMathOperator(value, options) {
+  if (value.length > 32) return null;
+  const zh = options.mathReadingLanguage === 'chinese';
+  const command = value.match(/^\\([A-Za-z]+)$/);
+  const named = value.match(/^\\operatorname\*?\s*\{\s*(arg\s*(?:max|min)|[A-Za-z]+)\s*\}$/);
+  const argExtremum = value.match(/^\\arg\s*\\(max|min)$/);
+  const literal = value.match(/^(max|min)$/);
+  const name = argExtremum ? 'arg' + argExtremum[1]
+    : (command?.[1] || named?.[1]?.replace(/\s/g, '') || literal?.[1]);
+  if (name && Object.prototype.hasOwnProperty.call(STANDALONE_MATH_OPERATORS, name)) return STANDALONE_MATH_OPERATORS[name][zh ? 1 : 0];
+  const call = value.match(SIMPLE_UNARY_MATH);
+  if (!call) return null;
+  const atom = call.slice(2).find(Boolean);
+  if (atom.startsWith('\\') && !GREEK_NAMES.has(atom.slice(1))) return null;
+  const argument = mathSpeech(atom, { ...options, academicSkipNotice: true });
+  if (!argument || /^(?:Formula\.|公式。)$/.test(argument)) return null;
+  const label = STANDALONE_MATH_OPERATORS[call[1]];
+  if (call[1] === 'exp') return zh ? 'e 的 ' + argument + ' 次方' : 'e to the power of ' + argument;
+  return zh ? argument + ' 的' + label[1] : label[0] + ' of ' + argument;
+}
+
 function mathSpeech(content, inputOptions = {}) {
   const options = academicOptions(inputOptions), zh = options.mathReadingLanguage === 'chinese', brief = options.academicMathStyle === 'concise';
   if (options.mathReadingLanguage === 'skip' || options.academicMathMode === 'skip') return omission('formula', options);
   let value = normalizeMathPresentation(content);
   if (value === null) return omission('formula', options);
   if (brief) value = value.replace(/\\widehat\b/g, '\\hat').replace(/\\widetilde\b/g, '\\tilde');
+  const shortOperator = shortMathOperator(value, options);
+  if (shortOperator !== null) return shortOperator;
   if (/^\s*(?:\\?(?:min|max)\b|\\[lr](?:ceil|floor)\b|[⌈⌊])/.test(value)) {
     return structuredMathSpeech(value, zh, options.academicMathMode !== 'all') ?? omission('formula', options);
   }
@@ -142,11 +192,7 @@ function mathSpeech(content, inputOptions = {}) {
   const semantic = value.replace(/\\[A-Za-z]+/g,'x').replace(/[{}\s]/g,'');
   const limit = options.academicMathMode === 'all' ? 100 : 32;
   if (semantic.length > limit || /\\(?:begin|end|sum|prod|int|iint|oint|cases|matrix)\b|\\\\/.test(value)) return omission('formula', options);
-  const symbols = { ell:'ell', ...Object.fromEntries(Object.values(greekNames).map(name => [name, name])) };
-  const known = new Set([...Object.keys(symbols), 'Gamma','Delta','Theta','Lambda','Sigma','Omega','Phi','Pi','Psi','psi','frac','dfrac','tfrac','sqrt','bar','overline','hat','tilde','vec','dot','ddot','text','mathrm','mathbf','mathbb','boldsymbol','operatorname','left','right','lvert','rvert','vert','leq','geq','le','ge','lt','gt','neq','ne','approx','times','cdot','pm','mp','infty','to','rightarrow','leftarrow','in','notin','partial']);
-  if (brief) for (const command of ['prime', 'ast', 'star', 'top']) known.add(command);
-  for (const command of ['lbrace', 'rbrace']) known.add(command);
-  if (commands.some(c => !known.has(c.slice(1)))) return omission('formula', options);
+  if (commands.some(c => !MATH_COMMANDS.has(c.slice(1)) && !(brief && CONCISE_COMMANDS.has(c.slice(1))))) return omission('formula', options);
   let depth = 0, maxDepth = 0;
   for (const c of value) { if (c === '{') maxDepth = Math.max(maxDepth, ++depth); if (c === '}' && --depth < 0) return omission('formula',options); }
   if (depth || maxDepth > 3) return omission('formula', options);
@@ -172,8 +218,10 @@ function mathSpeech(content, inputOptions = {}) {
     const range = endpoints.join(zh ? ' 到 ' : ' to ');
     return brief ? range : (zh ? '闭区间，' : 'closed interval, ') + range;
   }
-  if (options.academicMathMode === 'smart' && complexListeningMath(value)) return omission('formula', options);
+  if (options.academicMathMode === 'smart' && complexNormalizedMath(value)) return omission('formula', options);
   if (brief) {
+    const fraction = conciseFractionSpeech(value, zh, atom => mathSpeech(atom, { ...options, academicSkipNotice: true }));
+    if (fraction !== null) return fraction;
     const simpleBrackets = conciseBracketSpeech(value, zh, atom => mathSpeech(atom, { ...options, academicSkipNotice: true }));
     if (simpleBrackets !== null) return simpleBrackets;
     value = conciseMathLabels(value, zh).text;
@@ -186,8 +234,7 @@ function mathSpeech(content, inputOptions = {}) {
   // Explicitly speak products of adjacent, simply subscripted variables.
   value = value.replace(/([A-Za-z]_\{\s*(?:\\[A-Za-z]+|[A-Za-z0-9]+)\s*\})\s*(?=[A-Za-z]_\{)/g, '$1 * ');
   // A single Latin factor next to a Greek symbol is a product, not a word.
-  const greekFactor = Object.keys(symbols).filter(name => name !== 'ell').join('|');
-  value = value.replace(new RegExp('(?<![A-Za-z\\\\])([A-Za-z](?:_\\{[A-Za-z0-9]+\\})?)\\s*(?=\\\\(?:' + greekFactor + ')\\b)', 'g'), '$1 * ');
+  value = value.replace(GREEK_FACTOR, '$1 * ');
   value = value.replace(/\\(?:left|right)\b/g,'').replace(/\\(?:lvert|rvert|vert)\b/g,'|');
   const group = (inner) => /[+−=<>-]|\bover\b|分之/.test(inner) ? (zh ? ` 括号 ${inner} 括号结束 ` : ` open parenthesis ${inner} close parenthesis `) : inner;
   for (let pass=0;pass<4;pass++) {
@@ -218,9 +265,7 @@ function mathSpeech(content, inputOptions = {}) {
       const label = { Var: ['variance', '方差'], Cov: ['covariance', '协方差'], Corr: ['correlation', '相关系数'] }[name];
       return zh ? `${spoken.join(' 与 ')} 的${label[1]}` : `${label[0]} of ${spoken.join(' and ')}`;
     });
-  const ops = {leq:['less than or equal to','小于等于'],geq:['greater than or equal to','大于等于'],neq:['not equal to','不等于'],approx:['approximately equal to','约等于'],times:['times','乘以'],cdot:['times','乘以'],pm:['plus or minus','正负'],mp:['minus or plus','负正'],infty:['infinity','无穷'],to:['to','到'],rightarrow:['to','到'],leftarrow:['from','来自'],in:['belongs to','属于'],notin:['does not belong to','不属于'],partial:['partial','偏导']};
-  Object.assign(ops,{le:ops.leq,ge:ops.geq,ne:ops.neq,lt:['less than','小于'],gt:['greater than','大于']});
-  value = value.replace(/\\([A-Za-z]+)/g, (_,symbol) => ` ${ops[symbol]?.[zh?1:0] || symbols[symbol] || symbol} `);
+  value = value.replace(/\\([A-Za-z]+)/g, (_,symbol) => ` ${MATH_OPERATORS[symbol]?.[zh?1:0] || MATH_SYMBOLS[symbol] || symbol} `);
   value = value.replace(/\|([^|]+)\|/g, (_,a) => zh ? `${a} 的绝对值` : `absolute value of ${a}`);
   if (/\|/.test(value)) return omission('formula',options);
   value = value.replace(/_\s*(?:\{([^{}]*)\}|([A-Za-z0-9]))/g, (_,a,b) => {
