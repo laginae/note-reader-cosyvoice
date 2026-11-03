@@ -71,6 +71,7 @@ async function syncEditingToolbar(plugin) {
 function addReadingMenuSettings(container, plugin, Setting) {
   const zh = plugin.settings.settingsLanguage === 'chinese';
   container.createEl('h3', { cls: 'cozy-reader-settings-heading', text: zh ? '朗读快捷入口' : 'Reading shortcuts' });
+  require('./playback-controls').addFloatingPauseSetting(container, plugin, Setting);
   new Setting(container).setName(zh ? '显示朗读右键菜单' : 'Reading context menu')
     .setDesc(zh ? '在 Markdown 编辑器和 PDF 右键菜单中显示从此处朗读和朗读选中内容。' : 'Show read-from-here and selection actions in Markdown editor and PDF context menus.')
     .addToggle(toggle => toggle.setValue(plugin.settings.readingContextMenu !== false).onChange(async value => {

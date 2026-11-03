@@ -1670,6 +1670,8 @@ function createDefaultSettings() {
     ...MINI_DEFAULTS,
     readingContextMenu: true,
     readingFloatingToolbar: false,
+    floatingPauseButton: false,
+    floatingStopButton: true,
     readingFloatingAction: 'selection',
     ...ACADEMIC_DEFAULTS,
     ...COPILOT_DEFAULTS,

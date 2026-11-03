@@ -13,6 +13,18 @@ function fixture() {
     startReading:async (...args)=>calls.push(['read',...args]),readCurrentPdf:async (...args)=>calls.push(['pdf',...args])};
   return {adapter:desktopMiniAdapter(plugin),plugin,view,file,text,calls};
 }
+
+test('desktop pause adapter follows the existing session and excludes exports and terminal states', async () => {
+  const f=fixture(); assert.equal(f.adapter.playback().active,false);
+  const session=f.plugin.activeSession={kind:'reading',sourceLabel:'Public sample'};
+  f.plugin.readerState={status:'running',isPaused:false,canPause:true,canStop:true};
+  assert.deepEqual(f.adapter.playback(),{active:true,session,paused:false,canToggle:true,canStop:true,title:'Public sample'});
+  f.plugin.runUserAction=(_label,action)=>action();f.plugin.pauseOrResume=async()=>{f.plugin.readerState.isPaused=true;};
+  await f.adapter.togglePlayback();assert.equal(f.adapter.playback().paused,true);assert.deepEqual(f.calls,[]);
+  let stopped=0;f.plugin.stopReading=()=>{stopped++;};await f.adapter.stopPlayback();assert.equal(stopped,1);
+  f.plugin.activeSession.kind='audio-export';assert.equal(f.adapter.playback().active,false);
+  session.kind='reading';f.plugin.readerState.status='error';assert.equal(f.adapter.playback().canToggle,false);
+});
 test('Markdown titles navigate only; section audio includes descendants and rejects edited source', async () => {
   const f=fixture(), data=await f.adapter.load(f.view,()=>false);
   assert.equal(data.entries.length,3); await f.adapter.locate(f.view,data,1);

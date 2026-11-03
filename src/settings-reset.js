@@ -5,7 +5,7 @@ const PAGE_KEYS = {
     'azureSpeechConsent', 'azureSpeechVoice', 'openRouterConsent', 'openRouterModel', 'openRouterVoice',
     'mimoConsent', 'mimoVoice', 'mimoChunkLimit', 'openRouterContext'],
   playback: ['miniOutlineMode', 'miniOutlineSide', 'miniOutlineHover', 'miniOutlineDepth', 'miniOutlineTransparent', 'miniOutlineDoubleClick', 'miniOutlineWidth', 'miniOutlineTitleLines', 'miniOutlineStartup', 'readingContextMenu', 'readingFloatingToolbar', 'readingFloatingAction', 'speed', 'playbackSpeed', 'playbackVolume', 'chunkLimits', 'onlineChunkLimits', 'onlinePrefetchChunks',
-    'continuousListening', 'bufferingHints', 'smartQuickStart', 'rapidQuickStart', 'highlightColor', 'highlightStrength', 'noteHighlightBorder', 'readerOpenMode', 'readingHighlight', 'readingFollow',
+    'miniOutlinePlaybackDisplay', 'miniOutlineCollapsedStyle', 'floatingPauseButton', 'floatingStopButton', 'continuousListening', 'bufferingHints', 'smartQuickStart', 'rapidQuickStart', 'highlightColor', 'highlightStrength', 'noteHighlightBorder', 'readerOpenMode', 'readingHighlight', 'readingFollow',
     'webReadingHighlight', 'webReadingFollow', 'pdfReadingFollow', 'copilotChatEnabled', 'copilotChatScope', 'copilotIncludeQuestions'],
   academic: ['stripMarkdown', 'academicMathMode', 'academicMathStyle', 'academicTableMode', 'academicSkipNotice',
     'mathReadingLanguage', 'pdfBookmarksOverwrite', 'pdfFootnoteMode', 'pdfSkipHeaders', 'pdfIncludeGlossary', 'speechTermsEnabled', 'speechTerms', 'ocrEnabled', 'ocrModel'],

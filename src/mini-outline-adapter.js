@@ -42,6 +42,14 @@ function desktopMiniAdapter(plugin) {
       return views.includes(active) ? active : views.find(view => view.file === plugin.getCurrentReadableFile?.());
     },
     busy: () => plugin.activeSession?.kind === 'audio-export', valid,
+    playback: () => {
+      const session = plugin.activeSession, state = plugin.readerState || {};
+      const active = !!session && session.kind !== 'audio-export' && !['complete', 'error', 'stopped'].includes(state.status);
+      return { active, session, paused: !!state.isPaused, canToggle: active && !!state.canPause,
+        canStop: active && !!state.canStop, title: session?.sourceLabel };
+    },
+    togglePlayback: () => plugin.runUserAction('Pause or resume', () => plugin.pauseOrResume()),
+    stopPlayback: () => plugin.runUserAction('Stop reading', () => plugin.stopReading()),
     async load(view, cancelled, force) {
       const file = view.file, mtime = file.stat?.mtime, size = file.stat?.size;
       const stale = () => cancelled() || view.file !== file || file.stat?.mtime !== mtime || file.stat?.size !== size;

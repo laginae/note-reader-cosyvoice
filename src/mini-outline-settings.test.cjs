@@ -47,7 +47,7 @@ test('settings have two plain groups, explicit button labels and collapsed advan
   assert.ok(entry.desc.includes('仍可通过朗读工具栏或命令打开迷你目录，不影响其他插件。'));
   assert.deepEqual(entry.control.options,{auto:'自动（推荐）',always:'始终显示',off:'隐藏按钮'});
   const advanced=f.container.querySelector('details'); assert.equal(advanced.open,false);
-  for (const name of ['目录位置','默认展开层级','透明背景','双击标题开始朗读','鼠标悬停展开目录']) assert.ok(advanced.contains(f.row(name).settingEl),name);
+  for (const name of ['收起样式','播放按钮显示方式','目录位置','默认展开层级','透明背景','双击标题开始朗读','鼠标悬停展开目录图标']) assert.ok(advanced.contains(f.row(name).settingEl),name);
   for (const name of ['启动时打开迷你目录','迷你目录按钮','目录宽度','标题显示行数']) assert.equal(advanced.contains(f.row(name).settingEl),false,name);
   await f.row('透明背景').control.change(true);
   assert.equal(f.plugin.settings.miniOutlineTransparent,true); assert.deepEqual(f.counts(),{saves:1,syncs:1});
@@ -65,6 +65,42 @@ test('floating action hides immediately when disabled without discarding the sav
   await icon.control.change(false); assert.equal(action.settingEl.hidden,true);
   assert.equal(f.plugin.settings.readingFloatingAction,'from-selection');
   await icon.control.change(true); assert.equal(action.control.value,'from-selection');
+});
+
+test('independent pause button is opt-in and needs no Editing Toolbar plugin', async t=>{
+  const f=fixture(false); t.after(()=>f.dom.window.close()); const row=f.row('悬浮暂停／继续按钮');
+  assert.equal(row.control.value,false); assert.notEqual(row.control.disabled,true);
+  await row.control.change(true); assert.equal(f.plugin.settings.floatingPauseButton,true);
+  assert.deepEqual(f.counts(),{saves:1,syncs:1});
+  await row.control.change(false); assert.equal(f.plugin.settings.floatingPauseButton,false);
+});
+
+test('stop is a conditional floating-control preference and disabling the parent preserves it', async t=>{
+  const f=fixture(false);t.after(()=>f.dom.window.close());const parent=f.row('悬浮暂停／继续按钮'),stop=f.row('显示停止按钮');
+  assert.equal(stop.control.value,true);assert.equal(stop.settingEl.hidden,true);
+  await parent.control.change(true);assert.equal(stop.settingEl.hidden,false);
+  await stop.control.change(false);assert.equal(f.plugin.settings.floatingStopButton,false);
+  await parent.control.change(false);assert.equal(stop.settingEl.hidden,true);
+  await parent.control.change(true);assert.equal(stop.settingEl.hidden,false);assert.equal(f.plugin.settings.floatingStopButton,false);
+  const reopened=fixture(false,f.plugin.settings);t.after(()=>reopened.dom.window.close());
+  assert.equal(reopened.row('显示停止按钮').control.value,false);assert.equal(reopened.row('显示停止按钮').settingEl.hidden,false);
+  assert.deepEqual(f.counts(),{saves:4,syncs:4});
+});
+
+test('outline pause visibility defaults to following the header and saves independently of floating controls', async t=>{
+  const f=fixture(true,{floatingPauseButton:true}); t.after(()=>f.dom.window.close());
+  const row=f.row('播放按钮显示方式');
+  assert.equal(row.control.value,'toolbar');
+  assert.deepEqual(row.control.options,{toolbar:'随顶栏自动隐藏（默认）',session:'朗读时常显'});
+  assert.match(row.desc,/触屏始终可见/);
+  await row.control.change('session');
+  assert.equal(f.plugin.settings.miniOutlinePlaybackDisplay,'session');
+  assert.equal(f.plugin.settings.floatingPauseButton,true);
+  const reopened=fixture(true,f.plugin.settings); t.after(()=>reopened.dom.window.close());
+  assert.equal(reopened.row('播放按钮显示方式').control.value,'session');
+  await row.control.change('toolbar');
+  assert.equal(f.plugin.settings.miniOutlinePlaybackDisplay,'toolbar');
+  assert.deepEqual(f.counts(),{saves:2,syncs:2});
 });
 
 test('width slider displays the saved value, applies immediately and resets to responsive defaults', async t=>{
@@ -99,16 +135,25 @@ test('missing Editing Toolbar retains a disabled dependency control without a mi
   assert.equal(f.row('悬浮图标默认动作').settingEl.hidden,true);
 });
 
-test('startup preference hides the edge-button setting without overwriting its saved choice', async t=>{
+test('startup leaves the entry preference editable for manual collapse without overwriting its choice', async t=>{
   const f=fixture(true,{miniOutlineMode:'always'}); t.after(()=>f.dom.window.close());
   const startup=f.row('启动时打开迷你目录'), button=f.row('迷你目录按钮');
   assert.equal(startup.control.value,false); assert.equal(button.settingEl.hidden,false);
   await startup.control.change(true);
-  assert.equal(f.plugin.settings.miniOutlineStartup,true); assert.equal(button.settingEl.hidden,true); assert.equal(button.control.disabled,true);
+  assert.equal(f.plugin.settings.miniOutlineStartup,true); assert.equal(button.settingEl.hidden,false); assert.notEqual(button.control.disabled,true);
   assert.equal(f.plugin.settings.miniOutlineMode,'always'); assert.equal(button.control.value,'always');
   const reopened=fixture(true,f.plugin.settings); t.after(()=>reopened.dom.window.close());
-  assert.equal(reopened.row('启动时打开迷你目录').control.value,true); assert.equal(reopened.row('迷你目录按钮').settingEl.hidden,true);
+  assert.equal(reopened.row('启动时打开迷你目录').control.value,true); assert.equal(reopened.row('迷你目录按钮').settingEl.hidden,false);
   await startup.control.change(false);
-  assert.equal(button.settingEl.hidden,false); assert.equal(button.control.disabled,false); assert.equal(f.plugin.settings.miniOutlineMode,'always');
+  assert.equal(button.settingEl.hidden,false); assert.notEqual(button.control.disabled,true); assert.equal(f.plugin.settings.miniOutlineMode,'always');
   assert.deepEqual(f.counts(),{saves:2,syncs:2});
+});
+
+test('collapsed appearance saves all modes independently of icon hover and button coexistence', async t=>{
+  const f=fixture(true,{miniOutlineMode:'off',miniOutlineHover:false});t.after(()=>f.dom.window.close());
+  const row=f.row('收起样式');assert.equal(row.control.value,'auto');
+  assert.deepEqual(row.control.options,{auto:'自动（推荐）',rail:'章节短线',icon:'目录图标'});
+  for(const mode of ['rail','icon','auto']){await row.control.change(mode);assert.equal(f.plugin.settings.miniOutlineCollapsedStyle,mode);}
+  assert.equal(f.plugin.settings.miniOutlineHover,false);assert.equal(f.plugin.settings.miniOutlineMode,'off');
+  assert.deepEqual(f.counts(),{saves:3,syncs:3});
 });

@@ -8,7 +8,7 @@ test('playback settings place shortcuts first and keep secondary outline prefere
   const page=doc.querySelector('[data-settings-page="playback"]'), advanced=page.querySelector('.cozy-mini-settings-advanced');
   assert.deepEqual([...page.querySelectorAll('.cozy-reader-settings-heading')].slice(0,2).map(el=>el.textContent),['Reading shortcuts','Mini outline']);
   assert.equal(advanced.open,false);
-  for (const name of ['Outline side','Default expanded levels','Transparent background','Double-click heading to read','Open outline on hover']) {
+  for (const name of ['Collapsed appearance','Playback button visibility','Outline side','Default expanded levels','Transparent background','Double-click heading to read','Open outline icon on hover']) {
     assert.ok(advanced.contains(rows.find(row=>row.nameEl.textContent===name).settingEl),name);
   }
   const lines=rows.find(row=>row.nameEl.textContent==='Heading display lines');

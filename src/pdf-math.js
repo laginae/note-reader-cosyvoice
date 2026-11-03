@@ -6,7 +6,7 @@ const { conciseMathLabels } = require('./math-variable-labels');
 const { greekMathCommands } = require('./math-symbols');
 
 const mathGlyph = /[\u{1d400}-\u{1d7ff}\u220f\u2211\u221a\u222b-\u2233]|(?<![\p{Script=Greek}\p{M}])[\u0391-\u03c9](?![\p{Script=Greek}\p{M}])/u;
-const mathOperator = /[=+\-\u2212<>\u2264\u2265\u2248\u2260\u00d7\u00f7\u00b1\u2213*/|]/;
+const mathOperator = /[=+\-\u2212<>\u2264\u2265\u2248\u2260\u00d7\u00f7\u00b1\u2213\u2208\u2209*/|]/;
 const prose = value => /[\u3400-\u9fff]/u.test(value)
   || /\p{Script=Greek}{2,}/u.test(value)
   || (value.match(/[A-Za-z]{4,}/g) || []).some(word => !/^(?:sqrt|sinh|cosh|tanh|sin|cos|tan|log|exp|lim)$/i.test(word));
@@ -137,7 +137,7 @@ function pdfMathChanges(layout, items, settings = {}, names = {}, encodingContex
     for (const token of mapped) {
       if (token.math || /^[A-Za-z]$/.test(token.item.str.trim())
         || /^(?:[A-Za-z]\s*)?\(\s*(?:[A-Za-z\u0391-\u03c9]|\d+)\s*\)$/.test(token.speechText)
-        || /^[\s\d()[\]{}+*\-\u2212=<>/|\u2264\u2265\u2248\u2260\u00d7\u00f7\u00b1\u2213]+$/.test(token.speechText)) candidates.push(token);
+        || /^[\s\d()[\]{}+*\-\u2212=<>/|\u2264\u2265\u2248\u2260\u00d7\u00f7\u00b1\u2213\u2208\u2209]+$/.test(token.speechText)) candidates.push(token);
       else finishCandidates();
     }
     finishCandidates();
@@ -146,7 +146,7 @@ function pdfMathChanges(layout, items, settings = {}, names = {}, encodingContex
     const plainEquation = /[=\u2264\u2265\u2248\u2260]/.test(analysisText)
       && /[A-Za-z\u0370-\u03ff\u{1d400}-\u{1d7ff}]/u.test(analysisText) && !prose(analysisText)
       && (analysisText.match(/[A-Za-z]+/g) || []).every(word => word.length === 1 || /^(?:min|max|sin|cos|tan|log|exp|lim|sqrt)$/i.test(word));
-    const neutral = value => /^[\s\d()[\]{},.;:+*\-\u2212=<>/|\u2264\u2265\u2248\u2260\u00d7\u00f7\u00b1\u2213]+$/.test(value);
+    const neutral = value => /^[\s\d()[\]{},.;:+*\-\u2212=<>/|\u2264\u2265\u2248\u2260\u00d7\u00f7\u00b1\u2213\u2208\u2209]+$/.test(value);
     const mathFunction = value => /^(?:min|max|sin|cos|tan|log|exp|lim|sqrt)$/.test(value.trim());
     const display = plainEquation || mapped.every(token => token.math || neutral(token.speechText) || mathFunction(token.speechText));
     if (display) mapped.forEach(token => { token.math = true; });
@@ -231,9 +231,10 @@ function pdfMathChanges(layout, items, settings = {}, names = {}, encodingContex
         || (filtering && !row.display && complex(expression));
       if (run.omit) return true;
       const shortLabel = options.academicMathStyle === 'concise' && conciseMathLabels(greekMathCommands(source)).changed;
-      if (!mathOperator.test(source) && !tokens.some(token => token.repaired || token.script) && !shortLabel) return false;
       const local = contextualMathOptions(options, line.text.slice(0, run.start) || row.noticeContext, line.text.slice(run.end));
-      const spoken = mathSpeech(expression, { ...local, academicMathMode:'all', academicSkipNotice:true });
+      const bracketed = /^[\[({]/.test(source.trim());
+      if (!mathOperator.test(source) && !tokens.some(token => token.repaired || token.script) && !shortLabel && !bracketed) return false;
+      const spoken = mathSpeech(expression, { ...local, academicMathMode:'all', academicSkipNotice:true, literalMathSets:true });
       if (!spoken || spoken === 'Formula.' || spoken === '公式。') return false;
       run.speech = spoken;
       return true;

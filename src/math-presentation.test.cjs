@@ -18,15 +18,16 @@ test('named lower/upper bounds use concise ranges and preserve verbose interval 
   assert.equal(mathSpeech(source, {mathReadingLanguage:'skip', academicSkipNotice:false}), '');
 });
 test('range recognition does not reinterpret arbitrary pairs, vectors or unsupported operators', () => {
-  assert.equal(mathSpeech('[x,y]'), 'open bracket x,y close bracket');
-  assert.equal(mathSpeech('v=[1,2]'), 'v equals open bracket 1,2 close bracket');
-  assert.equal(mathSpeech('[l,u,v]'), 'open bracket l,u,v close bracket');
+  assert.equal(mathSpeech('[x,y]'), 'x, y');
+  assert.equal(mathSpeech('v=[1,2]'), 'v equals 1, 2');
+  assert.equal(mathSpeech('[l,u,v]'), 'l, u, v');
+  assert.equal(mathSpeech('[x,y]',{academicMathStyle:'verbose'}), 'open bracket x,y close bracket');
   assert.equal(mathSpeech('(l,u]'), 'open parenthesis l,u close bracket');
   assert.equal(mathSpeech(String.raw`\ell`), 'ell');
   assert.equal(mathSpeech(String.raw`R_\infty`), 'R infinity');
   assert.equal(mathSpeech(String.raw`E_\min`), 'E min');
   assert.equal(mathSpeech(String.raw`\min(x,y)`), 'the minimum of x and y');
-  assert.equal(mathSpeech(String.raw`[E_{\min},F_{\max}]`), 'open bracket E min ,F max close bracket');
+  assert.equal(mathSpeech(String.raw`[E_{\min},F_{\max}]`), 'E min, F max');
   assert.equal(mathSpeech(String.raw`[E_{\min}+\sqrt{x},E_{\max}-\sqrt{x}]`).includes('omitted'), false);
   for (const source of [
     String.raw`[E_{\min}+\sqrt{x},E_{\max}-\sqrt]`,

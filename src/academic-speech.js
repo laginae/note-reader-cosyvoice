@@ -3,6 +3,7 @@ const { structuredMathSpeech, replacePlainStructuredMath } = require('./structur
 const { greekMathCommands, greekNames } = require('./math-symbols');
 const { simpleFunctionCalls, speakSimpleFunctions } = require('./math-functions');
 const { conciseMathLabels } = require('./math-variable-labels');
+const { intervalProse, bracketMathSpeech, conciseBracketSpeech } = require('./math-collections');
 
 const ACADEMIC_DEFAULTS = { academicMathMode: 'smart', academicMathStyle: 'concise', academicTableMode: 'smart', academicSkipNotice: true };
 function academicOptions(settings = {}) {
@@ -20,7 +21,8 @@ function contextualMathOptions(options, before, after) {
   const preceding = String(before).slice(-400).replace(/\$\$[\s\S]*?\$\$|\$[^$]*\$|\\\([\s\S]*?\\\)|\\\[[\s\S]*?\\\]/g, ' ');
   const following = String(after).slice(0,400).replace(/\$\$[\s\S]*?\$\$|\$[^$]*\$|\\\([\s\S]*?\\\)|\\\[[\s\S]*?\\\]/g, ' ');
   const token = proseTokens(preceding).at(-1) || proseTokens(following)[0];
-  return token ? { ...options, mathReadingLanguage: chinese(token) ? 'chinese' : 'english' } : options;
+  return { ...options, ...(token ? { mathReadingLanguage: chinese(token) ? 'chinese' : 'english' } : {}),
+    mathIntervalContext: intervalProse(before, after) };
 }
 function omission(kind, options, text = '') {
   if (options.academicSkipNotice === false) return '';
@@ -67,6 +69,7 @@ function citations(text) {
 // Normalize presentation only; keep mathematical operators and unknown commands intact.
 function normalizeMathPresentation(content) {
   let value = greekMathCommands(String(content || '')).trim()
+    .replace(/[∈∉∞]/g, symbol => ({ '∈':'\\in ', '∉':'\\notin ', '∞':'\\infty ' })[symbol])
     .replace(/[×÷±∓≈]/g, symbol => ({ '×':'\\times ', '÷':' / ', '±':'\\pm ', '∓':'\\mp ', '≈':'\\approx ' })[symbol]);
   if (value.length > 4096) return null;
   let depth = 0;
@@ -91,7 +94,7 @@ function normalizeMathPresentation(content) {
   return value.replace(scriptSymbol, '$1{$2}')
     .replace(/([_^])\s*\\(min|max)\b/g, '$1{$2}');
 }
-// Only conventional lower/upper labels are shortened; arbitrary pairs stay bracketed.
+// Only conventional lower/upper labels imply ranges without additional context.
 function namedBounds(value) {
   const match = value.replace(/\\(?:left|right)\b/g, '').trim().match(/^\[([^\[\],]+),([^\[\],]+)\]$/);
   if (!match) return null;
@@ -142,21 +145,26 @@ function mathSpeech(content, inputOptions = {}) {
   const symbols = { ell:'ell', ...Object.fromEntries(Object.values(greekNames).map(name => [name, name])) };
   const known = new Set([...Object.keys(symbols), 'Gamma','Delta','Theta','Lambda','Sigma','Omega','Phi','Pi','Psi','psi','frac','dfrac','tfrac','sqrt','bar','overline','hat','tilde','vec','dot','ddot','text','mathrm','mathbf','mathbb','boldsymbol','operatorname','left','right','lvert','rvert','vert','leq','geq','le','ge','lt','gt','neq','ne','approx','times','cdot','pm','mp','infty','to','rightarrow','leftarrow','in','notin','partial']);
   if (brief) for (const command of ['prime', 'ast', 'star', 'top']) known.add(command);
+  for (const command of ['lbrace', 'rbrace']) known.add(command);
   if (commands.some(c => !known.has(c.slice(1)))) return omission('formula', options);
   let depth = 0, maxDepth = 0;
   for (const c of value) { if (c === '{') maxDepth = Math.max(maxDepth, ++depth); if (c === '}' && --depth < 0) return omission('formula',options); }
   if (depth || maxDepth > 3) return omission('formula', options);
+  const collection = bracketMathSpeech(value, { zh, brief, context: inputOptions.mathIntervalContext,
+    literalSets: inputOptions.literalMathSets === true }, atom => mathSpeech(atom, { ...options, academicSkipNotice: true }));
+  if (collection !== null) return collection;
+  if (/\\[lr]brace\b/.test(value)) return omission('formula', options);
   // Recognize a complete numeric interval, not a vector embedded in an expression.
   const numericRange = value.replace(/\\(?:left|right)\b/g, '').trim()
     .match(/^\[\s*([+−-]?\s*(?:\d+(?:\.\d+)?|\.\d+))\s*,\s*([+−-]?\s*(?:\d+(?:\.\d+)?|\.\d+))\s*\]$/);
-  if (numericRange) {
+  if (numericRange && inputOptions.mathIntervalContext !== 'literal') {
     const endpoints = numericRange.slice(1).map(number => number.replace(/\s/g, '')
       .replace(/^[−-]/, zh ? '负' : 'minus ').replace(/^\+/, zh ? '正' : 'plus '));
     const range = endpoints.join(zh ? ' 到 ' : ' to ');
     return brief ? range : (zh ? '闭区间，' : 'closed interval, ') + range;
   }
   const bounds = namedBounds(value);
-  if (bounds) {
+  if (bounds && inputOptions.mathIntervalContext !== 'literal') {
     const endpoints = bounds.map(bound => mathSpeech(bound, { ...options, academicSkipNotice: true }));
     if (endpoints.some(endpoint => !endpoint || endpoint === omission('formula', { ...options, academicSkipNotice: true }))) {
       return omission('formula', options);
@@ -166,6 +174,8 @@ function mathSpeech(content, inputOptions = {}) {
   }
   if (options.academicMathMode === 'smart' && complexListeningMath(value)) return omission('formula', options);
   if (brief) {
+    const simpleBrackets = conciseBracketSpeech(value, zh, atom => mathSpeech(atom, { ...options, academicSkipNotice: true }));
+    if (simpleBrackets !== null) return simpleBrackets;
     value = conciseMathLabels(value, zh).text;
     if (/\\(?:prime|ast|star|top)\b|['′″]/.test(value)) return omission('formula', options);
     const call = value.match(/^(\\[A-Za-z]+|[A-Za-z])\s*(?:\[([A-Za-z])\]|\(([A-Za-z])\))$/);

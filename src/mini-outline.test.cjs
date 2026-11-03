@@ -2,7 +2,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { JSDOM } = require('jsdom');
-const { MiniOutlineManager, headingParents, normalizeMiniSettings, otherOutlineEnabled } = require('../src/mini-outline');
+const { MiniOutlineManager, headingParents, normalizeMiniSettings, otherOutlineEnabled, railHeadings } = require('../src/mini-outline');
 const tick = () => new Promise(resolve => setTimeout(resolve, 0));
 function fixture(entries, settings = {}) {
   const dom = new JSDOM('<main></main><aside></aside>'), doc = dom.window.document, calls = [], menus = [];
@@ -33,9 +33,165 @@ function fixture(entries, settings = {}) {
   const cleanup = () => { manager.destroy(); dom.window.close(); };
   return { manager, panel, plugin, adapter, calls, menus, data, view, doc, cleanup, setPositions: value => { positions = value; }, setBusy: value => { busy = value; } };
 }
+function sectionMenu(f, index) {
+  f.panel.rows.get(index).row.dispatchEvent(new f.doc.defaultView.MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+  return f.menus.at(-1);
+}
+
+test('mini outline pause works without loading headings or opening the main toolbar and stays synchronized', async t => {
+  const f=fixture();t.after(f.cleanup);let paused=false,calls=0;
+  f.adapter.playback=()=>({active:true,session:1,canToggle:true,paused,title:'Public sample'});
+  f.adapter.togglePlayback=()=>{paused=!paused;calls++;};f.manager.update();const p=f.panel;
+  assert.equal(p.pause.dataset.icon,'pause');assert.equal(p.pause.disabled,false);
+  p.pause.click();await tick();assert.equal(paused,true);assert.equal(calls,1);assert.deepEqual(f.calls,[]);
+  await p.open();p.rows.get(1).title.focus();const row=p.rows.get(1).row;
+  p.pause.click();await tick();assert.equal(paused,false);assert.equal(p.pause.dataset.icon,'pause');assert.equal(p.rows.get(1).row,row);
+  assert.deepEqual(f.calls,['load']);assert.equal(p.currentSectionIndex(),1);
+  f.setBusy(true);f.adapter.playback=()=>({active:false,canToggle:false});f.manager.update();
+  assert.equal(p.pause.disabled,true);p.pause.click();await tick();assert.equal(calls,2);
+});
+
+test('outline pause visibility is normalized and applied without replacing controls or altering a reading session', async t => {
+  const f=fixture();t.after(f.cleanup);
+  f.adapter.playback=()=>({active:true,session:1,canToggle:true,paused:true,title:'Public sample'});
+  f.manager.update();await f.panel.open();const p=f.panel,button=p.pause,row=p.rows.get(0).row;
+  assert.equal(p.root.dataset.playbackDisplay,'toolbar');
+  for(const mode of ['session','toolbar','invalid']){
+    f.plugin.settings.miniOutlinePlaybackDisplay=mode;f.manager.sync();
+    assert.equal(p.root.dataset.playbackDisplay,mode==='session'?'session':'toolbar');
+    assert.equal(p.pause,button);assert.equal(p.pause.dataset.icon,'play');
+    assert.equal(p.rows.get(0).row,row);assert.deepEqual(f.calls,['load']);
+  }
+});
+
+test('heading rows have no trailing menu button and top options retain all section actions without starting speech', async t => {
+  const f = fixture(); t.after(f.cleanup); await f.panel.open(); const p = f.panel;
+  f.setPositions({ reading: 1, browsing: 0 }); f.manager.update();
+  for (const refs of p.rows.values()) {
+    assert.equal(refs.row.querySelector('[data-icon="ellipsis"]'), null);
+    assert.equal(refs.row.querySelector('.cozy-mini-action'), null);
+    assert.equal(refs.row.querySelectorAll('button').length, 2);
+  }
+  assert.equal(p.optionsToggle.dataset.icon, 'ellipsis');
+  p.optionsToggle.click(); await tick();
+  assert.equal(p.tools.hidden, false); assert.match(p.sectionLabel.textContent, /Introduction/);
+  assert.deepEqual(p.sectionButtons.map(button => button.dataset.icon), ['play', 'audio-lines', 'wrap-text']);
+  assert.equal(f.calls.some(call => call[0] === 'read'), false);
+  p.rows.get(1).title.focus();
+  assert.match(p.sectionLabel.textContent, /Details/);
+  p.sectionButtons[1].click(); await tick();
+  assert.deepEqual(f.calls.filter(call => call[0] === 'read'), [['read', 1, false]]);
+  f.setPositions({ reading: 3, browsing: 0 }); f.manager.update();
+  assert.match(p.sectionLabel.textContent, /Details/);
+  p.sectionButtons[2].click(); await tick();
+  assert.equal(p.rows.get(1).row.classList.contains('is-expanded'), true);
+  assert.equal(p.sectionButtons[2].getAttribute('aria-pressed'), 'true');
+  f.setBusy(true); f.manager.update();
+  assert.deepEqual(p.sectionButtons.map(button => button.disabled), [true, true, false]);
+  p.sectionButtons[0].click(); await tick();
+  assert.equal(f.calls.filter(call => call[0] === 'read').length, 1);
+});
+
+test('touch layouts use top section actions while title taps still navigate only', async t => {
+  const f = fixture(undefined, { settingsLanguage: 'chinese' }); t.after(f.cleanup);
+  f.doc.body.classList.add('is-mobile'); await f.panel.open(); const p = f.panel; p.state.pinned = true;
+  const touch = new f.doc.defaultView.Event('pointerdown', { bubbles: true });
+  Object.defineProperty(touch, 'pointerType', { value: 'touch' }); p.rows.get(1).title.dispatchEvent(touch);
+  p.rows.get(1).title.click(); await tick();
+  assert.ok(f.calls.some(call => call[0] === 'locate' && call[1] === 1));
+  assert.equal(f.calls.some(call => call[0] === 'read'), false);
+  p.optionsToggle.click(); await tick();
+  assert.match(p.sectionLabel.textContent, /章节：Details/);
+  assert.equal(p.sectionButtons[0].getAttribute('aria-label'), '从本节朗读');
+  p.sectionButtons[0].click(); await tick();
+  assert.deepEqual(f.calls.filter(call => call[0] === 'read'), [['read', 1, true]]);
+  assert.equal(p.list.querySelector('.cozy-mini-action'), null);
+});
+
+test('unknown and empty section targets disable top actions instead of selecting the first heading', async t => {
+  for (const entries of [undefined, []]) {
+    const f = fixture(entries); t.after(f.cleanup); await f.panel.open(); const p = f.panel;
+    f.setPositions({ reading: -1, browsing: -1 }); f.manager.update();
+    assert.deepEqual(p.sectionButtons.map(button => button.disabled), [true, true, true]);
+    assert.match(p.sectionLabel.textContent, /No section available/);
+    p.optionsToggle.click(); p.sectionButtons[0].click(); await tick();
+    assert.deepEqual(f.calls, ['load']);
+  }
+});
+
+test('top full-heading action reveals a hidden target locally and resets its target after reopening', async t => {
+  const f = fixture(); t.after(f.cleanup); await f.panel.open(); const p = f.panel;
+  f.setPositions({ reading: -1, browsing: 2 }); f.manager.update();
+  assert.equal(p.rows.has(2), false); assert.match(p.sectionLabel.textContent, /Example/);
+  p.search.value = 'no such public heading'; p.search.dispatchEvent(new f.doc.defaultView.Event('input'));
+  assert.equal(p.rows.size, 0);
+  p.sectionButtons[2].click(); await tick();
+  assert.equal(p.state.query, ''); assert.equal(p.search.value, '');
+  assert.equal(p.rows.get(2).row.classList.contains('is-expanded'), true);
+  assert.equal(f.doc.activeElement, p.rows.get(2).title); assert.deepEqual(f.calls, ['load']);
+  p.close(); f.setPositions({ reading: -1, browsing: 0 }); await p.open();
+  assert.match(p.sectionLabel.textContent, /Introduction/);
+});
+
+test('context-menu key anchors the menu and closing it returns keyboard focus without navigation', async t => {
+  const f = fixture(); t.after(f.cleanup); await f.panel.open(); const p = f.panel;
+  const title = p.rows.get(1).title; title.focus();
+  const key = new f.doc.defaultView.KeyboardEvent('keydown', { key: 'ContextMenu', bubbles: true, cancelable: true });
+  title.dispatchEvent(key); const menu = f.menus.at(-1);
+  assert.equal(key.defaultPrevented, true); assert.equal(menu.method, 'anchor');
+  assert.equal(title.getAttribute('aria-keyshortcuts'), 'Shift+F10');
+  title.blur(); menu.hide(); await tick();
+  assert.equal(f.doc.activeElement, title); assert.deepEqual(f.calls, ['load']);
+});
+
+test('repeated top playback clicks start one pending action and keep full-heading access available', async t => {
+  const f = fixture(); t.after(f.cleanup); await f.panel.open(); const p = f.panel;
+  let finish;
+  f.adapter.read = async (_view, _data, index, remaining) => {
+    f.calls.push(['read', index, remaining]); await new Promise(resolve => { finish = resolve; });
+  };
+  p.sectionButtons[0].click(); p.sectionButtons[0].click(); await tick();
+  assert.deepEqual(f.calls.filter(call => call[0] === 'read'), [['read', 0, true]]);
+  assert.deepEqual(p.sectionButtons.map(button => button.disabled), [true, true, false]);
+  finish(); await tick();
+  assert.deepEqual(p.sectionButtons.map(button => button.disabled), [false, false, false]);
+});
+
+test('dismissal or replaced source during validation cancels captured section commands', async t => {
+  for (const change of ['close', 'source']) {
+    const f = fixture(); t.after(f.cleanup); await f.panel.open(); const p = f.panel;
+    const menu = sectionMenu(f, 0); let finish;
+    p.valid = () => new Promise(resolve => { finish = resolve; });
+    const action = menu.items[0].click(); await tick();
+    if (change === 'close') p.close(); else { f.view.file = { path: 'replacement-public.md' }; p.invalidate(); }
+    finish(true); await action;
+    assert.equal(f.calls.some(call => call[0] === 'read'), false);
+    assert.equal(p.selectedSection, null);
+  }
+});
+test('closing and reopening the same outline cancels commands awaiting validation', async t => {
+  for (const mode of ['menu-read', 'menu-title', 'direct-read']) {
+    const f = fixture(); t.after(f.cleanup); await f.panel.open(); const p = f.panel;
+    const menu = sectionMenu(f, 0); let finish;
+    p.valid = () => new Promise(resolve => { finish = resolve; });
+    const pending = mode === 'direct-read' ? p.read(0, true) : menu.items[mode === 'menu-title' ? 2 : 0].click();
+    await tick(); p.close(); await p.open(); finish(true); await pending;
+    assert.deepEqual(f.calls, ['load'], mode);
+    assert.equal(p.expandedTitles.has(0), false, mode);
+    assert.equal(!!p.sectionReadPending, false, mode);
+    assert.deepEqual(p.sectionButtons.map(button => button.disabled), [false, false, false], mode);
+  }
+});
+
 test('preferences normalize and skipped heading levels still have a usable tree', () => {
   assert.deepEqual(normalizeMiniSettings({ miniOutlineMode: 'bad', miniOutlineDepth: 99, miniOutlineSide: 'bad', miniOutlineHover: 'true' }),
-    { miniOutlineMode: 'auto', miniOutlineDepth: 2, miniOutlineSide: 'right', miniOutlineHover: false, miniOutlineTransparent: false, miniOutlineDoubleClick: false, miniOutlineWidth: 0, miniOutlineTitleLines: 2, miniOutlineStartup: false });
+    { miniOutlineMode: 'auto', miniOutlineDepth: 2, miniOutlineSide: 'right', miniOutlineHover: false, miniOutlineTransparent: false, miniOutlineDoubleClick: false, miniOutlineWidth: 0, miniOutlineTitleLines: 2, miniOutlineStartup: false, miniOutlinePlaybackDisplay: 'toolbar', miniOutlineCollapsedStyle: 'auto' });
+  for (const value of [undefined, null, true, 'auto', 'rail', 'icon', 'bad']) {
+    assert.equal(normalizeMiniSettings({ miniOutlineCollapsedStyle: value }).miniOutlineCollapsedStyle, ['rail','icon'].includes(value) ? value : 'auto');
+  }
+  for (const value of [undefined,null,true,'always','toolbar','session']) {
+    assert.equal(normalizeMiniSettings({miniOutlinePlaybackDisplay:value}).miniOutlinePlaybackDisplay,value==='session'?'session':'toolbar');
+  }
   assert.equal(normalizeMiniSettings({ miniOutlineTransparent: true }).miniOutlineTransparent, true);
   assert.equal(normalizeMiniSettings({ miniOutlineTransparent: 'true' }).miniOutlineTransparent, false);
   assert.equal(normalizeMiniSettings({ miniOutlineDoubleClick: true }).miniOutlineDoubleClick, true);
@@ -83,7 +239,7 @@ test('startup is opt-in and waits for layout restoration before pinning only the
   assert.equal(f.panel.pin.getAttribute('aria-pressed'),'true'); assert.equal(f.doc.activeElement,focus);
   assert.equal(f.manager.panels.get(background).opened,undefined);
   assert.deepEqual([...f.plugin.app.plugins.enabledPlugins],['floating-toc']);
-  f.panel.pin.click(); await tick(); assert.equal(f.panel.opened,false);
+  f.panel.pin.click(); await new Promise(resolve=>setTimeout(resolve,300)); assert.equal(f.panel.opened,false);
   f.manager.sync(); f.manager.update(); assert.equal(f.manager.startupPending,false); assert.equal(f.manager.startupTimer,null);
   assert.deepEqual(f.calls,['load']);
 });
@@ -186,7 +342,7 @@ test('locate is separate from playback and section action preserves range choice
   assert.equal(f.calls.some(c => c[0] === 'read'), false); assert.equal(f.panel.opened, false);
   await f.panel.open(); await f.panel.read(1, false); await f.panel.read(1, true);
   assert.deepEqual(f.calls.filter(c => c[0] === 'read'), [['read',1,false], ['read',1,true]]);
-  f.setBusy(true); f.manager.update(); f.panel.rows.get(1).more.click(); await tick();
+  f.setBusy(true); f.manager.update(); sectionMenu(f, 1); await tick();
   assert.deepEqual(f.menus.at(-1).items.map(item=>item.disabled),[true,true,false]);
   await f.panel.read(1,true); assert.equal(f.calls.filter(c => c[0] === 'read').length,2);
 });
@@ -246,7 +402,7 @@ test('toolbar pointerdown does not close before toggle and a late chapter can be
 
 test('compact controls retain touch close and a secondary close action in outline options', async t => {
   const f=fixture(); t.after(f.cleanup); await f.panel.open(); const p=f.panel;
-  assert.equal(p.panel.querySelector('.cozy-mini-header').children.length,7);
+  assert.equal(p.panel.querySelector('.cozy-mini-header').children.length,8);
   assert.equal(p.search.hidden,true); assert.equal(p.tools.hidden,true); assert.equal(p.closeButton.hidden,false);
   p.searchToggle.click(); await tick(); assert.equal(p.search.hidden,false); assert.equal(f.doc.activeElement,p.search);
   p.search.value='example'; p.search.dispatchEvent(new f.doc.defaultView.Event('input'));
@@ -260,11 +416,14 @@ test('compact controls retain touch close and a secondary close action in outlin
   p.closeButton.click(); await tick(); assert.equal(p.opened,false);
 });
 
-test('unpin dismisses immediately and reopening does not silently pin the outline again', async t => {
+test('desktop unpin waits for pointer leave and reopening does not silently pin the outline again', async t => {
   const f=fixture(); t.after(f.cleanup); await f.panel.open(); const p=f.panel;
+  pointerEvent(f,'pointerenter','mouse',p.root);
   p.pin.click(); await tick(); assert.equal(p.state.pinned,true); assert.equal(p.opened,true);
-  assert.equal(p.pin.getAttribute('aria-label'),'Unpin and close outline');
-  p.pin.click(); await tick(); assert.equal(p.state.pinned,false); assert.equal(p.opened,false);
+  assert.equal(p.pin.getAttribute('aria-label'),'Unpin outline');
+  p.pin.click(); await tick(); assert.equal(p.state.pinned,false); assert.equal(p.opened,true);
+  pointerEvent(f,'pointerleave','mouse',p.root);
+  await new Promise(resolve=>setTimeout(resolve,300)); assert.equal(p.opened,false);
   assert.equal(p.pin.getAttribute('aria-label'),'Pin outline');
   await p.open(); assert.equal(p.state.pinned,false); assert.equal(p.pin.getAttribute('aria-pressed'),'false');
 });
@@ -292,20 +451,146 @@ test('document edge navigation cancels on dismissal or changed source', async t 
 
 test('native section menus hold header controls visible only until the current menu closes', async t => {
   const f=fixture(); t.after(f.cleanup); await f.panel.open(); const p=f.panel;
-  p.rows.get(0).more.click(); await tick(); const old=f.menus.at(-1);
+  sectionMenu(f, 0); await tick(); const old=f.menus.at(-1);
   assert.equal(p.panel.classList.contains('has-open-menu'),true);
   old.hide(); await tick(); assert.equal(p.panel.classList.contains('has-open-menu'),false);
-  p.rows.get(1).more.click(); await tick(); p.dismissMenu();
+  sectionMenu(f, 1); await tick(); p.dismissMenu();
   assert.equal(p.panel.classList.contains('has-open-menu'),false);
-  p.rows.get(0).more.click(); await tick(); p.close(); await tick();
+  sectionMenu(f, 0); await tick(); p.close(); await tick();
   assert.equal(p.panel.classList.contains('has-open-menu'),false);
 });
 
-function pointerEvent(f, name, type) {
+function pointerEvent(f, name, type, target = f.doc.querySelector('aside')) {
   const event = new f.doc.defaultView.Event(name, { bubbles: true });
   Object.defineProperty(event, 'pointerType', { value: type });
-  f.doc.querySelector('aside').dispatchEvent(event);
+  target.dispatchEvent(event);
 }
+
+test('chapter rail is lazy, represents cached headings and never navigates or speaks on hover', async t => {
+  const f=fixture(); t.after(f.cleanup); const p=f.panel;
+  assert.equal(p.launcherStyle,'icon'); assert.deepEqual(f.calls,[]);
+  await p.open(); p.close(); assert.equal(p.launcher.hidden,false); assert.equal(p.launcherStyle,'rail');
+  assert.equal(p.railMarks.length,4); assert.equal(p.launcher.querySelectorAll('button').length,0);
+  assert.match(p.launcher.getAttribute('aria-label'),/4 sections/);
+  assert.equal(p.launcher.querySelector('.cozy-mini-rail').getAttribute('aria-hidden'),'true');
+  pointerEvent(f,'pointerenter','mouse',p.root); pointerEvent(f,'pointerenter','mouse',p.launcher);
+  assert.equal(p.opened,false); await new Promise(resolve=>setTimeout(resolve,230));
+  assert.equal(p.opened,true); assert.equal(p.launcher.hidden,true); assert.deepEqual(f.calls,['load']);
+  assert.equal(p.state.pinned,false); assert.equal(f.doc.activeElement,f.doc.body);
+  pointerEvent(f,'pointerleave','mouse',p.root); await new Promise(resolve=>setTimeout(resolve,100));
+  pointerEvent(f,'pointerenter','mouse',p.root); await new Promise(resolve=>setTimeout(resolve,200));
+  assert.equal(p.opened,true);
+  pointerEvent(f,'pointerleave','mouse',p.root); await new Promise(resolve=>setTimeout(resolve,300));
+  assert.equal(p.opened,false); assert.deepEqual(f.calls,['load']);
+});
+
+test('a brief pass over the rail cancels expansion and icon hover is independently opt-in', async t => {
+  const f=fixture(); t.after(f.cleanup); const p=f.panel; await p.open(); p.close();
+  pointerEvent(f,'pointerenter','mouse',p.launcher); pointerEvent(f,'pointerleave','mouse',p.root);
+  await new Promise(resolve=>setTimeout(resolve,230)); assert.equal(p.opened,false);
+  f.plugin.settings.miniOutlineCollapsedStyle='icon'; f.manager.sync();
+  pointerEvent(f,'pointerenter','mouse',p.launcher); await new Promise(resolve=>setTimeout(resolve,230)); assert.equal(p.opened,false);
+  f.plugin.settings.miniOutlineHover=true; f.manager.sync();
+  pointerEvent(f,'pointerenter','mouse',p.launcher); await new Promise(resolve=>setTimeout(resolve,230)); assert.equal(p.opened,true);
+  assert.deepEqual(f.calls,['load']);
+});
+
+test('dense rails prefer shallow headings and bound marks without losing the full outline', async t => {
+  const entries=Array.from({length:1000},(_,i)=>({title:`Public heading ${i}`,level:i%100===0?1:2}));
+  assert.deepEqual(railHeadings(entries),Array.from({length:10},(_,i)=>i*100));
+  const flat=entries.map(e=>({...e,level:2})), indices=railHeadings(flat);
+  assert.equal(indices.length,24); assert.equal(indices[0],0); assert.equal(indices.at(-1),999);
+  assert.ok(indices.every((n,i)=>!i||n>indices[i-1])); assert.deepEqual(railHeadings([]),[]);
+  const f=fixture(entries); t.after(f.cleanup); await f.panel.open(); f.panel.close();
+  assert.equal(f.panel.railMarks.length,10); assert.equal(f.panel.data.entries.length,1000);
+  f.setPositions({reading:144,browsing:670}); f.panel.update(true);
+  assert.equal(f.panel.railMarks.find(r=>r.mark.classList.contains('is-reading')).index,100);
+  assert.equal(f.panel.railMarks.find(r=>r.mark.classList.contains('is-browsing')).index,600);
+});
+
+test('closed rails coalesce position updates without replacing rows or reading a document again', async t => {
+  const f=fixture(); t.after(f.cleanup); const p=f.panel; await p.open(); p.close();
+  const row=p.rows.get(0).row, marks=p.railMarks.map(r=>r.mark); let positions=0;
+  f.adapter.positions=()=>{positions++;return {reading:2,browsing:3};};
+  for(let i=0;i<100;i++)f.manager.update();
+  assert.equal(positions,0); await new Promise(resolve=>setTimeout(resolve,210)); assert.equal(positions,1);
+  assert.equal(p.rows.get(0).row,row); assert.deepEqual(p.railMarks.map(r=>r.mark),marks); assert.deepEqual(f.calls,['load']);
+  assert.equal(p.railMarks[2].mark.classList.contains('is-reading'),true);
+  assert.equal(p.railMarks[3].mark.classList.contains('is-browsing'),true);
+  f.plugin.settings.miniOutlineMode='off'; f.manager.sync(); f.manager.update();
+  await new Promise(resolve=>setTimeout(resolve,210)); assert.equal(positions,1);
+});
+
+test('search, options, menus and keyboard use keep an unpinned outline open after mouse leave', async t => {
+  for(const mode of ['search','options','menu','keyboard']) {
+    const f=fixture(); t.after(f.cleanup); const p=f.panel; await p.open();
+    if(mode==='search')p.toggleSearch();
+    if(mode==='options'){p.optionsToggle.click();await tick();}
+    if(mode==='menu')sectionMenu(f,0);
+    if(mode==='keyboard'){
+      p.rows.get(0).title.dispatchEvent(new f.doc.defaultView.KeyboardEvent('keydown',{key:'Tab',bubbles:true}));
+      p.rows.get(0).title.focus();
+    }
+    pointerEvent(f,'pointerleave','mouse',p.root); await new Promise(resolve=>setTimeout(resolve,280)); assert.equal(p.opened,true,mode);
+    if(mode==='search')p.toggleSearch();
+    if(mode==='options'){p.optionsToggle.click();await tick();}
+    if(mode==='menu')f.menus.at(-1).hide();
+    if(mode==='keyboard')p.rows.get(0).title.blur();
+    await new Promise(resolve=>setTimeout(resolve,300)); assert.equal(p.opened,false,mode);
+  }
+});
+
+test('touch unpin collapses to a large icon; hybrid mouse can restore rails without reloading', async t => {
+  const f=fixture(); t.after(f.cleanup); const p=f.panel; await p.open({pin:true});
+  pointerEvent(f,'pointerdown','touch',p.pin); p.pin.click(); await tick();
+  assert.equal(p.opened,false); assert.equal(p.launcherStyle,'icon'); assert.equal(p.launcher.classList.contains('is-touch-control'),true);
+  pointerEvent(f,'pointerenter','touch',p.launcher); await new Promise(resolve=>setTimeout(resolve,230)); assert.equal(p.opened,false);
+  p.launcher.click(); await tick(); assert.equal(p.opened,true); p.close();
+  pointerEvent(f,'pointerover','mouse'); assert.equal(p.launcherStyle,'rail');
+  f.doc.body.classList.add('is-mobile'); f.manager.sync(); assert.equal(p.launcherStyle,'icon');
+  f.plugin.settings.miniOutlineCollapsedStyle='rail'; f.manager.sync(); assert.equal(p.launcherStyle,'rail');
+  assert.equal(p.launcher.classList.contains('is-touch-control'),true); assert.deepEqual(f.calls,['load']);
+});
+
+test('keyboard opens the collapsed entry into focusable headings and Escape returns to the same entry', async t => {
+  const f=fixture(); t.after(f.cleanup); const p=f.panel; await p.open(); p.close();
+  p.launcher.focus(); p.launcher.click(); await tick();
+  assert.equal(f.doc.activeElement,p.rows.get(0).title);
+  p.rows.get(0).title.dispatchEvent(new f.doc.defaultView.KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}));
+  assert.equal(p.opened,false); assert.equal(f.doc.activeElement,p.launcher); assert.deepEqual(f.calls,['load']);
+});
+
+test('startup unpin permits a collapsed entry only for that document and honors explicit hiding and coexistence', async t => {
+  for(const mode of ['always','off','auto']){
+    const f=fixture(undefined,{miniOutlineStartup:true,miniOutlineMode:mode});t.after(f.cleanup);const p=f.panel;
+    if(mode==='auto')f.plugin.app.plugins.enabledPlugins.add('floating-toc');
+    assert.equal(p.launcher.hidden,true); await p.open({pin:true});
+    pointerEvent(f,'pointerdown','touch',p.pin);p.pin.click();await tick();f.manager.sync();
+    assert.equal(p.launcher.hidden,mode!=='always'); assert.equal(p.opened,false);
+    f.view.file={path:'another-public.pdf'};f.manager.sync();assert.equal(p.launcher.hidden,true);
+    assert.equal(p.launcherStyle,'icon'); assert.equal(p.railMarks.length,0); assert.deepEqual(f.calls,['load']);
+  }
+});
+
+test('invalidating headings removes stale rail markers without starting background analysis', async t => {
+  const f=fixture();t.after(f.cleanup);const p=f.panel;await p.open();p.close();
+  p.invalidate(); assert.equal(p.launcherStyle,'icon'); assert.equal(p.railMarks.length,0);
+  f.manager.update();await new Promise(resolve=>setTimeout(resolve,220));assert.deepEqual(f.calls,['load']);
+  await p.open(); assert.deepEqual(f.calls,['load','load']); assert.equal(p.data,f.data);
+});
+
+test('a disappeared viewer fails closed during a deferred rail update without affecting playback', async t => {
+  const f=fixture();t.after(f.cleanup);const p=f.panel;await p.open();p.close();
+  f.adapter.positions=()=>{throw Error('viewer detached');};f.manager.update();
+  await new Promise(resolve=>setTimeout(resolve,220));
+  assert.equal(p.launcherStyle,'icon');assert.equal(p.invalid,true);assert.equal(p.opened,false);assert.deepEqual(f.calls,['load']);
+});
+
+test('destroy cancels pending rail hover, collapse and position work', async t => {
+  const f=fixture();t.after(f.cleanup);const p=f.panel;await p.open();p.close();
+  pointerEvent(f,'pointerenter','mouse',p.launcher); f.manager.update(); f.manager.destroy();
+  await new Promise(resolve=>setTimeout(resolve,280)); assert.deepEqual(f.calls,['load']); assert.equal(p.root.isConnected,false);
+});
 
 test('mixed-input desktops use actual touch or pen interaction, not touch capability, to keep controls visible', t => {
   const f=fixture();t.after(f.cleanup);const p=f.panel;
@@ -423,32 +708,70 @@ test('width updates existing layout without replacing headings, loading document
   assert.equal(p.root.style.getPropertyValue('--cozy-mini-width'),'360px'); assert.deepEqual(f.calls,['load']);
 });
 
-test('compact outline controls follow actual pane-constrained width without changing saved preferences or reading state', async t => {
+test('header edge controls use measured space and theme button sizes without changing saved width or rows', async t => {
   const f=fixture(undefined,{miniOutlineWidth:420}); t.after(f.cleanup); const p=f.panel;
-  let width=420; p.panel.getBoundingClientRect=()=>({left:0,top:0,right:width,bottom:300,width,height:300});
+  let width=420, buttonWidth=26; p.panel.getBoundingClientRect=()=>rect(0,0,width,300);
+  p.header.getBoundingClientRect=()=>rect(0,0,width-14,26); p.header.style.columnGap='3px';
+  p.closeButton.style.display='none';
+  [...p.header.children].forEach(button=>{button.getBoundingClientRect=()=>rect(0,0,buttonWidth,26);});
   await p.open(); const row=p.rows.get(1).row, state=p.state;
-  assert.equal(p.panel.classList.contains('is-compact'),false);
-  for(const [actual,compact] of [[180,true],[230,true],[239,true],[240,false],[420,false]]) {
-    width=actual; p.layout(); assert.equal(p.panel.classList.contains('is-compact'),compact);
+  for(const [actual,fit] of [[180,false],[190,false],[230,true],[240,true],[420,true]]) {
+    width=actual; p.layout(); assert.deepEqual(p.edgeButtons.map(button=>button.hidden),[!fit,!fit,fit,fit]);
     assert.equal(p.rows.get(1).row,row); assert.equal(p.state,state); assert.equal(f.plugin.settings.miniOutlineWidth,420);
   }
+  width=230; buttonWidth=36; p.layout(); assert.equal(p.edgeButtons[0].hidden,true);
+  buttonWidth=26; p.layout(); assert.equal(p.edgeButtons[0].hidden,false);
   assert.deepEqual(f.calls,['load']);
   p.close(); width=180; await p.open();
-  assert.equal(p.panel.classList.contains('is-compact'),true); assert.deepEqual(f.calls,['load']);
+  assert.equal(p.edgeButtons[0].hidden,true); assert.deepEqual(f.calls,['load']);
+});
+
+test('section options use one compact row or an equivalent menu without changing the target', async t => {
+  const f=fixture(); t.after(f.cleanup); const p=f.panel;
+  f.doc.defaultView.matchMedia=()=>({matches:false});
+  let width=286; p.sectionTools.getBoundingClientRect=()=>rect(0,0,width,26);
+  p.sectionTools.style.columnGap='6px'; p.sectionCommands.style.columnGap='4px'; p.sectionLabel.style.fontSize='12px';
+  p.sectionButtons.forEach(button=>{button.getBoundingClientRect=()=>rect(0,0,26,26);});
+  await p.open({pin:true}); p.rows.get(1).title.focus(); p.optionsToggle.click(); await tick();
+  assert.equal(p.sectionCommands.hidden,false); assert.equal(p.sectionMenuToggle.hidden,true);
+  p.sectionButtons[0].focus(); width=166; p.layoutControls();
+  assert.equal(p.sectionCommands.hidden,true); assert.equal(p.sectionMenuToggle.hidden,false);
+  assert.equal(f.doc.activeElement,p.sectionMenuToggle);
+  assert.match(p.sectionMenuToggle.getAttribute('aria-label'),/Details/);
+  p.sectionMenuToggle.click(); await tick(); const menu=f.menus.at(-1);
+  assert.equal(menu.method,'anchor'); assert.equal(p.opened,true); assert.deepEqual(f.calls,['load']);
+  await menu.items[1].click(); assert.deepEqual(f.calls.filter(call=>call[0]==='read'),[['read',1,false]]);
+  p.sectionMenuToggle.blur(); menu.hide(); await tick(); assert.equal(f.doc.activeElement,p.sectionMenuToggle);
+  width=286; p.layoutControls(); assert.equal(p.sectionCommands.hidden,false);
+  assert.equal(f.doc.activeElement,p.sectionButtons[0]);
+  p.touchControls=true; p.layoutControls(); assert.equal(p.sectionCommands.hidden,true);
+  f.setPositions({reading:-1,browsing:-1}); p.selectedSection=null; f.manager.update();
+  assert.equal(p.sectionMenuToggle.disabled,true);
+});
+
+test('touch headers require full-sized controls and keep edge actions together when space is tight', async t => {
+  const f=fixture(); t.after(f.cleanup); const p=f.panel; f.doc.body.classList.add('is-mobile');
+  let width=322; p.header.getBoundingClientRect=()=>rect(0,0,width,44); p.header.style.columnGap='3px';
+  p.closeButton.style.marginLeft='200px';
+  [...p.header.children].forEach(button=>{button.getBoundingClientRect=()=>rect(0,0,44,44);});
+  await p.open(); assert.deepEqual(p.edgeButtons.map(button=>button.hidden),[true,true,false,false]);
+  width=400; p.layoutControls(); assert.deepEqual(p.edgeButtons.map(button=>button.hidden),[false,false,true,true]);
+  p.optionsToggle.click(); await tick(); assert.equal(p.sectionCommands.hidden,true);
+  assert.equal(p.sectionMenuToggle.hidden,false); assert.deepEqual(f.calls,['load']);
 });
 
 test('heading line limits update in place and preserve explicitly expanded titles and full labels', async t => {
   const f=fixture([{title:'A long public heading '.repeat(20),level:1}]); t.after(f.cleanup); await f.panel.open(); const p=f.panel,row=p.rows.get(0).row;
   const fullLabel=p.rows.get(0).title.getAttribute('aria-label');
   assert.equal(p.root.style.getPropertyValue('--cozy-mini-title-lines'),'2');
-  p.rows.get(0).more.click(); await tick(); await f.menus.at(-1).items[2].click();
+  sectionMenu(f, 0); await tick(); await f.menus.at(-1).items[2].click();
   for (const lines of [1,2,3,4]) {
     f.plugin.settings.miniOutlineTitleLines=lines; f.manager.sync();
     assert.equal(p.root.style.getPropertyValue('--cozy-mini-title-lines'),String(lines));
     assert.equal(p.rows.get(0).row,row); assert.equal(row.classList.contains('is-expanded'),true);
     assert.equal(p.rows.get(0).title.getAttribute('aria-label'),fullLabel);
   }
-  p.rows.get(0).more.click(); await tick(); await f.menus.at(-1).items[2].click();
+  sectionMenu(f, 0); await tick(); await f.menus.at(-1).items[2].click();
   assert.equal(row.classList.contains('is-expanded'),false); assert.equal(p.root.style.getPropertyValue('--cozy-mini-title-lines'),'4');
   assert.deepEqual(f.calls,['load']);
 });
@@ -499,14 +822,17 @@ test('titles use display-only cleanup and search without changing source anchors
 test('one section menu retains both reading scopes and a complete-title view, including keyboard access', async t => {
   const f=fixture([{title:'A long public heading '.repeat(12),level:1}]); t.after(f.cleanup); await f.panel.open(); const p=f.panel;
   assert.equal(p.back.dataset.icon,'corner-up-left'); assert.equal(p.list.classList.contains('cozy-mini-flat'),true);
-  assert.equal(p.rows.get(0).row.querySelectorAll('.cozy-mini-action').length,1);
-  p.rows.get(0).more.click(); await tick(); const menu=f.menus.at(-1);
+  assert.equal(p.rows.get(0).row.querySelectorAll('.cozy-mini-action').length,0);
+  p.rows.get(0).title.focus();
+  const key = new f.doc.defaultView.KeyboardEvent('keydown', { key: 'F10', shiftKey: true, bubbles: true, cancelable: true });
+  p.rows.get(0).title.dispatchEvent(key); await tick(); const menu=f.menus.at(-1);
+  assert.equal(key.defaultPrevented, true);
   assert.equal(menu.method,'anchor'); assert.deepEqual(menu.items.map(item=>item.label),['Read from this section','Read this section only','Show full heading']);
   await menu.items[0].click(); await menu.items[1].click();
   assert.deepEqual(f.calls.filter(call=>call[0]==='read'),[['read',0,true],['read',0,false]]);
   await menu.items[2].click(); assert.equal(p.rows.get(0).row.classList.contains('is-expanded'),true);
-  assert.equal(f.doc.activeElement,p.rows.get(0).more);
-  p.rows.get(0).more.click(); await tick(); assert.equal(f.menus.at(-1).items[2].label,'Collapse heading');
+  assert.equal(f.doc.activeElement,p.rows.get(0).title);
+  sectionMenu(f, 0); await tick(); assert.equal(f.menus.at(-1).items[2].label,'Collapse heading');
   await f.menus.at(-1).items[2].click(); assert.equal(p.rows.get(0).row.classList.contains('is-expanded'),false);
 });
 
@@ -520,5 +846,5 @@ test('section menus do not close an unpinned outline before selection and cannot
   f.adapter.load=async()=>({kind:'markdown',entries:[{title:'Replacement',level:1}]}); await p.load();
   await menu.items[0].click(); await menu.items[2].click();
   assert.equal(f.calls.some(call=>call[0]==='read'),false); assert.equal(p.expandedTitles.size,0);
-  p.rows.get(0).more.click(); await tick(); const current=f.menus.at(-1); p.close(); assert.equal(current.hidden,true);
+  sectionMenu(f, 0); await tick(); const current=f.menus.at(-1); p.close(); assert.equal(current.hidden,true);
 });

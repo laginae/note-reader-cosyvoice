@@ -9,8 +9,9 @@ test('numeric intervals speak endpoints and unary signs without bracket narratio
   assert.equal(mathSpeech(String.raw`\left[−0.025, +0.05\right]`),'minus 0.025 to plus 0.05');
   assert.equal(mathSpeech('[0,1]',{academicMathStyle:'verbose'}),'closed interval, 0 to 1');
   assert.equal(mathSpeech('[-1,2]',{academicMathMode:'skip'}),'Formula.');
-  assert.match(mathSpeech('[1,2,3]'),/open bracket/);
-  assert.match(mathSpeech('x=[1,2]'),/open bracket/);
+  assert.equal(mathSpeech('[1,2,3]'),'1, 2, 3');
+  assert.equal(mathSpeech('x=[1,2]'),'x equals 1, 2');
+  assert.match(mathSpeech('[1,2,3]',{academicMathStyle:'verbose'}),/open bracket/);
   assert.match(academicLatex('范围为 $[-0.025,0.025]$。'),/负0.025 到 0.025/);
 });
 
@@ -27,10 +28,11 @@ test('statistics read naturally inside equations in both languages and styles', 
   assert.equal(mathSpeech(String.raw`Var[\alpha]`),'variance of alpha');
 });
 
-test('statistics do not erase vector brackets, reinterpret arbitrary names or bypass omission', () => {
+test('statistics do not reinterpret vector members or arbitrary names and respect omission', () => {
   for (const source of ['[x,y]','MyVar[x]','Var[x,y]','Cov[x]','Var[x+y]','Var[x|y]'])
     assert.doesNotMatch(mathSpeech(source),/variance|covariance/);
-  assert.match(mathSpeech('[x,y]'),/open bracket/);
+  assert.equal(mathSpeech('[x,y]'),'x, y');
+  assert.match(mathSpeech('[x,y]',{academicMathStyle:'verbose'}),/open bracket/);
   assert.equal(mathSpeech('Var[x]',{academicMathMode:'skip'}),'Formula.');
   assert.equal(mathSpeech('Var[x]',{academicMathMode:'skip',academicSkipNotice:false}),'');
   assert.equal(mathSpeech('Var[x]',{academicMathMode:'all'}),'variance of x');

@@ -106,6 +106,23 @@ test('HTML subscript speech keeps selection highlighting on original source', ()
   }
 });
 
+test('HTML interval speech keeps source markup and original highlight ranges intact', () => {
+  const source = '<p>区间为 $[a,b)$。</p><p>坐标为 $(a,b)$。</p>';
+  const dom = new JSDOM(source), doc = dom.window.document, before = doc.body.innerHTML;
+  const options = academicOptions(), speechTransform = text => academicLatex(text, options);
+  const speech = speechTransform(extractHtmlText(source, options));
+  assert.match(speech,/a 到 b，含 a，不含 b/);
+  assert.match(speech,/坐标为\s+a、b/);
+  assert.match(academicLatex(extractHtmlText(source, options), {...options,academicMathStyle:'verbose'}), /左括号 a,b 右括号/);
+  dom.window.CSS = { highlights:new Map() };
+  dom.window.Highlight = class extends Set { constructor(...ranges) { super(ranges); } };
+  assert.equal(highlightDocument(doc, { text:speech, academic:options, speechTransform }), true);
+  assert.equal(doc.body.innerHTML, before);
+  const selected = [...dom.window.CSS.highlights.get('note-reader-speech')].map(range=>range.toString()).join('');
+  assert.ok(selected.includes('$[a,b)$')); assert.ok(selected.includes('$(a,b)$'));
+  dom.window.close();
+});
+
 test('numeric citations merge adjacent groups and links without changing units, years or zero intervals', () => {
   assert.equal(citations('研究[3]。'), '研究 文献3 。');
   assert.equal(citations('研究[2][4]。'), '研究 文献2和4 。');
