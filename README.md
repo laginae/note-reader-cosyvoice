@@ -8,15 +8,30 @@ Read aloud **notes, PDFs, HTML files, web pages and saved Copilot chats** with l
 
 **Language:** English | [简体中文](README.zh-CN.md) | [Deutsch](README.de.md) | [Français](README.fr.md) | [Русский](README.ru.md) | [한국어](README.ko.md) | [日本語](README.ja.md) | [Español](README.es.md) | [Italiano](README.it.md) | [Português](README.pt.md)
 
-### See it in action
+### Read from the mini outline
+
+**Choose a chapter, start reading, and pause or resume without opening the main playback bar.** Keep the original page in view, search headings, return to your reading position, and unpin the outline to tuck it away.
+
+[![Use only the mini outline to read a section, pause, search and navigate, resume, collapse to chapter lines, and double-click another heading to start reading](docs/images/mini-outline-demo.gif)](docs/media/mini-outline-demo.mp4)
+
+[Watch the 58-second walkthrough (silent MP4)](docs/media/mini-outline-demo.mp4) · [Still preview](docs/media/mini-outline-demo-poster.png) · [Recording details](docs/media/README.md#mini-outline-playback-demo)
+
+Single-click a heading to navigate; right-click it for **Read this section only** or **Read from this section**. The captioned double-click shortcut is **off by default**: enable **Mini outline > More outline options > Double-click heading to read**. On touch screens, use the section actions in **Outline options** instead.
+
+Recorded in Obsidian with public sample text and local system speech. No online speech requests were made.
+
+<details>
+<summary>Reading toolbar and selected-text walkthrough</summary>
 
 [![Select a passage, read it aloud, pause and resume, then navigate by heading](docs/images/cozy-quick-tour.gif)](docs/media/cozy-quick-tour.mp4)
 
 [Watch the 53-second demo with sound (MP4)](docs/media/cozy-quick-tour.mp4) · [Demo transcript and recording details](docs/media/README.md)
 
-More ways to start: [Editing Toolbar demo](#editing-toolbar-demo) · [Right-click menu demo](#right-click-menu-demo).
-
 The GIF is silent. The video uses public sample text and previously generated audio to demonstrate the controls, not actual online synthesis speed. [Voice and recording details](docs/media/README.md).
+
+</details>
+
+More ways to start: [Editing Toolbar demo](#editing-toolbar-demo) · [Right-click menu demo](#right-click-menu-demo).
 
 ## Quick start
 
@@ -26,10 +41,13 @@ The GIF is silent. The video uses public sample text and previously generated au
 
 Click **More controls** again to fold the extra controls away; click the pane-header audio icon again to hide the playback bar.
 
+Prefer a smaller player? Open the document-edge outline entry or run **Toggle mini outline**, then right-click a heading to start reading. Its header provides Pause/Resume during a reading session; the main playback bar can stay closed.
+
 No extra toolbar plugin is needed. New installations start with system speech and check available voices after the workspace is ready; existing users keep their engine and permissions. Test the fixed sample before reading a document. Local CosyVoice still requires its own setup. [Other engines and setup options](#choose-a-voice-service) · [Manual installation](INSTALL.md)
 
 ## Make it fit your reading
 
+- **A small outline that also controls reading.** Navigate, choose a section, and pause/resume in the same compact panel. Pin it beside your document or let it collapse when not in use. It works independently of the main playback bar and does not require Floating TOC.
 - **Stay with the original.** Highlight the current passage in notes, text PDFs, HTML and web pages. Turn on auto-follow when you want the view to move with reading; use the outline to jump to a section in notes, PDFs and local HTML.
 - **Listen to an answer.** Read the latest reply, recent replies or a question and answer from a **saved Copilot conversation**. This is not automatic narration of streaming chat replies.
 - **Focus on the argument.** Optional academic settings simplify short formulas, skip complex formulas or long numeric tables, merge numbered citations and handle PDF headers, footers and footnotes. Your source stays unchanged; recognition depends on the document.

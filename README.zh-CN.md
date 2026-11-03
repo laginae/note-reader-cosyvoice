@@ -8,15 +8,30 @@
 
 **语言：** [English](README.md) | 简体中文 | [Deutsch](README.de.md) | [Français](README.fr.md) | [Русский](README.ru.md) | [한국어](README.ko.md) | [日本語](README.ja.md) | [Español](README.es.md) | [Italiano](README.it.md) | [Português](README.pt.md)
 
-### 看一次实际操作
+### 用迷你目录控制朗读
+
+**选章节、开始朗读、暂停或继续，不必打开顶部播放栏。** 正文始终在眼前；还可搜索标题、回到朗读位置，或取消固定，把目录收起。
+
+[![仅用迷你目录完成章节朗读、暂停、搜索与定位、继续、收起为短线，以及双击另一标题起读](docs/images/mini-outline-demo.gif)](docs/media/mini-outline-demo.mp4)
+
+[观看约 58 秒操作演示（无声 MP4）](docs/media/mini-outline-demo.mp4) · [静态预览](docs/media/mini-outline-demo-poster.png) · [录制说明](docs/media/README.md#mini-outline-playback-demo)
+
+单击标题只定位；右键标题可选择“只朗读本节”或“从本节朗读”。动图已为双击操作加上字幕：该快捷方式**默认关闭**，需先在“迷你目录 > 更多目录选项 > 双击标题开始朗读”中开启。触屏请使用顶部“目录选项”中的章节操作。
+
+使用公开示例和本地系统语音在 Obsidian 中实录，未调用在线语音接口。
+
+<details>
+<summary>播放工具栏与选中文字朗读演示</summary>
 
 [![选中文字、开始朗读、暂停与继续，再按标题定位](docs/images/cozy-quick-tour.gif)](docs/media/cozy-quick-tour.mp4)
 
 [观看 53 秒有声演示（MP4）](docs/media/cozy-quick-tour.mp4) · [示例文字与录制说明](docs/media/README.md)
 
-其他起读方式：[Editing Toolbar 动图](#editing-toolbar-动图) · [鼠标右键菜单动图](#鼠标右键菜单动图)。
-
 动图无声，有声视频使用公开示例和预生成音频演示操作，不代表实际在线合成速度。[音色与录制详情](docs/media/README.md)。
+
+</details>
+
+其他起读方式：[Editing Toolbar 动图](#editing-toolbar-动图) · [鼠标右键菜单动图](#鼠标右键菜单动图)。
 
 ## 快速开始
 
@@ -26,10 +41,13 @@
 
 再次点击“三个点”可收起更多控制；再次点击窗口标题栏的朗读图标，可收起播放栏。
 
+想让界面更简洁？打开文档侧边目录入口，或执行“打开/关闭迷你目录”命令，再右键标题开始朗读。朗读会话中可直接使用目录顶栏的暂停／继续按钮，不必展开主播放栏。
+
 以上步骤无需额外安装悬浮工具栏插件。全新安装先选择系统语音，工作区就绪后检测可用音色；已有用户的引擎和授权不变。建议先播放设置中的固定测试短句。本地 CosyVoice 仍需单独配置。[其他语音方式与配置](#先选一种适合你的语音方式) · [手动安装](INSTALL.md)
 
 ## 按你的习惯听读
 
+- **小目录，也能控制朗读。** 在同一个轻量面板里定位、选择章节朗读、暂停与继续；可固定在正文旁，也可在不用时收起。独立于主播放栏，无需安装 Floating TOC。
 - **跟着原文听。** 在笔记、文本型 PDF、HTML 和网页中高亮正在朗读的内容；需要时开启自动跟随。在笔记、PDF 和本地 HTML 中，还可通过大纲定位章节。
 - **把回答听下来。** 从**已保存的 Copilot 对话**中选择最新回复、最近回复或一轮问答；不是实时自动朗读流式聊天。
 - **专注论述内容。** 可选学术设置简化短公式、跳过复杂公式或长数字表格、合并编号引用，并处理 PDF 页眉页脚与脚注。不改动源文件，识别效果取决于文档结构。

@@ -1,4 +1,28 @@
-# Quick Tour
+# Demo Recordings
+
+## Mini Outline Playback Demo
+
+[Watch the 58-second silent video](mini-outline-demo.mp4) · [Looping GIF](../images/mini-outline-demo.gif) · [Still preview](mini-outline-demo-poster.png) · [Public sample note](mini-outline-public-sample.md)
+
+Recorded on November 3, 2026 with **Cozy Read Aloud 1.7.0** in a separate public sample vault on Obsidian desktop for Windows. The main playback bar remains closed throughout. This is a desktop recording, not a mobile-device test.
+
+1. Hover over the chapter lines to open the outline and pin it beside the page.
+2. Single-click a heading to navigate without starting speech.
+3. Open the heading's actual right-click menu and choose **Read this section only**.
+4. Pause in the outline header, search for another heading and navigate while remaining paused.
+5. Use **Return to reading**, then resume from the same header.
+6. Unpin and move away to collapse to chapter lines. Let the current section finish.
+7. Hover to reopen, double-click another heading to read from there, then pause again.
+
+**Double-click is opt-in and mouse-only.** It was enabled in **Mini outline > More outline options > Double-click heading to read** before recording; the bilingual caption calls this out. Touch users can use the section actions in **Outline options**. In this release, another section-start action can remain disabled while the current section-reading operation is active; the recording lets that operation finish before starting the next section. It does not demonstrate seamless switching between active reading ranges.
+
+The recording uses actual local **Microsoft Zira Desktop** system speech at **1x** playback. No online speech requests, credentials, private notes or prerecorded-audio adapter are used. Actual playing/paused states and the closed main toolbar were checked during capture. Both published formats are silent UI walkthroughs, not latency benchmarks.
+
+The document area is cropped for readability; UI text is enlarged in the isolated recording window. English/Chinese captions, a standard arrow pointer and a faint, short-lived yellow click cue are recording overlays. Mouse motion and menus are deliberately paced. The interface, menus, highlights and control actions are not reconstructed, and the recording is not sped up. Theme and window size can change the appearance.
+
+**中文说明：** 约 58 秒桌面实录，只操作迷你目录，展示章节起读、暂停／继续、搜索定位、返回朗读位置、固定与收起。双击起读需要预先在设置中开启，触屏使用“目录选项”中的章节操作。素材仅含下方链接的公开示例，使用本地系统语音；动图与视频均无声，非合成等待时间测试，也不是手机实测。
+
+## Reading Toolbar Quick Tour
 
 [Watch the 53-second video with sound](cozy-quick-tour.mp4) · [Silent preview](../images/cozy-quick-tour.gif) · [Back to the main README](../../README.md)
 
@@ -68,6 +92,10 @@ Use case: logo-brand. Create one original small mascot mark for Cozy Read Aloud,
 
 ## File Formats
 
+- `mini-outline-demo.mp4`: silent H.264 video, approximately 58 seconds, with English/Chinese captions.
+- `../images/mini-outline-demo.gif`: silent looping preview of the same recording, 1040 pixels wide, 10 frames per second.
+- `mini-outline-demo-poster.png`: non-animated preview of the mini outline workflow.
+- `mini-outline-public-sample.md`: the complete invented public note used for the mini outline recording.
 - `cozy-quick-tour.mp4`: H.264 video and AAC audio, approximately 53 seconds.
 - `../images/cozy-quick-tour.gif`: smaller, silent looping preview of the same recording.
 - `cozy-quick-tour-poster.png`: still frame for a non-animated preview.
