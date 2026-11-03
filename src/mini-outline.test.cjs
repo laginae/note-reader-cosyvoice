@@ -658,16 +658,75 @@ test('keyboard opens the collapsed entry into focusable headings and Escape retu
   assert.equal(p.opened,false); assert.equal(f.doc.activeElement,p.launcher); assert.deepEqual(f.calls,['load']);
 });
 
-test('startup unpin permits a collapsed entry only for that document and honors explicit hiding and coexistence', async t => {
+test('startup unpin keeps an entry across documents while honoring explicit hiding and coexistence', async t => {
   for(const mode of ['always','off','auto']){
     const f=fixture(undefined,{miniOutlineStartup:true,miniOutlineMode:mode});t.after(f.cleanup);const p=f.panel;
     if(mode==='auto')f.plugin.app.plugins.enabledPlugins.add('floating-toc');
     assert.equal(p.launcher.hidden,true); await p.open({pin:true});
     pointerEvent(f,'pointerdown','touch',p.pin);p.pin.click();await tick();f.manager.sync();
     assert.equal(p.launcher.hidden,mode!=='always'); assert.equal(p.opened,false);
-    f.view.file={path:'another-public.pdf'};f.manager.sync();assert.equal(p.launcher.hidden,true);
+    f.view.file={path:'another-public.pdf'};f.manager.sync();assert.equal(p.launcher.hidden,mode!=='always');
     assert.equal(p.launcherStyle,'icon'); assert.equal(p.railMarks.length,0); assert.deepEqual(f.calls,['load']);
   }
+});
+
+test('collapsed chapter rails follow only the active document and recover when returning in the same pane or another tab', async t => {
+  for (const newPane of [false,true]) {
+    const f=fixture(undefined,{miniOutlineStartup:true,miniOutlineMode:'always'});t.after(f.cleanup);
+    const original=f.view.file, loads=[];
+    f.adapter.loadCollapsed=async view=>{loads.push(view.file.path);return {kind:'markdown',entries:[{title:view.file.path,level:1}]};};
+    await f.panel.open({pin:true});f.panel.pin.click();await tick();f.panel.close();
+    const next=newPane?{file:{path:'next-public.md'},containerEl:f.doc.querySelector('aside')}:f.view;
+    if(newPane){f.adapter.views=()=>[f.view,next];f.plugin.app.workspace={activeLeaf:{view:next}};}
+    else next.file={path:'next-public.md'};
+    f.manager.sync();await tick();const target=f.manager.panels.get(next);
+    assert.notEqual(target.opened,true);assert.equal(target.launcher.hidden,false);
+    assert.equal(target.launcherStyle,'rail');assert.equal(target.data.entries[0].title,'next-public.md');
+    assert.equal(f.manager.panels.get(f.view).panel.hidden,true);assert.deepEqual(loads,['next-public.md']);
+    if(newPane)f.plugin.app.workspace.activeLeaf.view=f.view;else f.view.file=original;
+    f.manager.sync();await tick();assert.equal(f.panel.launcherStyle,'rail');assert.equal(f.panel.launcher.hidden,false);
+    assert.notEqual(f.panel.opened,true);assert.equal(f.doc.activeElement,f.doc.body);
+    assert.equal(f.calls.some(call=>Array.isArray(call)&&call[0]==='read'),false);
+    assert.deepEqual(loads,newPane?['next-public.md']:['next-public.md','public-example.md']);
+  }
+});
+
+test('collapsed loading stays lazy at startup and on touch, hidden entries and inactive panes', async t => {
+  for(const reason of ['startup','touch','hidden','coexistence','icon']){
+    const f=fixture();t.after(f.cleanup);const loads=[];
+    f.adapter.loadCollapsed=async view=>{loads.push(view.file.path);return f.data;};
+    f.manager.sync();await tick();assert.deepEqual(loads,[]);
+    if(reason==='startup')continue;
+    await f.panel.open();f.panel.close();f.view.file={path:'changed-public.md'};
+    if(reason==='touch')f.doc.body.classList.add('is-mobile');
+    if(reason==='hidden')f.plugin.settings.miniOutlineMode='off';
+    if(reason==='coexistence')f.plugin.app.plugins.enabledPlugins.add('floating-toc');
+    if(reason==='icon')f.plugin.settings.miniOutlineCollapsedStyle='icon';
+    f.manager.sync();await tick();assert.deepEqual(loads,[]);
+  }
+  const f=fixture();t.after(f.cleanup);const loads=[];
+  f.adapter.loadCollapsed=async view=>{loads.push(view.file.path);return f.data;};
+  await f.panel.open();f.panel.close();f.plugin.app.workspace={activeLeaf:{view:{}}};
+  f.view.file={path:'background-public.md'};f.manager.sync();await tick();assert.deepEqual(loads,[]);
+});
+
+test('stale collapsed loads cannot restore another file and an uncached PDF stays an icon without repeated attempts', async t => {
+  const f=fixture();t.after(f.cleanup);await f.panel.open();f.panel.close();const pending=[];
+  f.adapter.loadCollapsed=(view,cancelled)=>new Promise(resolve=>pending.push({file:view.file,cancelled,resolve}));
+  f.view.file={path:'next-public.md'};f.manager.sync();
+  f.view.file={path:'last-public.pdf'};f.manager.sync();assert.equal(pending[0].cancelled(),true);
+  pending[1].resolve(null);await tick();pending[0].resolve(f.data);await tick();
+  for(let i=0;i<10;i++)f.manager.sync();await tick();
+  assert.equal(pending.length,2);assert.equal(f.panel.launcherStyle,'icon');assert.equal(f.panel.launcher.hidden,false);
+  assert.notEqual(f.panel.opened,true);assert.equal(f.panel.data,null);
+});
+
+test('opening during a collapsed load replaces the lazy request and does not leave an empty panel', async t => {
+  const f=fixture();t.after(f.cleanup);await f.panel.open();f.panel.close();let pending;
+  f.adapter.loadCollapsed=(_view,cancelled)=>new Promise(resolve=>{pending={resolve,cancelled};});
+  f.view.file={path:'new-public.md'};f.manager.sync();assert.equal(f.panel.collapsedLoading,true);
+  await f.panel.open();assert.equal(pending.cancelled(),true);pending.resolve(null);await tick();
+  assert.equal(f.panel.opened,true);assert.equal(f.panel.data,f.data);assert.equal(f.panel.rows.size,3);
 });
 
 test('invalidating headings removes stale rail markers without starting background analysis', async t => {

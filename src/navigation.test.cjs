@@ -333,6 +333,20 @@ test('Next skips pending internal startup audio but keeps logical segment number
   assert.equal(session.totalChunks, 2);
 });
 
+test('a paused five-second seek prepares its uncached target without resuming prefetch or speech',async()=>{
+  const {plugin,session,requests}=fixture(['First.','A second public passage.','Third.']);
+  const playback=deferred();
+  plugin.playPreparedAudio=async(_prepared,active,index)=>{
+    if(index===0){plugin.currentAudio={currentTime:1,duration:2,paused:true,pause(){},onended(){plugin.currentAudio=null;playback.resolve();}};await playback.promise;}
+    else{assert.equal(plugin.pauseRequested,true);assert.equal(active.preparationPool.paused,true);active.stopped=true;}
+  };
+  const run=plugin.runSpeechSession(session);await tick();requests.get('0:0').resolve({});await tick();
+  plugin.pauseRequested=true;session.preparationPool.pause(true);
+  assert.equal(plugin.seekCurrentAudioBySeconds(5),true);await tick();
+  assert.ok(requests.has('1:0'));assert.equal(requests.has('2:0'),false);
+  requests.get('1:0').resolve({});await run;assert.equal(plugin.pauseRequested,true);
+});
+
 test('Stop releases a pending synthesis wait even when the service does not respond', async () => {
   const { plugin, session, requests } = fixture();
   const run = plugin.runSpeechSession(session);

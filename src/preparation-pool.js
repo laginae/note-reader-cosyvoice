@@ -102,28 +102,30 @@ class PreparationPool {
     this.bytes = 0;
     // Active operations are deliberately not removed from active.
   }
-  get(key, factory, { background = false, valid = () => true } = {}) {
+  get(key, factory, { background = false, valid = () => true, allowWhilePaused = false } = {}) {
     if (background && this.backgroundFailures.has(key)) return this.backgroundFailures.get(key);
     if (!background) this.backgroundFailures.delete(key);
     const old = this.entries.get(key);
     if (old) {
       this.timings.count(old.state === 'ready' ? 'cacheHit' : 'inflightHit');
       this.entries.delete(key); this.entries.set(key, old);
-      if (!background) { old.background = false; old.valid = valid; }
+      if (!background) { old.background = false; old.valid = valid; old.allowWhilePaused = allowWhilePaused; }
       this.drain();
       return old.promise;
     }
     let resolve, reject;
     const promise = new Promise((ok, fail) => { resolve = ok; reject = fail; });
     promise.catch(() => {});
-    const entry = { key, factory, background, valid, promise, resolve, reject,
+    const entry = { key, factory, background, valid, allowWhilePaused, promise, resolve, reject,
       state: 'queued', queuedAt: this.timings.now(), bytes: 0 };
     this.entries.set(key, entry);
     this.drain();
     return promise;
   }
   drain() {
-    if (this.paused) return;
+    // An explicit seek may prepare its target while playback and speculative work stay paused.
+    const eligible = entry => entry.state === 'queued' && (!this.paused || (!entry.background && entry.allowWhilePaused));
+    if (this.paused && ![...this.entries.values()].some(eligible)) return;
     const wait = this.cooldownUntil - this.timings.now();
     if (wait > 0) {
       if (!this.cooldownTimer) {
@@ -133,7 +135,7 @@ class PreparationPool {
       return;
     }
     while (this.active.size < this.limit) {
-      const queued = [...this.entries.values()].filter(entry => entry.state === 'queued');
+      const queued = [...this.entries.values()].filter(eligible);
       const entry = queued.find(entry => !entry.background)
         || queued.find(entry => ![...this.active].some(active => active.background));
       if (!entry) return;

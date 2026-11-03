@@ -1,5 +1,17 @@
 # Mini Outline Validation
 
+## Desktop 1.7.1 and Mobile 0.8.1
+
+Checked on 2026-11-03:
+
+- Desktop core/export/loader checks and 690 Node tests passed. Mobile passed 382 Node tests and the 45-file compatibility check. Shared outline UI, floating controls, settings tests and styles remain synchronized; mobile keeps its existing current-audio-only seek capability.
+- Collapsed-entry regressions cover switching and returning in the same pane and separate tabs, stale asynchronous results, explicit opening during a collapsed load, invalidation, startup dismissal, hidden/icon/touch modes and Floating TOC coexistence. Collapsed PDFs reuse valid cached outlines and never trigger PDF extraction just for a rail.
+- Floating-seek tests cover opt-in defaults, settings persistence/reset, stale clicks, unavailable audio, pending pause/stop, preserved pause state, stable hover geometry, narrow panes, outline overlap, keyboard focus and mouse/touch transitions. A desktop scheduling regression now permits only an explicit seek target to prepare while paused, preserving cooldown, concurrency, deduplication and stale-target checks; ordinary foreground work and speculative preparation remain paused.
+- Both editions passed isolated Edge/Chromium checks at 1100x800 and touch-simulated 320x568, 390x844, 820x1180 and 1180x820. Note switching kept the entry collapsed with the correct headings and made no speech calls. Optional side buttons fit the viewport, avoid the simulated bottom bar, retain at least 44-pixel touch targets and do not move Pause on reveal. Screenshots were inspected.
+- In a separate public sample vault, actual Obsidian desktop switching and return retained the collapsed chapter rail. Real local system audio was paused, advanced by five seconds across uncached audio segments, then moved back by five seconds to the same position while staying paused. Stop removed the controls. No online speech service was used.
+- The approximately one-minute transparent-background recording checks 14 actual UI/playback states, keeps the main toolbar closed and uses only invented public sample text. Both English and Chinese README previews passed local-link, media-load and overflow checks at desktop and phone widths. Raw frames, profiles, diagnostic outputs and installed settings are not publication assets.
+- Browser simulation is not physical iPhone/iPad/Android acceptance. Current-release device tests remain pending, and mobile background playback, optional OCR and Realtime retain their existing experimental boundaries. No private prose or credentials are included.
+
 Date: 2026-11-01. Desktop 1.5.0; mobile 0.6.0. All fixtures are invented public examples. No speech API requests were made for this feature.
 
 ## Automated Checks

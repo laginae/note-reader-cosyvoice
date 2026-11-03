@@ -18,11 +18,15 @@ test('desktop pause adapter follows the existing session and excludes exports an
   const f=fixture(); assert.equal(f.adapter.playback().active,false);
   const session=f.plugin.activeSession={kind:'reading',sourceLabel:'Public sample'};
   f.plugin.readerState={status:'running',isPaused:false,canPause:true,canStop:true};
-  assert.deepEqual(f.adapter.playback(),{active:true,session,paused:false,canToggle:true,canStop:true,title:'Public sample'});
+  assert.deepEqual(f.adapter.playback(),{active:true,session,paused:false,canToggle:true,canStop:true,canSeek:false,title:'Public sample'});
   f.plugin.runUserAction=(_label,action)=>action();f.plugin.pauseOrResume=async()=>{f.plugin.readerState.isPaused=true;};
   await f.adapter.togglePlayback();assert.equal(f.adapter.playback().paused,true);assert.deepEqual(f.calls,[]);
   let stopped=0;f.plugin.stopReading=()=>{stopped++;};await f.adapter.stopPlayback();assert.equal(stopped,1);
+  const seeks=[];f.plugin.seekCurrentAudioBySeconds=seconds=>seeks.push(seconds);
+  f.plugin.readerState.canSeek=true;assert.equal(f.adapter.playback().canSeek,true);
+  f.adapter.seekPlaybackBy(-5);f.adapter.seekPlaybackBy(5);assert.deepEqual(seeks,[-5,5]);
   f.plugin.activeSession.kind='audio-export';assert.equal(f.adapter.playback().active,false);
+  assert.equal(f.adapter.playback().canSeek,false);
   session.kind='reading';f.plugin.readerState.status='error';assert.equal(f.adapter.playback().canToggle,false);
 });
 test('Markdown titles navigate only; section audio includes descendants and rejects edited source', async () => {
@@ -50,6 +54,17 @@ test('PDF reuses bounded outline cache without reading bytes, and cancelled load
   await f.adapter.locate(f.view,data,0); assert.equal(f.calls.at(-1)[1].pageNumber,1);
   assert.equal(await f.adapter.load(f.view,()=>true),null);
   f.file.stat.mtime++; assert.equal(f.adapter.valid(f.view,data),false);
+});
+
+test('collapsed PDF outlines use existing cache only; Markdown headings still load on demand', async () => {
+  const f=fixture();assert.equal((await f.adapter.loadCollapsed(f.view,()=>false)).entries.length,3);
+  f.file.extension='pdf';assert.equal(await f.adapter.loadCollapsed(f.view,()=>false),null);
+  assert.equal(f.plugin.pdfOutlineCache,undefined);
+  const entries=[{title:'Public cached chapter',level:1,page:1}];
+  f.plugin.pdfOutlineCache=new PdfOutlineCache();f.plugin.pdfOutlineCache.set(f.file,{model:{entries,pages:[]},entries});
+  assert.equal((await f.adapter.loadCollapsed(f.view,()=>false)).entries,entries);
+  f.file.stat.mtime++;assert.equal(await f.adapter.loadCollapsed(f.view,()=>false),null);
+  assert.deepEqual(f.calls,[]);
 });
 
 test('edge navigation uses the active source and rejects cancelled or changed targets after revealing its pane', async () => {

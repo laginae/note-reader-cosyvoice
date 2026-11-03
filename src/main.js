@@ -1672,6 +1672,7 @@ function createDefaultSettings() {
     readingFloatingToolbar: false,
     floatingPauseButton: false,
     floatingStopButton: true,
+    floatingSeekButtons: false,
     readingFloatingAction: 'selection',
     ...ACADEMIC_DEFAULTS,
     ...COPILOT_DEFAULTS,
@@ -5643,6 +5644,7 @@ class CosyVoiceReaderPlugin extends Plugin {
         return prepared;
       }, {
         background: !foreground,
+        allowWhilePaused: foreground && !!session.seekTarget,
         valid: () => this.isActive(session) && (foreground || (!this.pauseRequested
           && !Number.isInteger(session.requestedChunkIndex) && !session.seekTarget)),
       });

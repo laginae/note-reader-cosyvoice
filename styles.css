@@ -937,11 +937,15 @@
 .cozy-floating-controls .clickable-icon:hover { background: var(--background-secondary); }
 .cozy-floating-controls .clickable-icon:focus-visible { outline: 2px solid var(--interactive-accent); outline-offset: 2px; }
 .cozy-floating-stop-slot { position: absolute; bottom: 100%; left: 0; padding-bottom: 8px; opacity: 0; visibility: hidden; pointer-events: none; transition: opacity 120ms ease; }
-.cozy-floating-controls.is-expanded .cozy-floating-stop-slot { opacity: 1; visibility: visible; pointer-events: auto; }
+.cozy-floating-seek-slot { position: absolute; bottom: 0; opacity: 0; visibility: hidden; pointer-events: none; transition: opacity 120ms ease; }
+.cozy-floating-back-slot { right: 100%; padding-right: 8px; }
+.cozy-floating-forward-slot { left: 100%; padding-left: 8px; }
+.cozy-floating-controls.is-expanded .cozy-floating-stop-slot,
+.cozy-floating-controls.is-expanded .cozy-floating-seek-slot { opacity: 1; visibility: visible; pointer-events: auto; }
 body.is-mobile .cozy-floating-controls, body.is-mobile .cozy-floating-controls .clickable-icon,
 .cozy-floating-controls.is-touch-controls, .cozy-floating-controls.is-touch-controls .clickable-icon { width: 44px; height: 44px; }
 @media (pointer: coarse), (max-width: 600px) { .cozy-floating-controls, .cozy-floating-controls .clickable-icon { width: 44px; height: 44px; } }
-@media (prefers-reduced-motion: reduce) { .cozy-floating-stop-slot { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .cozy-floating-stop-slot, .cozy-floating-seek-slot { transition: none; } }
 .cozy-mini-toc { position: absolute; top: var(--cozy-mini-top, 52px); right: 10px; z-index: 30; max-width: calc(100% - 20px); pointer-events: none; letter-spacing: 0; }
 .cozy-mini-toc[data-side="left"] { right: auto; left: 10px; }
 .cozy-mini-toc button, .cozy-mini-toc input, .cozy-mini-toc select { font: inherit; letter-spacing: 0; }

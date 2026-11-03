@@ -514,7 +514,7 @@ var require_preparation_pool = __commonJS({
         for (const entry of this.entries.values()) this.drop(entry);
         this.bytes = 0;
       }
-      get(key, factory, { background = false, valid = () => true } = {}) {
+      get(key, factory, { background = false, valid = () => true, allowWhilePaused = false } = {}) {
         if (background && this.backgroundFailures.has(key)) return this.backgroundFailures.get(key);
         if (!background) this.backgroundFailures.delete(key);
         const old = this.entries.get(key);
@@ -525,6 +525,7 @@ var require_preparation_pool = __commonJS({
           if (!background) {
             old.background = false;
             old.valid = valid;
+            old.allowWhilePaused = allowWhilePaused;
           }
           this.drain();
           return old.promise;
@@ -541,6 +542,7 @@ var require_preparation_pool = __commonJS({
           factory,
           background,
           valid,
+          allowWhilePaused,
           promise,
           resolve,
           reject,
@@ -553,7 +555,8 @@ var require_preparation_pool = __commonJS({
         return promise;
       }
       drain() {
-        if (this.paused) return;
+        const eligible = (entry) => entry.state === "queued" && (!this.paused || !entry.background && entry.allowWhilePaused);
+        if (this.paused && ![...this.entries.values()].some(eligible)) return;
         const wait = this.cooldownUntil - this.timings.now();
         if (wait > 0) {
           if (!this.cooldownTimer) {
@@ -566,7 +569,7 @@ var require_preparation_pool = __commonJS({
           return;
         }
         while (this.active.size < this.limit) {
-          const queued = [...this.entries.values()].filter((entry2) => entry2.state === "queued");
+          const queued = [...this.entries.values()].filter(eligible);
           const entry = queued.find((entry2) => !entry2.background) || queued.find((entry2) => ![...this.active].some((active) => active.background));
           if (!entry) return;
           if (!entry.valid()) {
@@ -1032,6 +1035,7 @@ var require_settings_reset = __commonJS({
         "miniOutlineCollapsedStyle",
         "floatingPauseButton",
         "floatingStopButton",
+        "floatingSeekButtons",
         "continuousListening",
         "bufferingHints",
         "smartQuickStart",
@@ -1368,8 +1372,9 @@ var require_playback_controls = __commonJS({
       }
       button(parent, action = "toggle") {
         const button = parent.ownerDocument.createElement("button");
+        const seek = action === "back" || action === "forward";
         button.type = "button";
-        button.className = `clickable-icon ${action === "stop" ? "cozy-stop-control" : "cozy-pause-control"}`;
+        button.className = `clickable-icon ${seek ? "cozy-seek-control" : action === "stop" ? "cozy-stop-control" : "cozy-pause-control"}`;
         button.dataset.playbackAction = action;
         parent.append(button);
         let pointerSession;
@@ -1390,7 +1395,8 @@ var require_playback_controls = __commonJS({
           const expected = event.detail ? pointerSession : void 0;
           pointerSession = void 0;
           if (this.destroyed || !this.buttons.has(button) || !button.isConnected) return;
-          if (action === "stop") void this.stop(expected);
+          if (seek) void this.seek(action === "back" ? -5 : 5, expected);
+          else if (action === "stop") void this.stop(expected);
           else void this.toggle(expected);
         });
         this.buttons.add(button);
@@ -1402,16 +1408,16 @@ var require_playback_controls = __commonJS({
       }
       paint(button, state) {
         const zh = this.plugin.settings.settingsLanguage === "chinese";
-        const stop = button.dataset.playbackAction === "stop";
-        const icon = stop ? "square" : state.active && !state.paused ? "pause" : "play";
+        const action = button.dataset.playbackAction, stop = action === "stop", seek = action === "back" || action === "forward";
+        const icon = seek ? action === "back" ? "rotate-ccw" : "rotate-cw" : stop ? "square" : state.active && !state.paused ? "pause" : "play";
         if (button.dataset.icon !== icon) {
           this.setIcon(button, icon);
           button.dataset.icon = icon;
         }
-        const label = !state.active ? zh ? "\u8BF7\u5148\u5F00\u59CB\u6717\u8BFB" : "Start reading first" : stop ? zh ? "\u505C\u6B62\u6717\u8BFB" : "Stop reading" : state.paused ? zh ? "\u7EE7\u7EED\u6717\u8BFB" : "Resume reading" : zh ? "\u6682\u505C\u6717\u8BFB" : "Pause reading";
+        const label = !state.active ? zh ? "\u8BF7\u5148\u5F00\u59CB\u6717\u8BFB" : "Start reading first" : seek ? !state.canSeek ? zh ? "\u5F53\u524D\u6717\u8BFB\u4E0D\u652F\u6301\u6309\u79D2\u8DF3\u8F6C" : "Seeking is unavailable for this reading" : action === "back" ? zh ? "\u540E\u9000 5 \u79D2" : "Back 5 seconds" : zh ? "\u524D\u8FDB 5 \u79D2" : "Forward 5 seconds" : stop ? zh ? "\u505C\u6B62\u6717\u8BFB" : "Stop reading" : state.paused ? zh ? "\u7EE7\u7EED\u6717\u8BFB" : "Resume reading" : zh ? "\u6682\u505C\u6717\u8BFB" : "Pause reading";
         const title = state.active && state.title ? `${label}${zh ? "\uFF1A" : ": "}${String(state.title).slice(0, 160)}` : label;
         if (button.getAttribute("aria-label") !== title) button.setAttribute("aria-label", title);
-        const disabled = !state.active || Boolean(this.stopping) || (stop ? state.canStop === false || typeof this.adapter.stopPlayback !== "function" : !state.canToggle || Boolean(this.pending));
+        const disabled = !state.active || Boolean(this.stopping) || (seek ? !state.canSeek || Boolean(this.pending) || typeof this.adapter.seekPlaybackBy !== "function" : stop ? state.canStop === false || typeof this.adapter.stopPlayback !== "function" : !state.canToggle || Boolean(this.pending));
         if (button.disabled !== disabled) button.disabled = disabled;
         if (button.classList.contains("is-playback-active") !== !!state.active) button.classList.toggle("is-playback-active", !!state.active);
       }
@@ -1440,6 +1446,17 @@ var require_playback_controls = __commonJS({
           if (!this.destroyed && this.state().session === state.session) this.adapter.playbackError?.(error);
         } finally {
           if (this.stopping === stopping) this.stopping = null;
+          if (!this.destroyed) this.update();
+        }
+      }
+      async seek(seconds, expectedSession) {
+        const state = this.state();
+        if (this.destroyed || this.pending || this.stopping || !state.active || !state.canSeek || ![-5, 5].includes(seconds) || typeof this.adapter.seekPlaybackBy !== "function" || expectedSession !== void 0 && expectedSession !== state.session) return;
+        try {
+          await this.adapter.seekPlaybackBy(seconds);
+        } catch (error) {
+          if (!this.destroyed && this.state().session === state.session) this.adapter.playbackError?.(error);
+        } finally {
           if (!this.destroyed) this.update();
         }
       }
@@ -1495,6 +1512,12 @@ var require_playback_controls = __commonJS({
         this.root.append(this.stopSlot);
         this.stopButton = controls.button(this.stopSlot, "stop");
         this.stopButton.classList.add("cozy-floating-stop");
+        this.seekSlots = ["back", "forward"].map((action) => {
+          const slot = this.doc.createElement("div");
+          slot.className = `cozy-floating-seek-slot cozy-floating-${action}-slot`;
+          this.root.append(slot);
+          return { slot, button: controls.button(slot, action) };
+        });
         this.touch = this.doc.body.classList.contains("is-mobile") || !this.win.matchMedia?.("(hover: hover) and (pointer: fine)").matches;
         this.enter = (event) => {
           this.input(event);
@@ -1541,15 +1564,23 @@ var require_playback_controls = __commonJS({
         this.configure();
       }
       input(event) {
+        const wasTouch = this.touch;
         if (["mouse", "touch", "pen"].includes(event.pointerType)) this.touch = this.doc.body.classList.contains("is-mobile") || event.pointerType !== "mouse";
         this.root.classList.toggle("is-touch-controls", this.touch);
+        if (wasTouch !== this.touch) this.layout();
       }
       updateVisibility(delay = false) {
         if (this.destroyed) return;
         this.root.classList.toggle("is-touch-controls", this.touch);
-        const enabled = this.controls.plugin.settings.floatingStopButton !== false && this.stopFits !== false;
-        this.stopSlot.hidden = !enabled;
-        if (!enabled && this.doc.activeElement === this.stopButton) this.button.focus({ preventScroll: true });
+        const stopEnabled = this.controls.plugin.settings.floatingStopButton !== false && this.stopFits !== false;
+        const seekEnabled = this.controls.plugin.settings.floatingSeekButtons === true && this.seekFits === true;
+        this.stopSlot.hidden = !stopEnabled;
+        for (const { slot, button } of this.seekSlots) {
+          slot.hidden = !seekEnabled;
+          if (!seekEnabled && this.doc.activeElement === button) this.button.focus({ preventScroll: true });
+        }
+        if (!stopEnabled && this.doc.activeElement === this.stopButton) this.button.focus({ preventScroll: true });
+        const enabled = stopEnabled || seekEnabled;
         const show = enabled && (this.touch || this.hovered || this.keyboardFocus);
         if (show || !enabled) {
           clearTimeout(this.hideTimer);
@@ -1595,7 +1626,10 @@ var require_playback_controls = __commonJS({
         const height = parseFloat(style.height) || 44, width = parseFloat(style.width) || 44;
         const safeBottom = parseFloat(style.scrollMarginBottom) || 0;
         const safeRight = parseFloat(style.scrollMarginRight) || 0;
-        const x = right - 16 - safeRight - width;
+        const left = Math.max(host.left, viewport?.offsetLeft || 0);
+        const seekRoom = this.controls.plugin.settings.floatingSeekButtons === true && right - left - safeRight >= 3 * width + 40;
+        const reserve = seekRoom ? width + 8 : 0;
+        const x = right - 16 - safeRight - width - reserve;
         let bottom = end - 12 - safeBottom;
         const bars = (this.obstacles || []).map((el) => {
           if (el.classList.contains("cozy-mini-panel")) return null;
@@ -1603,7 +1637,7 @@ var require_playback_controls = __commonJS({
           return rect.width && rect.height && css.display !== "none" && css.visibility !== "hidden" ? rect : null;
         }).filter(Boolean).sort((a, b) => b.bottom - a.bottom);
         for (const rect of bars) {
-          if (rect.left < x + width && rect.right > x && rect.top < bottom + 12 && rect.bottom > bottom - height - 12) bottom = rect.top - 12;
+          if (rect.left < x + width + reserve && rect.right > x - reserve && rect.top < bottom + 12 && rect.bottom > bottom - height - 12) bottom = rect.top - 12;
         }
         const outline = this.host.querySelector(".cozy-mini-panel:not([hidden])");
         const panel = outline?.getBoundingClientRect();
@@ -1614,6 +1648,8 @@ var require_playback_controls = __commonJS({
         const stopTop = bottom - 2 * height - 8, stopBottom = bottom - height;
         const blocked = (rect) => rect.left < x + width + 4 && rect.right > x - 4 && rect.top < stopBottom && rect.bottom > stopTop - 4;
         this.stopFits = stopTop >= top + 12 && !bars.some(blocked) && !(panel?.width && panel?.height && blocked(panel));
+        const blocksSeek = (rect) => rect.left < x + width + reserve + 4 && rect.right > x - reserve - 4 && rect.top < bottom + 4 && rect.bottom > bottom - height - 4;
+        this.seekFits = seekRoom && !bars.some(blocksSeek) && !(panel?.width && panel?.height && blocksSeek(panel));
         this.updateVisibility();
       }
       destroy() {
@@ -1633,13 +1669,14 @@ var require_playback_controls = __commonJS({
         this.root.removeEventListener("keydown", this.key);
         this.controls.forget(this.button);
         this.controls.forget(this.stopButton);
+        this.seekSlots.forEach(({ button }) => this.controls.forget(button));
         this.root.remove();
         if (this.ownedClass) this.host.classList.remove("cozy-playback-host");
       }
     };
     function addFloatingPauseSetting(container, plugin, Setting) {
       const zh = plugin.settings.settingsLanguage === "chinese";
-      new Setting(container).setName(zh ? "\u60AC\u6D6E\u64AD\u653E\u63A7\u5236" : "Floating playback controls").setDesc(zh ? "\u9ED8\u8BA4\u5173\u95ED\u3002\u6717\u8BFB\u6216\u6682\u505C\u65F6\uFF0C\u5728\u5F53\u524D\u6587\u6863\u53F3\u4E0B\u89D2\u663E\u793A\u6682\u505C\uFF0F\u7EE7\u7EED\u6309\u94AE\uFF0C\u53EF\u9644\u52A0\u505C\u6B62\u6309\u94AE\uFF1B\u505C\u6B62\u6216\u7ED3\u675F\u540E\u9690\u85CF\u3002\u53EA\u63A7\u5236\u5DF2\u6709\u6717\u8BFB\uFF0C\u4E0D\u4F1A\u5F00\u59CB\u65B0\u7684\u6717\u8BFB\u3002" : "Off by default. Show pause/resume with an optional Stop button at the current document's lower-right during active or paused reading. Hidden after stop or completion; never starts new speech.").addToggle((toggle) => toggle.setValue(plugin.settings.floatingPauseButton === true).onChange(async (value) => {
+      new Setting(container).setName(zh ? "\u60AC\u6D6E\u64AD\u653E\u63A7\u5236" : "Floating playback controls").setDesc(zh ? "\u9ED8\u8BA4\u5173\u95ED\u3002\u6717\u8BFB\u6216\u6682\u505C\u65F6\uFF0C\u5728\u5F53\u524D\u6587\u6863\u53F3\u4E0B\u89D2\u663E\u793A\u6682\u505C\uFF0F\u7EE7\u7EED\u6309\u94AE\uFF0C\u53EF\u9644\u52A0\u505C\u6B62\u548C\u524D\u540E\u8DF3\u8F6C\u6309\u94AE\uFF1B\u505C\u6B62\u6216\u7ED3\u675F\u540E\u9690\u85CF\u3002\u53EA\u63A7\u5236\u5DF2\u6709\u6717\u8BFB\uFF0C\u4E0D\u4F1A\u5F00\u59CB\u65B0\u7684\u6717\u8BFB\u3002" : "Off by default. Show pause/resume with optional Stop and seek buttons at the current document's lower-right during active or paused reading. Hidden after stop or completion; never starts new speech.").addToggle((toggle) => toggle.setValue(plugin.settings.floatingPauseButton === true).onChange(async (value) => {
         plugin.settings.floatingPauseButton = value;
         more.hidden = !value;
         if (!value) more.open = false;
@@ -1651,6 +1688,11 @@ var require_playback_controls = __commonJS({
       more.createEl("summary", { text: zh ? "\u66F4\u591A\u60AC\u6D6E\u6309\u94AE\u9009\u9879" : "More floating control options" });
       new Setting(more).setName(zh ? "\u663E\u793A\u505C\u6B62\u6717\u8BFB\u6309\u94AE" : "Show stop reading button").setDesc(zh ? "\u5728\u6682\u505C\uFF0F\u7EE7\u7EED\u6309\u94AE\u4E0A\u65B9\u63D0\u4F9B\u505C\u6B62\u6717\u8BFB\u64CD\u4F5C\u3002\u9F20\u6807\u60AC\u505C\u6216\u952E\u76D8\u805A\u7126\u65F6\u663E\u793A\uFF0C\u89E6\u5C4F\u7AEF\u5E38\u663E\u3002" : "Show Stop reading above pause/resume on hover or keyboard focus. Always visible on touch screens.").addToggle((toggle) => toggle.setValue(plugin.settings.floatingStopButton !== false).onChange(async (value) => {
         plugin.settings.floatingStopButton = value;
+        plugin.miniOutline?.sync();
+        await plugin.saveSettings();
+      }));
+      new Setting(more).setName(zh ? "\u663E\u793A\u524D\u540E 5 \u79D2\u6309\u94AE" : "Show 5-second seek buttons").setDesc(zh ? "\u9ED8\u8BA4\u5173\u95ED\u3002\u5728\u6682\u505C\uFF0F\u7EE7\u7EED\u6309\u94AE\u5DE6\u53F3\u663E\u793A\u540E\u9000\u3001\u524D\u8FDB 5 \u79D2\u3002\u9F20\u6807\u60AC\u505C\u6216\u952E\u76D8\u805A\u7126\u65F6\u663E\u793A\uFF0C\u89E6\u5C4F\u7AEF\u5E38\u663E\uFF1B\u4E0D\u652F\u6301\u6309\u79D2\u8DF3\u8F6C\u65F6\u7981\u7528\u3002\u7A7A\u95F4\u4E0D\u8DB3\u65F6\u9690\u85CF\u3002" : "Off by default. Show Back/Forward 5 seconds beside pause/resume on hover or keyboard focus; always visible on touch. Disabled when seeking is unavailable and hidden when space is insufficient.").addToggle((toggle) => toggle.setValue(plugin.settings.floatingSeekButtons === true).onChange(async (value) => {
+        plugin.settings.floatingSeekButtons = value;
         plugin.miniOutline?.sync();
         await plugin.saveSettings();
       }));
@@ -16180,7 +16222,7 @@ var require_mini_outline = __commonJS({
             this.state.pinned = !this.state.pinned;
             this.updatePin();
             if (!this.state.pinned) {
-              this.collapsedEntryFile = this.view.file;
+              this.manager.collapsedEntryRequested = true;
               if (this.touchInput()) this.close(true);
               else this.scheduleCollapse();
             } else clearTimeout(this.collapseTimer);
@@ -16383,7 +16425,7 @@ var require_mini_outline = __commonJS({
       }
       updateLauncher() {
         const settings = this.settings();
-        this.launcher.hidden = !!this.opened || settings.miniOutlineMode === "off" || settings.miniOutlineMode === "auto" && otherOutlineEnabled(this.plugin.app) || settings.miniOutlineStartup && this.collapsedEntryFile !== this.view.file;
+        this.launcher.hidden = !!this.opened || settings.miniOutlineMode === "off" || settings.miniOutlineMode === "auto" && otherOutlineEnabled(this.plugin.app) || settings.miniOutlineStartup && !this.manager.collapsedEntryRequested;
         const data = !this.invalid && this.file === this.view.file ? this.data : null;
         const rail = !!data?.entries.length && (settings.miniOutlineCollapsedStyle === "rail" || settings.miniOutlineCollapsedStyle === "auto" && !this.touchInput());
         this.launcher.classList.toggle("is-touch-control", this.touchInput());
@@ -16517,7 +16559,7 @@ var require_mini_outline = __commonJS({
         this.launcher.setAttribute("aria-expanded", "true");
         this.updateLauncher();
         this.layout();
-        if (this.loading && this.loadingFile === this.view.file) return;
+        if (this.loading && this.loadingFile === this.view.file && !this.collapsedLoading) return;
         if (!this.data || this.file !== this.view.file || this.invalid || !this.adapter.valid(this.view, this.data)) await this.load();
         else this.update(true);
         if (focus && this.opened && !this.destroyed) {
@@ -16535,7 +16577,7 @@ var require_mini_outline = __commonJS({
         clearTimeout(this.collapseTimer);
         clearTimeout(this.railUpdateTimer);
         this.railUpdateTimer = null;
-        if (this.opened && cancelStartup) this.collapsedEntryFile = this.view.file;
+        if (this.opened && cancelStartup) this.manager.collapsedEntryRequested = true;
         this.dismissMenu();
         this.opened = false;
         this.panel.hidden = true;
@@ -16608,11 +16650,19 @@ var require_mini_outline = __commonJS({
           this.updateLauncher();
         }
       }
-      async load(force = false) {
+      ensureCollapsed() {
+        const settings = this.settings();
+        if (this.destroyed || this.opened || this.loading || this.launcher.hidden || !this.manager.collapsedEntryRequested || this.manager.startupView() !== this.view || typeof this.adapter.loadCollapsed !== "function" || settings.miniOutlineCollapsedStyle === "icon" || settings.miniOutlineCollapsedStyle === "auto" && this.touchInput()) return;
+        if (this.data && this.file === this.view.file && !this.invalid && this.adapter.valid(this.view, this.data)) return;
+        if (this.collapsedAttempt?.file === this.view.file && this.collapsedAttempt.generation === this.generation) return;
+        void this.load(false, true);
+      }
+      async load(force = false, collapsed = false) {
         this.dismissMenu();
         const generation = ++this.generation, file = this.view.file;
-        const cancelled = () => this.destroyed || !this.opened || generation !== this.generation || file !== this.view.file;
+        const cancelled = () => this.destroyed || generation !== this.generation || file !== this.view.file || (collapsed ? this.opened || this.launcher.hidden || this.manager.startupView() !== this.view : !this.opened);
         this.loading = true;
+        this.collapsedLoading = collapsed;
         this.loadingFile = file;
         this.invalid = false;
         this.data = null;
@@ -16625,11 +16675,11 @@ var require_mini_outline = __commonJS({
         this.setLoading(true);
         this.status.textContent = this.t("\u6B63\u5728\u8BFB\u53D6\u76EE\u5F55\u2026", "Loading outline\u2026");
         try {
-          const data = await this.adapter.load(this.view, cancelled, force);
+          const data = await (collapsed ? this.adapter.loadCollapsed(this.view, cancelled) : this.adapter.load(this.view, cancelled, force));
           if (cancelled()) return;
           if (!data) {
             this.invalid = true;
-            this.error();
+            if (!collapsed) this.error();
             return;
           }
           this.data = data;
@@ -16657,10 +16707,14 @@ var require_mini_outline = __commonJS({
         } catch {
           if (!cancelled()) {
             this.invalid = true;
-            this.error();
+            if (!collapsed) this.error();
           }
         } finally {
-          if (generation === this.generation) this.loading = false;
+          if (collapsed && !cancelled()) this.collapsedAttempt = { file, generation };
+          if (generation === this.generation) {
+            this.loading = false;
+            this.collapsedLoading = false;
+          }
         }
       }
       setLoading(loading) {
@@ -17099,6 +17153,7 @@ var require_mini_outline = __commonJS({
         }
         const view = this.startupView(), panel = this.panels.get(view);
         if (panel) {
+          if (panel !== previousPanel || view.file !== previousFile) panel.collapsedAttempt = null;
           this.currentPanel = panel;
           this.currentFile = view.file;
           if (followPinned && (panel !== previousPanel || view.file !== previousFile)) {
@@ -17107,6 +17162,7 @@ var require_mini_outline = __commonJS({
               if (!panel.destroyed && panel.opened && view.file === file) panel.error();
             });
           }
+          panel.ensureCollapsed();
         }
         this.playback.sync([...this.panels.keys()]);
         this.queueStartup();
@@ -17119,6 +17175,7 @@ var require_mini_outline = __commonJS({
       }
       invalidate(file) {
         for (const [view, panel] of this.panels) if (!file || view.file?.path === file.path) panel.invalidate();
+        if (this.collapsedEntryRequested) this.schedule();
       }
       update() {
         this.playback.update();
@@ -17301,7 +17358,11 @@ var require_mini_outline_adapter = __commonJS({
     var { browsingIndex, elementHeading, pdfViewer, scrollDocumentEdge } = require_mini_outline_position();
     var { htmlReadingTarget } = require_html_highlights();
     var { currentDocumentHighlightElement } = require_dom_highlights();
-    async function pdfData(plugin, file, cancelled, force) {
+    async function pdfData(plugin, file, cancelled, force, cachedOnly = false) {
+      if (cachedOnly) {
+        const cached2 = plugin.pdfOutlineCache?.get(file);
+        return cached2 ? { kind: "pdf", entries: cached2.model.entries, model: cached2.model } : null;
+      }
       const { PdfOutlineCache } = require_pdf_outline_cache();
       const cache = plugin.pdfOutlineCache || (plugin.pdfOutlineCache = new PdfOutlineCache());
       if (force) cache.delete(file.path);
@@ -17351,16 +17412,19 @@ var require_mini_outline_adapter = __commonJS({
             paused: !!state.isPaused,
             canToggle: active && !!state.canPause,
             canStop: active && !!state.canStop,
+            canSeek: active && (!!state.canSeek || !!session?.seekTarget),
             title: session?.sourceLabel
           };
         },
         togglePlayback: () => plugin.runUserAction("Pause or resume", () => plugin.pauseOrResume()),
         stopPlayback: () => plugin.runUserAction("Stop reading", () => plugin.stopReading()),
-        async load(view, cancelled, force) {
+        seekPlaybackBy: (seconds) => plugin.seekCurrentAudioBySeconds(seconds),
+        loadCollapsed: (view, cancelled) => adapter.load(view, cancelled, false, true),
+        async load(view, cancelled, force, cachedOnly = false) {
           const file = view.file, mtime = file.stat?.mtime, size = file.stat?.size;
           const stale = () => cancelled() || view.file !== file || file.stat?.mtime !== mtime || file.stat?.size !== size;
           let data;
-          if (file.extension === "pdf") data = await pdfData(plugin, file, stale, force);
+          if (file.extension === "pdf") data = await pdfData(plugin, file, stale, force, cachedOnly);
           else if (/^html?$/.test(file.extension)) {
             const doc = getHtmlReaderDocument2(view);
             data = { kind: "html", doc, entries: captureHtmlOutline(doc) };
@@ -42549,6 +42613,7 @@ function createDefaultSettings() {
     readingFloatingToolbar: false,
     floatingPauseButton: false,
     floatingStopButton: true,
+    floatingSeekButtons: false,
     readingFloatingAction: "selection",
     ...ACADEMIC_DEFAULTS,
     ...COPILOT_DEFAULTS,
@@ -46178,6 +46243,7 @@ ${embed}
         return prepared;
       }, {
         background: !foreground,
+        allowWhilePaused: foreground && !!session.seekTarget,
         valid: () => this.isActive(session) && (foreground || !this.pauseRequested && !Number.isInteger(session.requestedChunkIndex) && !session.seekTarget)
       });
     };

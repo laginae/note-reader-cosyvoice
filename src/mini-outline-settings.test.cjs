@@ -75,6 +75,16 @@ test('independent pause button is opt-in and needs no Editing Toolbar plugin', a
   await row.control.change(false); assert.equal(f.plugin.settings.floatingPauseButton,false);
 });
 
+test('five-second seek is opt-in under collapsed floating options and saves independently',async t=>{
+  const f=fixture(false);t.after(()=>f.dom.window.close());const row=f.row('显示前后 5 秒按钮');
+  assert.equal(row.control.value,false);assert.ok(f.container.querySelector('.cozy-floating-settings').contains(row.settingEl));
+  await row.control.change(true);assert.equal(f.plugin.settings.floatingSeekButtons,true);
+  assert.equal(f.plugin.settings.floatingPauseButton,undefined);assert.equal(f.plugin.settings.floatingStopButton,undefined);
+  assert.deepEqual(f.counts(),{saves:1,syncs:1});
+  const en=fixture(false,{settingsLanguage:'english',floatingSeekButtons:true});t.after(()=>en.dom.window.close());
+  assert.equal(en.row('Show 5-second seek buttons').control.value,true);
+});
+
 test('floating options are collapsed by default and disabling the parent preserves the stop choice', async t=>{
   const f=fixture(false);t.after(()=>f.dom.window.close());const parent=f.row('悬浮播放控制'),stop=f.row('显示停止朗读按钮');
   const more=f.container.querySelector('.cozy-floating-settings');

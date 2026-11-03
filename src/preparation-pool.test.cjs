@@ -64,6 +64,24 @@ test('cache is limited by bytes and entries and can be safely regenerated', asyn
   assert.equal(pool.bytes, 0); assert.equal(pool.state('large'), undefined);
   assert.ok((await pool.get('a', make)).arrayBuffer);
 });
+
+test('only an explicit foreground target may synthesize while paused',async()=>{
+  const pool=new PreparationPool({concurrency:1}),calls=[];pool.pause(true);
+  const ordinary=pool.get('ordinary',()=>calls.push('ordinary'));
+  const background=pool.get('future',()=>calls.push('future'),{background:true,allowWhilePaused:true});
+  const target=pool.get('target',()=>calls.push('target'),{allowWhilePaused:true});
+  await target;await tick();assert.deepEqual(calls,['target']);assert.equal(pool.paused,true);
+  pool.pause(false);await ordinary;await background;assert.deepEqual(calls,['target','ordinary','future']);pool.clear();
+});
+
+test('paused targets retain cooldown, validity and in-flight deduplication',async()=>{
+  let now=0;const pool=new PreparationPool({timings:new PlaybackTimings(()=>now)}),calls=[];pool.pause(true);pool.throttle(100);
+  const pending=pool.get('target',()=>calls.push('target'));
+  assert.equal(pool.get('target',()=>{throw Error('Duplicate');},{allowWhilePaused:true}),pending);
+  await tick();assert.deepEqual(calls,[]);now=100;pool.drain();await pending;assert.deepEqual(calls,['target']);
+  await assert.rejects(pool.get('stale',()=>calls.push('stale'),{allowWhilePaused:true,valid:()=>false}),{name:'AbortError'});
+  assert.deepEqual(calls,['target']);assert.equal(pool.paused,true);pool.clear();
+});
 test('timing report contains bounded numeric aggregates only and excludes paused intervals', () => {
   let time = 0; const timings = new PlaybackTimings(() => time);
   timings.begin('sessionToPlaying'); time=20; timings.playing(10);

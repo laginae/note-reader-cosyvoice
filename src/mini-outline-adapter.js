@@ -9,7 +9,11 @@ const { browsingIndex, elementHeading, pdfViewer, scrollDocumentEdge } = require
 const { htmlReadingTarget } = require('./html-highlights');
 const { currentDocumentHighlightElement } = require('./dom-highlights');
 
-async function pdfData(plugin, file, cancelled, force) {
+async function pdfData(plugin, file, cancelled, force, cachedOnly = false) {
+  if (cachedOnly) {
+    const cached = plugin.pdfOutlineCache?.get(file);
+    return cached ? { kind: 'pdf', entries: cached.model.entries, model: cached.model } : null;
+  }
   const { PdfOutlineCache } = require('./pdf-outline-cache');
   const cache = plugin.pdfOutlineCache ||= new PdfOutlineCache();
   if (force) cache.delete(file.path);
@@ -46,15 +50,17 @@ function desktopMiniAdapter(plugin) {
       const session = plugin.activeSession, state = plugin.readerState || {};
       const active = !!session && session.kind !== 'audio-export' && !['complete', 'error', 'stopped'].includes(state.status);
       return { active, session, paused: !!state.isPaused, canToggle: active && !!state.canPause,
-        canStop: active && !!state.canStop, title: session?.sourceLabel };
+        canStop: active && !!state.canStop, canSeek: active && (!!state.canSeek || !!session?.seekTarget), title: session?.sourceLabel };
     },
     togglePlayback: () => plugin.runUserAction('Pause or resume', () => plugin.pauseOrResume()),
     stopPlayback: () => plugin.runUserAction('Stop reading', () => plugin.stopReading()),
-    async load(view, cancelled, force) {
+    seekPlaybackBy: seconds => plugin.seekCurrentAudioBySeconds(seconds),
+    loadCollapsed: (view, cancelled) => adapter.load(view, cancelled, false, true),
+    async load(view, cancelled, force, cachedOnly = false) {
       const file = view.file, mtime = file.stat?.mtime, size = file.stat?.size;
       const stale = () => cancelled() || view.file !== file || file.stat?.mtime !== mtime || file.stat?.size !== size;
       let data;
-      if (file.extension === 'pdf') data = await pdfData(plugin, file, stale, force);
+      if (file.extension === 'pdf') data = await pdfData(plugin, file, stale, force, cachedOnly);
       else if (/^html?$/.test(file.extension)) {
         const doc = getHtmlReaderDocument(view); data = { kind: 'html', doc, entries: captureHtmlOutline(doc) };
       } else {

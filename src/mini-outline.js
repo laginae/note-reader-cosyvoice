@@ -64,7 +64,7 @@ class MiniOutlinePanel {
       if (this.state) {
         this.state.pinned = !this.state.pinned; this.updatePin();
         if (!this.state.pinned) {
-          this.collapsedEntryFile = this.view.file;
+          this.manager.collapsedEntryRequested = true;
           if (this.touchInput()) this.close(true); else this.scheduleCollapse();
         } else clearTimeout(this.collapseTimer);
       }
@@ -209,7 +209,7 @@ class MiniOutlinePanel {
     const settings = this.settings();
     this.launcher.hidden = !!this.opened || settings.miniOutlineMode === 'off'
       || (settings.miniOutlineMode === 'auto' && otherOutlineEnabled(this.plugin.app))
-      || (settings.miniOutlineStartup && this.collapsedEntryFile !== this.view.file);
+      || (settings.miniOutlineStartup && !this.manager.collapsedEntryRequested);
     const data = !this.invalid && this.file === this.view.file ? this.data : null;
     const rail = !!data?.entries.length && (settings.miniOutlineCollapsedStyle === 'rail'
       || (settings.miniOutlineCollapsedStyle === 'auto' && !this.touchInput()));
@@ -310,7 +310,7 @@ class MiniOutlinePanel {
     this.opened = true; this.panel.hidden = false; this.launcher.setAttribute('aria-expanded', 'true');
     this.updateLauncher();
     this.layout();
-    if (this.loading && this.loadingFile === this.view.file) return;
+    if (this.loading && this.loadingFile === this.view.file && !this.collapsedLoading) return;
     if (!this.data || this.file !== this.view.file || this.invalid || !this.adapter.valid(this.view, this.data)) await this.load();
     else this.update(true);
     if (focus && this.opened && !this.destroyed) {
@@ -323,7 +323,7 @@ class MiniOutlinePanel {
     this.headingAction = (this.headingAction || 0) + 1;
     this.selectedSection = null; this.positionKey = null;
     clearTimeout(this.hoverTimer); clearTimeout(this.reloadTimer); clearTimeout(this.collapseTimer); clearTimeout(this.railUpdateTimer); this.railUpdateTimer = null;
-    if (this.opened && cancelStartup) this.collapsedEntryFile = this.view.file;
+    if (this.opened && cancelStartup) this.manager.collapsedEntryRequested = true;
     this.dismissMenu();
     this.opened = false; this.panel.hidden = true; this.launcher.setAttribute('aria-expanded', 'false');
     this.tools.hidden = true; this.optionsToggle.setAttribute('aria-expanded', 'false');
@@ -390,19 +390,29 @@ class MiniOutlinePanel {
     const railLimit = host.height > 0 ? Math.max(3, Math.min(24, Math.floor((bottom - top - 116) / 7))) : 24;
     if (railLimit !== this.railLimit) { this.railLimit = railLimit; this.updateLauncher(); }
   }
-  async load(force = false) {
+  ensureCollapsed() {
+    const settings = this.settings();
+    if (this.destroyed || this.opened || this.loading || this.launcher.hidden || !this.manager.collapsedEntryRequested
+      || this.manager.startupView() !== this.view || typeof this.adapter.loadCollapsed !== 'function'
+      || settings.miniOutlineCollapsedStyle === 'icon' || (settings.miniOutlineCollapsedStyle === 'auto' && this.touchInput())) return;
+    if (this.data && this.file === this.view.file && !this.invalid && this.adapter.valid(this.view, this.data)) return;
+    if (this.collapsedAttempt?.file === this.view.file && this.collapsedAttempt.generation === this.generation) return;
+    void this.load(false, true);
+  }
+  async load(force = false, collapsed = false) {
     this.dismissMenu();
     const generation = ++this.generation, file = this.view.file;
-    const cancelled = () => this.destroyed || !this.opened || generation !== this.generation || file !== this.view.file;
-    this.loading = true; this.loadingFile = file; this.invalid = false; this.data = null; this.selectedSection = null; this.rows.clear(); this.list.replaceChildren(); this.more.hidden = true;
+    const cancelled = () => this.destroyed || generation !== this.generation || file !== this.view.file
+      || (collapsed ? this.opened || this.launcher.hidden || this.manager.startupView() !== this.view : !this.opened);
+    this.loading = true; this.collapsedLoading = collapsed; this.loadingFile = file; this.invalid = false; this.data = null; this.selectedSection = null; this.rows.clear(); this.list.replaceChildren(); this.more.hidden = true;
     this.reading = this.browsing = -1;
     this.updateLauncher();
     this.setLoading(true);
     this.status.textContent = this.t('正在读取目录…', 'Loading outline…');
     try {
-      const data = await this.adapter.load(this.view, cancelled, force);
+      const data = await (collapsed ? this.adapter.loadCollapsed(this.view, cancelled) : this.adapter.load(this.view, cancelled, force));
       if (cancelled()) return;
-      if (!data) { this.invalid = true; this.error(); return; }
+      if (!data) { this.invalid = true; if (!collapsed) this.error(); return; }
       this.data = data; this.file = file; this.limit = 200; this.expandedTitles = new Set();
       const { miniOutlineTitle } = require('./mini-outline-title');
       this.titles = data.entries.map(entry => miniOutlineTitle(entry.title, data.kind) || this.t('未命名章节', 'Untitled section'));
@@ -421,8 +431,11 @@ class MiniOutlinePanel {
         : this.t('未找到可用章节', 'No headings available');
       this.draw();
       this.updateLauncher();
-    } catch { if (!cancelled()) { this.invalid = true; this.error(); } }
-    finally { if (generation === this.generation) this.loading = false; }
+    } catch { if (!cancelled()) { this.invalid = true; if (!collapsed) this.error(); } }
+    finally {
+      if (collapsed && !cancelled()) this.collapsedAttempt = { file, generation };
+      if (generation === this.generation) { this.loading = false; this.collapsedLoading = false; }
+    }
   }
   setLoading(loading) {
     this.pin.disabled = this.searchToggle.disabled = this.search.disabled = this.depth.disabled = loading;
@@ -720,6 +733,7 @@ class MiniOutlineManager {
     // Carry an open pin to the active document only, never a remembered reading source.
     const view = this.startupView(), panel = this.panels.get(view);
     if (panel) {
+      if (panel !== previousPanel || view.file !== previousFile) panel.collapsedAttempt = null;
       this.currentPanel = panel; this.currentFile = view.file;
       if (followPinned && (panel !== previousPanel || view.file !== previousFile)) {
         const file = view.file;
@@ -727,6 +741,7 @@ class MiniOutlineManager {
           if (!panel.destroyed && panel.opened && view.file === file) panel.error();
         });
       }
+      panel.ensureCollapsed();
     }
     this.playback.sync([...this.panels.keys()]); this.queueStartup();
   }
@@ -735,7 +750,10 @@ class MiniOutlineManager {
     for (const other of this.panels.values()) if (other !== panel && !other.state?.pinned) other.close();
     if (panel) return panel.toggle();
   }
-  invalidate(file) { for (const [view, panel] of this.panels) if (!file || view.file?.path === file.path) panel.invalidate(); }
+  invalidate(file) {
+    for (const [view, panel] of this.panels) if (!file || view.file?.path === file.path) panel.invalidate();
+    if (this.collapsedEntryRequested) this.schedule();
+  }
   update() {
     this.playback.update();
     if (this.startupPending) this.queueStartup();

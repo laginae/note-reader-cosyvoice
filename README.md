@@ -8,20 +8,7 @@ Read aloud **notes, PDFs, HTML files, web pages and saved Copilot chats** with l
 
 **Language:** English | [简体中文](README.zh-CN.md) | [Deutsch](README.de.md) | [Français](README.fr.md) | [Русский](README.ru.md) | [한국어](README.ko.md) | [日本語](README.ja.md) | [Español](README.es.md) | [Italiano](README.it.md) | [Português](README.pt.md)
 
-### Read from the mini outline
-
-**Choose a chapter, start reading, and pause or resume without opening the main playback bar.** Keep the original page in view, search headings, return to your reading position, and unpin the outline to tuck it away.
-
-[![Use only the mini outline to read a section, pause, search and navigate, resume, collapse to chapter lines, and double-click another heading to start reading](docs/images/mini-outline-demo.gif)](docs/media/mini-outline-demo.mp4)
-
-[Watch the 58-second walkthrough (silent MP4)](docs/media/mini-outline-demo.mp4) · [Still preview](docs/media/mini-outline-demo-poster.png) · [Recording details](docs/media/README.md#mini-outline-playback-demo)
-
-Single-click a heading to navigate; right-click it for **Read this section only** or **Read from this section**. The captioned double-click shortcut is **off by default**: enable **Mini outline > More outline options > Double-click heading to read**. On touch screens, use the section actions in **Outline options** instead.
-
-Recorded in Obsidian with public sample text and local system speech. No online speech requests were made.
-
-<details>
-<summary>Reading toolbar and selected-text walkthrough</summary>
+### Reading toolbar and selected text
 
 [![Select a passage, read it aloud, pause and resume, then navigate by heading](docs/images/cozy-quick-tour.gif)](docs/media/cozy-quick-tour.mp4)
 
@@ -29,7 +16,17 @@ Recorded in Obsidian with public sample text and local system speech. No online 
 
 The GIF is silent. The video uses public sample text and previously generated audio to demonstrate the controls, not actual online synthesis speed. [Voice and recording details](docs/media/README.md).
 
-</details>
+### Read from the mini outline
+
+**Choose a chapter, start reading, and pause or resume without opening the main playback bar.** Keep the original page in view, search headings, return to your reading position, and unpin the outline to tuck it away.
+
+[![Use only the mini outline to read a section, pause, search and navigate, resume, collapse to chapter lines, and double-click another heading to start reading](docs/images/mini-outline-demo.gif)](docs/media/mini-outline-demo.mp4)
+
+[Watch the one-minute walkthrough (silent MP4)](docs/media/mini-outline-demo.mp4) · [Still preview](docs/media/mini-outline-demo-poster.png) · [Recording details](docs/media/README.md#mini-outline-playback-demo)
+
+Single-click a heading to navigate; right-click it for **Read this section only** or **Read from this section**. The captioned double-click shortcut is **off by default**: enable **Mini outline > More outline options > Double-click heading to read**. On touch screens, use the section actions in **Outline options** instead.
+
+Recorded with **Transparent background** enabled, using public sample text and local system speech in Obsidian. No online speech requests were made.
 
 More ways to start: [Editing Toolbar demo](#editing-toolbar-demo) · [Right-click menu demo](#right-click-menu-demo).
 
@@ -160,6 +157,8 @@ Use pause/resume, playback speed, volume, segment navigation and seeking without
 **1.7.0:** the mini outline has a pause/resume button independent of the main playback toolbar. It follows the header's idle hiding by default; **Mini outline > More outline options > Playback button visibility** can keep it visible during reading instead. Touch screens always retain it. The optional **Floating playback controls** setting in **Playback and interface > Reading shortcuts** adds one lower-right control in the current Markdown/PDF/local HTML pane. It is off by default, appears only for an active/paused session, and never starts new speech. Both controls share the existing player state. [Controls and limits](docs/mini-outline.md).
 
 Under **Floating playback controls > More floating control options**, **Show stop reading button** is on by default. The options start collapsed; collapsing them does not disable Stop. Stop appears above Pause on desktop hover/keyboard focus and stays visible on touch. Collapsed chapter lines use accent color alone for reading, with no dot or thickness change.
+
+**1.7.1:** optional **Show 5-second seek buttons** adds Back/Forward beside Pause, with the same hover/focus and touch behavior. It is off by default; unsupported seeking is disabled, and the pair hides when it cannot fit. After unpinning/collapsing the outline, its entry follows the active document when switching notes and returning. Markdown/local HTML refresh only the active outline; PDFs reuse an available outline cache or keep an icon until opened. Explicit hiding and Floating TOC coexistence still win.
 
 In Markdown **Live Preview** or **Source mode**, right-click to **Read aloud from here**; when text is selected, you can also **Read selected text**. PDF text also supports these menu actions: a selection takes priority; otherwise, reading starts near the clicked text, preferably at the sentence beginning within the same column. Blank space and images do not provide a text starting point. An unverified starting point is rejected rather than silently reading from the page beginning. Existing built-in PDF and PDF++ menu items are preserved. HTML and Markdown Reading view retain their reading-toolbar actions.
 

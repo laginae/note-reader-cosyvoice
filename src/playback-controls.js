@@ -9,7 +9,8 @@ class PlaybackControls {
   state() { return this.adapter.playback?.() || { active: false, canToggle: false }; }
   button(parent, action = 'toggle') {
     const button = parent.ownerDocument.createElement('button');
-    button.type = 'button'; button.className = `clickable-icon ${action === 'stop' ? 'cozy-stop-control' : 'cozy-pause-control'}`;
+    const seek = action === 'back' || action === 'forward';
+    button.type = 'button'; button.className = `clickable-icon ${seek ? 'cozy-seek-control' : action === 'stop' ? 'cozy-stop-control' : 'cozy-pause-control'}`;
     button.dataset.playbackAction = action; parent.append(button);
     let pointerSession;
     button.addEventListener('pointerdown', event => {
@@ -25,22 +26,27 @@ class PlaybackControls {
       event.stopPropagation();
       const expected = event.detail ? pointerSession : undefined; pointerSession = undefined;
       if (this.destroyed || !this.buttons.has(button) || !button.isConnected) return;
-      if (action === 'stop') void this.stop(expected); else void this.toggle(expected);
+      if (seek) void this.seek(action === 'back' ? -5 : 5, expected);
+      else if (action === 'stop') void this.stop(expected); else void this.toggle(expected);
     });
     this.buttons.add(button); this.paint(button, this.state()); return button;
   }
   forget(button) { this.buttons.delete(button); }
   paint(button, state) {
     const zh = this.plugin.settings.settingsLanguage === 'chinese';
-    const stop = button.dataset.playbackAction === 'stop';
-    const icon = stop ? 'square' : state.active && !state.paused ? 'pause' : 'play';
+    const action = button.dataset.playbackAction, stop = action === 'stop', seek = action === 'back' || action === 'forward';
+    const icon = seek ? (action === 'back' ? 'rotate-ccw' : 'rotate-cw') : stop ? 'square' : state.active && !state.paused ? 'pause' : 'play';
     if (button.dataset.icon !== icon) { this.setIcon(button, icon); button.dataset.icon = icon; }
     const label = !state.active ? (zh ? '请先开始朗读' : 'Start reading first')
+      : seek ? (!state.canSeek ? (zh ? '当前朗读不支持按秒跳转' : 'Seeking is unavailable for this reading')
+        : action === 'back' ? (zh ? '后退 5 秒' : 'Back 5 seconds') : (zh ? '前进 5 秒' : 'Forward 5 seconds'))
       : stop ? (zh ? '停止朗读' : 'Stop reading')
         : state.paused ? (zh ? '继续朗读' : 'Resume reading') : (zh ? '暂停朗读' : 'Pause reading');
     const title = state.active && state.title ? `${label}${zh ? '：' : ': '}${String(state.title).slice(0, 160)}` : label;
     if (button.getAttribute('aria-label') !== title) button.setAttribute('aria-label', title);
-    const disabled = !state.active || Boolean(this.stopping) || (stop
+    const disabled = !state.active || Boolean(this.stopping) || (seek
+      ? !state.canSeek || Boolean(this.pending) || typeof this.adapter.seekPlaybackBy !== 'function'
+      : stop
       ? state.canStop === false || typeof this.adapter.stopPlayback !== 'function'
       : !state.canToggle || Boolean(this.pending));
     if (button.disabled !== disabled) button.disabled = disabled;
@@ -66,6 +72,14 @@ class PlaybackControls {
     try { await this.adapter.stopPlayback(); }
     catch (error) { if (!this.destroyed && this.state().session === state.session) this.adapter.playbackError?.(error); }
     finally { if (this.stopping === stopping) this.stopping = null; if (!this.destroyed) this.update(); }
+  }
+  async seek(seconds, expectedSession) {
+    const state = this.state();
+    if (this.destroyed || this.pending || this.stopping || !state.active || !state.canSeek || ![-5, 5].includes(seconds)
+      || typeof this.adapter.seekPlaybackBy !== 'function' || (expectedSession !== undefined && expectedSession !== state.session)) return;
+    try { await this.adapter.seekPlaybackBy(seconds); }
+    catch (error) { if (!this.destroyed && this.state().session === state.session) this.adapter.playbackError?.(error); }
+    finally { if (!this.destroyed) this.update(); }
   }
   sync(views) { this.views = views; this.update(); this.floating?.configure(); }
   update() {
@@ -97,6 +111,10 @@ class FloatingPauseButton {
     this.button = controls.button(this.root); this.button.classList.add('cozy-floating-playback');
     this.stopSlot = this.doc.createElement('div'); this.stopSlot.className = 'cozy-floating-stop-slot'; this.root.append(this.stopSlot);
     this.stopButton = controls.button(this.stopSlot, 'stop'); this.stopButton.classList.add('cozy-floating-stop');
+    this.seekSlots = ['back', 'forward'].map(action => {
+      const slot = this.doc.createElement('div'); slot.className = `cozy-floating-seek-slot cozy-floating-${action}-slot`; this.root.append(slot);
+      return { slot, button: controls.button(slot, action) };
+    });
     this.touch = this.doc.body.classList.contains('is-mobile') || !this.win.matchMedia?.('(hover: hover) and (pointer: fine)').matches;
     this.enter = event => { this.input(event); this.hovered = !this.touch; this.updateVisibility(); };
     this.leave = () => { this.hovered = false; this.updateVisibility(true); };
@@ -119,15 +137,23 @@ class FloatingPauseButton {
     this.configure();
   }
   input(event) {
+    const wasTouch = this.touch;
     if (['mouse', 'touch', 'pen'].includes(event.pointerType)) this.touch = this.doc.body.classList.contains('is-mobile') || event.pointerType !== 'mouse';
     this.root.classList.toggle('is-touch-controls', this.touch);
+    if (wasTouch !== this.touch) this.layout();
   }
   updateVisibility(delay = false) {
     if (this.destroyed) return;
     this.root.classList.toggle('is-touch-controls', this.touch);
-    const enabled = this.controls.plugin.settings.floatingStopButton !== false && this.stopFits !== false;
-    this.stopSlot.hidden = !enabled;
-    if (!enabled && this.doc.activeElement === this.stopButton) this.button.focus({ preventScroll: true });
+    const stopEnabled = this.controls.plugin.settings.floatingStopButton !== false && this.stopFits !== false;
+    const seekEnabled = this.controls.plugin.settings.floatingSeekButtons === true && this.seekFits === true;
+    this.stopSlot.hidden = !stopEnabled;
+    for (const { slot, button } of this.seekSlots) {
+      slot.hidden = !seekEnabled;
+      if (!seekEnabled && this.doc.activeElement === button) this.button.focus({ preventScroll: true });
+    }
+    if (!stopEnabled && this.doc.activeElement === this.stopButton) this.button.focus({ preventScroll: true });
+    const enabled = stopEnabled || seekEnabled;
     const show = enabled && (this.touch || this.hovered || this.keyboardFocus);
     if (show || !enabled) { clearTimeout(this.hideTimer); this.hideTimer = null; }
     if (show || !enabled) this.root.classList.toggle('is-expanded', !!show);
@@ -163,14 +189,18 @@ class FloatingPauseButton {
     const height = parseFloat(style.height) || 44, width = parseFloat(style.width) || 44;
     const safeBottom = parseFloat(style.scrollMarginBottom) || 0;
     const safeRight = parseFloat(style.scrollMarginRight) || 0;
-    const x = right - 16 - safeRight - width; let bottom = end - 12 - safeBottom;
+    const left = Math.max(host.left, viewport?.offsetLeft || 0);
+    const seekRoom = this.controls.plugin.settings.floatingSeekButtons === true && right - left - safeRight >= 3 * width + 40;
+    // Reserve both side buttons before hover so the pause target never moves under the pointer.
+    const reserve = seekRoom ? width + 8 : 0;
+    const x = right - 16 - safeRight - width - reserve; let bottom = end - 12 - safeBottom;
     const bars = (this.obstacles || []).map(el => {
       if (el.classList.contains('cozy-mini-panel')) return null;
       const rect = el.getBoundingClientRect(), css = this.win.getComputedStyle(el);
       return rect.width && rect.height && css.display !== 'none' && css.visibility !== 'hidden' ? rect : null;
     }).filter(Boolean).sort((a, b) => b.bottom - a.bottom);
     for (const rect of bars) {
-      if (rect.left < x + width && rect.right > x && rect.top < bottom + 12 && rect.bottom > bottom - height - 12) bottom = rect.top - 12;
+      if (rect.left < x + width + reserve && rect.right > x - reserve && rect.top < bottom + 12 && rect.bottom > bottom - height - 12) bottom = rect.top - 12;
     }
     const outline = this.host.querySelector('.cozy-mini-panel:not([hidden])');
     const panel = outline?.getBoundingClientRect();
@@ -183,6 +213,9 @@ class FloatingPauseButton {
     const stopTop = bottom - 2 * height - 8, stopBottom = bottom - height;
     const blocked = rect => rect.left < x + width + 4 && rect.right > x - 4 && rect.top < stopBottom && rect.bottom > stopTop - 4;
     this.stopFits = stopTop >= top + 12 && !bars.some(blocked) && !(panel?.width && panel?.height && blocked(panel));
+    const blocksSeek = rect => rect.left < x + width + reserve + 4 && rect.right > x - reserve - 4
+      && rect.top < bottom + 4 && rect.bottom > bottom - height - 4;
+    this.seekFits = seekRoom && !bars.some(blocksSeek) && !(panel?.width && panel?.height && blocksSeek(panel));
     this.updateVisibility();
   }
   destroy() {
@@ -193,7 +226,8 @@ class FloatingPauseButton {
     this.root.removeEventListener('pointerenter', this.enter); this.root.removeEventListener('pointerleave', this.leave);
     this.root.removeEventListener('pointerdown', this.pointer); this.root.removeEventListener('focusin', this.focus);
     this.root.removeEventListener('focusout', this.blur); this.root.removeEventListener('keydown', this.key);
-    this.controls.forget(this.button); this.controls.forget(this.stopButton); this.root.remove();
+    this.controls.forget(this.button); this.controls.forget(this.stopButton);
+    this.seekSlots.forEach(({ button }) => this.controls.forget(button)); this.root.remove();
     if (this.ownedClass) this.host.classList.remove('cozy-playback-host');
   }
 }
@@ -201,8 +235,8 @@ class FloatingPauseButton {
 function addFloatingPauseSetting(container, plugin, Setting) {
   const zh = plugin.settings.settingsLanguage === 'chinese';
   new Setting(container).setName(zh ? '悬浮播放控制' : 'Floating playback controls')
-    .setDesc(zh ? '默认关闭。朗读或暂停时，在当前文档右下角显示暂停／继续按钮，可附加停止按钮；停止或结束后隐藏。只控制已有朗读，不会开始新的朗读。'
-      : 'Off by default. Show pause/resume with an optional Stop button at the current document\'s lower-right during active or paused reading. Hidden after stop or completion; never starts new speech.')
+    .setDesc(zh ? '默认关闭。朗读或暂停时，在当前文档右下角显示暂停／继续按钮，可附加停止和前后跳转按钮；停止或结束后隐藏。只控制已有朗读，不会开始新的朗读。'
+      : 'Off by default. Show pause/resume with optional Stop and seek buttons at the current document\'s lower-right during active or paused reading. Hidden after stop or completion; never starts new speech.')
     .addToggle(toggle => toggle.setValue(plugin.settings.floatingPauseButton === true).onChange(async value => {
       plugin.settings.floatingPauseButton = value; more.hidden = !value;
       if (!value) more.open = false;
@@ -216,6 +250,12 @@ function addFloatingPauseSetting(container, plugin, Setting) {
       : 'Show Stop reading above pause/resume on hover or keyboard focus. Always visible on touch screens.')
     .addToggle(toggle => toggle.setValue(plugin.settings.floatingStopButton !== false).onChange(async value => {
       plugin.settings.floatingStopButton = value; plugin.miniOutline?.sync(); await plugin.saveSettings();
+    }));
+  new Setting(more).setName(zh ? '显示前后 5 秒按钮' : 'Show 5-second seek buttons')
+    .setDesc(zh ? '默认关闭。在暂停／继续按钮左右显示后退、前进 5 秒。鼠标悬停或键盘聚焦时显示，触屏端常显；不支持按秒跳转时禁用。空间不足时隐藏。'
+      : 'Off by default. Show Back/Forward 5 seconds beside pause/resume on hover or keyboard focus; always visible on touch. Disabled when seeking is unavailable and hidden when space is insufficient.')
+    .addToggle(toggle => toggle.setValue(plugin.settings.floatingSeekButtons === true).onChange(async value => {
+      plugin.settings.floatingSeekButtons = value; plugin.miniOutline?.sync(); await plugin.saveSettings();
     }));
 }
 

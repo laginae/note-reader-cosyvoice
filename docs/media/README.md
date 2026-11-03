@@ -2,11 +2,11 @@
 
 ## Mini Outline Playback Demo
 
-[Watch the 58-second silent video](mini-outline-demo.mp4) · [Looping GIF](../images/mini-outline-demo.gif) · [Still preview](mini-outline-demo-poster.png) · [Public sample note](mini-outline-public-sample.md)
+[Watch the one-minute silent video](mini-outline-demo.mp4) · [Looping GIF](../images/mini-outline-demo.gif) · [Still preview](mini-outline-demo-poster.png) · [Public sample note](mini-outline-public-sample.md)
 
-Recorded on November 3, 2026 with **Cozy Read Aloud 1.7.0** in a separate public sample vault on Obsidian desktop for Windows. The main playback bar remains closed throughout. This is a desktop recording, not a mobile-device test.
+Recorded on November 3, 2026 with **Cozy Read Aloud 1.7.1** in a separate public sample vault on Obsidian desktop for Windows. **Transparent background** is enabled, with space beside the document. The main playback bar remains closed throughout. This is a desktop recording, not a mobile-device test.
 
-1. Hover over the chapter lines to open the outline and pin it beside the page.
+1. Hover over the chapter lines to open the outline and pin it beside the page. Move away to show the transparent idle appearance and hidden header actions.
 2. Single-click a heading to navigate without starting speech.
 3. Open the heading's actual right-click menu and choose **Read this section only**.
 4. Pause in the outline header, search for another heading and navigate while remaining paused.
@@ -92,7 +92,7 @@ Use case: logo-brand. Create one original small mascot mark for Cozy Read Aloud,
 
 ## File Formats
 
-- `mini-outline-demo.mp4`: silent H.264 video, approximately 58 seconds, with English/Chinese captions.
+- `mini-outline-demo.mp4`: silent H.264 video, approximately 61 seconds, with English/Chinese captions.
 - `../images/mini-outline-demo.gif`: silent looping preview of the same recording, 1040 pixels wide, 10 frames per second.
 - `mini-outline-demo-poster.png`: non-animated preview of the mini outline workflow.
 - `mini-outline-public-sample.md`: the complete invented public note used for the mini outline recording.

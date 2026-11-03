@@ -212,3 +212,61 @@ test('destroy cancels Stop reveal timers and forgotten stop listeners cannot aff
   f.controls.destroy();floating.stopButton.click();await new Promise(r=>setTimeout(r,280));
   assert.equal(f.counts().stops,0);assert.equal(f.controls.buttons.size,0);assert.equal(floating.root.isConnected,false);
 });
+
+test('seek controls reuse the existing seek action in five-second increments without toggling paused playback',async t=>{
+  const f=fixture();t.after(f.cleanup);const seeks=[];f.adapter.seekPlaybackBy=seconds=>seeks.push(seconds);
+  f.setState({active:true,canToggle:true,canSeek:true,session:1,paused:true});
+  const back=f.controls.button(f.first.containerEl,'back'),forward=f.controls.button(f.first.containerEl,'forward');
+  assert.equal(back.dataset.icon,'rotate-ccw');assert.equal(forward.dataset.icon,'rotate-cw');
+  assert.equal(back.getAttribute('aria-label'),'Back 5 seconds');assert.equal(forward.getAttribute('aria-label'),'Forward 5 seconds');
+  back.click();forward.click();await tick();assert.deepEqual(seeks,[-5,5]);assert.equal(f.controls.state().paused,true);assert.equal(f.counts().calls,0);
+  f.setState({active:true,canToggle:true,canSeek:false,session:1});assert.equal(back.disabled,true);
+  assert.match(back.getAttribute('aria-label'),/Seeking is unavailable/);back.click();assert.deepEqual(seeks,[-5,5]);
+});
+
+test('seek rejects stale pointers, detached controls, unavailable audio and pending pause or stop actions',async t=>{
+  const f=fixture();t.after(f.cleanup);let seeks=0;f.adapter.seekPlaybackBy=()=>seeks++;
+  const active=session=>f.setState({active:true,canToggle:true,canStop:true,canSeek:true,session});active(1);
+  const back=f.controls.button(f.first.containerEl,'back');pointer(f,back,'pointerdown');active(2);
+  back.dispatchEvent(new f.dom.window.MouseEvent('click',{detail:1}));await tick();assert.equal(seeks,0);
+  f.controls.pending={session:2};f.controls.update();back.click();assert.equal(seeks,0);
+  f.controls.pending=null;f.controls.stopping={session:2};f.controls.update();back.click();assert.equal(seeks,0);
+  f.controls.stopping=null;f.controls.update();back.click();await tick();assert.equal(seeks,1);
+  back.remove();back.click();await tick();assert.equal(seeks,1);
+});
+
+test('optional seek buttons reserve a stable anchor, reveal with Stop, and remain visible on touch',async t=>{
+  const f=fixture();t.after(f.cleanup);f.plugin.settings.floatingPauseButton=true;f.active();const floating=f.controls.floating;
+  assert.ok(floating.seekSlots.every(({slot})=>slot.hidden));
+  f.plugin.settings.floatingSeekButtons=true;f.controls.sync([f.first,f.second]);
+  assert.equal(floating.root.style.getPropertyValue('--cozy-playback-right'),'68px');
+  assert.ok(floating.seekSlots.every(({slot})=>!slot.hidden));const anchor=floating.root.style.cssText;
+  pointer(f,floating.root,'pointerenter');assert.equal(floating.root.classList.contains('is-expanded'),true);
+  assert.equal(floating.root.style.cssText,anchor);
+  pointer(f,floating.root,'pointerleave');await new Promise(r=>setTimeout(r,280));assert.equal(floating.root.classList.contains('is-expanded'),false);
+  f.plugin.settings.floatingStopButton=false;pointer(f,floating.button,'pointerdown','touch');
+  assert.equal(floating.stopSlot.hidden,true);assert.equal(floating.root.classList.contains('is-expanded'),true);
+  assert.ok(floating.seekSlots.every(({slot})=>!slot.hidden));
+});
+
+test('seek controls yield to narrow panes and nearby outlines rather than covering content or clipping',()=>{
+  const f=fixture();try{
+    f.plugin.settings.floatingPauseButton=true;f.plugin.settings.floatingSeekButtons=true;f.active();const floating=f.controls.floating;
+    f.first.containerEl.getBoundingClientRect=()=>rect(0,0,150,700);floating.layout();
+    assert.equal(floating.seekFits,false);assert.ok(floating.seekSlots.every(({slot})=>slot.hidden));assert.equal(floating.button.hidden,false);
+    f.first.containerEl.getBoundingClientRect=()=>rect(0,0,500,700);
+    const outline=f.doc.createElement('section');outline.className='cozy-mini-panel';outline.getBoundingClientRect=()=>rect(330,610,50,50);f.first.containerEl.append(outline);
+    floating.configure();assert.equal(floating.seekFits,false);assert.equal(floating.button.hidden,false);
+    outline.hidden=true;floating.layout();assert.equal(floating.seekFits,true);
+  }finally{f.cleanup();}
+});
+
+test('hybrid input recalculates seek space when touch targets become larger',t=>{
+  const f=fixture();t.after(f.cleanup);
+  const css=f.doc.createElement('style');css.textContent='.cozy-floating-playback{width:40px;height:40px}.is-touch-controls .cozy-floating-playback{width:44px;height:44px}';f.doc.head.append(css);
+  f.first.containerEl.getBoundingClientRect=()=>rect(0,0,166,700);
+  f.plugin.settings.floatingPauseButton=true;f.plugin.settings.floatingSeekButtons=true;f.active();const floating=f.controls.floating;
+  assert.equal(floating.seekFits,true);
+  pointer(f,floating.button,'pointerdown','touch');assert.equal(floating.seekFits,false);assert.equal(floating.button.hidden,false);
+  pointer(f,floating.root,'pointerenter','mouse');assert.equal(floating.seekFits,true);
+});

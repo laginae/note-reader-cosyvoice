@@ -315,6 +315,7 @@ assert.deepStrictEqual(moduleObject.exports.__test.createDefaultSettings(), {
   readingFloatingToolbar: false,
   floatingPauseButton: false,
   floatingStopButton: true,
+  floatingSeekButtons: false,
   readingFloatingAction: 'selection',
   copilotChatEnabled: true,
   copilotChatFolder: '',
