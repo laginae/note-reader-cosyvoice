@@ -1639,20 +1639,21 @@ var require_playback_controls = __commonJS({
     };
     function addFloatingPauseSetting(container, plugin, Setting) {
       const zh = plugin.settings.settingsLanguage === "chinese";
-      let stopSetting;
-      new Setting(container).setName(zh ? "\u60AC\u6D6E\u6682\u505C\uFF0F\u7EE7\u7EED\u6309\u94AE" : "Floating pause/resume button").setDesc(zh ? "\u9ED8\u8BA4\u5173\u95ED\u3002\u6717\u8BFB\u6216\u6682\u505C\u65F6\uFF0C\u5728\u5F53\u524D\u6587\u6863\u53F3\u4E0B\u89D2\u663E\u793A\u4E00\u4E2A\u72EC\u7ACB\u6309\u94AE\uFF1B\u505C\u6B62\u6216\u7ED3\u675F\u540E\u9690\u85CF\u3002\u53EA\u63A7\u5236\u5DF2\u6709\u6717\u8BFB\uFF0C\u4E0D\u4F1A\u5F00\u59CB\u65B0\u7684\u6717\u8BFB\u3002" : "Off by default. Show one independent button at the current document's lower-right during an active or paused reading session. Hidden after stop or completion; never starts new speech.").addToggle((toggle) => toggle.setValue(plugin.settings.floatingPauseButton === true).onChange(async (value) => {
+      new Setting(container).setName(zh ? "\u60AC\u6D6E\u64AD\u653E\u63A7\u5236" : "Floating playback controls").setDesc(zh ? "\u9ED8\u8BA4\u5173\u95ED\u3002\u6717\u8BFB\u6216\u6682\u505C\u65F6\uFF0C\u5728\u5F53\u524D\u6587\u6863\u53F3\u4E0B\u89D2\u663E\u793A\u6682\u505C\uFF0F\u7EE7\u7EED\u6309\u94AE\uFF0C\u53EF\u9644\u52A0\u505C\u6B62\u6309\u94AE\uFF1B\u505C\u6B62\u6216\u7ED3\u675F\u540E\u9690\u85CF\u3002\u53EA\u63A7\u5236\u5DF2\u6709\u6717\u8BFB\uFF0C\u4E0D\u4F1A\u5F00\u59CB\u65B0\u7684\u6717\u8BFB\u3002" : "Off by default. Show pause/resume with an optional Stop button at the current document's lower-right during active or paused reading. Hidden after stop or completion; never starts new speech.").addToggle((toggle) => toggle.setValue(plugin.settings.floatingPauseButton === true).onChange(async (value) => {
         plugin.settings.floatingPauseButton = value;
-        stopSetting.settingEl.hidden = !value;
+        more.hidden = !value;
+        if (!value) more.open = false;
         plugin.miniOutline?.sync();
         await plugin.saveSettings();
       }));
-      stopSetting = new Setting(container).setName(zh ? "\u663E\u793A\u505C\u6B62\u6309\u94AE" : "Show stop button").setDesc(zh ? "\u5728\u60AC\u6D6E\u6682\u505C\uFF0F\u7EE7\u7EED\u6309\u94AE\u4E0A\u65B9\u663E\u793A\u505C\u6B62\u6309\u94AE\u3002\u684C\u9762\u7AEF\u60AC\u505C\u6216\u952E\u76D8\u805A\u7126\u65F6\u663E\u793A\uFF0C\u79FB\u5F00\u540E\u6536\u8D77\uFF1B\u89E6\u5C4F\u7AEF\u4FDD\u6301\u53EF\u89C1\u3002" : "Show Stop above the floating pause/resume button on hover or keyboard focus. It stays visible on touch devices.").addToggle((toggle) => toggle.setValue(plugin.settings.floatingStopButton !== false).onChange(async (value) => {
+      const more = container.createEl("details", { cls: "cozy-floating-settings" });
+      more.hidden = plugin.settings.floatingPauseButton !== true;
+      more.createEl("summary", { text: zh ? "\u66F4\u591A\u60AC\u6D6E\u6309\u94AE\u9009\u9879" : "More floating control options" });
+      new Setting(more).setName(zh ? "\u663E\u793A\u505C\u6B62\u6717\u8BFB\u6309\u94AE" : "Show stop reading button").setDesc(zh ? "\u5728\u6682\u505C\uFF0F\u7EE7\u7EED\u6309\u94AE\u4E0A\u65B9\u63D0\u4F9B\u505C\u6B62\u6717\u8BFB\u64CD\u4F5C\u3002\u9F20\u6807\u60AC\u505C\u6216\u952E\u76D8\u805A\u7126\u65F6\u663E\u793A\uFF0C\u89E6\u5C4F\u7AEF\u5E38\u663E\u3002" : "Show Stop reading above pause/resume on hover or keyboard focus. Always visible on touch screens.").addToggle((toggle) => toggle.setValue(plugin.settings.floatingStopButton !== false).onChange(async (value) => {
         plugin.settings.floatingStopButton = value;
         plugin.miniOutline?.sync();
         await plugin.saveSettings();
       }));
-      stopSetting.settingEl.addClass("cozy-reader-conditional");
-      stopSetting.settingEl.hidden = plugin.settings.floatingPauseButton !== true;
     }
     module2.exports = { PlaybackControls, FloatingPauseButton, addFloatingPauseSetting };
   }
@@ -17067,30 +17068,44 @@ var require_mini_outline = __commonJS({
       }
       sync() {
         if (this.destroyed) return;
+        const previousPanel = this.currentPanel, previousFile = this.currentFile;
+        const followPinned = previousPanel?.opened && previousPanel.state?.pinned;
         const startup = normalizeMiniSettings2(this.plugin.settings).miniOutlineStartup;
         if (startup !== this.startupEnabled) {
           this.cancelStartup();
           this.startupEnabled = startup;
           this.startupPending = startup;
         }
-        const views = this.adapter.views().filter((view) => view?.file && view.containerEl?.ownerDocument);
-        for (const [view, panel] of this.panels) if (!views.includes(view) || !view.containerEl.isConnected) {
-          panel.destroy();
-          this.panels.delete(view);
+        const views = this.adapter.views().filter((view2) => view2?.file && view2.containerEl?.ownerDocument);
+        for (const [view2, panel2] of this.panels) if (!views.includes(view2) || !view2.containerEl.isConnected) {
+          panel2.destroy();
+          this.panels.delete(view2);
         }
-        for (const view of views) {
-          const previous = this.panels.get(view);
+        for (const view2 of views) {
+          const previous = this.panels.get(view2);
           if (previous && previous.language !== this.plugin.settings.settingsLanguage) {
             previous.destroy();
-            this.panels.delete(view);
+            this.panels.delete(view2);
           }
-          if (!this.panels.has(view)) this.panels.set(view, new MiniOutlinePanel(this, view));
-          const panel = this.panels.get(view);
-          panel.configure();
-          const sourceFile = panel.loading ? panel.loadingFile : panel.file;
-          if (sourceFile && sourceFile !== view.file) {
-            panel.close(false, false);
-            panel.invalidate();
+          if (!this.panels.has(view2)) this.panels.set(view2, new MiniOutlinePanel(this, view2));
+          const panel2 = this.panels.get(view2);
+          panel2.configure();
+          const sourceFile = panel2.loading ? panel2.loadingFile : panel2.file;
+          if (sourceFile && sourceFile !== view2.file) {
+            panel2.close(false, false);
+            panel2.file = panel2.loadingFile = null;
+            panel2.invalidate();
+          }
+        }
+        const view = this.startupView(), panel = this.panels.get(view);
+        if (panel) {
+          this.currentPanel = panel;
+          this.currentFile = view.file;
+          if (followPinned && (panel !== previousPanel || view.file !== previousFile)) {
+            const file = view.file;
+            void panel.open({ pin: true }).catch(() => {
+              if (!panel.destroyed && panel.opened && view.file === file) panel.error();
+            });
           }
         }
         this.playback.sync([...this.panels.keys()]);
@@ -17124,6 +17139,7 @@ var require_mini_outline = __commonJS({
         for (const panel of this.panels.values()) panel.destroy();
         this.panels.clear();
         this.states.clear();
+        this.currentPanel = this.currentFile = null;
         this.playback.destroy();
       }
     };

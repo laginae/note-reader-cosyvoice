@@ -200,22 +200,23 @@ class FloatingPauseButton {
 
 function addFloatingPauseSetting(container, plugin, Setting) {
   const zh = plugin.settings.settingsLanguage === 'chinese';
-  let stopSetting;
-  new Setting(container).setName(zh ? '悬浮暂停／继续按钮' : 'Floating pause/resume button')
-    .setDesc(zh ? '默认关闭。朗读或暂停时，在当前文档右下角显示一个独立按钮；停止或结束后隐藏。只控制已有朗读，不会开始新的朗读。'
-      : 'Off by default. Show one independent button at the current document\'s lower-right during an active or paused reading session. Hidden after stop or completion; never starts new speech.')
+  new Setting(container).setName(zh ? '悬浮播放控制' : 'Floating playback controls')
+    .setDesc(zh ? '默认关闭。朗读或暂停时，在当前文档右下角显示暂停／继续按钮，可附加停止按钮；停止或结束后隐藏。只控制已有朗读，不会开始新的朗读。'
+      : 'Off by default. Show pause/resume with an optional Stop button at the current document\'s lower-right during active or paused reading. Hidden after stop or completion; never starts new speech.')
     .addToggle(toggle => toggle.setValue(plugin.settings.floatingPauseButton === true).onChange(async value => {
-      plugin.settings.floatingPauseButton = value; stopSetting.settingEl.hidden = !value;
+      plugin.settings.floatingPauseButton = value; more.hidden = !value;
+      if (!value) more.open = false;
       plugin.miniOutline?.sync(); await plugin.saveSettings();
     }));
-  stopSetting = new Setting(container).setName(zh ? '显示停止按钮' : 'Show stop button')
-    .setDesc(zh ? '在悬浮暂停／继续按钮上方显示停止按钮。桌面端悬停或键盘聚焦时显示，移开后收起；触屏端保持可见。'
-      : 'Show Stop above the floating pause/resume button on hover or keyboard focus. It stays visible on touch devices.')
+  const more = container.createEl('details', { cls: 'cozy-floating-settings' });
+  more.hidden = plugin.settings.floatingPauseButton !== true;
+  more.createEl('summary', { text: zh ? '更多悬浮按钮选项' : 'More floating control options' });
+  new Setting(more).setName(zh ? '显示停止朗读按钮' : 'Show stop reading button')
+    .setDesc(zh ? '在暂停／继续按钮上方提供停止朗读操作。鼠标悬停或键盘聚焦时显示，触屏端常显。'
+      : 'Show Stop reading above pause/resume on hover or keyboard focus. Always visible on touch screens.')
     .addToggle(toggle => toggle.setValue(plugin.settings.floatingStopButton !== false).onChange(async value => {
       plugin.settings.floatingStopButton = value; plugin.miniOutline?.sync(); await plugin.saveSettings();
     }));
-  stopSetting.settingEl.addClass('cozy-reader-conditional');
-  stopSetting.settingEl.hidden = plugin.settings.floatingPauseButton !== true;
 }
 
 module.exports = { PlaybackControls, FloatingPauseButton, addFloatingPauseSetting };

@@ -305,14 +305,112 @@ test('failed startup reads do not loop, and a later manual retry is still possib
 });
 
 test('automatic pinning reuses an in-flight manual load and file changes cancel stale initial loads', async t => {
-  const f=fixture(); t.after(f.cleanup); let resolve;
-  f.adapter.load=async()=>{f.calls.push('load');return new Promise(r=>{resolve=r;});};
+  const f=fixture(); t.after(f.cleanup); const pending=[];
+  f.adapter.load=async()=>{f.calls.push('load');return new Promise(r=>{pending.push(r);});};
   const manual=f.panel.open();
   f.plugin.settings.miniOutlineStartup=true; f.manager.layoutReady=true; f.manager.sync();
   await finishStartup(f); assert.equal(f.panel.state.pinned,true); assert.deepEqual(f.calls,['load']);
-  f.view.file={path:'new-public.md'}; f.manager.sync(); assert.equal(f.panel.opened,false);
-  resolve(f.data); await manual;
-  assert.equal(f.panel.data,null); assert.equal(f.panel.loading,false); assert.equal(f.manager.startupPending,false);
+  f.view.file={path:'new-public.md'}; f.manager.sync(); assert.equal(f.panel.opened,true);
+  pending[0](f.data); await manual;
+  assert.equal(f.panel.data,null); assert.equal(f.panel.loading,true); assert.equal(f.manager.startupPending,false);
+  pending[1](f.data); await tick();
+  assert.equal(f.panel.file,f.view.file); assert.equal(f.panel.state.pinned,true); assert.equal(f.panel.loading,false);
+});
+
+test('a pinned outline follows same-pane files without opening playback or moving focus', async t => {
+  const f=fixture(); t.after(f.cleanup); await f.panel.open({pin:true});
+  f.panel.search.value='Details'; f.panel.search.dispatchEvent(new f.doc.defaultView.Event('input'));
+  const oldFile=f.view.file, oldState=f.panel.state, focus=f.doc.activeElement;
+  f.view.file={path:'next-public.md'}; f.manager.sync(); await tick();
+  assert.equal(f.panel.opened,true); assert.equal(f.panel.state.pinned,true);
+  assert.notEqual(f.panel.state,oldState); assert.equal(f.panel.search.value,'');
+  assert.equal(f.panel.file,f.view.file); assert.equal(f.doc.activeElement,focus);
+  f.view.file=oldFile; f.manager.sync(); await tick();
+  assert.equal(f.panel.state,oldState); assert.equal(f.panel.search.value,'Details');
+  assert.deepEqual(f.calls,['load','load','load']);
+});
+
+test('pinned following loads only the newly active pane and preserves Floating TOC coexistence', async t => {
+  for (const removeOld of [false,true]) {
+    const f=fixture(); t.after(f.cleanup);
+    const next={file:{path:'next-public.pdf'},containerEl:f.doc.querySelector('aside')};
+    const background={file:{path:'background-public.pdf'},containerEl:f.doc.createElement('section')};
+    f.doc.body.append(background.containerEl);
+    f.adapter.views=()=>[f.view,next,background]; f.plugin.app.workspace={activeLeaf:{view:f.view}};
+    f.plugin.app.plugins.enabledPlugins.add('floating-toc');
+    f.adapter.load=async view=>{f.calls.push(view.file.path);return f.data;};
+    f.manager.sync(); await f.panel.open({pin:true});
+    if(removeOld) {f.adapter.views=()=>[next,background];f.view.containerEl.remove();}
+    f.plugin.app.workspace.activeLeaf.view=next; f.manager.sync(); await tick();
+    const target=f.manager.panels.get(next);
+    assert.equal(target.opened,true); assert.equal(target.state.pinned,true); assert.equal(target.launcher.hidden,true);
+    assert.equal(f.manager.panels.get(background).opened,undefined);
+    assert.deepEqual(f.calls,['public-example.md','next-public.pdf']);
+    assert.deepEqual([...f.plugin.app.plugins.enabledPlugins],['floating-toc']);
+    f.manager.sync(); f.manager.update(); assert.equal(f.calls.length,2);
+  }
+});
+
+test('manual dismissal or unpinning prevents automatic opening in another file or tab', async t => {
+  for (const action of ['close','unpin']) for (const newPane of [false,true]) {
+    const f=fixture(undefined,{miniOutlineStartup:true}); t.after(f.cleanup);
+    await f.panel.open({pin:true});
+    if(action==='close') f.panel.close(); else f.panel.pin.click();
+    await tick();
+    const next=newPane?{file:{path:'next-public.md'},containerEl:f.doc.querySelector('aside')}:f.view;
+    if(newPane) {f.adapter.views=()=>[f.view,next];f.plugin.app.workspace={activeLeaf:{view:next}};}
+    else f.view.file={path:'next-public.md'};
+    f.manager.sync(); await tick();
+    assert.notEqual(f.manager.panels.get(next).opened,true,`${action}, newPane=${newPane}`);
+    assert.equal(f.manager.startupPending,false); assert.deepEqual(f.calls,['load']);
+  }
+});
+
+test('unsupported active views do not load a background source; pinned following resumes on a document', async t => {
+  const f=fixture(); t.after(f.cleanup); await f.panel.open({pin:true});
+  const next={file:{path:'next-public.html'},containerEl:f.doc.querySelector('aside')};
+  f.adapter.views=()=>[f.view,next]; f.plugin.app.workspace={activeLeaf:{view:{}}};
+  f.manager.sync(); await tick(); assert.deepEqual(f.calls,['load']);
+  assert.equal(f.manager.panels.get(next).opened,undefined);
+  f.plugin.app.workspace.activeLeaf.view=next; f.manager.sync(); await tick();
+  assert.equal(f.manager.panels.get(next).state.pinned,true); assert.deepEqual(f.calls,['load','load']);
+});
+
+test('rapid pinned file changes and a later close cannot show stale headings', async t => {
+  const f=fixture(); t.after(f.cleanup); await f.panel.open({pin:true}); const pending=[];
+  f.adapter.load=async(view,cancelled)=>new Promise(resolve=>pending.push({resolve,cancelled}));
+  f.view.file={path:'next-public.md'}; f.manager.sync();
+  f.view.file={path:'last-public.md'}; f.manager.sync();
+  assert.equal(pending[0].cancelled(),true);
+  const latest={kind:'markdown',entries:[{title:'Latest public heading',level:1}]};
+  pending[1].resolve(latest); await tick(); pending[0].resolve(f.data); await tick();
+  assert.equal(f.panel.data,latest); assert.equal(f.panel.file,f.view.file);
+  assert.equal(f.panel.list.textContent,'Latest public heading');
+  f.view.file={path:'dismissed-public.md'}; f.manager.sync(); f.panel.close();
+  pending[2].resolve(f.data); await tick(); f.manager.sync();
+  assert.equal(pending[2].cancelled(),true); assert.equal(f.panel.opened,false); assert.equal(f.panel.data,null);
+});
+
+test('a failed followed load keeps its retry state without automatic retry or closing', async t => {
+  const f=fixture(); t.after(f.cleanup); await f.panel.open({pin:true});
+  let calls=0; f.adapter.load=async()=>{calls++;throw Error('Public test failure');};
+  f.view.file={path:'unavailable-public.md'}; f.manager.sync(); await tick();
+  for(let i=0;i<5;i++) {f.manager.sync();f.manager.update();}
+  assert.equal(calls,1); assert.equal(f.panel.opened,true); assert.equal(f.panel.state.pinned,true);
+  assert.match(f.panel.status.textContent,/retry/);
+  f.adapter.load=async()=>f.data; await f.panel.open();
+  assert.equal(f.panel.data,f.data); assert.equal(f.panel.file,f.view.file);
+});
+
+test('inactive file replacement stays lazy until the pane becomes active', async t => {
+  const f=fixture(); t.after(f.cleanup); await f.panel.open({pin:true});
+  const next={file:{path:'next-public.md'},containerEl:f.doc.querySelector('aside')};
+  f.adapter.views=()=>[f.view,next]; f.plugin.app.workspace={activeLeaf:{view:next}};
+  f.manager.sync(); await tick();
+  f.view.file={path:'background-replacement.pdf'}; f.manager.sync(); await tick();
+  assert.equal(f.panel.opened,false); assert.equal(f.calls.length,2);
+  f.plugin.app.workspace.activeLeaf.view=f.view; f.manager.sync(); await tick();
+  assert.equal(f.panel.opened,true); assert.equal(f.panel.state.pinned,true); assert.equal(f.calls.length,3);
 });
 
 test('the saved startup preference opens again after a new manager lifecycle, not after a same-session close', async t => {

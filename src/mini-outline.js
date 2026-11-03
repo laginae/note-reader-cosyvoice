@@ -699,6 +699,8 @@ class MiniOutlineManager {
   }
   sync() {
     if (this.destroyed) return;
+    const previousPanel = this.currentPanel, previousFile = this.currentFile;
+    const followPinned = previousPanel?.opened && previousPanel.state?.pinned;
     const startup = normalizeMiniSettings(this.plugin.settings).miniOutlineStartup;
     if (startup !== this.startupEnabled) {
       this.cancelStartup(); this.startupEnabled = startup; this.startupPending = startup;
@@ -711,7 +713,20 @@ class MiniOutlineManager {
       if (!this.panels.has(view)) this.panels.set(view, new MiniOutlinePanel(this, view));
       const panel = this.panels.get(view); panel.configure();
       const sourceFile = panel.loading ? panel.loadingFile : panel.file;
-      if (sourceFile && sourceFile !== view.file) { panel.close(false, false); panel.invalidate(); }
+      if (sourceFile && sourceFile !== view.file) {
+        panel.close(false, false); panel.file = panel.loadingFile = null; panel.invalidate();
+      }
+    }
+    // Carry an open pin to the active document only, never a remembered reading source.
+    const view = this.startupView(), panel = this.panels.get(view);
+    if (panel) {
+      this.currentPanel = panel; this.currentFile = view.file;
+      if (followPinned && (panel !== previousPanel || view.file !== previousFile)) {
+        const file = view.file;
+        void panel.open({ pin: true }).catch(() => {
+          if (!panel.destroyed && panel.opened && view.file === file) panel.error();
+        });
+      }
     }
     this.playback.sync([...this.panels.keys()]); this.queueStartup();
   }
@@ -726,7 +741,7 @@ class MiniOutlineManager {
     if (this.startupPending) this.queueStartup();
     for (const panel of this.panels.values()) { try { panel.update(); } catch { panel.invalidate(); panel.error(); } }
   }
-  destroy() { this.destroyed = true; clearTimeout(this.timer); this.cancelStartup(); for (const panel of this.panels.values()) panel.destroy(); this.panels.clear(); this.states.clear(); this.playback.destroy(); }
+  destroy() { this.destroyed = true; clearTimeout(this.timer); this.cancelStartup(); for (const panel of this.panels.values()) panel.destroy(); this.panels.clear(); this.states.clear(); this.currentPanel = this.currentFile = null; this.playback.destroy(); }
 }
 function registerMiniOutline(plugin, adapter) {
   const { setIcon, Menu } = require('obsidian');

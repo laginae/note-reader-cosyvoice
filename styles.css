@@ -921,6 +921,10 @@
 .cozy-mini-settings-advanced { margin: 4px 0 16px; }
 .cozy-mini-settings-advanced > summary { padding: 8px 0; cursor: pointer; color: var(--text-muted); }
 .cozy-mini-settings-advanced > .setting-item { border-top: 0; }
+.cozy-floating-settings { margin: 4px 0 16px; }
+.cozy-floating-settings > summary { padding: 8px 0; cursor: pointer; color: var(--text-muted); }
+.cozy-floating-settings > .setting-item { border-top: 0; }
+.cozy-floating-settings[hidden] { display: none !important; }
 .cozy-mini-width-setting .setting-item-control { flex-wrap: wrap; gap: 8px; }
 .cozy-mini-width-setting input[type="range"] { width: 140px; max-width: 100%; }
 .cozy-mini-width-value { min-width: 5.5em; text-align: right; white-space: nowrap; color: var(--text-muted); font-variant-numeric: tabular-nums; }

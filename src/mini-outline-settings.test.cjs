@@ -46,7 +46,7 @@ test('settings have two plain groups, explicit button labels and collapsed advan
   const entry=f.row('迷你目录按钮');
   assert.ok(entry.desc.includes('仍可通过朗读工具栏或命令打开迷你目录，不影响其他插件。'));
   assert.deepEqual(entry.control.options,{auto:'自动（推荐）',always:'始终显示',off:'隐藏按钮'});
-  const advanced=f.container.querySelector('details'); assert.equal(advanced.open,false);
+  const advanced=f.container.querySelector('.cozy-mini-settings-advanced'); assert.equal(advanced.open,false);
   for (const name of ['收起样式','播放按钮显示方式','目录位置','默认展开层级','透明背景','双击标题开始朗读','鼠标悬停展开目录图标']) assert.ok(advanced.contains(f.row(name).settingEl),name);
   for (const name of ['启动时打开迷你目录','迷你目录按钮','目录宽度','标题显示行数']) assert.equal(advanced.contains(f.row(name).settingEl),false,name);
   await f.row('透明背景').control.change(true);
@@ -68,23 +68,40 @@ test('floating action hides immediately when disabled without discarding the sav
 });
 
 test('independent pause button is opt-in and needs no Editing Toolbar plugin', async t=>{
-  const f=fixture(false); t.after(()=>f.dom.window.close()); const row=f.row('悬浮暂停／继续按钮');
+  const f=fixture(false); t.after(()=>f.dom.window.close()); const row=f.row('悬浮播放控制');
   assert.equal(row.control.value,false); assert.notEqual(row.control.disabled,true);
   await row.control.change(true); assert.equal(f.plugin.settings.floatingPauseButton,true);
   assert.deepEqual(f.counts(),{saves:1,syncs:1});
   await row.control.change(false); assert.equal(f.plugin.settings.floatingPauseButton,false);
 });
 
-test('stop is a conditional floating-control preference and disabling the parent preserves it', async t=>{
-  const f=fixture(false);t.after(()=>f.dom.window.close());const parent=f.row('悬浮暂停／继续按钮'),stop=f.row('显示停止按钮');
-  assert.equal(stop.control.value,true);assert.equal(stop.settingEl.hidden,true);
-  await parent.control.change(true);assert.equal(stop.settingEl.hidden,false);
+test('floating options are collapsed by default and disabling the parent preserves the stop choice', async t=>{
+  const f=fixture(false);t.after(()=>f.dom.window.close());const parent=f.row('悬浮播放控制'),stop=f.row('显示停止朗读按钮');
+  const more=f.container.querySelector('.cozy-floating-settings');
+  assert.equal(more.previousElementSibling,parent.settingEl);assert.equal(more.firstElementChild.tagName,'SUMMARY');
+  assert.equal(more.firstElementChild.textContent,'更多悬浮按钮选项');assert.ok(more.contains(stop.settingEl));
+  assert.equal(stop.control.value,true);assert.equal(more.hidden,true);assert.equal(more.open,false);
+  await parent.control.change(true);assert.equal(more.hidden,false);assert.equal(more.open,false);
+  more.open=true;
   await stop.control.change(false);assert.equal(f.plugin.settings.floatingStopButton,false);
-  await parent.control.change(false);assert.equal(stop.settingEl.hidden,true);
-  await parent.control.change(true);assert.equal(stop.settingEl.hidden,false);assert.equal(f.plugin.settings.floatingStopButton,false);
+  await parent.control.change(false);assert.equal(more.hidden,true);assert.equal(more.open,false);
+  await parent.control.change(true);assert.equal(more.hidden,false);assert.equal(more.open,false);assert.equal(f.plugin.settings.floatingStopButton,false);
   const reopened=fixture(false,f.plugin.settings);t.after(()=>reopened.dom.window.close());
-  assert.equal(reopened.row('显示停止按钮').control.value,false);assert.equal(reopened.row('显示停止按钮').settingEl.hidden,false);
+  assert.equal(reopened.row('显示停止朗读按钮').control.value,false);
+  assert.equal(reopened.container.querySelector('.cozy-floating-settings').hidden,false);
+  assert.equal(reopened.container.querySelector('.cozy-floating-settings').open,false);
   assert.deepEqual(f.counts(),{saves:4,syncs:4});
+});
+
+test('opening and collapsing floating options never saves preferences or changes playback controls', async t=>{
+  const f=fixture(false,{floatingPauseButton:true,floatingStopButton:true});t.after(()=>f.dom.window.close());
+  const more=f.container.querySelector('.cozy-floating-settings');
+  more.open=true;more.open=false;await new Promise(resolve=>setTimeout(resolve,0));
+  assert.deepEqual(f.counts(),{saves:0,syncs:0});
+  assert.equal(f.plugin.settings.floatingStopButton,true);assert.equal(f.plugin.settings.floatingPauseButton,true);
+  const en=fixture(false,{settingsLanguage:'english',floatingPauseButton:true,floatingStopButton:false});t.after(()=>en.dom.window.close());
+  assert.ok(en.row('Floating playback controls'));assert.equal(en.row('Show stop reading button').control.value,false);
+  assert.equal(en.container.querySelector('.cozy-floating-settings summary').textContent,'More floating control options');
 });
 
 test('outline pause visibility defaults to following the header and saves independently of floating controls', async t=>{
