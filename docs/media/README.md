@@ -20,7 +20,27 @@ The recording uses actual local **Microsoft Zira Desktop** system speech at **1x
 
 The document area is cropped for readability; UI text is enlarged in the isolated recording window. English/Chinese captions, a standard arrow pointer and a faint, short-lived yellow click cue are recording overlays. Mouse motion and menus are deliberately paced. The interface, menus, highlights and control actions are not reconstructed, and the recording is not sped up. Theme and window size can change the appearance.
 
-**中文说明：** 约 58 秒桌面实录，只操作迷你目录，展示章节起读、暂停／继续、搜索定位、返回朗读位置、固定与收起。双击起读需要预先在设置中开启，触屏使用“目录选项”中的章节操作。素材仅含下方链接的公开示例，使用本地系统语音；动图与视频均无声，非合成等待时间测试，也不是手机实测。
+**中文说明：** 约一分钟桌面实录，只操作迷你目录，展示章节起读、暂停／继续、搜索定位、返回朗读位置、固定与收起。双击起读需要预先在设置中开启，触屏使用“目录选项”中的章节操作。素材仅含下方链接的公开示例，使用本地系统语音；动图与视频均无声，非合成等待时间测试，也不是手机实测。
+
+## Floating Playback Demo
+
+[Watch the 33-second silent video](floating-controls-demo.mp4) · [Looping GIF](../images/floating-controls-demo.gif) · [Still preview](floating-controls-demo-poster.png) · [Public sample note](mini-outline-public-sample.md)
+
+Recorded on November 3, 2026 with **Cozy Read Aloud 1.7.1** in a separate public sample vault on Obsidian desktop for Windows. Reading was started before capture; the main playback bar and mini outline stay closed throughout.
+
+1. Hover over Pause to reveal Stop above it and Back/Forward 5 seconds beside it.
+2. Pause the existing reading session.
+3. Seek backward five seconds, then forward five seconds, keeping the session paused.
+4. Resume, then move away so that the extra controls fold away.
+5. Hover again and click Stop. The floating player disappears when the session ends.
+
+**Setup:** enable **Playback and interface > Reading shortcuts > Floating playback controls** and its **More floating control options > Show 5-second seek buttons** option. These two settings are off by default; **Show stop reading button** is on within the floating controls by default. No settings changes are made during the recording, and the floating controls cannot start a new reading session.
+
+The recording uses actual local **Microsoft Zira Desktop** speech at **1x**, with no online requests or prerecorded-audio adapter. Playing/paused state, both five-second seeks and control visibility were checked during capture. Both published formats are silent, not synthesis-speed demonstrations. Mobile seeking uses only loaded online audio, not device system speech; this desktop clip is not a mobile-device test.
+
+The document area is cropped for readability, retaining the controls and their actual tooltips. Bilingual captions, a standard arrow pointer and a brief pale-yellow click cue are recording overlays; the interface and control actions are real and are not sped up. Only the invented public note linked above is used. Private notes, credentials, vault settings, temporary audio, profiles, raw frames and diagnostic logs are not published.
+
+**中文说明：** 约 33 秒桌面实录，展示悬停展开、暂停、前后 5 秒、继续、移出收起及停止。主播放栏和迷你目录全程关闭；主开关和前后 5 秒功能需预先开启。使用公开示例和本地系统语音，未调用在线接口，未使用私人正文或密钥。动图与视频均无声，含中英文字幕，不代表移动端真机测试。
 
 ## Reading Toolbar Quick Tour
 
@@ -92,6 +112,9 @@ Use case: logo-brand. Create one original small mascot mark for Cozy Read Aloud,
 
 ## File Formats
 
+- `floating-controls-demo.mp4`: silent H.264 video, approximately 33 seconds, with English/Chinese captions.
+- `../images/floating-controls-demo.gif`: silent looping preview of the same recording, 900 pixels wide, 10 frames per second.
+- `floating-controls-demo-poster.png`: non-animated preview of the floating controls.
 - `mini-outline-demo.mp4`: silent H.264 video, approximately 61 seconds, with English/Chinese captions.
 - `../images/mini-outline-demo.gif`: silent looping preview of the same recording, 1040 pixels wide, 10 frames per second.
 - `mini-outline-demo-poster.png`: non-animated preview of the mini outline workflow.

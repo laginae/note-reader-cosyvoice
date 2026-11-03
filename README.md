@@ -152,13 +152,25 @@ Use pause/resume, playback speed, volume, segment navigation and seeking without
 
 **Toolbar shortcuts (0.8.1):** **Space** pauses/resumes, and **Left/Right Arrow** seeks backward/forward five seconds, including across audio parts. In live preview and editing mode, these shortcuts work only while the toolbar or its buttons have focus; click a playback control or the toolbar background to focus it. In Markdown reading mode, they also work in the original reading pane while the toolbar is open. Text fields, sliders, menus and modified key combinations keep their normal keyboard behavior. Hover the pause/resume and seek buttons for shortcut hints.
 
-### Context menu and floating toolbar
+### Mini outline and floating playback controls
 
 **1.7.0:** the mini outline has a pause/resume button independent of the main playback toolbar. It follows the header's idle hiding by default; **Mini outline > More outline options > Playback button visibility** can keep it visible during reading instead. Touch screens always retain it. The optional **Floating playback controls** setting in **Playback and interface > Reading shortcuts** adds one lower-right control in the current Markdown/PDF/local HTML pane. It is off by default, appears only for an active/paused session, and never starts new speech. Both controls share the existing player state. [Controls and limits](docs/mini-outline.md).
 
 Under **Floating playback controls > More floating control options**, **Show stop reading button** is on by default. The options start collapsed; collapsing them does not disable Stop. Stop appears above Pause on desktop hover/keyboard focus and stays visible on touch. Collapsed chapter lines use accent color alone for reading, with no dot or thickness change.
 
 **1.7.1:** optional **Show 5-second seek buttons** adds Back/Forward beside Pause, with the same hover/focus and touch behavior. It is off by default; unsupported seeking is disabled, and the pair hides when it cannot fit. After unpinning/collapsing the outline, its entry follows the active document when switching notes and returning. Markdown/local HTML refresh only the active outline; PDFs reuse an available outline cache or keep an icon until opened. Explicit hiding and Floating TOC coexistence still win.
+
+#### Floating playback demo
+
+**Keep listening without opening the main playback bar.** Hover to reveal Stop and the optional Back/Forward 5 seconds, pause or resume, then move away to leave just one small button.
+
+[![Hover over the floating player, pause, seek backward and forward five seconds, resume, hide the extra controls and stop](docs/images/floating-controls-demo.gif)](docs/media/floating-controls-demo.mp4)
+
+[Watch the 33-second walkthrough (silent MP4)](docs/media/floating-controls-demo.mp4) · [Still preview](docs/media/floating-controls-demo-poster.png) · [Recording details](docs/media/README.md#floating-playback-demo)
+
+Enable **Playback and interface > Reading shortcuts > Floating playback controls**, then **More floating control options > Show 5-second seek buttons** to match this demo. Both are off by default; Stop is enabled within the floating controls by default. The recording begins with reading already in progress and uses public sample text with local system speech. These controls do not start a new reading session.
+
+### Context menu and floating toolbar
 
 In Markdown **Live Preview** or **Source mode**, right-click to **Read aloud from here**; when text is selected, you can also **Read selected text**. PDF text also supports these menu actions: a selection takes priority; otherwise, reading starts near the clicked text, preferably at the sentence beginning within the same column. Blank space and images do not provide a text starting point. An unverified starting point is rejected rather than silently reading from the page beginning. Existing built-in PDF and PDF++ menu items are preserved. HTML and Markdown Reading view retain their reading-toolbar actions.
 
