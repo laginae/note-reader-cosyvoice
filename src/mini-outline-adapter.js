@@ -23,14 +23,14 @@ async function pdfData(plugin, file, cancelled, force, cachedOnly = false) {
     const bytes = await plugin.app.vault.readBinary(file); if (cancelled()) return null;
     const { loadPdfJs } = require('obsidian'), { scanPdfOutline } = require('./pdf-outline');
     const lib = await loadPdfJs(); if (cancelled()) return null;
-    const task = lib.getDocument({ data: new Uint8Array(bytes.slice(0)) }); let pdf;
+    const task = lib.getDocument(require('./pdf-document-options').pdfDocumentOptions(new Uint8Array(bytes.slice(0)))); let pdf;
     try {
       pdf = await task.promise;
       const model = await scanPdfOutline(pdf, { isCurrent: () => !cancelled() });
       if (cancelled()) return null;
       cached = { model, entries: model.entries.map(entry => ({ ...entry, enabled: true })), sourceDigest: require('crypto').createHash('sha256').update(new Uint8Array(bytes)).digest('hex') };
       cache.set(file, cached);
-    } finally { try { if (pdf) await pdf.destroy(); else await task.destroy(); } catch {} }
+    } finally { try { if (typeof pdf?.destroy === 'function') await pdf.destroy(); else await task.destroy(); } catch {} }
   }
   return { kind: 'pdf', entries: cached.model.entries, model: cached.model };
 }

@@ -5228,7 +5228,7 @@ class CosyVoiceReaderPlugin extends Plugin {
     const data = binary instanceof Uint8Array
       ? new Uint8Array(binary.buffer, binary.byteOffset, binary.byteLength)
       : new Uint8Array(binary);
-    const loadingTask = pdfjsLib.getDocument({ data });
+    const loadingTask = pdfjsLib.getDocument(require('./pdf-document-options').pdfDocumentOptions(data));
     session.pdfLoadingTask = loadingTask;
     let pdfDocument = null;
 

@@ -1,5 +1,6 @@
 'use strict';
 const { extractPdfTextLayout } = require('./pdf-layout');
+const { outlineTypography, detectPdfHeadings } = require('./pdf-outline-detection');
 const HEADING_NUMBER = /^(\d+(?:\.\d+)*\.?|[IVXLC]+[.)]|第[一二三四五六七八九十\d]+[章节])\s+/;
 
 function numberedBookmark(entry, page) {
@@ -29,49 +30,10 @@ function indexedLines(layout) {
 }
 
 function inferOutline(pages) {
-  const repeats = new Map();
-  const sizes = new Map();
-  for (const page of pages) for (const item of page.items) {
-    const size = Math.round(item.height * 10) / 10;
-    sizes.set(size, (sizes.get(size) || 0) + item.str.length);
-  }
-  const bodyHeight = [...sizes].sort((a,b) => b[1]-a[1])[0]?.[0] || 10;
-  for (const page of pages) for (const line of page.lines) {
-    const key = line.text.replace(/\d+/g, '#').trim();
-    if (line.y > page.height * 0.93 || line.y < page.height * 0.07) {
-      if (!repeats.has(key)) repeats.set(key, new Set());
-      repeats.get(key).add(page.number);
-    }
-  }
-  const entries = [];
-  let lastTopNumber = 0;
-  for (const page of pages) for (const line of page.lines) {
-    const text = line.text.trim();
-    if (line.offset < 0 || text.length < 3 || text.length > 180) continue;
-    if (line.y < page.height * 0.04 || line.y > page.height * 0.97) continue;
-    if ((repeats.get(text.replace(/\d+/g, '#'))?.size || 0) > 1) continue;
-    if (/^(?:fig(?:ure)?\.?|table|equation|eq\.?|图|表)\s*[\dIVX]/i.test(text) || /^\(?[\d.]+\)?$/.test(text)) continue;
-    const numbered = text.match(/^(\d+(?:\.\d+)*\.?|[IVXLC]+[.)]|第[一二三四五六七八九十\d]+[章节])\s+(.+)/);
-    const semantic = /^(abstract|introduction|conclusions?|references|acknowledg(?:e)?ments?|appendix(?:\s+[A-Z])?|摘要|引言|结论|参考文献)$/i.test(text);
-    const candidates = page.items.filter(item => Math.abs(item.transform[5] - line.y) <= page.bodyHeight * 0.6
-      && item.transform[4] >= line.xMin - 2 && item.transform[4] + item.width <= line.xMax + 2);
-    const lineHeight = candidates.length ? Math.max(...candidates.map(i=>i.height)) : bodyHeight;
-    if (lineHeight < bodyHeight * 0.94) continue;
-    const prominent = candidates.some(item => item.height >= bodyHeight * 1.25 || /bold|black|demi/i.test(page.styles[item.fontName]?.fontFamily || item.fontName || ''));
-    if (!numbered && !semantic && (page.number === 1 || /[,;@]/.test(text))) continue;
-    if (!semantic && !numbered && !(prominent && text.length < 90 && !/[.;:,]$/.test(text))) continue;
-    if (numbered && /^\d{4}\b/.test(text)) continue;
-    if (/^\d+\s/.test(text) && (!prominent || text.length > 80)) continue;
-    const top = text.match(/^(\d+)\.\s/);
-    if (top && Number(top[1]) <= lastTopNumber) continue;
-    // Papers sometimes place the first body sentence on the heading's line.
-    const title = numbered ? `${numbered[1]} ${numbered[2].match(/^(.+?\.)\s+(?=[A-Z])/)?.[1] || numbered[2]}` : text;
-    if (top) lastTopNumber = Number(top[1]);
-    entries.push({ title, level: numbered && /^\d/.test(numbered[1]) ? Math.min(6, numbered[1].replace(/\.$/, '').split('.').length) : 1,
-      page: page.number, offset: line.offset, x: line.xMin, y: line.y, inferred: true });
-    if (entries.length >= 1000) return entries;
-  }
-  return entries;
+  return detectPdfHeadings(pages.map(page => ({
+    ...outlineTypography({ text: page.text, lines: page.lines }, page.items, page.styles,
+      { height: page.height, viewBox: page.view }), number: page.number,
+  })));
 }
 
 async function scanPdfOutline(pdf, { isCurrent = () => true, progress = () => {} } = {}) {
@@ -81,13 +43,14 @@ async function scanPdfOutline(pdf, { isCurrent = () => true, progress = () => {}
     if (!isCurrent()) throw new Error('Cancelled');
     const page = await pdf.getPage(n);
     try {
-      const content = await page.getTextContent(), viewport = page.getViewport({ scale: 1 });
+      const content = await page.getTextContent(), viewport = page.getViewport({ scale: 1, rotation: 0 });
       const layout = extractPdfTextLayout(content.items, { viewport });
       chars += layout.text.length;
       if (chars > 5000000) throw new Error('PDF exceeds the outline text limit.');
       const items = content.items.filter(i => i.str?.trim() && i.transform);
       const heights = items.map(i => Math.abs(i.height || i.transform[3])).sort((a,b) => a-b);
       pages.push({ number: n, text: layout.text, lines: indexedLines(layout), height: viewport.height,
+        view: page.view || viewport.viewBox, width: viewport.width,
         items, styles: content.styles || {}, bodyHeight: heights[Math.floor(heights.length / 2)] || 10 });
       progress(n, pdf.numPages);
     } finally { page.cleanup?.(); }

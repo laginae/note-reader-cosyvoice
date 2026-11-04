@@ -1787,8 +1787,11 @@ assert.deepStrictEqual(chunkNavigationCalls, [-1, 1]);
   let pdfPageCleanupCount = 0;
   let receivedPdfData = null;
   mockPdfJsLib = {
-    getDocument: ({ data }) => {
-      receivedPdfData = data;
+    getDocument: (options) => {
+      assert.strictEqual(options.cMapUrl, '/lib/pdfjs/cmaps/');
+      assert.strictEqual(options.cMapPacked, true);
+      assert.strictEqual(options.standardFontDataUrl, '/lib/pdfjs/standard_fonts/');
+      receivedPdfData = options.data;
       return {
         promise: Promise.resolve({
           numPages: 2,

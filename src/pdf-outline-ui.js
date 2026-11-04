@@ -84,12 +84,15 @@ class PdfOutlineModal extends Modal {
       this.sourceDigest = digest(this.bytes);
       const lib = await loadPdfJs();
       if (this.closed) return;
-      this.task = lib.getDocument({ data: new Uint8Array(this.bytes.slice(0)) });
+      this.task = lib.getDocument(require('./pdf-document-options').pdfDocumentOptions(new Uint8Array(this.bytes.slice(0))));
       const pdf = await this.task.promise;
       try {
         this.model = await scanPdfOutline(pdf, { isCurrent: () => !this.closed,
           progress: (page, total) => { this.status.textContent = this.t('本地分析', 'Local analysis') + ` ${page} / ${total}`; } });
-      } finally { await pdf.destroy(); this.task = null; }
+      } finally {
+        if (typeof pdf.destroy === 'function') await pdf.destroy(); else await this.task.destroy();
+        this.task = null;
+      }
       if (this.closed) return;
       this.assertValid();
       this.entries = this.model.entries.map(entry => ({ ...entry, enabled: true }));

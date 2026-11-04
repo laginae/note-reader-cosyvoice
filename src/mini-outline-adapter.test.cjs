@@ -67,6 +67,34 @@ test('collapsed PDF outlines use existing cache only; Markdown headings still lo
   assert.deepEqual(f.calls,[]);
 });
 
+test('fresh PDF outlines configure local font resources and release the loading task', async () => {
+  const Module = require('node:module'), original = Module._load;
+  const f = fixture(); f.file.extension = 'pdf';
+  f.plugin.app.vault = { readBinary: async () => new Uint8Array([1, 2, 3]).buffer };
+  let destroyed = 0, reads = 0;
+  const pdf = { numPages: 1, getOutline: async () => [], getPage: async () => ({
+    getTextContent: async () => ({ items: [
+      { str: '1. Introduction', fontName: 'Head', height: 12, width: 120, transform: [12, 0, 0, 12, 40, 700] },
+      { str: 'Public example body text explaining the topic.', fontName: 'Body', height: 10, width: 240, transform: [10, 0, 0, 10, 40, 670] },
+    ] }), getViewport: () => ({ width: 600, height: 800 }), cleanup() {},
+  }) };
+  Module._load = function (name, ...args) {
+    if (name === 'obsidian') return { loadPdfJs: async () => ({ getDocument: options => {
+      reads++; assert.equal(options.cMapUrl, '/lib/pdfjs/cmaps/');
+      assert.equal(options.cMapPacked, true); assert.ok(options.data instanceof Uint8Array);
+      return { promise: Promise.resolve(pdf), destroy: async () => { destroyed++; } };
+    } }) };
+    return original.call(this, name, ...args);
+  };
+  try {
+    const data = await f.adapter.load(f.view, () => false);
+    assert.deepEqual(data.entries.map(e => e.title), ['1. Introduction']);
+    assert.equal(destroyed, 1);
+    await f.adapter.load(f.view, () => false);
+    assert.equal(reads, 1, 'Cached navigation must not load the PDF again');
+  } finally { Module._load = original; }
+});
+
 test('edge navigation uses the active source and rejects cancelled or changed targets after revealing its pane', async () => {
   const f=fixture(),data=await f.adapter.load(f.view,()=>false),scrolls=[];
   f.view.editor.scrollIntoView=range=>scrolls.push(range);
