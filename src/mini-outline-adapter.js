@@ -98,11 +98,11 @@ function desktopMiniAdapter(plugin) {
         else await workspace.openLinkText(data.file.path + '#page=' + entry.page + '&offset=' + Math.round(entry.x) + ',' + Math.round(entry.y) + ',0', '', false);
       }
     },
-    async read(view, data, index, remaining) {
+    async read(view, data, index, remaining, options = {}) {
       if (!valid(view, data) || adapter.busy()) throw Error('Changed');
       await workspace.revealLeaf?.(view.leaf); if (!valid(view, data)) throw Error('Changed');
       const entry = data.entries[index];
-      if (data.kind === 'pdf') return plugin.readCurrentPdf(data.file, { outlineRange: {
+      if (data.kind === 'pdf') return plugin.readCurrentPdf(data.file, { ...(options.keepControls ? { keepControls: true } : {}), outlineRange: {
         ...require('./pdf-outline').sectionRange(data.entries, index, data.model.pages, remaining), fileMtime: data.mtime, title: entry.title } });
       if (data.kind === 'html') return plugin.startReading(htmlSectionText(data.doc, entry, captureHtmlOutline(data.doc), remaining), entry.title, { file: data.file, sourceKind: 'html', plainText: true });
       return plugin.startReading(data.text.slice(entry.from, remaining ? undefined : entry.to), entry.title,

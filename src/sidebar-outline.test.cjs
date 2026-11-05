@@ -6,6 +6,25 @@ const loaded = { exports: {} };
 new Function('require', 'module', fs.readFileSync(`${__dirname}/sidebar-outline.js`, 'utf8'))(
   name => name === 'obsidian' ? { setIcon() {}, Notice: class {} } : require(name), loaded);
 const { SidebarOutline } = loaded.exports;
+test('legacy sidebar configures bundled PDF CMaps and falls back to task cleanup', async () => {
+  const instance = { exports: {} }; let destroyed = 0, options;
+  const model = { entries: [], pages: [] };
+  new Function('require', 'module', fs.readFileSync(`${__dirname}/sidebar-outline.js`, 'utf8'))(name => {
+    if (name === 'obsidian') return { setIcon() {}, loadPdfJs: async () => ({ getDocument: value => {
+      options = value; return { promise: Promise.resolve({}), destroy: async () => { destroyed++; } };
+    } }) };
+    if (name === './pdf-outline') return { scanPdfOutline: async () => model };
+    return require(name);
+  }, instance);
+  const dom = new JSDOM(''), file = { path: 'public.pdf', extension: 'pdf', stat: { size: 3, mtime: 1 } };
+  const plugin = { settings: {}, getCurrentReadableFile: () => file, app: { vault: { readBinary: async () => new Uint8Array([1, 2, 3]).buffer } } };
+  const outline = new instance.exports.SidebarOutline(plugin, dom.window.document);
+  outline.refresh(); await new Promise(resolve => setImmediate(resolve));
+  assert.equal(options.cMapUrl, '/lib/pdfjs/cmaps/'); assert.equal(options.cMapPacked, true);
+  assert.ok(options.data instanceof Uint8Array); assert.equal(destroyed, 1);
+  assert.equal(plugin.pdfOutlineCache.get(file).model, model);
+  outline.destroy(); dom.window.close();
+});
 function fixture() {
   const doc = new JSDOM('<main/>').window.document, calls = [];
   const text = '# Parent\nIntro\n## Child\nBody\n### Deep\nDetails\n# Next\nEnd';

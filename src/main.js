@@ -50,6 +50,7 @@ const { APPEARANCE_DEFAULTS, normalizeAppearance, applyAppearance, clearAppearan
 const { SidebarOutline } = require('./sidebar-outline');
 const { MINI_DEFAULTS, normalizeMiniSettings, addMiniOutlineSettings } = require('./mini-outline');
 const { installMiniOutline } = require('./mini-outline-adapter');
+const { registerDockedOutline } = require('./docked-outline');
 const { PdfOutlineModal, addPdfOutlineSettings } = require('./pdf-outline-ui');
 const { readerRange } = require('./reader-selection');
 const { getSpeechParts, planSpeechParts, adjacentSpeechPart, getSpeechPartTiming } = require('./speech-parts');
@@ -2522,6 +2523,7 @@ class CosyVoiceReaderPlugin extends Plugin {
 
     this.registerView(VIEW_TYPE, (leaf) => new CosyVoiceReaderView(leaf, this));
     this.registerView(DOCUMENT_VIEW_TYPE, leaf => new AccessibleReaderView(leaf, this));
+    registerDockedOutline(this);
     this.nativeToolbars = new NativeToolbarManager(this);
     installMiniOutline(this);
     this.pdfHighlights = new PdfReadingHighlights(this);
@@ -2583,7 +2585,7 @@ class CosyVoiceReaderPlugin extends Plugin {
     if (typeof window !== 'undefined' && typeof this.registerInterval === 'function') {
       this.viewObservation = createViewObservation({
         hasViews: () => this.getHtmlReaderLeaves().length > 0 || this.getWebPageLeaves().length > 0,
-        observe: () => { this.observeHtmlSelections(); this.observeWebPages(); },
+        observe: () => { this.observeHtmlSelections(); this.observeWebPages(); this.dockedOutline?.observeHtml(); },
         setTimer: callback => window.setInterval(callback, 750),
         clearTimer: timer => window.clearInterval(timer),
       });
@@ -3167,6 +3169,7 @@ class CosyVoiceReaderPlugin extends Plugin {
   }
 
   renderReaderViews() {
+    this.dockedOutline?.update();
     this.miniOutline?.update();
     this.nativeToolbars?.render();
     for (const view of this.readerViews) {
@@ -5070,7 +5073,7 @@ class CosyVoiceReaderPlugin extends Plugin {
       return;
     }
 
-    await this.activateControlView();
+    if (!options.keepControls) await this.activateControlView();
     await this.stopReading({ silent: true });
     this.pauseRequested = false;
 

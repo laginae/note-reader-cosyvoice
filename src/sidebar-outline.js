@@ -112,7 +112,7 @@ class SidebarOutline {
         const bytes = await this.plugin.app.vault.readBinary(file);
         if (!current()) return;
         const lib = await loadPdfJs(); if (!current()) return;
-        task = this.task = lib.getDocument({ data: new Uint8Array(bytes.slice(0)) }); pdf = await task.promise;
+        task = this.task = lib.getDocument(require('./pdf-document-options').pdfDocumentOptions(new Uint8Array(bytes.slice(0)))); pdf = await task.promise;
         const model = await scanPdfOutline(pdf, { isCurrent: current, progress: (page, total) => {
           if (current()) this.status.textContent = this.t('本地分析', 'Local analysis') + ' ' + page + '/' + total;
         } });
@@ -128,7 +128,7 @@ class SidebarOutline {
     } catch (error) {
       if (current()) this.status.textContent = error.message;
     } finally {
-      try { if (pdf) await pdf.destroy(); else if (task) await task.destroy(); } catch (_) { /* Already cancelled. */ }
+      try { if (typeof pdf?.destroy === 'function') await pdf.destroy(); else if (task) await task.destroy(); } catch (_) { /* Already cancelled. */ }
       if (this.task === task) this.task = null;
     }
   }
