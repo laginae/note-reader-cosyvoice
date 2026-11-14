@@ -1,6 +1,6 @@
 'use strict';
 const { greekNames } = require('./math-symbols');
-const { simpleFunctionCalls } = require('./math-functions');
+const { simpleFunctionCalls, simpleFunctionSpeech } = require('./math-functions');
 const { shortMathVariableParser } = require('./math-variable-labels');
 const symbols = new Set([...Object.values(greekNames), 'ell']);
 
@@ -114,7 +114,7 @@ function bracketMathSpeech(value, { zh, brief, context, rangeOnly = false, liter
   return wrapped && !brief ? (zh ? `左括号 ${spoken} 右括号` : `open parenthesis ${spoken} close parenthesis`) : spoken;
 }
 // Simplify complete, bounded expressions only; never remove arbitrary grouping in prose.
-function conciseBracketSpeech(value, zh, render) {
+function conciseBracketSpeech(value, zh, render, functionStyle = 'of') {
   const text = value.replace(/\\(?:left|right)\b/g, '').trim();
   const speak = raw => {
     const entry = atom(raw);
@@ -129,7 +129,7 @@ function conciseBracketSpeech(value, zh, render) {
     if (calls.length !== 1 || calls[0].start !== 0 || calls[0].end !== text.length) return null;
     const name = render(calls[0].name), argument = render(calls[0].argument);
     return name && argument && !/^(?:Formula\.|公式。)$/.test(name) && !/^(?:Formula\.|公式。)$/.test(argument)
-      ? `${name} of ${argument}` : null;
+      ? simpleFunctionSpeech(name, argument, functionStyle) : null;
   };
   const list = (source, calls = false) => {
     const parts = members(source);
@@ -156,7 +156,7 @@ function conciseBracketSpeech(value, zh, render) {
     if (name && !/^(?:Formula\.|公式。)$/.test(name)) {
       if (rest[0] === '[') {
         const argument = speak(inner);
-        if (argument) return prefix + name + ' of ' + argument;
+        if (argument) return prefix + simpleFunctionSpeech(name, argument, functionStyle);
       } else {
         const args = list(inner);
         if (args) return prefix + name + (zh ? '，参数为 ' : ' with arguments ') + args;

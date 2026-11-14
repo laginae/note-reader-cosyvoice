@@ -8664,6 +8664,15 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
       .addDropdown(dropdown => dropdown.addOption('precise', zhReading ? '保留端点条件（推荐）' : 'Preserve endpoints (recommended)')
         .addOption('range', zhReading ? '只读起点到终点' : 'Only read lower to upper bound')
         .setValue(academicOptions(this.plugin.settings).academicIntervalStyle).onChange(async value => { this.plugin.settings.academicIntervalStyle=value; await this.plugin.saveSettings(); }));
+    new Setting(containerEl).setName(zhReading ? '简单函数读法' : 'Simple function speech')
+      .setDesc(zhReading ? '仅用于简洁模式中可靠识别的简单函数。默认读“f of x”，可省略 of，读为“f x”；保留修饰符和下标。不改变完整模式、正文中的 of 或复杂公式规则，下次朗读生效。'
+        : 'For recognized simple functions in concise style. Keep "f of x" by default, or omit of and say "f x". Accent and index labels remain. Explicit style, prose and complex-formula rules are unchanged. Applies to the next reading session.')
+      .addDropdown(dropdown => dropdown.addOption('of', zhReading ? '保留 of：f of x（默认）' : 'Keep of: f of x (default)')
+        .addOption('compact', zhReading ? '省略 of：f x' : 'Omit of: f x')
+        .setValue(academicOptions(this.plugin.settings).academicFunctionStyle).onChange(async value => {
+          this.plugin.settings.academicFunctionStyle = academicOptions({ academicFunctionStyle: value }).academicFunctionStyle;
+          await this.plugin.saveSettings();
+        }));
     new Setting(containerEl)
       .setName(ui.mathLanguageName)
       .setDesc(zhReading ? '公式转换目前支持中文和英文，与界面语言及语音音色分别设置。' : 'Formula conversion supports Chinese and English, independently of interface language and speech voice.')

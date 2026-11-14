@@ -39,4 +39,8 @@ function speakSimpleFunctions(value, render) {
   return result + value.slice(offset);
 }
 
-module.exports = { simpleFunctionCalls, speakSimpleFunctions };
+function simpleFunctionSpeech(name, argument, style = 'of') {
+  return `${name}${style === 'compact' ? ' ' : ' of '}${argument}`;
+}
+
+module.exports = { simpleFunctionCalls, speakSimpleFunctions, simpleFunctionSpeech };

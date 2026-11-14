@@ -1,7 +1,7 @@
 'use strict';
 const { structuredMathSpeech, replacePlainStructuredMath } = require('./structured-math');
 const { greekMathCommands, greekNames } = require('./math-symbols');
-const { simpleFunctionCalls, speakSimpleFunctions } = require('./math-functions');
+const { simpleFunctionCalls, speakSimpleFunctions, simpleFunctionSpeech } = require('./math-functions');
 const { conciseMathLabels } = require('./math-variable-labels');
 const { intervalProse, bracketMathSpeech, conciseBracketSpeech } = require('./math-collections');
 const { conciseFractionSpeech } = require('./math-fractions');
@@ -15,13 +15,14 @@ const GREEK_FACTOR = new RegExp('(?<![A-Za-z\\\\])([A-Za-z](?:_\\{[A-Za-z0-9]+\\
 const MATH_OPERATORS = {leq:['less than or equal to','小于等于'],geq:['greater than or equal to','大于等于'],neq:['not equal to','不等于'],approx:['approximately equal to','约等于'],times:['times','乘以'],cdot:['times','乘以'],pm:['plus or minus','正负'],mp:['minus or plus','负正'],infty:['infinity','无穷'],to:['to','到'],rightarrow:['to','到'],leftarrow:['from','来自'],in:['belongs to','属于'],notin:['does not belong to','不属于'],partial:['partial','偏导']};
 Object.assign(MATH_OPERATORS, {le:MATH_OPERATORS.leq,ge:MATH_OPERATORS.geq,ne:MATH_OPERATORS.neq,lt:['less than','小于'],gt:['greater than','大于']});
 
-const ACADEMIC_DEFAULTS = { academicMathMode: 'smart', academicMathStyle: 'concise', academicIntervalStyle: 'precise', academicTableMode: 'smart', academicSkipNotice: true };
+const ACADEMIC_DEFAULTS = { academicMathMode: 'smart', academicMathStyle: 'concise', academicIntervalStyle: 'precise', academicFunctionStyle: 'of', academicTableMode: 'smart', academicSkipNotice: true };
 function academicOptions(settings = {}) {
   return { ...ACADEMIC_DEFAULTS, academicSkipNotice: settings.academicSkipNotice !== false,
     mathReadingLanguage: ['english','chinese','skip'].includes(settings.mathReadingLanguage) ? settings.mathReadingLanguage : 'english',
     academicMathMode: ['smart','all','skip'].includes(settings.academicMathMode) ? settings.academicMathMode : 'smart',
     academicMathStyle: settings.academicMathStyle === 'verbose' ? 'verbose' : 'concise',
     academicIntervalStyle: settings.academicIntervalStyle === 'range' ? 'range' : 'precise',
+    academicFunctionStyle: settings.academicFunctionStyle === 'compact' ? 'compact' : 'of',
     academicTableMode: ['smart','all','skip'].includes(settings.academicTableMode) ? settings.academicTableMode : 'smart' };
 }
 const chinese = text => /[\u3400-\u9fff]/.test(text);
@@ -176,7 +177,8 @@ function shortMathOperator(value, options) {
   if (!argument || /^(?:Formula\.|公式。)$/.test(argument)) return null;
   const label = STANDALONE_MATH_OPERATORS[call[1]];
   if (call[1] === 'exp') return zh ? 'e 的 ' + argument + ' 次方' : 'e to the power of ' + argument;
-  return zh ? argument + ' 的' + label[1] : label[0] + ' of ' + argument;
+  return zh ? argument + ' 的' + label[1] : simpleFunctionSpeech(label[0], argument,
+    options.academicMathStyle === 'concise' ? options.academicFunctionStyle : 'of');
 }
 
 function mathSpeech(content, inputOptions = {}) {
@@ -225,11 +227,11 @@ function mathSpeech(content, inputOptions = {}) {
   if (brief) {
     const fraction = conciseFractionSpeech(value, zh, atom => mathSpeech(atom, { ...options, academicSkipNotice: true }));
     if (fraction !== null) return fraction;
-    const simpleBrackets = conciseBracketSpeech(value, zh, atom => mathSpeech(atom, { ...options, academicSkipNotice: true }));
+    const simpleBrackets = conciseBracketSpeech(value, zh, atom => mathSpeech(atom, { ...options, academicSkipNotice: true }), options.academicFunctionStyle);
     if (simpleBrackets !== null) return simpleBrackets;
     // Parse calls before turning decorations into words, so their full head stays attached.
     value = speakSimpleFunctions(value.replace(/\\(?:left|right)\b/g, ''),
-      (name, argument) => `${mathSpeech(name, options)} of ${mathSpeech(argument, options)}`);
+      (name, argument) => simpleFunctionSpeech(mathSpeech(name, options), mathSpeech(argument, options), options.academicFunctionStyle));
     value = conciseMathLabels(value, zh).text;
     if (/\\(?:prime|ast|star|top)\b|['′″]/.test(value)) return omission('formula', options);
   }

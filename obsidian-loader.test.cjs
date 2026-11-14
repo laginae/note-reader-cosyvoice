@@ -339,6 +339,7 @@ assert.deepStrictEqual(moduleObject.exports.__test.createDefaultSettings(), {
   academicMathMode: 'smart',
   academicMathStyle: 'concise',
   academicIntervalStyle: 'precise',
+  academicFunctionStyle: 'of',
   academicTableMode: 'smart',
   academicSkipNotice: true,
   playbackVolume: 1,
