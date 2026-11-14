@@ -362,6 +362,8 @@ The three-part limit above describes quick start itself. Optional **Continuous l
 
 ## Academic reading
 
+**1.7.7 table wording:** **Repeat table headers for each row** is on by default. Disable it to hear headings once at the opening, then row numbers and values, with short placeholders for empty cells. Smart / All / Skip policy is unchanged. Markdown and simple HTML tables are supported; complex spans, partial selections and unstructured PDF text do not receive guessed headers. [Release notes](docs/release-1.7.7.md).
+
 In concise style, simple subscripts read naturally: `$z_{\mathrm d}$` as "z d", `r_{t+1}` as "r t plus 1", and `x_{i,j}` as "x i j". Letters stay separated; verbose style retains "subscript", and compound subscripts retain structural cues. Font and spacing commands do not make a short formula complex; explicit skip settings and complex-formula safeguards still apply.
 
 Standalone operators such as `\max` and `\min` are read as "max" and "min"; `\lim`, `\sum` and other common symbols receive their usual labels. Short single-argument functions such as `\sin x` and `\ln(x)` are also supported. Nested or unsupported expressions still follow the existing omission rules, and **Skip all formulas** remains authoritative. Start a new reading session to replace previously prepared audio.

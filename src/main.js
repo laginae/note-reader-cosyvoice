@@ -8693,6 +8693,12 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
       .addDropdown(dropdown => dropdown.addOption('smart',zhReading ? '智能：跳过长数字表格' : 'Smart: skip long numeric tables')
         .addOption('all',zhReading ? '完整朗读表格' : 'Read all tables').addOption('skip',zhReading ? '跳过所有已识别表格' : 'Skip all recognized tables')
         .setValue(academicOptions(this.plugin.settings).academicTableMode).onChange(async value => { this.plugin.settings.academicTableMode=value; await this.plugin.saveSettings(); }));
+    new Setting(containerEl).setName(zhReading ? '每行重复表头' : 'Repeat table headers for each row')
+      .setDesc(zhReading ? '默认开启。关闭后，已识别表格仅在开头读一次表头，后续读行号和数据；空单元格用“空”占位。不会改变智能跳过策略，PDF 不强行推断表头。下次朗读生效。' : 'On by default. Disable to read recognized column headings once, then row numbers and values. Empty cells keep a placeholder. Smart skipping is unchanged; PDF headings are not guessed. Applies to new reading sessions.')
+      .addToggle(toggle => toggle.setValue(academicOptions(this.plugin.settings).academicTableRepeatHeaders).onChange(async value => {
+        this.plugin.settings.academicTableRepeatHeaders = value;
+        await this.plugin.saveSettings();
+      }));
     new Setting(containerEl).setName(zhReading ? '简短提示略过内容' : 'Announce skipped content')
       .setDesc(zhReading ? '略过公式时简短提示“公式。”，英文为“Formula.”；停顿由音色按标点处理。PDF 提示随邻近正文使用中文或英文。关闭后直接继续正文。表格数据提示不变；PDF 保留表格标题，不额外插入提示。' : 'Say "Formula." when a formula is skipped; the voice determines the pause from punctuation. PDF notices follow nearby Chinese or English prose. Disable for uninterrupted prose. Table notices are unchanged; PDF tables keep captions without an extra notice.')
       .addToggle(toggle => toggle.setValue(this.plugin.settings.academicSkipNotice !== false).onChange(async value => { this.plugin.settings.academicSkipNotice=value; await this.plugin.saveSettings(); }));

@@ -7,7 +7,7 @@ const PAGE_KEYS = {
   playback: ['miniOutlineMode', 'miniOutlineSide', 'miniOutlineHover', 'miniOutlineDepth', 'miniOutlineTransparent', 'miniOutlineDoubleClick', 'miniOutlineWidth', 'miniOutlineTitleLines', 'miniOutlineStartup', 'readingContextMenu', 'readingFloatingToolbar', 'readingFloatingAction', 'speed', 'playbackSpeed', 'playbackVolume', 'chunkLimits', 'onlineChunkLimits', 'onlinePrefetchChunks',
     'miniOutlinePlaybackDisplay', 'miniOutlineCollapsedStyle', 'floatingPauseButton', 'floatingStopButton', 'floatingSeekButtons', 'floatingSpeedButtons', 'floatingRightClickVolume', 'continuousListening', 'bufferingHints', 'smartQuickStart', 'rapidQuickStart', 'highlightColor', 'highlightStrength', 'noteHighlightBorder', 'readerOpenMode', 'readingHighlight', 'readingFollow',
     'webReadingHighlight', 'webReadingFollow', 'pdfReadingFollow', 'copilotChatEnabled', 'copilotChatScope', 'copilotIncludeQuestions'],
-  academic: ['stripMarkdown', 'academicMathMode', 'academicMathStyle', 'academicIntervalStyle', 'academicFunctionStyle', 'academicTableMode', 'academicSkipNotice',
+  academic: ['stripMarkdown', 'academicMathMode', 'academicMathStyle', 'academicIntervalStyle', 'academicFunctionStyle', 'academicTableMode', 'academicTableRepeatHeaders', 'academicSkipNotice',
     'mathReadingLanguage', 'pdfBookmarksOverwrite', 'pdfFootnoteMode', 'pdfSkipHeaders', 'pdfIncludeGlossary', 'speechTermsEnabled', 'speechTerms', 'ocrEnabled', 'ocrModel'],
   storage: ['audioExportLocation', 'audioExportFolder', 'cleanupCache', 'persistentAudioCache', 'readingHistoryMode', 'rememberReadingPosition'],
   privacy: ['diagnosticLogging'],

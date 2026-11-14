@@ -341,6 +341,7 @@ assert.deepStrictEqual(moduleObject.exports.__test.createDefaultSettings(), {
   academicIntervalStyle: 'precise',
   academicFunctionStyle: 'of',
   academicTableMode: 'smart',
+  academicTableRepeatHeaders: true,
   academicSkipNotice: true,
   playbackVolume: 1,
   playbackSpeed: 1,

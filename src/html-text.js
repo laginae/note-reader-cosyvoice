@@ -2,6 +2,7 @@
 
 const { parseDocument } = require('htmlparser2');
 const { skipTable, omission } = require('./academic-speech');
+const { formatTableForSpeech } = require('../core');
 
 const MAX_HTML_BYTES = 50 * 1024 * 1024;
 const MAX_HTML_TEXT_CHARS = 5_000_000;
@@ -42,7 +43,7 @@ function nodeInfo(node) {
 
 // The same walk handles parsed source and HTML Reader's rendered DOM, retaining exact range offsets.
 function tableSpeechSummary(table, options) {
-  const rows = [], stack = [{ node: table }]; let visited = 0, caption = '';
+  const rows = [], stack = [{ node: table }]; let visited = 0, caption = '', simple = true;
   while (stack.length) {
     if (++visited > MAX_HTML_NODES) throw new Error('HTML contains too many elements.');
     const { node, row, cell, isCaption } = stack.pop(), info = nodeInfo(node);
@@ -55,13 +56,21 @@ function tableSpeechSummary(table, options) {
     if (info.tag === 'table' && node !== table) return null;
     const nextRow = info.tag === 'tr' ? [] : row;
     if (info.tag === 'tr') rows.push(nextRow);
-    const nextCell = ['td','th'].includes(info.tag) && nextRow ? { text: '' } : cell;
+    if (['td','th'].includes(info.tag)) for (const name of ['colspan','rowspan']) {
+      const span = node.getAttribute?.(name) ?? node.attribs?.[name];
+      if (span != null && String(span) !== '1') simple = false;
+    }
+    const nextCell = ['td','th'].includes(info.tag) && nextRow ? { text: '', header: info.tag === 'th' } : cell;
     if (nextCell !== cell) nextRow.push(nextCell);
     for (const child of [...info.children].reverse()) stack.push({ node: child, row: nextRow, cell: nextCell, isCaption: isCaption || info.tag === 'caption' });
   }
   const data = rows.map(row => row.map(cell => cell.text.trim()));
-  if (!data.length || !skipTable(data[0], data.slice(1), options)) return null;
-  return [caption.trim(), omission('table', options, data.flat().join(' '))].filter(Boolean).join('\n');
+  if (!data.length) return null;
+  if (skipTable(data[0], data.slice(1), options))
+    return [caption.trim(), omission('table', options, data.flat().join(' '))].filter(Boolean).join('\n');
+  if (!simple || typeof options.academicTableRepeatHeaders !== 'boolean' || typeof options.onText === 'function') return null;
+  const hasHeader = rows[0].length && rows[0].every(cell => cell.header);
+  return [caption.trim(), formatTableForSpeech(hasHeader ? data[0] : [], hasHeader ? data.slice(1) : data, options)].filter(Boolean).join('\n');
 }
 
 function extractHtmlTreeText(root, range = null, options = {}) {
