@@ -96,6 +96,14 @@ test('timing report contains bounded numeric aggregates only and excludes paused
   assert.equal(report.timings.prepare.p95,143);
   assert.equal(report.timings.audioLoadToPlaying.count,3);
 });
+test('startup timing includes local preparation and rejects invalid backdated timestamps', () => {
+  let time = 50; const timings = new PlaybackTimings(() => time);
+  timings.begin('sessionToPlaying', 10); time = 90; timings.playing(80);
+  assert.equal(timings.snapshot().timings.sessionToPlaying.p50, 80);
+  timings.begin('sessionToPlaying', 1000); time = 95; timings.playing(90);
+  assert.equal(timings.snapshot().timings.sessionToPlaying.p50, 5);
+  assert.equal(timings.snapshot().timings.sessionToPlaying.p95, 80);
+});
 test('failed background requests are not retried by buffer polling; foreground can retry once', async () => {
   const pool = new PreparationPool(); let calls = 0;
   const fail = () => { calls++; throw new Error('Temporary service failure'); };

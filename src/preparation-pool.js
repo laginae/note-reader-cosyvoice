@@ -14,7 +14,11 @@ class PlaybackTimings {
     values.push(Math.round(milliseconds));
     if (values.length > 128) values.shift();
   }
-  begin(kind) { this.intent = { kind, time: this.now() }; this.endedAt = null; }
+  begin(kind, started) {
+    const now = this.now();
+    this.intent = { kind, time: Number.isFinite(started) && started >= 0 && started <= now ? started : now };
+    this.endedAt = null;
+  }
   suspend() { this.intent = null; this.endedAt = null; }
   ended() { this.endedAt = this.now(); }
   playing(started) {

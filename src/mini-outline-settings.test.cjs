@@ -84,6 +84,27 @@ test('five-second seek is opt-in under collapsed floating options and saves inde
   const en=fixture(false,{settingsLanguage:'english',floatingSeekButtons:true});t.after(()=>en.dom.window.close());
   assert.equal(en.row('Show 5-second seek buttons').control.value,true);
 });
+test('quarter-speed controls are independent and remain under collapsed floating options', async t => {
+  const f = fixture(false); t.after(() => f.dom.window.close());
+  const row = f.row('显示 ±0.25x 倍速按钮');
+  assert.equal(row.control.value, false); assert.ok(f.container.querySelector('.cozy-floating-settings').contains(row.settingEl));
+  await row.control.change(true); assert.equal(f.plugin.settings.floatingSpeedButtons, true);
+  assert.equal(f.plugin.settings.floatingSeekButtons, undefined);
+  assert.deepEqual(f.counts(), { saves: 1, syncs: 1 });
+  const en = fixture(false, { settingsLanguage: 'english', floatingSpeedButtons: true }); t.after(() => en.dom.window.close());
+  assert.equal(en.row('Show 0.25x speed step buttons').control.value, true);
+});
+test('secondary volume defaults off and keeps its choice when speed buttons are hidden', async t => {
+  const f = fixture(false); t.after(() => f.dom.window.close()); const volume = f.row('右键调整音量（±10%）');
+  assert.equal(volume.control.value, false); assert.equal(volume.settingEl.hidden, true);
+  assert.ok(f.container.querySelector('.cozy-floating-settings').contains(volume.settingEl));
+  await f.row('显示 ±0.25x 倍速按钮').control.change(true); assert.equal(volume.settingEl.hidden, false);
+  await volume.control.change(true); assert.equal(f.plugin.settings.floatingRightClickVolume, true);
+  await f.row('显示 ±0.25x 倍速按钮').control.change(false); assert.equal(volume.settingEl.hidden, true);
+  assert.equal(f.plugin.settings.floatingRightClickVolume, true);
+  const en = fixture(false, { settingsLanguage: 'english', floatingSpeedButtons: true, floatingRightClickVolume: true }); t.after(() => en.dom.window.close());
+  assert.equal(en.row('Right-click volume steps (10%)').control.value, true);
+});
 
 test('floating options are collapsed by default and disabling the parent preserves the stop choice', async t=>{
   const f=fixture(false);t.after(()=>f.dom.window.close());const parent=f.row('悬浮播放控制'),stop=f.row('显示停止朗读按钮');

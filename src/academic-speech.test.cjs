@@ -199,7 +199,7 @@ test('language catalog is complete per entry and settings wrappers preserve IDs 
 
 test('web academic options never contain credentials, paths or unrelated plugin settings', () => {
   assert.deepEqual(academicOptions({key:'private',path:'private',apiSecretName:'private'}),academicOptions());
-  assert.equal(Object.keys(academicOptions()).length,5);
+  assert.deepEqual(Object.keys(academicOptions()).sort(), ['academicMathMode', 'academicMathStyle', 'academicIntervalStyle', 'academicTableMode', 'academicSkipNotice', 'mathReadingLanguage'].sort());
 });
 
 test('Portuguese covers the common catalog, aliases and safe English fallback', () => {

@@ -44,6 +44,108 @@ test('floating control allocates no UI or observers unless opted in and a readin
   assert.equal(f.first.containerEl.classList.contains('cozy-playback-host'),false);
   assert.equal(f.counts().calls,0);
 });
+test('speed controls are opt-in, step playback by 0.25x and clamp without synthesis or pause', async t => {
+  const f = fixture(); t.after(f.cleanup); const rates = [];
+  f.plugin.settings.playbackSpeed = 1;
+  f.adapter.setPlaybackRate = async rate => { rates.push(rate); f.plugin.settings.playbackSpeed = rate; };
+  f.plugin.settings.floatingPauseButton = true; f.active(); const floating = f.controls.floating;
+  assert.ok(floating.speedSlots.every(({ slot }) => slot.hidden));
+  f.plugin.settings.floatingSpeedButtons = true; f.controls.sync([f.first, f.second]);
+  const [slower, faster] = floating.speedSlots.map(item => item.button);
+  assert.ok(floating.speedSlots.every(({ slot }) => !slot.hidden));
+  assert.equal(slower.dataset.icon, 'minus'); assert.equal(faster.dataset.icon, 'plus');
+  faster.click(); await tick(); assert.deepEqual(rates, [1.25]);
+  assert.match(faster.getAttribute('aria-label'), /current 1.25x/);
+  slower.click(); await tick(); assert.deepEqual(rates, [1.25, 1]);
+  f.plugin.settings.playbackSpeed = 1.9; f.controls.update(); faster.click(); await tick();
+  assert.equal(rates.at(-1), 2); assert.equal(faster.disabled, true);
+  f.plugin.settings.playbackSpeed = 0.6; f.controls.update(); slower.click(); await tick();
+  assert.equal(rates.at(-1), 0.5); assert.equal(slower.disabled, true);
+  assert.deepEqual(f.counts().calls, 0); assert.equal(f.counts().stops, 0);
+  f.setState({ active: true, canToggle: true, session: 1, canRate: false });
+  assert.equal(faster.disabled, true); assert.equal(slower.disabled, true);
+});
+test('pending, stale-pointer and failed speed changes remain isolated to their reading session', async t => {
+  const f = fixture(); t.after(f.cleanup); f.active(); let finish, calls = 0;
+  f.adapter.setPlaybackRate = () => { calls++; return new Promise(resolve => { finish = resolve; }); };
+  const button = f.controls.button(f.first.containerEl, 'faster');
+  button.dispatchEvent(new f.dom.window.MouseEvent('pointerdown', { button: 0, bubbles: true })); f.active(2);
+  button.dispatchEvent(new f.dom.window.MouseEvent('click', { detail: 1, bubbles: true })); await tick(); assert.equal(calls, 0);
+  button.click(); button.click(); assert.equal(calls, 1); assert.equal(button.disabled, true);
+  f.active(3); assert.equal(button.disabled, false); finish(); await tick();
+  f.adapter.setPlaybackRate = () => { throw Error('Public failure'); };
+  button.click(); await tick(); assert.equal(f.counts().errors, 1); assert.equal(button.disabled, false);
+});
+test('speed button layout reserves hover space and hides optional controls on cramped panes', t => {
+  const f = fixture(); t.after(f.cleanup); f.plugin.settings.floatingPauseButton = true;
+  f.plugin.settings.floatingSpeedButtons = true; f.active(); const floating = f.controls.floating;
+  assert.equal(floating.speedFits, true); assert.equal(floating.root.style.getPropertyValue('--cozy-playback-right'), '68px');
+  const before = floating.root.style.cssText;
+  floating.hovered = true; floating.updateVisibility(); assert.equal(floating.root.style.cssText, before);
+  f.first.containerEl.getBoundingClientRect = () => rect(0, 0, 140, 700); floating.layout();
+  assert.equal(floating.speedFits, false); assert.ok(floating.speedSlots.every(({ slot }) => slot.hidden));
+  assert.equal(floating.button.hidden, false);
+});
+function secondaryClick(f, button, pointerType = 'mouse') {
+  const down = new f.dom.window.MouseEvent('pointerdown', { button: 2, bubbles: true });
+  Object.defineProperty(down, 'pointerType', { value: pointerType }); button.dispatchEvent(down);
+  const menu = new f.dom.window.MouseEvent('contextmenu', { button: 2, bubbles: true, cancelable: true });
+  Object.defineProperty(menu, 'pointerType', { value: pointerType }); button.dispatchEvent(menu); return menu;
+}
+test('secondary volume is opt-in, changes by ten percentage points and never changes speed', async t => {
+  const f = fixture(); t.after(f.cleanup); f.active(); const volumes = [], rates = [];
+  f.plugin.settings.playbackVolume = 0.5; f.plugin.settings.playbackSpeed = 1.25;
+  f.adapter.setPlaybackVolume = async value => { volumes.push(value); f.plugin.settings.playbackVolume = value; };
+  f.adapter.setPlaybackRate = async value => rates.push(value);
+  const slower = f.controls.button(f.first.containerEl, 'slower'), faster = f.controls.button(f.first.containerEl, 'faster');
+  assert.equal(secondaryClick(f, faster).defaultPrevented, false); await tick(); assert.deepEqual(volumes, []);
+  f.plugin.settings.floatingRightClickVolume = true; f.controls.update();
+  assert.equal(secondaryClick(f, faster).defaultPrevented, true); await tick(); assert.deepEqual(volumes, [0.6]);
+  secondaryClick(f, slower); await tick(); assert.deepEqual(volumes, [0.6, 0.5]); assert.deepEqual(rates, []);
+  assert.match(faster.getAttribute('aria-label'), /secondary: volume \+10% \(current 50%\)/);
+  const bodyMenu = new f.dom.window.MouseEvent('contextmenu', { button: 2, bubbles: true, cancelable: true });
+  f.doc.body.dispatchEvent(bodyMenu); assert.equal(bodyMenu.defaultPrevented, false);
+  assert.equal(f.counts().calls, 0); assert.equal(f.counts().stops, 0);
+});
+test('muted volume and volume boundaries work independently of disabled primary speed actions', async t => {
+  const f = fixture(); t.after(f.cleanup); f.active(); const volumes = [], rates = [];
+  f.plugin.settings.floatingRightClickVolume = true; f.plugin.settings.playbackSpeed = 2; f.plugin.settings.playbackVolume = 0;
+  f.adapter.setPlaybackVolume = async value => { volumes.push(value); f.plugin.settings.playbackVolume = value; };
+  f.adapter.setPlaybackRate = async value => rates.push(value);
+  const faster = f.controls.button(f.first.containerEl, 'faster'), slower = f.controls.button(f.first.containerEl, 'slower');
+  assert.equal(faster.disabled, false); faster.click(); await tick(); assert.deepEqual(rates, []);
+  secondaryClick(f, faster); await tick(); assert.equal(volumes.at(-1), 0.1);
+  secondaryClick(f, slower); await tick(); assert.equal(volumes.at(-1), 0);
+  secondaryClick(f, slower); await tick(); assert.equal(volumes.length, 2);
+  f.plugin.settings.playbackVolume = 0.95; f.controls.update(); secondaryClick(f, faster); await tick();
+  assert.equal(volumes.at(-1), 1); assert.equal(f.plugin.settings.playbackSpeed, 2);
+});
+test('secondary gestures reject stale sessions, touch long presses, keyboard menus and detached controls', async t => {
+  const f = fixture(); t.after(f.cleanup); f.active(); let calls = 0;
+  f.plugin.settings.floatingRightClickVolume = true; f.adapter.setPlaybackVolume = async () => { calls++; };
+  const button = f.controls.button(f.first.containerEl, 'slower');
+  const down = new f.dom.window.MouseEvent('pointerdown', { button: 2, bubbles: true }); button.dispatchEvent(down); f.active(2);
+  button.dispatchEvent(new f.dom.window.MouseEvent('contextmenu', { button: 2, bubbles: true, cancelable: true }));
+  await tick(); assert.equal(calls, 0);
+  for (const type of ['touch', 'pen']) assert.equal(secondaryClick(f, button, type).defaultPrevented, false);
+  const keyboard = new f.dom.window.MouseEvent('contextmenu', { button: 0, bubbles: true, cancelable: true }); button.dispatchEvent(keyboard);
+  assert.equal(keyboard.defaultPrevented, false); await tick(); assert.equal(calls, 0);
+  f.controls.forget(button); assert.equal(secondaryClick(f, button).defaultPrevented, false); await tick(); assert.equal(calls, 0);
+});
+test('pending or unavailable volume changes do not block Stop or target a replacement session', async t => {
+  const f = fixture(); t.after(f.cleanup); f.active(); const finishes = [];
+  f.plugin.settings.floatingRightClickVolume = true; f.plugin.settings.playbackVolume = 0.5;
+  f.adapter.setPlaybackVolume = () => new Promise(resolve => finishes.push(resolve));
+  const button = f.controls.button(f.first.containerEl, 'faster'); secondaryClick(f, button); secondaryClick(f, button);
+  assert.equal(finishes.length, 1); const first = f.controls.volumePending;
+  f.active(2); secondaryClick(f, button); const newer = f.controls.volumePending; assert.notEqual(first, newer);
+  finishes[0](); await tick(); assert.equal(f.controls.volumePending, newer);
+  finishes[1](); await tick(); assert.equal(f.controls.volumePending, null);
+  f.setState({ active: true, canToggle: true, canStop: true, session: 2, canVolume: false });
+  secondaryClick(f, button); await tick(); assert.equal(finishes.length, 2);
+  f.setState({ active: true, canToggle: true, canStop: true, session: 2 }); secondaryClick(f, button);
+  await f.controls.stop(); assert.equal(f.counts().stops, 1); finishes[2](); await tick();
+});
 test('only one floating button follows the active pane and disabling removes it immediately', t=>{
   const f=fixture();t.after(f.cleanup);f.plugin.settings.floatingPauseButton=true;f.active();const old=f.controls.floating.button;
   f.plugin.app.workspace.activeLeaf.view=f.second;f.controls.update();

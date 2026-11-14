@@ -2,12 +2,11 @@
 
 const { greekNames } = require('./math-symbols');
 const variableCommands = new Set([...Object.values(greekNames), 'ell']);
-const accents = { hat: 'hat', widehat: 'hat', bar: 'bar', overline: 'bar', tilde: 'tilde', widetilde: 'tilde', dot: 'dot', ddot: 'double dot', vec: 'vector' };
+const accents = { hat: 'hat', widehat: 'hat', bar: 'bar', overline: 'bar', underline: 'underbar', tilde: 'tilde', widetilde: 'tilde', dot: 'dot', ddot: 'double dot', vec: 'vector' };
 
 // This grammar only labels short variables; it never evaluates or simplifies an expression.
-function conciseMathLabels(input, chinese = false) {
+function shortMathVariableParser(input, chinese = false) {
   const source = String(input);
-  if (source.length > 4096) return { text: source, changed: false };
   const space = index => { while (/\s/.test(source[index] || '') && index < source.length) index++; return index; };
   function groupEnd(start) {
     let depth = 0;
@@ -100,6 +99,13 @@ function conciseMathLabels(input, chinese = false) {
     }
     return { ...atom, tail, end: i, changed };
   }
+  return { at: source.length <= 4096 ? variableAt : () => null, space };
+}
+
+function conciseMathLabels(input, chinese = false) {
+  const source = String(input);
+  if (source.length > 4096) return { text: source, changed: false };
+  const { at: variableAt, space } = shortMathVariableParser(source, chinese);
   let result = '', changed = false;
   for (let i = 0; i < source.length;) {
     const atom = !/[A-Za-z\\]/.test(source[i - 1] || '') ? variableAt(i) : null;
@@ -115,4 +121,4 @@ function conciseMathLabels(input, chinese = false) {
   return { text: result, changed };
 }
 
-module.exports = { conciseMathLabels };
+module.exports = { conciseMathLabels, shortMathVariableParser };

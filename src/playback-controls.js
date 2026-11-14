@@ -10,24 +10,38 @@ class PlaybackControls {
   button(parent, action = 'toggle') {
     const button = parent.ownerDocument.createElement('button');
     const seek = action === 'back' || action === 'forward';
-    button.type = 'button'; button.className = `clickable-icon ${seek ? 'cozy-seek-control' : action === 'stop' ? 'cozy-stop-control' : 'cozy-pause-control'}`;
+    const rate = action === 'slower' || action === 'faster';
+    button.type = 'button'; button.className = `clickable-icon ${rate ? 'cozy-rate-control' : seek ? 'cozy-seek-control' : action === 'stop' ? 'cozy-stop-control' : 'cozy-pause-control'}`;
     button.dataset.playbackAction = action; parent.append(button);
-    let pointerSession;
+    let pointerSession, secondaryIntent;
     button.addEventListener('pointerdown', event => {
       if (['mouse', 'touch', 'pen'].includes(event.pointerType)) button.classList.toggle('is-touch-control', event.pointerType !== 'mouse');
-      if (event.button === 0) pointerSession = this.state().session;
+      if (event.button === 0) { pointerSession = this.state().session; secondaryIntent = undefined; }
+      else if (event.button === 2 && !['touch', 'pen'].includes(event.pointerType)) {
+        const state = this.state(); secondaryIntent = { session: state.session, active: state.active };
+      }
     });
-    button.addEventListener('pointercancel', () => { pointerSession = undefined; });
+    button.addEventListener('pointercancel', () => { pointerSession = secondaryIntent = undefined; });
     button.addEventListener('keydown', event => {
       if (![' ', 'Enter'].includes(event.key)) return;
       event.stopPropagation(); if (event.repeat) event.preventDefault();
     });
     button.addEventListener('click', event => {
+      if (event.button && event.button !== 0) return;
       event.stopPropagation();
       const expected = event.detail ? pointerSession : undefined; pointerSession = undefined;
       if (this.destroyed || !this.buttons.has(button) || !button.isConnected) return;
-      if (seek) void this.seek(action === 'back' ? -5 : 5, expected);
+      if (rate) void this.changeRate(action === 'slower' ? -0.25 : 0.25, expected);
+      else if (seek) void this.seek(action === 'back' ? -5 : 5, expected);
       else if (action === 'stop') void this.stop(expected); else void this.toggle(expected);
+    });
+    if (rate) button.addEventListener('contextmenu', event => {
+      const intent = secondaryIntent; secondaryIntent = undefined;
+      if (event.button !== 2 || !intent?.active || ['touch', 'pen'].includes(event.pointerType)
+        || this.plugin.settings.floatingRightClickVolume !== true || this.destroyed
+        || !this.buttons.has(button) || !button.isConnected) return;
+      event.preventDefault(); event.stopPropagation();
+      void this.changeVolume(action === 'slower' ? -0.1 : 0.1, intent.session);
     });
     this.buttons.add(button); this.paint(button, this.state()); return button;
   }
@@ -35,16 +49,26 @@ class PlaybackControls {
   paint(button, state) {
     const zh = this.plugin.settings.settingsLanguage === 'chinese';
     const action = button.dataset.playbackAction, stop = action === 'stop', seek = action === 'back' || action === 'forward';
-    const icon = seek ? (action === 'back' ? 'rotate-ccw' : 'rotate-cw') : stop ? 'square' : state.active && !state.paused ? 'pause' : 'play';
+    const rate = action === 'slower' || action === 'faster', speed = this.rateState(state), volume = this.volumeState(state);
+    const rateLimited = rate && (action === 'slower' ? speed.value <= speed.min : speed.value >= speed.max);
+    const limitLabel = !rateLimited ? '' : zh ? `，已达${action === 'slower' ? '最低' : '最高'}倍速` : `, ${action === 'slower' ? 'minimum' : 'maximum'} speed reached`;
+    const icon = rate ? (action === 'slower' ? 'minus' : 'plus') : seek ? (action === 'back' ? 'rotate-ccw' : 'rotate-cw') : stop ? 'square' : state.active && !state.paused ? 'pause' : 'play';
     if (button.dataset.icon !== icon) { this.setIcon(button, icon); button.dataset.icon = icon; }
     const label = !state.active ? (zh ? '请先开始朗读' : 'Start reading first')
+      : rate ? (zh ? `${action === 'slower' ? '减慢' : '加快'} 0.25x（当前 ${speed.value}x）` : `${action === 'slower' ? 'Slower' : 'Faster'} by 0.25x (current ${speed.value}x)`) + limitLabel
       : seek ? (!state.canSeek ? (zh ? '当前朗读不支持按秒跳转' : 'Seeking is unavailable for this reading')
         : action === 'back' ? (zh ? '后退 5 秒' : 'Back 5 seconds') : (zh ? '前进 5 秒' : 'Forward 5 seconds'))
       : stop ? (zh ? '停止朗读' : 'Stop reading')
         : state.paused ? (zh ? '继续朗读' : 'Resume reading') : (zh ? '暂停朗读' : 'Pause reading');
-    const title = state.active && state.title ? `${label}${zh ? '：' : ': '}${String(state.title).slice(0, 160)}` : label;
+    const dual = rate && state.active && this.plugin.settings.floatingRightClickVolume === true;
+    const description = !dual ? label : zh ? `主键：${label}；右键：${volume.available ? `音量${action === 'slower' ? '减' : '加'} 10%（当前 ${Math.round(volume.value * 100)}%）` : '当前引擎不支持音量调整'}`
+      : `Primary: ${label}; secondary: ${volume.available ? `volume ${action === 'slower' ? '-' : '+'}10% (current ${Math.round(volume.value * 100)}%)` : 'volume adjustment unavailable'}`;
+    const title = state.active && state.title ? `${description}${zh ? '：' : ': '}${String(state.title).slice(0, 160)}` : description;
     if (button.getAttribute('aria-label') !== title) button.setAttribute('aria-label', title);
-    const disabled = !state.active || Boolean(this.stopping) || (seek
+    const disabled = !state.active || Boolean(this.stopping) || (rate
+      ? (!speed.available || Boolean(this.ratePending) || rateLimited)
+        && !(dual && volume.available && !this.volumePending)
+      : seek
       ? !state.canSeek || Boolean(this.pending) || typeof this.adapter.seekPlaybackBy !== 'function'
       : stop
       ? state.canStop === false || typeof this.adapter.stopPlayback !== 'function'
@@ -81,12 +105,45 @@ class PlaybackControls {
     catch (error) { if (!this.destroyed && this.state().session === state.session) this.adapter.playbackError?.(error); }
     finally { if (!this.destroyed) this.update(); }
   }
+  rateState(state = this.state()) {
+    return { value: Number(this.plugin.settings.playbackSpeed) || 1, min: state.minRate || 0.5, max: state.maxRate || 2,
+      available: state.canRate !== false && typeof this.adapter.setPlaybackRate === 'function' };
+  }
+  async changeRate(delta, expectedSession) {
+    const state = this.state(), speed = this.rateState(state);
+    if (this.destroyed || this.ratePending || this.stopping || !state.active || !speed.available || ![-0.25, 0.25].includes(delta)
+      || (expectedSession !== undefined && expectedSession !== state.session)) return;
+    const next = Math.max(speed.min, Math.min(speed.max, Math.round((speed.value + delta) * 100) / 100));
+    if (next === speed.value) return;
+    const pending = this.ratePending = { session: state.session }; this.update();
+    try { await this.adapter.setPlaybackRate(next); }
+    catch (error) { if (!this.destroyed && this.state().session === state.session) this.adapter.playbackError?.(error); }
+    finally { if (this.ratePending === pending) this.ratePending = null; if (!this.destroyed) this.update(); }
+  }
+  volumeState(state = this.state()) {
+    const value = Number(this.plugin.settings.playbackVolume);
+    return { value: Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : 1,
+      available: state.canVolume !== false && typeof this.adapter.setPlaybackVolume === 'function' };
+  }
+  async changeVolume(delta, expectedSession) {
+    const state = this.state(), volume = this.volumeState(state);
+    if (this.destroyed || this.volumePending || this.stopping || !state.active || !volume.available || ![-0.1, 0.1].includes(delta)
+      || this.plugin.settings.floatingRightClickVolume !== true || (expectedSession !== undefined && expectedSession !== state.session)) return;
+    const next = Math.max(0, Math.min(1, Math.round((volume.value + delta) * 1000) / 1000));
+    if (next === volume.value) return;
+    const pending = this.volumePending = { session: state.session }; this.update();
+    try { await this.adapter.setPlaybackVolume(next); }
+    catch (error) { if (!this.destroyed && this.state().session === state.session) this.adapter.playbackError?.(error); }
+    finally { if (this.volumePending === pending) this.volumePending = null; if (!this.destroyed) this.update(); }
+  }
   sync(views) { this.views = views; this.update(); this.floating?.configure(); }
   update() {
     if (this.destroyed) return;
     const state = this.state();
     if (this.pending && this.pending.session !== state.session) this.pending = null;
     if (this.stopping && this.stopping.session !== state.session) this.stopping = null;
+    if (this.ratePending && this.ratePending.session !== state.session) this.ratePending = null;
+    if (this.volumePending && this.volumePending.session !== state.session) this.volumePending = null;
     for (const button of this.buttons) this.paint(button, state);
     let view;
     if (this.plugin.settings.floatingPauseButton === true && state.active) {
@@ -113,6 +170,10 @@ class FloatingPauseButton {
     this.stopButton = controls.button(this.stopSlot, 'stop'); this.stopButton.classList.add('cozy-floating-stop');
     this.seekSlots = ['back', 'forward'].map(action => {
       const slot = this.doc.createElement('div'); slot.className = `cozy-floating-seek-slot cozy-floating-${action}-slot`; this.root.append(slot);
+      return { slot, button: controls.button(slot, action) };
+    });
+    this.speedSlots = ['slower', 'faster'].map(action => {
+      const slot = this.doc.createElement('div'); slot.className = `cozy-floating-speed-slot cozy-floating-${action}-slot`; this.root.append(slot);
       return { slot, button: controls.button(slot, action) };
     });
     this.touch = this.doc.body.classList.contains('is-mobile') || !this.win.matchMedia?.('(hover: hover) and (pointer: fine)').matches;
@@ -147,13 +208,16 @@ class FloatingPauseButton {
     this.root.classList.toggle('is-touch-controls', this.touch);
     const stopEnabled = this.controls.plugin.settings.floatingStopButton !== false && this.stopFits !== false;
     const seekEnabled = this.controls.plugin.settings.floatingSeekButtons === true && this.seekFits === true;
+    const speedEnabled = this.controls.plugin.settings.floatingSpeedButtons === true && this.speedFits === true;
     this.stopSlot.hidden = !stopEnabled;
-    for (const { slot, button } of this.seekSlots) {
-      slot.hidden = !seekEnabled;
-      if (!seekEnabled && this.doc.activeElement === button) this.button.focus({ preventScroll: true });
+    for (const [slots, enabled] of [[this.seekSlots, seekEnabled], [this.speedSlots, speedEnabled]]) {
+      for (const { slot, button } of slots) {
+        slot.hidden = !enabled;
+        if (!enabled && this.doc.activeElement === button) this.button.focus({ preventScroll: true });
+      }
     }
     if (!stopEnabled && this.doc.activeElement === this.stopButton) this.button.focus({ preventScroll: true });
-    const enabled = stopEnabled || seekEnabled;
+    const enabled = stopEnabled || seekEnabled || speedEnabled;
     const show = enabled && (this.touch || this.hovered || this.keyboardFocus);
     if (show || !enabled) { clearTimeout(this.hideTimer); this.hideTimer = null; }
     if (show || !enabled) this.root.classList.toggle('is-expanded', !!show);
@@ -190,7 +254,8 @@ class FloatingPauseButton {
     const safeBottom = parseFloat(style.scrollMarginBottom) || 0;
     const safeRight = parseFloat(style.scrollMarginRight) || 0;
     const left = Math.max(host.left, viewport?.offsetLeft || 0);
-    const seekRoom = this.controls.plugin.settings.floatingSeekButtons === true && right - left - safeRight >= 3 * width + 40;
+    const seekRoom = (this.controls.plugin.settings.floatingSeekButtons === true || this.controls.plugin.settings.floatingSpeedButtons === true)
+      && right - left - safeRight >= 3 * width + 40;
     // Reserve both side buttons before hover so the pause target never moves under the pointer.
     const reserve = seekRoom ? width + 8 : 0;
     const x = right - 16 - safeRight - width - reserve; let bottom = end - 12 - safeBottom;
@@ -216,6 +281,9 @@ class FloatingPauseButton {
     const blocksSeek = rect => rect.left < x + width + reserve + 4 && rect.right > x - reserve - 4
       && rect.top < bottom + 4 && rect.bottom > bottom - height - 4;
     this.seekFits = seekRoom && !bars.some(blocksSeek) && !(panel?.width && panel?.height && blocksSeek(panel));
+    const blocksSpeed = rect => rect.left < x + width + reserve + 4 && rect.right > x - reserve - 4
+      && rect.top < stopBottom && rect.bottom > stopTop - 4;
+    this.speedFits = seekRoom && stopTop >= top + 12 && !bars.some(blocksSpeed) && !(panel?.width && panel?.height && blocksSpeed(panel));
     this.updateVisibility();
   }
   destroy() {
@@ -227,7 +295,7 @@ class FloatingPauseButton {
     this.root.removeEventListener('pointerdown', this.pointer); this.root.removeEventListener('focusin', this.focus);
     this.root.removeEventListener('focusout', this.blur); this.root.removeEventListener('keydown', this.key);
     this.controls.forget(this.button); this.controls.forget(this.stopButton);
-    this.seekSlots.forEach(({ button }) => this.controls.forget(button)); this.root.remove();
+    [...this.seekSlots, ...this.speedSlots].forEach(({ button }) => this.controls.forget(button)); this.root.remove();
     if (this.ownedClass) this.host.classList.remove('cozy-playback-host');
   }
 }
@@ -235,8 +303,8 @@ class FloatingPauseButton {
 function addFloatingPauseSetting(container, plugin, Setting) {
   const zh = plugin.settings.settingsLanguage === 'chinese';
   new Setting(container).setName(zh ? '悬浮播放控制' : 'Floating playback controls')
-    .setDesc(zh ? '默认关闭。朗读或暂停时，在当前文档右下角显示暂停／继续按钮，可附加停止和前后跳转按钮；停止或结束后隐藏。只控制已有朗读，不会开始新的朗读。'
-      : 'Off by default. Show pause/resume with optional Stop and seek buttons at the current document\'s lower-right during active or paused reading. Hidden after stop or completion; never starts new speech.')
+    .setDesc(zh ? '默认关闭。朗读或暂停时，在当前文档右下角显示暂停／继续按钮，可附加停止、前后跳转和倍速按钮；停止或结束后隐藏。只控制已有朗读，不会开始新的朗读。'
+      : 'Off by default. Show pause/resume with optional Stop, seek and speed buttons at the current document\'s lower-right during active or paused reading. Hidden after stop or completion; never starts new speech.')
     .addToggle(toggle => toggle.setValue(plugin.settings.floatingPauseButton === true).onChange(async value => {
       plugin.settings.floatingPauseButton = value; more.hidden = !value;
       if (!value) more.open = false;
@@ -257,6 +325,20 @@ function addFloatingPauseSetting(container, plugin, Setting) {
     .addToggle(toggle => toggle.setValue(plugin.settings.floatingSeekButtons === true).onChange(async value => {
       plugin.settings.floatingSeekButtons = value; plugin.miniOutline?.sync(); await plugin.saveSettings();
     }));
+  new Setting(more).setName(zh ? '显示 ±0.25x 倍速按钮' : 'Show 0.25x speed step buttons')
+    .setDesc(zh ? '默认关闭。在上方左右显示减慢／加快 0.25x，调整播放倍速而不重新合成。悬停或键盘聚焦时显示，触屏端常显；空间不足时隐藏。不支持实时倍速的引擎会禁用。'
+      : 'Off by default. Show slower/faster 0.25x buttons above the side controls. Adjust playback without re-synthesis. Visible on hover/focus, always visible on touch, and hidden if space is insufficient. Disabled for engines without live rate control.')
+    .addToggle(toggle => toggle.setValue(plugin.settings.floatingSpeedButtons === true).onChange(async value => {
+      plugin.settings.floatingSpeedButtons = value; volumeRow.settingEl.hidden = !value;
+      plugin.miniOutline?.sync(); await plugin.saveSettings();
+    }));
+  const volumeRow = new Setting(more).setName(zh ? '右键调整音量（±10%）' : 'Right-click volume steps (10%)')
+    .setDesc(zh ? '默认关闭。启用后，倍速加减按钮的主键仍调整 0.25x，鼠标右键改为调整 10% 音量。悬停显示当前倍速和音量；不接管正文菜单，触屏仍使用原有音量滑条。'
+      : 'Off by default. Primary clicks still change speed by 0.25x; secondary mouse clicks change volume by 10%. Tooltips show both values. Document menus are unaffected; touch users retain the volume slider.')
+    .addToggle(toggle => toggle.setValue(plugin.settings.floatingRightClickVolume === true).onChange(async value => {
+      plugin.settings.floatingRightClickVolume = value; plugin.miniOutline?.sync(); await plugin.saveSettings();
+    }));
+  volumeRow.settingEl.hidden = plugin.settings.floatingSpeedButtons !== true;
 }
 
 module.exports = { PlaybackControls, FloatingPauseButton, addFloatingPauseSetting };

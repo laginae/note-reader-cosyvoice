@@ -1,5 +1,7 @@
 'use strict';
 const { greekNames } = require('./math-symbols');
+const { simpleFunctionCalls } = require('./math-functions');
+const { shortMathVariableParser } = require('./math-variable-labels');
 const symbols = new Set([...Object.values(greekNames), 'ell']);
 
 // Context is deliberately local: a previous formula or another sentence is not evidence.
@@ -9,30 +11,49 @@ function intervalProse(before, after) {
   const right = strip(String(after).slice(0, 400)).slice(0, 100).split(/[.!?;。！？；\n]/)[0];
   const literal = /\b(?:coordinates?|points?|tuples?|vectors?|matrices|matrix|commutators?|gcd)\b|inner product|greatest common divisor|坐标|有序对|向量|矩阵|内积|交换子|最大公约数/i;
   if (literal.test(left) || /^[\s,，]*(?:(?:is|are|denotes?|represents?)\s+(?:an?\s+)?)?(?:coordinate|point|tuple|vector|matrix|commutator)\b|^[\s,，]*(?:是|表示|为)?(?:坐标|有序对|向量|矩阵|内积|交换子)/i.test(right)) return 'literal';
-  if (/\b(?:interval|range)(?:\s+(?:is|are|equals?|denoted by))?\s*[:=]?\s*$|(?:区间|范围)(?:为|是|取为|记作|表示为)?\s*[:：=]?\s*$/i.test(left)
+  if (/\b(?:interval|range|domain)(?:\s+(?:is|are|equals?|denoted by))?\s*[:=]?\s*$|(?:区间|范围|实数域|定义域|取值域)(?:为|是|取为|记作|表示为)?\s*[:：=]?\s*$/i.test(left)
+    || /(?:往|向)\s*$/.test(left) && /^[\s,，]*(?:搜(?:索)?|查找)/.test(right)
     || /^[\s,，]*(?:(?:is|are|denotes?|represents?)\s+(?:an?\s+|the\s+)?)?(?:(?:open|closed|half-open)\s+)?interval\b|^[\s,，]*(?:是|表示|为|这个|这一)?(?:开|闭|左开右闭|左闭右开)?区间/i.test(right)) return 'interval';
   return undefined;
 }
-function atom(source) {
+function atom(source, depth = 0) {
+  if (depth > 3) return null;
   const text = source.trim(), sign = text.match(/^[+−-]/)?.[0] || '';
   const base = (sign ? text.slice(1) : text).trim();
   if (/^(?:\\infty|∞)$/.test(base)) return { base, sign, kind: 'infinity' };
   if (/^(?:\d+(?:\.\d+)?|\.\d+)$/.test(base)) return { base, sign, kind: 'number' };
-  const variable = base.match(/^([A-Za-z]|\\[A-Za-z]+)(?:\s*[_^]\s*(?:\{\s*(?:[A-Za-z0-9]+|\\[A-Za-z]+)\s*\}|[A-Za-z0-9]))?$/);
+  const variable = base.match(/^([A-Za-z]{1,8}|\\[A-Za-z]+)(?:\s*[_^]\s*(?:\{\s*(?:[A-Za-z0-9]+|\\[A-Za-z]+)\s*\}|[A-Za-z0-9]))?$/);
   if (variable && (!variable[1].startsWith('\\') || symbols.has(variable[1].slice(1)))) return { base, sign, kind: 'variable' };
+  // An accent may label another short variable, but never turn a compound expression into an endpoint atom.
+  const accent = base.match(/^\\(?:bar|overline|underline|hat|widehat|tilde|widetilde|vec|dot|ddot)\b\s*/);
+  if (accent) {
+    let argument = base.slice(accent[0].length).trim(), suffix = '';
+    if (argument.startsWith('{')) {
+      let level = 0, end = -1;
+      for (let i = 0; i < argument.length; i++) {
+        if (argument[i] === '{') level++;
+        else if (argument[i] === '}' && --level === 0) { end = i; break; }
+      }
+      if (end < 0) return null;
+      suffix = argument.slice(end + 1).trim(); argument = argument.slice(1, end).trim();
+    }
+    const inner = atom(argument, depth + 1), indexed = /^[_^]/.test(suffix) ? atom('x' + suffix, depth + 1) : null;
+    if (inner?.kind === 'variable' && !inner.sign && (!suffix || indexed?.kind === 'variable')) return { base, sign, kind: 'variable' };
+  }
   return null;
 }
 function members(source) {
-  const result = []; let depth = 0, start = 0;
+  const result = [], stack = []; let start = 0;
   for (let i = 0; i < source.length; i++) {
-    if (source[i] === '{') depth++;
-    else if (source[i] === '}' && --depth < 0) return null;
-    else if (source[i] === ',' && !depth) { result.push(source.slice(start, i)); start = i + 1; }
+    const char = source[i];
+    if ('([{'.includes(char)) stack.push(char);
+    else if (')]}'.includes(char) && stack.pop() !== ({ ')': '(', ']': '[', '}': '{' })[char]) return null;
+    else if (char === ',' && !stack.length) { result.push(source.slice(start, i)); start = i + 1; }
   }
-  if (depth) return null;
+  if (stack.length) return null;
   result.push(source.slice(start)); return result;
 }
-function bracketMathSpeech(value, { zh, brief, context, literalSets = false }, render) {
+function bracketMathSpeech(value, { zh, brief, context, rangeOnly = false, literalSets = false }, render) {
   let text = value.replace(/\\(?:left|right)\b/g, '').trim();
   const speak = entry => {
     const base = entry.kind === 'infinity' ? (zh ? '无穷' : 'infinity') : render(entry.base);
@@ -57,7 +78,7 @@ function bracketMathSpeech(value, { zh, brief, context, literalSets = false }, r
     if (!set[1].trim()) return prefix + (zh ? '空集' : 'the empty set');
     const values = members(set[1]);
     if (!values || values.length > 3) return null;
-    const entries = values.map(atom);
+    const entries = values.map(value => atom(value));
     if (entries.some(entry => !entry || entry.kind === 'infinity')) return null;
     const spoken = entries.map(speak); if (spoken.some(entry => !entry)) return null;
     const list = zh ? spoken.join('、') : spoken.length === 1 ? spoken[0] : spoken.slice(0, -1).join(', ') + ' and ' + spoken.at(-1);
@@ -68,7 +89,7 @@ function bracketMathSpeech(value, { zh, brief, context, literalSets = false }, r
   if (pair && (membership || context === 'interval')) {
     const values = members(pair[2]);
     if (!values || values.length !== 2) return null;
-    const entries = values.map(atom); if (entries.some(entry => !entry)) return null;
+    const entries = values.map(value => atom(value)); if (entries.some(entry => !entry)) return null;
     const [lower, upper] = entries, left = pair[1] === '[', right = pair[3] === ']';
     if ((lower.kind === 'infinity' && (lower.sign !== '-' && lower.sign !== '−' || left))
       || (upper.kind === 'infinity' && (upper.sign === '-' || upper.sign === '−' || right))) return null;
@@ -78,6 +99,7 @@ function bracketMathSpeech(value, { zh, brief, context, literalSets = false }, r
     const kind = left && right ? ['闭区间', 'closed interval'] : !left && !right ? ['开区间', 'open interval']
       : left ? ['左闭右开区间', 'left-closed, right-open interval'] : ['左开右闭区间', 'left-open, right-closed interval'];
     if (!brief) return lead + kind[zh ? 0 : 1] + (zh ? '，' : ', ') + range;
+    if (rangeOnly) return prefix + range;
     if (!prefix && upper.kind === 'infinity' && lower.kind !== 'infinity') return zh ? (left ? spoken[0] + ' 及以上' : '大于 ' + spoken[0]) : (left ? spoken[0] + ' and above' : 'greater than ' + spoken[0]);
     if (!prefix && lower.kind === 'infinity' && upper.kind !== 'infinity') return zh ? (right ? '不超过 ' : '小于 ') + spoken[1] : (right ? 'at most ' : 'less than ') + spoken[1];
     if (left && right) return lead + (prefix && !zh ? 'interval from ' : '') + range + (prefix && zh ? ' 的区间' : '');
@@ -101,10 +123,18 @@ function conciseBracketSpeech(value, zh, render) {
     if (!spoken || /^(?:Formula\.|公式。)$/.test(spoken)) return null;
     return (entry.sign ? (zh ? entry.sign === '+' ? '正' : '负' : entry.sign === '+' ? 'plus ' : 'minus ') : '') + spoken;
   };
-  const list = source => {
+  const memberSpeech = raw => {
+    const spoken = speak(raw); if (spoken) return spoken;
+    const text = raw.trim(), calls = simpleFunctionCalls(text);
+    if (calls.length !== 1 || calls[0].start !== 0 || calls[0].end !== text.length) return null;
+    const name = render(calls[0].name), argument = render(calls[0].argument);
+    return name && argument && !/^(?:Formula\.|公式。)$/.test(name) && !/^(?:Formula\.|公式。)$/.test(argument)
+      ? `${name} of ${argument}` : null;
+  };
+  const list = (source, calls = false) => {
     const parts = members(source);
     if (!parts || parts.length < 2 || parts.length > 3) return null;
-    const spoken = parts.map(speak);
+    const spoken = parts.map(calls ? memberSpeech : speak);
     return spoken.every(Boolean) ? spoken.join(zh ? '、' : ', ') : null;
   };
   let body = text, prefix = '';
@@ -114,15 +144,24 @@ function conciseBracketSpeech(value, zh, render) {
     if (!subject) return null;
     prefix = subject + (zh ? ' 等于 ' : ' equals '); body = assignment[2].trim();
   }
-  const pair = body.match(/^\(([^()\[\]]+)\)$/) || body.match(/^\[([^()\[\]]+)\]$/);
+  const pair = body.match(/^\(([\s\S]*)\)$/) || body.match(/^\[([\s\S]*)\]$/);
   if (pair) {
-    const spoken = list(pair[1]);
+    const spoken = list(pair[1], true);
     if (spoken) return prefix + spoken;
   }
-  const call = body.match(/^([A-Za-z]|\\[A-Za-z]+)\s*\(([^()\[\]]+)\)$/);
-  if (call) {
-    const name = speak(call[1]), args = list(call[2]);
-    if (name && args) return prefix + name + (zh ? '，参数为 ' : ' with arguments ') + args;
+  const { at: variableAt, space } = shortMathVariableParser(body), head = variableAt(0);
+  const open = head ? space(head.end) : -1, rest = body.slice(open);
+  if (head && (/^\([^()[\]]+\)$/.test(rest) || /^\[[^()[\]]+\]$/.test(rest))) {
+    const name = render(body.slice(0, head.end)), inner = rest.slice(1, -1);
+    if (name && !/^(?:Formula\.|公式。)$/.test(name)) {
+      if (rest[0] === '[') {
+        const argument = speak(inner);
+        if (argument) return prefix + name + ' of ' + argument;
+      } else {
+        const args = list(inner);
+        if (args) return prefix + name + (zh ? '，参数为 ' : ' with arguments ') + args;
+      }
+    }
   }
   const group = body.match(/^(.*?)\(([^()\[\]]+)\)(.*?)$/);
   if (!group) return null;

@@ -8,19 +8,20 @@ const { conciseFractionSpeech } = require('./math-fractions');
 
 const GREEK_NAMES = new Set(Object.values(greekNames));
 const MATH_SYMBOLS = { ell: 'ell', ...Object.fromEntries([...GREEK_NAMES].map(name => [name, name])) };
-const MATH_COMMANDS = new Set([...Object.keys(MATH_SYMBOLS), 'Gamma','Delta','Theta','Lambda','Sigma','Omega','Phi','Pi','Psi','psi','frac','dfrac','tfrac','sqrt','bar','overline','hat','tilde','vec','dot','ddot','text','mathrm','mathbf','mathbb','boldsymbol','operatorname','left','right','lvert','rvert','vert','leq','geq','le','ge','lt','gt','neq','ne','approx','times','cdot','pm','mp','infty','to','rightarrow','leftarrow','in','notin','partial','lbrace','rbrace']);
+const MATH_COMMANDS = new Set([...Object.keys(MATH_SYMBOLS), 'Gamma','Delta','Theta','Lambda','Sigma','Omega','Phi','Pi','Psi','psi','frac','dfrac','tfrac','sqrt','bar','overline','underline','hat','tilde','vec','dot','ddot','text','mathrm','mathbf','mathbb','boldsymbol','operatorname','left','right','lvert','rvert','vert','leq','geq','le','ge','lt','gt','neq','ne','approx','times','cdot','pm','mp','infty','to','rightarrow','leftarrow','in','notin','partial','lbrace','rbrace']);
 const CONCISE_COMMANDS = new Set(['prime', 'ast', 'star', 'top']);
 const SCRIPT_SYMBOL = new RegExp('([_^])\\s*(\\\\(?:' + [...GREEK_NAMES, 'ell', 'infty'].join('|') + '))(?![A-Za-z])', 'g');
 const GREEK_FACTOR = new RegExp('(?<![A-Za-z\\\\])([A-Za-z](?:_\\{[A-Za-z0-9]+\\})?)\\s*(?=\\\\(?:' + [...GREEK_NAMES].join('|') + ')\\b)', 'g');
 const MATH_OPERATORS = {leq:['less than or equal to','小于等于'],geq:['greater than or equal to','大于等于'],neq:['not equal to','不等于'],approx:['approximately equal to','约等于'],times:['times','乘以'],cdot:['times','乘以'],pm:['plus or minus','正负'],mp:['minus or plus','负正'],infty:['infinity','无穷'],to:['to','到'],rightarrow:['to','到'],leftarrow:['from','来自'],in:['belongs to','属于'],notin:['does not belong to','不属于'],partial:['partial','偏导']};
 Object.assign(MATH_OPERATORS, {le:MATH_OPERATORS.leq,ge:MATH_OPERATORS.geq,ne:MATH_OPERATORS.neq,lt:['less than','小于'],gt:['greater than','大于']});
 
-const ACADEMIC_DEFAULTS = { academicMathMode: 'smart', academicMathStyle: 'concise', academicTableMode: 'smart', academicSkipNotice: true };
+const ACADEMIC_DEFAULTS = { academicMathMode: 'smart', academicMathStyle: 'concise', academicIntervalStyle: 'precise', academicTableMode: 'smart', academicSkipNotice: true };
 function academicOptions(settings = {}) {
   return { ...ACADEMIC_DEFAULTS, academicSkipNotice: settings.academicSkipNotice !== false,
     mathReadingLanguage: ['english','chinese','skip'].includes(settings.mathReadingLanguage) ? settings.mathReadingLanguage : 'english',
     academicMathMode: ['smart','all','skip'].includes(settings.academicMathMode) ? settings.academicMathMode : 'smart',
     academicMathStyle: settings.academicMathStyle === 'verbose' ? 'verbose' : 'concise',
+    academicIntervalStyle: settings.academicIntervalStyle === 'range' ? 'range' : 'precise',
     academicTableMode: ['smart','all','skip'].includes(settings.academicTableMode) ? settings.academicTableMode : 'smart' };
 }
 const chinese = text => /[\u3400-\u9fff]/.test(text);
@@ -91,7 +92,8 @@ function normalizeMathPresentation(content) {
   value = value.replace(/\\(?:mathrm|mathbf|mathit|mathsf|mathtt|mathnormal|boldsymbol|rm|bf|it)\b/g, '')
     .replace(/\\(?:displaystyle|textstyle|scriptstyle|scriptscriptstyle)\b/g, '')
     .replace(/\\[,;:! ]|\\(?:quad|qquad|enspace|thinspace)\b/g, ' ')
-    .replace(/\\_/g, '_');
+    .replace(/\\_/g, '_')
+    .replace(/\\{1,2}%/g, '%');
   // Flatten redundant groups around a single atom, not fractions or compound expressions.
   for (let pass = 0; pass < 16; pass++) {
     const next = value.replace(/\{\s*\{\s*([A-Za-z0-9]+|\\[A-Za-z]+)\s*\}\s*\}/g, '{$1}');
@@ -197,6 +199,7 @@ function mathSpeech(content, inputOptions = {}) {
   for (const c of value) { if (c === '{') maxDepth = Math.max(maxDepth, ++depth); if (c === '}' && --depth < 0) return omission('formula',options); }
   if (depth || maxDepth > 3) return omission('formula', options);
   const collection = bracketMathSpeech(value, { zh, brief, context: inputOptions.mathIntervalContext,
+    rangeOnly: options.academicIntervalStyle === 'range',
     literalSets: inputOptions.literalMathSets === true }, atom => mathSpeech(atom, { ...options, academicSkipNotice: true }));
   if (collection !== null) return collection;
   if (/\\[lr]brace\b/.test(value)) return omission('formula', options);
@@ -224,12 +227,11 @@ function mathSpeech(content, inputOptions = {}) {
     if (fraction !== null) return fraction;
     const simpleBrackets = conciseBracketSpeech(value, zh, atom => mathSpeech(atom, { ...options, academicSkipNotice: true }));
     if (simpleBrackets !== null) return simpleBrackets;
-    value = conciseMathLabels(value, zh).text;
-    if (/\\(?:prime|ast|star|top)\b|['′″]/.test(value)) return omission('formula', options);
-    const call = value.match(/^(\\[A-Za-z]+|[A-Za-z])\s*(?:\[([A-Za-z])\]|\(([A-Za-z])\))$/);
-    if (call) return `${mathSpeech(call[1], options)} of ${call[2] || call[3]}`;
+    // Parse calls before turning decorations into words, so their full head stays attached.
     value = speakSimpleFunctions(value.replace(/\\(?:left|right)\b/g, ''),
       (name, argument) => `${mathSpeech(name, options)} of ${mathSpeech(argument, options)}`);
+    value = conciseMathLabels(value, zh).text;
+    if (/\\(?:prime|ast|star|top)\b|['′″]/.test(value)) return omission('formula', options);
   }
   // Explicitly speak products of adjacent, simply subscripted variables.
   value = value.replace(/([A-Za-z]_\{\s*(?:\\[A-Za-z]+|[A-Za-z0-9]+)\s*\})\s*(?=[A-Za-z]_\{)/g, '$1 * ');
@@ -241,12 +243,12 @@ function mathSpeech(content, inputOptions = {}) {
     const before = value;
     value = value.replace(/\\(?:frac|dfrac|tfrac)\s*\{([^{}]*)\}\s*\{([^{}]*)\}/g, (_,a,b) => zh ? `${group(b)} 分之 ${group(a)}` : `${group(a)} over ${group(b)}`)
       .replace(/\\sqrt\s*\{([^{}]*)\}/g, (_,a) => zh ? `${group(a)} 的平方根` : `square root of ${group(a)}`)
-      .replace(/\\(bar|overline|hat|tilde|vec|dot|ddot)\s*(?:\{([^{}]+)\}|([A-Za-z]))/g, (_,symbol,a,b) => `${group(a || b)} ${symbol === 'overline' ? 'bar' : symbol}`)
+      .replace(/\\(bar|overline|underline|hat|tilde|vec|dot|ddot)\s*(?:\{([^{}]+)\}|([A-Za-z]))/g, (_,symbol,a,b) => `${group(a || b)} ${({ overline: 'bar', underline: 'underbar' })[symbol] || symbol}`)
       .replace(/\\(?:text|mathrm|mathbf|mathbb|boldsymbol|operatorname)\s*\{([^{}]*)\}/g,'$1');
     if (before === value) break;
   }
   // Remaining structural commands cannot be interpreted reliably by this short-form reader.
-  if (/\\(?:frac|dfrac|tfrac|sqrt|bar|overline|hat|tilde|vec|dot|ddot|text|mathrm|mathbf|mathbb|boldsymbol|operatorname)\b/.test(value)) return omission('formula',options);
+  if (/\\(?:frac|dfrac|tfrac|sqrt|bar|overline|underline|hat|tilde|vec|dot|ddot|text|mathrm|mathbf|mathbb|boldsymbol|operatorname)\b/.test(value)) return omission('formula',options);
   // Only named statistics with short variable arguments get natural labels.
   // Ordinary brackets, conditional expressions and compound arguments stay intact.
   value = value.replace(/\{\s*(Var|Cov|Corr)\s*\}(?=\s*[[(])/g, '$1')
@@ -275,11 +277,13 @@ function mathSpeech(content, inputOptions = {}) {
       return brief && simple ? ` ${index.replace(/,/g, ' ')} ` : ` ${zh ? '下标' : 'subscript'} ${index} `;
     })
     .replace(/\^\s*(?:\{([^{}]*)\}|([A-Za-z0-9+-]))/g, (_,a,b) => {
-      const exponent = a ?? b;
+      const exponent = (a ?? b).trim().replace(/^([+−-])\s*(\d+(?:\.\d+)?|[A-Za-z])$/, (_, sign, atom) =>
+        (zh ? sign === '+' ? '正' : '负' : sign === '+' ? 'positive ' : 'negative ') + atom);
       return exponent === '2' ? (zh ? ' 的平方 ' : ' squared ') : exponent === '3' ? (zh ? ' 的立方 ' : ' cubed ') : ` ${zh ? '的' : 'to the power of'} ${exponent} ${zh ? '次方' : ''} `;
     });
   if (/[\\_^]/.test(value)) return omission('formula', options);
-  value = value.replace(/<=|>=|!=|≤|≥|≠|[+−=<>*/-]/g, op => ` ${({'<=':zh?'小于等于':'less than or equal to','>=':zh?'大于等于':'greater than or equal to','!=':zh?'不等于':'not equal to','≤':zh?'小于等于':'less than or equal to','≥':zh?'大于等于':'greater than or equal to','≠':zh?'不等于':'not equal to','+':zh?'加':'plus','-':zh?'减':'minus','−':zh?'减':'minus','=':zh?'等于':'equals','<':zh?'小于':'less than','>':zh?'大于':'greater than','*':zh?'乘以':'times','/':zh?'除以':'divided by'})[op]} `);
+  value = value.replace(/<=|>=|!=|≤|≥|≠|[+−=<>*/-]/g, op => ` ${({'<=':zh?'小于等于':'less than or equal to','>=':zh?'大于等于':'greater than or equal to','!=':zh?'不等于':'not equal to','≤':zh?'小于等于':'less than or equal to','≥':zh?'大于等于':'greater than or equal to','≠':zh?'不等于':'not equal to','+':zh?'加':'plus','-':zh?'减':'minus','−':zh?'减':'minus','=':zh?'等于':'equals','<':zh?'小于':'less than','>':zh?'大于':'greater than','*':zh?'乘以':'times','/':zh?'除以':'divided by'})[op]} `)
+    .replace(/(\d+(?:\.\d+)?)\s*%/g, (_, number) => zh ? `百分之${number}` : `${number} percent`);
   value = value.replace(/\(/g,zh?' 左括号 ':' open parenthesis ').replace(/\)/g,zh?' 右括号 ':' close parenthesis ')
     .replace(/\[/g,zh?' 左方括号 ':' open bracket ').replace(/\]/g,zh?' 右方括号 ':' close bracket ')
     .replace(/[{}]/g,' ').replace(/\s+/g,' ').trim();

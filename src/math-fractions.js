@@ -4,7 +4,7 @@ const { greekNames } = require('./math-symbols');
 const variable = '(?:[A-Za-z]|\\\\(?:' + [...new Set(Object.values(greekNames)), 'ell'].join('|') + '))';
 const index = '(?:[A-Za-z0-9]|\\{\\s*(?:[A-Za-z0-9]{1,8}|' + variable + ')\\s*\\})';
 const scripted = variable + '(?:\\s*_\\s*' + index + ')?';
-const accented = '\\\\(?:bar|overline|hat|tilde|vec|dot|ddot)\\s*(?:' + variable + '|\\{\\s*' + scripted + '\\s*\\})';
+const accented = '\\\\(?:bar|overline|underline|hat|tilde|vec|dot|ddot)\\s*(?:' + variable + '|\\{\\s*' + scripted + '\\s*\\})';
 const shortAtom = new RegExp('^(?:\\d+(?:\\.\\d+)?|\\.\\d+|(?:' + variable + '|' + accented
   + ')(?:\\s*_\\s*' + index + ')?(?:\\s*\\^\\s*(?:[23]|\\{[23]\\}))?)$');
 

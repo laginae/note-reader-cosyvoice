@@ -50,11 +50,19 @@ function desktopMiniAdapter(plugin) {
       const session = plugin.activeSession, state = plugin.readerState || {};
       const active = !!session && session.kind !== 'audio-export' && !['complete', 'error', 'stopped'].includes(state.status);
       return { active, session, paused: !!state.isPaused, canToggle: active && !!state.canPause,
-        canStop: active && !!state.canStop, canSeek: active && (!!state.canSeek || !!session?.seekTarget), title: session?.sourceLabel };
+        canStop: active && !!state.canStop, canSeek: active && (!!state.canSeek || !!session?.seekTarget),
+        canRate: session?.speechEngine !== 'system-tts', canVolume: active && session?.speechEngine !== 'system-tts',
+        minRate: 0.5, maxRate: 2, title: session?.sourceLabel };
     },
     togglePlayback: () => plugin.runUserAction('Pause or resume', () => plugin.pauseOrResume()),
     stopPlayback: () => plugin.runUserAction('Stop reading', () => plugin.stopReading()),
     seekPlaybackBy: seconds => plugin.seekCurrentAudioBySeconds(seconds),
+    setPlaybackRate: rate => plugin.setPlaybackSpeed(rate, { announce: true }),
+    setPlaybackVolume: async value => {
+      const volume = plugin.setPlaybackVolume(value);
+      plugin.renderReaderViews(); plugin.showPlaybackVolumeNotice(volume);
+      await plugin.saveSettings();
+    },
     loadCollapsed: (view, cancelled) => adapter.load(view, cancelled, false, true),
     async load(view, cancelled, force, cachedOnly = false) {
       const file = view.file, mtime = file.stat?.mtime, size = file.stat?.size;

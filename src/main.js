@@ -1674,6 +1674,8 @@ function createDefaultSettings() {
     floatingPauseButton: false,
     floatingStopButton: true,
     floatingSeekButtons: false,
+    floatingSpeedButtons: false,
+    floatingRightClickVolume: false,
     readingFloatingAction: 'selection',
     ...ACADEMIC_DEFAULTS,
     ...COPILOT_DEFAULTS,
@@ -2841,6 +2843,7 @@ class CosyVoiceReaderPlugin extends Plugin {
   }
 
   async onunload() {
+    this.hidePlaybackRateNotice();
     this.ocrModal?.close();
     this.bufferingHint?.stop();
     this.systemSpeechUnloaded = true;
@@ -3029,7 +3032,7 @@ class CosyVoiceReaderPlugin extends Plugin {
     return this.settings.speed;
   }
 
-  async setPlaybackSpeed(value) {
+  async setPlaybackSpeed(value, options = {}) {
     if (!this.settings) this.settings = createDefaultSettings();
     this.settings.playbackSpeed = normalizeSpeed(value);
     if (this.currentAudio) {
@@ -3039,7 +3042,31 @@ class CosyVoiceReaderPlugin extends Plugin {
     }
     this.activeSession?.prepareAvailableChunks?.();
     this.renderReaderViews();
+    if (options.announce) this.showPlaybackRateNotice(this.settings.playbackSpeed);
     await this.saveSettings();
+  }
+
+  showPlaybackRateNotice(value) {
+    const speed = normalizeSpeed(value);
+    const message = this.settings?.settingsLanguage === 'chinese' ? `播放倍速：${speed}x` : `Playback speed: ${speed}x`;
+    this.showPlaybackControlNotice(message);
+  }
+
+  showPlaybackVolumeNotice(value) {
+    const volume = Math.round(normalizeVolume(value) * 100);
+    this.showPlaybackControlNotice(this.settings?.settingsLanguage === 'chinese' ? `音量：${volume}%` : `Volume: ${volume}%`);
+  }
+
+  showPlaybackControlNotice(message) {
+    if (this.playbackRateNotice) this.playbackRateNotice.setMessage(message);
+    else this.playbackRateNotice = new Notice(message, 0);
+    clearTimeout(this.playbackRateNoticeTimer);
+    this.playbackRateNoticeTimer = setTimeout(() => this.hidePlaybackRateNotice(), 1400);
+  }
+
+  hidePlaybackRateNotice() {
+    clearTimeout(this.playbackRateNoticeTimer); this.playbackRateNoticeTimer = null;
+    this.playbackRateNotice?.hide(); this.playbackRateNotice = null;
   }
 
   setPlaybackVolume(value) {
@@ -5042,6 +5069,7 @@ class CosyVoiceReaderPlugin extends Plugin {
   }
 
   async readCurrentPdf(pdfFile = null, options = {}) {
+    const preparationStarted = (this.playbackTimings ||= new PlaybackTimings()).now();
     const file = pdfFile || (
       typeof this.app.workspace.getActiveFile === 'function'
         ? this.app.workspace.getActiveFile()
@@ -5073,8 +5101,11 @@ class CosyVoiceReaderPlugin extends Plugin {
       return;
     }
 
+    const startIntent = this.readingStartSequence = (this.readingStartSequence || 0) + 1;
     if (!options.keepControls) await this.activateControlView();
-    await this.stopReading({ silent: true });
+    if (startIntent !== this.readingStartSequence) return;
+    await this.stopReading({ silent: true, deferCleanup: true, preserveReadingStart: true });
+    if (startIntent !== this.readingStartSequence) return;
     this.pauseRequested = false;
 
     const sourceLabel = file.basename || file.name || 'PDF';
@@ -5090,6 +5121,7 @@ class CosyVoiceReaderPlugin extends Plugin {
       sourceKind: 'pdf',
     });
     session.pdfOutlineRange = outlineRange;
+    session.preparationStarted = preparationStarted;
     session.resumingPosition = Boolean(resumePosition);
     session.pdfContentScope = ['glossary', 'footnotes'].includes(options.contentScope) ? options.contentScope : 'body';
     this.activeSession = session;
@@ -5523,6 +5555,7 @@ class CosyVoiceReaderPlugin extends Plugin {
 
   async startReading(rawText, sourceLabel, options = {}) {
     const preparationStarted = (this.playbackTimings ||= new PlaybackTimings()).now();
+    const startIntent = this.readingStartSequence = (this.readingStartSequence || 0) + 1;
     const speechRaw = options.sourceKind === 'markdown' && this.settings.stripMarkdown && typeof options.sourceText === 'string'
       ? require('./markdown-syntax').maskMarkdownNonSpeech(options.sourceText).slice(options.sourceOffset || 0, (options.sourceOffset || 0) + rawText.length)
       : rawText;
@@ -5541,7 +5574,8 @@ class CosyVoiceReaderPlugin extends Plugin {
       return;
     }
 
-    await this.stopReading({ silent: true });
+    await this.stopReading({ silent: true, deferCleanup: true, preserveReadingStart: true });
+    if (startIntent !== this.readingStartSequence) return;
     if (options.settingsPreview && (options.settingsPreview.cancelled || this.activeSession)) return 'cancelled';
     this.pauseRequested = false;
 
@@ -5562,7 +5596,9 @@ class CosyVoiceReaderPlugin extends Plugin {
       ? buildMarkdownSource(rawText, chunks, value => this.settings.stripMarkdown
         ? sanitizeTextForSpeech(value, academicOptions(this.settings))
         : normalizeLineBreaks(value).trim(), { sourceText: options.sourceText, sourceOffset: options.sourceOffset, filePath: options.file?.path,
-          preserveSyntax: !this.settings.stripMarkdown }) : null);
+          preserveSyntax: !this.settings.stripMarkdown,
+          maskedText: this.settings.stripMarkdown && typeof options.sourceText === 'string' ? speechRaw : undefined,
+          preparedText: text }) : null);
     if (options.focusDisplay) {
       const display = options.focusDisplay;
       let start = compact(display.text.slice(0, display.offset)).length;
@@ -5574,6 +5610,7 @@ class CosyVoiceReaderPlugin extends Plugin {
       sourceKind: options.sourceKind || '',
       markdownSource,
     });
+    session.preparationStarted = preparationStarted;
 
     session.webContext = options.webContext;
     if (selectedPages?.length) {
@@ -5629,7 +5666,7 @@ class CosyVoiceReaderPlugin extends Plugin {
 
   async runSpeechSession(session) {
     const timings = this.playbackTimings ||= new PlaybackTimings();
-    timings.begin('sessionToPlaying');
+    timings.begin('sessionToPlaying', session.preparationStarted);
     session.preparationLatencies = [];
     const pool = session.preparationPool = new PreparationPool({
       concurrency: isOnlineSpeechEngine(session.speechEngine) && session.speechEngine !== 'edge-tts' ? 2 : 1,
@@ -5816,7 +5853,9 @@ class CosyVoiceReaderPlugin extends Plugin {
   }
 
   async prepareChunk(chunkText, index, session, part = 0) {
+    const cleanupStarted = this.playbackTimings?.now();
     await this.startupCleanup;
+    if (Number.isFinite(cleanupStarted)) this.playbackTimings.record('startupCleanupWait', this.playbackTimings.now() - cleanupStarted);
     if (!this.settings.persistentAudioCache || session.kind === 'audio-export'
       || !isOnlineSpeechEngine(session.speechEngine)) return this.synthesizeChunk(chunkText, index, session, part);
     const assertPermission = () => {
@@ -7130,7 +7169,7 @@ class CosyVoiceReaderPlugin extends Plugin {
     }
   }
 
-  async cancelSessionOperations(session) {
+  async cancelSessionOperations(session, options = {}) {
     if (session) {
       session.stopped = true;
       session.preparationPool?.clear();
@@ -7140,14 +7179,8 @@ class CosyVoiceReaderPlugin extends Plugin {
       this.notifySessionNavigation(session);
     }
 
-    if (session && session.pdfLoadingTask && typeof session.pdfLoadingTask.destroy === 'function') {
-      try {
-        await session.pdfLoadingTask.destroy();
-      } catch (error) {
-        console.warn(`[${PLUGIN_ID}] Could not cancel PDF loading`, error);
-      }
-      session.pdfLoadingTask = null;
-    }
+    const pdfTask = session?.pdfLoadingTask;
+    if (session) session.pdfLoadingTask = null;
 
     if (this.currentProcess) {
       this.currentProcess.kill();
@@ -7170,24 +7203,44 @@ class CosyVoiceReaderPlugin extends Plugin {
       audio.load();
       if (this.currentAudio === audio) this.currentAudio = null;
     }
+    if (typeof pdfTask?.destroy === 'function') {
+      const release = Promise.resolve().then(() => pdfTask.destroy()).catch(() => {
+        console.warn(`[${PLUGIN_ID}] Could not cancel PDF loading`);
+      });
+      if (options.deferCleanup) this.trackSessionCleanup(release); else await release;
+    }
+  }
+
+  trackSessionCleanup(operation) {
+    const jobs = this.sessionCleanupJobs ||= new Set();
+    const job = Promise.resolve(operation).catch(() => {
+      console.warn('[note-reader-cosyvoice] Stopped-session cleanup could not complete.');
+    }).finally(() => jobs.delete(job));
+    jobs.add(job); return job;
   }
 
   async stopReading(options = {}) {
     if (!options.preservePendingActions) this.webActionSequence = (this.webActionSequence || 0) + 1;
+    if (!options.preserveReadingStart) this.readingStartSequence = (this.readingStartSequence || 0) + 1;
     const previous = this.activeSession;
-    await this.saveSessionReadingPosition(previous);
+    // Capture the current audio position before cancellation, but do not make a new reading wait on disk writes.
+    const saved = Promise.resolve(this.saveSessionReadingPosition(previous)).catch(() => {
+      console.warn('[note-reader-cosyvoice] Reading position could not be saved.');
+    });
     this.transitionSessionPhase(previous, 'stopping');
-    this.sequence += 1;
+    const stoppedAt = ++this.sequence;
     this.pauseRequested = false;
-    await this.cancelSessionOperations(previous);
+    await this.cancelSessionOperations(previous, options);
     this.transitionSessionPhase(previous, 'idle');
 
-    this.activeSession = null;
-    this.updateStatus('CosyVoice idle', createReaderState());
-
-    if (previous && this.settings && this.settings.cleanupCache) {
-      await this.cleanupSessionFiles(previous);
+    if (this.sequence === stoppedAt && this.activeSession === previous) {
+      this.activeSession = null;
+      this.updateStatus('CosyVoice idle', createReaderState());
     }
+
+    const cleanup = saved.then(() => previous && this.settings?.cleanupCache ? this.cleanupSessionFiles(previous) : undefined);
+    if (options.deferCleanup) this.trackSessionCleanup(cleanup);
+    else { await cleanup; await Promise.all(this.sessionCleanupJobs || []); }
 
     if (!options.silent) {
       new Notice('CosyVoice: stopped.');
@@ -8605,6 +8658,12 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
       .addDropdown(dropdown => dropdown.addOption('concise',zhReading ? '简洁（sub、bar）' : 'Concise (sub, bar)')
         .addOption('verbose',zhReading ? '明确（下标、subscript）' : 'Explicit (subscript)')
         .setValue(academicOptions(this.plugin.settings).academicMathStyle).onChange(async value => { this.plugin.settings.academicMathStyle=value; await this.plugin.saveSettings(); }));
+    new Setting(containerEl).setName(zhReading ? '区间读法（简洁模式）' : 'Interval speech (concise style)')
+      .setDesc(zhReading ? '仅适用于可靠识别的区间。默认保留开闭端点条件；可选择只读“a 到 b”，不读括号及端点是否包含的说明。此简短读法会省略数学细节；明确公式读法仍保留完整说明，不改变原文。'
+        : 'For recognized intervals only. Preserve endpoint inclusion by default, or say only "a to b" without bracket or inclusion labels. The shorter option omits mathematical detail; explicit formula style still preserves it. Source text is unchanged.')
+      .addDropdown(dropdown => dropdown.addOption('precise', zhReading ? '保留端点条件（推荐）' : 'Preserve endpoints (recommended)')
+        .addOption('range', zhReading ? '只读起点到终点' : 'Only read lower to upper bound')
+        .setValue(academicOptions(this.plugin.settings).academicIntervalStyle).onChange(async value => { this.plugin.settings.academicIntervalStyle=value; await this.plugin.saveSettings(); }));
     new Setting(containerEl)
       .setName(ui.mathLanguageName)
       .setDesc(zhReading ? '公式转换目前支持中文和英文，与界面语言及语音音色分别设置。' : 'Formula conversion supports Chinese and English, independently of interface language and speech voice.')

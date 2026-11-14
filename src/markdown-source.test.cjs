@@ -3,6 +3,16 @@ const test = require('node:test');
 const { sourceBlocks, buildMarkdownSource, currentSourceRanges, readingMarkdown, sourceLineStarts, markdownReadingHighlight } = require('./markdown-source');
 const clean = value => value.replace(/^#+ /gm, '').replace(/\*\*/g, '').trim();
 
+test('prepared speech reuses the validated stream instead of cleaning the whole selection again', () => {
+  const raw = '# Public title\n\nPublic paragraph.\n\nPublic conclusion.', chunks = ['Public title', 'Public paragraph.', 'Public conclusion.'];
+  let calls = 0;
+  const source = buildMarkdownSource(raw, chunks, value => { calls++; return clean(value); }, { maskedText: raw, preparedText: clean(raw) });
+  assert.equal(calls, 3); assert.equal(source.mappingValid, true);
+  assert.deepEqual(currentSourceRanges(source, { index: 1 }), [{ from: raw.indexOf('Public paragraph.'), to: raw.indexOf('Public conclusion.') - 1, sentence: false }]);
+  const mismatch = buildMarkdownSource(raw, chunks, clean, { preparedText: 'Unrelated public text.' });
+  assert.equal(mismatch.mappingValid, false); assert.equal(mismatch.partialMapping, false);
+});
+
 test('duplicate paragraphs map to their own source block, never the first matching occurrence', () => {
   const raw = '# Heading\n\nRepeated text.\n\nRepeated text.';
   const source = buildMarkdownSource(raw, ['Heading', 'Repeated text.', 'Repeated text.'], clean);

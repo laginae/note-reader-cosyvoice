@@ -29,3 +29,11 @@ test('PDF coordinates remain literal and short literal sets retain member rather
   assert.match(fixture('取值为','x∈[a,b]').speech,/x 属于 a 到 b 的区间/);
   assert.match(fixture('区间为','(a,b)',{academicMathMode:'skip'}).speech,/公式。/);
 });
+test('PDF math shares signed exponent and interval preferences without changing source text', () => {
+  const negative = fixture('容差为', '10^{-9}');
+  assert.match(negative.speech, /负9/); assert.doesNotMatch(negative.speech, /减 9/);
+  assert.ok(negative.layout.text.includes('10^{-9}'));
+  assert.match(fixture('区间为', '[lo,mid]').speech, /lo 到 mid/);
+  assert.match(fixture('取值为', 'x∈(0,1]', { academicIntervalStyle: 'range' }).speech, /x 属于 0 到 1/);
+  assert.doesNotMatch(fixture('取值为', 'x∈(0,1]', { academicIntervalStyle: 'range' }).speech, /不含|括号/);
+});
