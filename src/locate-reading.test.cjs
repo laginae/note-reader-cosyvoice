@@ -4,6 +4,7 @@ const { JSDOM } = require('jsdom');
 const { locateReading } = require('./locate-reading');
 const { highlightDocument } = require('./dom-highlights');
 const { academicOptions } = require('./academic-speech');
+const { buildMarkdownSource } = require('./markdown-source');
 
 function fixture() {
   const file = { path: 'public.md', stat: { mtime: 1 } }, calls = [];
@@ -34,15 +35,83 @@ test('locate reuses original Markdown view without changing playback or selectio
 });
 
 test('locate rejects changed files, invalid mappings, exports and stale sessions', async () => {
-  const { plugin, file, calls } = fixture();
-  file.stat.mtime = 2;
-  assert.equal(await locateReading(plugin), 'changed'); assert.equal(calls.length, 0);
+  const { plugin, file, view, calls } = fixture();
+  view.editor.getValue = () => 'Changed public text.';
+  assert.equal(await locateReading(plugin), 'changed'); assert.equal(calls.some(call => call?.from), false);
+  view.editor.getValue = () => plugin.activeSession.markdownSource.text;
   file.stat.mtime = 1; plugin.activeSession.markdownSource.mappingValid = false;
   assert.equal(await locateReading(plugin), 'unmatched');
   plugin.activeSession.kind = 'audio-export'; assert.equal(await locateReading(plugin), 'unavailable');
   delete plugin.activeSession.kind;
   plugin.app.workspace.revealLeaf = async () => { plugin.activeSession = null; };
   assert.equal(await locateReading(plugin), 'changed');
+});
+
+test('returning to unchanged Markdown ignores autosave-only modification-time changes', async () => {
+  const f = fixture(), session = f.plugin.activeSession;
+  const audio = f.plugin.currentAudio = { currentTime: 7, paused: false };
+  const other = { view: { file: { path: 'another-public-note.md' } } };
+  f.plugin.app.workspace.activeLeaf = other;
+  f.plugin.app.workspace.revealLeaf = async leaf => {
+    f.plugin.app.workspace.activeLeaf = leaf; f.calls.push(leaf);
+    f.file.stat.mtime++;
+  };
+  f.file.stat.mtime = 2;
+  for (let i = 0; i < 2; i++) {
+    f.plugin.app.workspace.activeLeaf = other;
+    assert.equal(await locateReading(f.plugin), 'located');
+    assert.equal(f.plugin.app.workspace.activeLeaf, f.leaf);
+    assert.equal(f.plugin.activeSession, session);
+    assert.equal(f.plugin.currentAudio, audio);
+    assert.deepEqual(audio, { currentTime: 7, paused: false });
+  }
+  assert.equal(session.fileMtime, 1, 'Do not bless a changed disk revision for other session consumers');
+});
+
+test('reopening the reading note after its original tab is reused checks the new editor contents', async () => {
+  const f = fixture(), original = f.view, reopened = { view: original };
+  f.file.stat.mtime = 3;
+  f.leaf.view = { file: { path: 'another-public-note.md' } };
+  f.plugin.app.workspace.getLeaf = mode => { assert.equal(mode, 'tab'); return reopened; };
+  let opens = 0;
+  reopened.openFile = async file => { assert.equal(file, f.file); opens++; };
+  assert.equal(await locateReading(f.plugin), 'located');
+  assert.equal(opens, 1); assert.equal(f.calls[0], reopened);
+});
+
+test('changed Markdown is rejected even if its timestamp stayed the same or only changed after reveal', async () => {
+  for (const afterReveal of [false, true]) {
+    const f = fixture();
+    const edit = () => { f.view.editor.getValue = () => 'A genuinely edited public note.'; };
+    if (afterReveal) f.plugin.app.workspace.revealLeaf = async () => { f.file.stat.mtime++; edit(); };
+    else edit();
+    assert.equal(await locateReading(f.plugin), 'changed');
+    assert.equal(f.calls.some(call => call?.from), false);
+  }
+});
+
+test('PDF and HTML keep their file-revision guards when returning to a document', async () => {
+  for (const kind of ['pdf', 'html']) {
+    const f = fixture(); f.plugin.activeSession.sourceKind = kind; f.file.stat.mtime = 2;
+    assert.equal(await locateReading(f.plugin), 'changed'); assert.deepEqual(f.calls, []);
+  }
+});
+
+test('Markdown locate uses the current passage if playback advances while the tab is revealed', async () => {
+  const f = fixture(), text = 'First public passage.\n\nSecond public passage.';
+  const chunks = ['First public passage.', 'Second public passage.'];
+  Object.assign(f.plugin.activeSession, { chunks,
+    markdownSource: buildMarkdownSource(text, chunks, value => value.trim(), { filePath: f.file.path }) });
+  f.view.editor.getValue = () => text;
+  f.plugin.app.workspace.revealLeaf = async () => { f.plugin.activeSession.currentChunkIndex = 1; };
+  assert.equal(await locateReading(f.plugin), 'located');
+  assert.equal(f.calls.at(-1).from.ch, text.indexOf('Second'));
+  assert.equal(f.plugin.activeSession.currentChunkIndex, 1);
+});
+
+test('a Markdown view without an available source editor is not reported as a content edit', async () => {
+  const f = fixture(); delete f.view.editor;
+  assert.equal(await locateReading(f.plugin), 'unmatched');
 });
 
 test('locate reopens a closed local document in a new tab', async () => {

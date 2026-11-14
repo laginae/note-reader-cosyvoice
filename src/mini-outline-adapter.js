@@ -118,7 +118,8 @@ function desktopMiniAdapter(plugin) {
     },
     positions(view, data) {
       let reading = -1; const session = plugin.activeSession;
-      if (session?.kind !== 'audio-export' && session?.filePath === data.file.path && (session.fileMtime == null || session.fileMtime === data.mtime)) {
+      if (session?.kind !== 'audio-export' && session?.filePath === data.file.path
+        && (data.kind === 'markdown' || session.fileMtime == null || session.fileMtime === data.mtime)) {
         if (data.kind === 'markdown' && (session.markdownSource?.text === undefined || session.markdownSource.text === data.text)) {
           const ranges = currentSourceRanges(session.markdownSource, { index: session.currentChunkIndex });
           reading = headingAt(data.entries, ranges[0]?.from);

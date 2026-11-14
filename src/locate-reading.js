@@ -35,7 +35,8 @@ async function locateReading(plugin) {
     return 'unmatched';
   }
   const file = plugin.app.vault.getAbstractFileByPath(session.filePath);
-  if (!file || (session.fileMtime && file.stat?.mtime !== session.fileMtime)) return 'changed';
+  // Markdown autosaves can change mtime without changing the captured editor text.
+  if (!file || (session.sourceKind !== 'markdown' && session.fileMtime && file.stat?.mtime !== session.fileMtime)) return 'changed';
   const type = { markdown: 'markdown', pdf: 'pdf', html: 'html-view' }[session.sourceKind];
   if (!type) return 'unavailable';
   let leaf = workspace.getLeavesOfType(type).find(leaf => leaf.view.file?.path === session.filePath);
@@ -44,13 +45,17 @@ async function locateReading(plugin) {
     await leaf.openFile(file);
   }
   await workspace.revealLeaf(leaf);
-  if (!current() || leaf.view.file?.path !== session.filePath) return 'changed';
+  if (plugin.activeSession !== session || leaf.view.file?.path !== session.filePath) return 'changed';
   const view = leaf.view;
   if (type === 'markdown') {
     const source = session.markdownSource;
-    if (!source || view.editor?.getValue() !== source.text) return 'changed';
+    const text = view.editor?.getValue?.();
+    if (!source || typeof text !== 'string') return 'unmatched';
+    if (text !== source.text) return 'changed';
+    const activeIndex = session.currentChunkIndex;
+    if (!Number.isInteger(activeIndex) || !session.chunks?.[activeIndex]) return 'unavailable';
     const highlight = plugin.getCurrentReadingHighlight?.();
-    const range = currentSourceRanges(source, markdownReadingHighlight(session, highlight?.index === index ? highlight : { index }, plugin.settings))[0];
+    const range = currentSourceRanges(source, markdownReadingHighlight(session, highlight?.index === activeIndex ? highlight : { index: activeIndex }, plugin.settings))[0];
     if (!range) return 'unmatched';
     const from = view.editor.offsetToPos(range.from);
     if (view.getMode?.() === 'preview') {

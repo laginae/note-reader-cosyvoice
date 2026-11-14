@@ -3,6 +3,7 @@ const test = require('node:test'), assert = require('node:assert/strict');
 const { JSDOM } = require('jsdom');
 const { desktopMiniAdapter } = require('./mini-outline-adapter');
 const { PdfOutlineCache } = require('./pdf-outline-cache');
+const { buildMarkdownSource } = require('./markdown-source');
 function fixture() {
   const calls = [], file = {path:'public-example.md',extension:'md',stat:{mtime:1,size:100}};
   const text = '# One\nPublic introduction.\n## Child\nPublic detail.\n# Two\nPublic conclusion.';
@@ -117,4 +118,15 @@ test('explicit document navigation pauses only document auto-follow, not speech 
   f.adapter.pauseFollow(f.view);
   assert.equal(f.plugin.readingFollowPaused.has('readingFollow'),true);
   assert.equal(f.plugin.activeSession,session);assert.equal(session.paused,false);
+});
+
+test('the Markdown reading marker survives an autosave timestamp change but not a content change', async () => {
+  const f = fixture(), chunks = [f.text];
+  f.plugin.activeSession = { kind: 'reading', filePath: f.file.path, fileMtime: 1, chunks, currentChunkIndex: 0,
+    markdownSource: buildMarkdownSource(f.text, chunks, value => value.trim(), { filePath: f.file.path }) };
+  f.file.stat.mtime = 2;
+  const data = await f.adapter.load(f.view, () => false);
+  assert.equal(f.adapter.positions(f.view, data).reading, 0);
+  assert.equal(f.adapter.positions(f.view, { ...data, text: f.text + '\nAn actual edit.' }).reading, -1);
+  assert.equal(f.plugin.activeSession.fileMtime, 1);
 });
