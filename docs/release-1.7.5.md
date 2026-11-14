@@ -18,7 +18,7 @@
 ## Verification and Boundaries
 
 - Automated checks cover shared pronunciation, source/highlight mapping, settings, stale starts, playback controls and cleanup. No online synthesis was required.
-- The optional Windows OCR helper is unchanged and reused from the previous release. OCR remains separately installed and opt-in.
+- The optional Windows OCR helper code is unchanged; the release workflow rebuilds it and checks both models against an invented public sample before publishing its checksum and provenance. OCR remains separately installed and opt-in.
 - No private prose, PDFs, credentials, installed settings, diagnostic extracts or local backups are release assets.
 - Existing settings are preserved. Restart Obsidian or reload the plugin, then begin a new reading session to replace old prepared audio.
 
