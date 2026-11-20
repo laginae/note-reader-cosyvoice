@@ -23,7 +23,7 @@ const { pathToFileURL } = require('url');
 const { extractPdfTextLayout, extractTextFromPdfItems } = require('./pdf-layout');
 const { partitionFootnotes, footnoteRules, normalizeFootnoteMode, addFootnoteSettings, splitFootnotesInRange } = require('./pdf-footnotes');
 const { recurringEdges, ancillaryLayout, inside: insidePdfRegion, textOf: pdfLinesText, addAncillarySettings } = require('./pdf-ancillary');
-const { ACADEMIC_DEFAULTS, academicOptions, academicLatex, mathSpeech, citations, skipTable, omission } = require('./academic-speech');
+const { ACADEMIC_DEFAULTS, academicOptions, academicLatex, mathSpeech, citations } = require('./academic-speech');
 const { speakGreekCommands } = require('./math-symbols');
 const { numericTableRegions } = require('./pdf-academic');
 const { pdfMathChanges, applyPdfMathChanges, pdfFontNames } = require('./pdf-math');
@@ -32,7 +32,7 @@ const { capturePdfSelectionLayout, preparePdfSelection, normalizePdfSpeechText }
 const { MAX_HTML_BYTES, captureHtmlSelection, extractHtmlText, getHtmlReaderDocument, isHtmlFile } = require('./html-text');
 const { WEB_VIEW_TYPE, captureWebPage, getWebPageUrl, isWebPageView } = require('./web-page');
 const { createViewObservation } = require('./view-observation');
-const { estimatePlayback, formatDuration } = require('./playback-estimate');
+const { estimatePlayback, invalidateEstimate, formatDuration } = require('./playback-estimate');
 const { getSystemVoiceKey, listSystemVoices, normalizeSystemVoice, synthesizeSystemSpeech, systemSpeechError } = require('./system-tts');
 const { edgeTtsError } = require('./edge-errors');
 const { safeRemoteErrorDetail, MAX_ERROR_BYTES } = require('./remote-error-detail');
@@ -54,7 +54,8 @@ const { registerDockedOutline } = require('./docked-outline');
 const { PdfOutlineModal, addPdfOutlineSettings } = require('./pdf-outline-ui');
 const { readerRange } = require('./reader-selection');
 const { getSpeechParts, planSpeechParts, adjacentSpeechPart, getSpeechPartTiming } = require('./speech-parts');
-const { preparationStatusText } = require('./preparation-status');
+const { preparationStatusText, playbackStatusText } = require('./preparation-status');
+const { bindOverallSeek } = require('./overall-seek');
 const { listeningMode, planListeningBuffer } = require('./listening-buffer');
 const { BufferingHint, renderBufferingHint } = require('./buffering-hint');
 const { kindFor, toggleFollowing, updateFollowButton } = require('./reading-follow');
@@ -1059,37 +1060,6 @@ function isMarkdownTableDelimiterLine(line) {
   return cells.length >= 2 && cells.every((cell) => /^:?-{3,}:?$/.test(cell.replace(/\s+/g, '')));
 }
 
-function formatMarkdownTableForSpeech(headers, rows, options = {}) {
-  if (skipTable(headers, rows, options)) return omission('table', options, headers.concat(...rows).join(' '));
-  const tableText = headers.concat(...rows).join(' ');
-  const useChineseLabels = /[\u3040-\u30ff\u3400-\u9fff\uf900-\ufaff]/.test(tableText);
-  const output = [];
-  const headerLabels = headers.map((header) => header.trim()).filter(Boolean);
-
-  if (headerLabels.length) {
-    output.push(`${useChineseLabels ? '表格列' : 'Table columns'}: ${headerLabels.join('; ')}${useChineseLabels ? '。' : '.'}`);
-  }
-
-  rows.forEach((cells, rowIndex) => {
-    const values = [];
-    const cellCount = Math.max(headers.length, cells.length);
-    for (let cellIndex = 0; cellIndex < cellCount; cellIndex += 1) {
-      const cell = String(cells[cellIndex] || '').trim();
-      if (!cell) {
-        continue;
-      }
-      const header = String(headers[cellIndex] || '').trim();
-      values.push(header ? `${header}: ${cell}` : cell);
-    }
-
-    if (values.length) {
-      const rowLabel = useChineseLabels ? `第 ${rowIndex + 1} 行` : `Row ${rowIndex + 1}`;
-      output.push(`${rowLabel}. ${values.join('; ')}${useChineseLabels ? '。' : '.'}`);
-    }
-  });
-
-  return output.join('\n');
-}
 
 function sanitizeMarkdownTablesForSpeech(text, options = {}) {
   const lines = normalizeLineBreaks(text).split('\n');
@@ -1112,7 +1082,7 @@ function sanitizeMarkdownTablesForSpeech(text, options = {}) {
         rowIndex += 1;
       }
 
-      output.push(formatMarkdownTableForSpeech(headers, rows, options));
+      output.push(require('../core').formatTableForSpeech(headers, rows, academicOptions(options)));
       index = rowIndex - 1;
       continue;
     }
@@ -1881,7 +1851,7 @@ function isInteractiveKeyboardTarget(target) {
       (target.attributes && target.attributes.type) ||
       'text'
   ).toLowerCase();
-  return !['button', 'checkbox', 'radio', 'range', 'reset', 'submit'].includes(type);
+  return !['button', 'reset', 'submit'].includes(type);
 }
 
 function getChunkNavigationState(currentChunk, totalChunks) {
@@ -2514,13 +2484,9 @@ class CosyVoiceReaderPlugin extends Plugin {
         file: snapshot.file, sourceKind: 'markdown', sourceText: snapshot.sourceText,
         sourceOffset: snapshot.start, skipReadingPosition: snapshot.selection,
       })), message => new Notice(message));
-    registerPdfReadingMenu(this, Menu, getPdfSelectionContext, snapshot => this.runUserAction('Read PDF context', async () => {
-      if (!snapshot.selection) return this.readCurrentPdf(snapshot.file, { selectionContext: snapshot.context });
-      await this.activateControlView();
-      return this.startReading(preparePdfSelection(snapshot.context, this.settings), `${snapshot.file.basename || snapshot.file.name} (PDF selection)`, {
-        plainText:true, pdfText:true, skipReadingPosition:true, file:snapshot.file, sourceKind:'pdf', pdfSelection:snapshot.context,
-      });
-    }), message => new Notice(message));
+    registerPdfReadingMenu(this, Menu, getPdfSelectionContext, snapshot => this.runUserAction('Read PDF context', () =>
+      this.readPdfRange(snapshot.file, snapshot.context, snapshot.selection ? 'selection' : 'from-selection', snapshot.selection)
+    ), message => new Notice(message));
     await this.ensureCacheDir();
 
     this.registerView(VIEW_TYPE, (leaf) => new CosyVoiceReaderView(leaf, this));
@@ -2535,11 +2501,21 @@ class CosyVoiceReaderPlugin extends Plugin {
     this.registerEvent(this.app.workspace.on('layout-change', () => { this.nativeToolbars.sync(); this.viewObservation?.sync(); }));
     this.registerEvent(this.app.workspace.on('file-open', () => {
       this.nativeToolbars.sync();
+      for (const panel of this.readerViews) panel.render(true);
       this.viewObservation?.sync();
       this.runUserAction('Save reading position', () => this.saveSessionReadingPosition(this.activeSession));
     }));
-    this.registerEvent(this.app.workspace.on('editor-change', editor => this.nativeToolbars.invalidate(editor)));
-    if (this.app.metadataCache?.on) this.registerEvent(this.app.metadataCache.on('changed', file => this.nativeToolbars.changed(file)));
+    this.registerEvent(this.app.workspace.on('editor-change', (editor, view) => {
+      this.nativeToolbars.invalidate(editor);
+      for (const panel of this.readerViews) panel.scheduleOutlineRefresh(view?.file);
+    }));
+    if (this.app.metadataCache?.on) this.registerEvent(this.app.metadataCache.on('changed', file => {
+      this.nativeToolbars.changed(file);
+      for (const panel of this.readerViews) panel.scheduleOutlineRefresh(file);
+    }));
+    if (this.app.vault?.on) this.registerEvent(this.app.vault.on('modify', file => {
+      for (const panel of this.readerViews) panel.scheduleOutlineRefresh(file);
+    }));
     this.app.workspace.onLayoutReady?.(() => { if (!this.systemSpeechUnloaded) this.nativeToolbars.sync(); });
     if (typeof this.registerEditorExtension === 'function' && typeof this.registerMarkdownPostProcessor === 'function') {
       this.noteHighlights = installNoteHighlights(this);
@@ -3195,12 +3171,16 @@ class CosyVoiceReaderPlugin extends Plugin {
     this.readerViews.delete(view);
   }
 
-  renderReaderViews() {
+  renderReaderViews(playbackOnly = false) {
+    if (this.statusBar && this.readerState) {
+      const label = playbackStatusText(this.readerState, this.settings?.settingsLanguage, this.activeSession?.kind === 'audio-export');
+      if (label !== this.lastStatusBarLabel) { this.statusBar.setText(label); this.lastStatusBarLabel = label; }
+    }
     this.dockedOutline?.update();
     this.miniOutline?.update();
     this.nativeToolbars?.render();
     for (const view of this.readerViews) {
-      view.render();
+      view.render(!playbackOnly);
     }
     this.renderDocumentViews();
   }
@@ -3385,16 +3365,15 @@ class CosyVoiceReaderPlugin extends Plugin {
 
   captureMarkdownReadingSelection(view) {
     if (!view?.editor || !view.file) return null;
-    const sourceText = view.editor.getValue();
     if (view.getMode?.() === 'preview') {
       const range = readerRange(view.contentEl);
       if (!range) return null;
       const offsets = this.noteHighlights?.selectionOffsets(view, range);
-      return { sourceText, filePath: view.file.path, selectedText: range.toString(), start: offsets?.start ?? null, end: offsets?.end ?? null };
+      return { sourceText: view.editor.getValue(), filePath: view.file.path, selectedText: range.toString(), start: offsets?.start ?? null, end: offsets?.end ?? null };
     }
     const selectedText = view.editor.getSelection();
     if (!selectedText?.trim()) return null;
-    return { sourceText, filePath: view.file.path, selectedText,
+    return { sourceText: view.editor.getValue(), filePath: view.file.path, selectedText,
       start: view.editor.posToOffset(view.editor.getCursor('from')), end: view.editor.posToOffset(view.editor.getCursor('to')) };
   }
 
@@ -3442,7 +3421,7 @@ class CosyVoiceReaderPlugin extends Plugin {
       ...this.readerState,
       ...patch,
     });
-    this.renderReaderViews();
+    this.renderReaderViews(true);
   }
 
   async runUserAction(label, action) {
@@ -3500,6 +3479,27 @@ class CosyVoiceReaderPlugin extends Plugin {
     const liveSelection = this.capturePdfSelection();
     const context = liveSelection || this.lastPdfSelection;
     return context && context.filePath === getPdfFileIdentity(file) && context.fileMtime === getFileMtime(file) ? context : null;
+  }
+
+  async readPdfRange(file, context, scope, showControls = false) {
+    const valid = () => isPdfFile(file) && context?.selectedText?.trim()
+      && context.filePath === getPdfFileIdentity(file) && context.fileMtime === getFileMtime(file);
+    const reselect = () => new Notice(translateInterface(this.settings.settingsLanguage,
+      'Select text in the current PDF again.', '请在当前 PDF 中重新选择文字。'));
+    if (!valid()) { reselect(); return; }
+    if (scope === 'from-selection') return this.readCurrentPdf(file, { selectionContext: { ...context, strictMatch: true } });
+    if (scope !== 'selection') return;
+    if (!context.selectionLayout?.length) {
+      new Notice(translateInterface(this.settings.settingsLanguage,
+        'PDF selection layout is unavailable. Wait for the page to render, then select the text again.',
+        '无法可靠读取 PDF 选区版面。请等待页面显示完整后重新选择文字。'), 8000);
+      return;
+    }
+    if (showControls) await this.activateControlView();
+    if (!valid()) { reselect(); return; }
+    return this.startReading(preparePdfSelection(context, this.settings), `${file.basename || file.name} (PDF selection)`, {
+      plainText: true, pdfText: true, skipReadingPosition: true, file, sourceKind: 'pdf', pdfSelection: context,
+    });
   }
 
   getHtmlReaderLeaves() {
@@ -3801,6 +3801,7 @@ class CosyVoiceReaderPlugin extends Plugin {
         }
         return null;
       }
+      if (options.availabilityOnly) return { documentKind: 'markdown', file };
       const documentText = String(view.editor.getValue() || '');
       const selectionText = typeof view.editor.getSelection === 'function'
         ? String(view.editor.getSelection() || '')
@@ -3821,7 +3822,7 @@ class CosyVoiceReaderPlugin extends Plugin {
       };
     }
     if (isPdfFile(file)) {
-      const selectionContext = this.getPdfSelectionForFile(file);
+      const selectionContext = options.captureSelection === false ? null : this.getPdfSelectionForFile(file);
       return {
         documentKind: 'pdf',
         file,
@@ -3846,11 +3847,11 @@ class CosyVoiceReaderPlugin extends Plugin {
   }
 
   canExportCurrentFile() {
-    return Boolean(this.getCurrentAudioExportContext({ notify: false, captureSelection: false }));
+    return Boolean(this.getCurrentAudioExportContext({ notify: false, captureSelection: false, availabilityOnly: true }));
   }
 
   canInsertAudioExportIntoCurrentNote() {
-    const context = this.getCurrentAudioExportContext({ notify: false, captureSelection: false });
+    const context = this.getCurrentAudioExportContext({ notify: false, captureSelection: false, availabilityOnly: true });
     return Boolean(context && context.documentKind === 'markdown');
   }
 
@@ -4810,13 +4811,7 @@ class CosyVoiceReaderPlugin extends Plugin {
       return;
     }
 
-    const selectionContext = this.getPdfSelectionForFile(file);
-    if (!selectionContext) {
-      new Notice('CosyVoice PDF: select text in the PDF first, then try again.', 8000);
-      return;
-    }
-
-    await this.readCurrentPdf(file, { selectionContext });
+    return this.readPdfRange(file, this.getPdfSelectionForFile(file), 'from-selection');
   }
 
   getSpeechConfiguration() {
@@ -5471,26 +5466,7 @@ class CosyVoiceReaderPlugin extends Plugin {
       return;
     }
     if (isPdfFile(activeFile)) {
-      const selectionContext = this.getPdfSelectionForFile(activeFile);
-      if (!selectionContext) {
-        new Notice('CosyVoice PDF: select text in the PDF first, then try again.', 8000);
-        return;
-      }
-
-      await this.activateControlView();
-      if (!selectionContext.selectionLayout?.length) {
-        new Notice(translateInterface(this.settings.settingsLanguage,
-          'PDF selection layout is unavailable. Wait for the page to render, then select the text again.',
-          '无法可靠读取 PDF 选区版面。请等待页面显示完整后重新选择文字。'), 8000);
-        return;
-      }
-      await this.startReading(
-        preparePdfSelection(selectionContext, this.settings),
-        `${activeFile.basename || activeFile.name || 'PDF'} (PDF selection)`,
-        { plainText: true, pdfText: true, skipReadingPosition: true,
-          file: activeFile, sourceKind: 'pdf', pdfSelection: selectionContext }
-      );
-      return;
+      return this.readPdfRange(activeFile, this.getPdfSelectionForFile(activeFile), 'selection', true);
     }
 
     const view = this.getActiveMarkdownView();
@@ -5902,7 +5878,8 @@ class CosyVoiceReaderPlugin extends Plugin {
     session.speechStarted = true;
     session.synthesisSpeeds = session.synthesisSpeeds || {};
     const speechEngine = normalizeSpeechEngine(session.speechEngine || this.settings.speechEngine);
-    session.synthesisSpeeds[index] = effectiveSynthesisSpeed({ ...(session.synthesisSettings || this.settings), speechEngine });
+    const speed = effectiveSynthesisSpeed({ ...(session.synthesisSettings || this.settings), speechEngine });
+    if (session.synthesisSpeeds[index] !== speed) { session.synthesisSpeeds[index] = speed; invalidateEstimate(session, index); }
     const engineLabel = session.engineLabel || getSpeechEngineLabel(this.settings);
     const outputExtension = getAudioExportExtension(speechEngine, session.synthesisSettings || this.settings);
     const basename = `${Date.now()}-${session.id}-${index}-${part}`;
@@ -6668,9 +6645,11 @@ class CosyVoiceReaderPlugin extends Plugin {
           if (this.isActive(session) && Number.isFinite(audio.duration) && audio.duration > 0) {
             session.audioDurations = session.audioDurations || {};
             session.partDurations ||= {};
+            if (session.partDurations[`${index}:${part}`] === audio.duration && session.audioDurations[index] > 0) return;
             session.partDurations[`${index}:${part}`] = audio.duration;
             session.audioDurations[index] = getSpeechParts(session, index).length > 1
               ? this.getSegmentTiming(session, index, part, audio.currentTime).duration : audio.duration;
+            invalidateEstimate(session, index);
           }
         };
         const applyPlaybackSpeed = () => {
@@ -7287,9 +7266,6 @@ class CosyVoiceReaderPlugin extends Plugin {
     if (patch && patch.phase && this.activeSession) {
       this.transitionSessionPhase(this.activeSession, patch.phase);
     }
-    if (this.statusBar) {
-      this.statusBar.setText(text);
-    }
     this.setReaderState({
       label: text,
       ...patch,
@@ -7376,11 +7352,19 @@ class CosyVoiceReaderView extends ItemView {
   }
 
   async onClose() {
+    clearTimeout(this.outlineTimer);
     this.sidebarOutline?.destroy();
+    this.sidebarOutline = null; this.panel = null;
     this.plugin.unregisterReaderView(this);
   }
 
-  render() {
+  scheduleOutlineRefresh(file) {
+    if (!this.sidebarOutline || (file && file !== this.sidebarOutline.file)) return;
+    clearTimeout(this.outlineTimer);
+    this.outlineTimer = setTimeout(() => this.sidebarOutline?.refresh(), 150);
+  }
+
+  render(checkDocument = false) {
     if (this.sidebarOutline?.pointerBusy) return;
     if (this.plugin.bufferingHint?.visibleSession === this.plugin.activeSession
       && this.bufferingHintEl?.contains(this.bufferingHintEl.ownerDocument.activeElement)) return;
@@ -7389,12 +7373,16 @@ class CosyVoiceReaderView extends ItemView {
     const outlineScroll = this.sidebarOutline?.list.scrollTop;
     const outlinePath = this.sidebarOutline?.path;
     const outlineCurrent = this.sidebarOutline?.current;
-    if (this.volumeInteracting) return;
-    if (this.chunkSeekEditing && this.chunkSeekAudio === this.plugin.currentAudio
-      && this.plugin.readerState?.canSeek) return;
-    this.chunkSeekEditing = false;
     const root = this.contentEl || this.containerEl.children[1] || this.containerEl;
     const state = this.plugin.readerState || createReaderState();
+    const language = this.plugin.settings?.settingsLanguage;
+    const layout = [language, this.plugin.settings?.copilotChatEnabled !== false, Boolean(this.plugin.pendingAudioMerge)].join('|');
+    if (this.panel?.root === root && this.panel.layout === layout) {
+      this.updatePanel(state, checkDocument);
+      return;
+    }
+    const r = this.panel = { root, layout };
+    this.chunkSeekEditing = this.volumeInteracting = false;
 
     this.sidebarOutline?.root.remove();
     this.bufferingHintEl?.remove();
@@ -7407,94 +7395,65 @@ class CosyVoiceReaderView extends ItemView {
 
     const header = root.createDiv({ cls: 'note-reader-cosyvoice-panel-header' });
     header.createEl('h3', { text: this.translate('Voice Reader') });
-    header.createDiv({ cls: `note-reader-cosyvoice-state is-${state.status}`, text: state.label });
-    this.bufferingHintEl = renderBufferingHint(this.plugin, header, this.bufferingHintEl, setIcon);
+    r.header = header;
+    r.status = header.createDiv({ cls: 'note-reader-cosyvoice-state' });
 
     const progressWrap = root.createDiv({ cls: 'note-reader-cosyvoice-progress-wrap' });
     const progressHeading = progressWrap.createDiv({ cls: 'note-reader-progress-heading' });
     progressHeading.createDiv({ cls: 'note-reader-cosyvoice-section-label', text: this.translate('Overall progress') });
     const followActions = progressHeading.createDiv({ cls: 'note-reader-follow-actions' });
-    const follow = this.createIconButton(followActions, 'move-vertical', 'Auto-follow',
+    r.follow = this.createIconButton(followActions, 'move-vertical', 'Auto-follow',
       () => toggleFollowing(this.plugin, kindFor(this.plugin)), false, { triggerOnPointerDown: true });
-    if (follow) updateFollowButton(follow, this.plugin, kindFor(this.plugin));
-    this.createIconButton(followActions, 'locate-fixed', this.plugin.settings.settingsLanguage === 'chinese'
+    r.locate = this.createIconButton(followActions, 'locate-fixed', this.plugin.settings.settingsLanguage === 'chinese'
       ? '定位正在朗读的位置' : 'Locate current reading', () => this.plugin.locateCurrentReading(),
       !this.plugin.activeSession || this.plugin.activeSession.kind === 'audio-export', { triggerOnPointerDown: true });
     const progressControls = progressWrap.createDiv({ cls: 'note-reader-cosyvoice-progress-controls' });
-    this.createIconButton(progressControls, 'skip-back', 'Previous chunk', () => {
+    r.previous = this.createIconButton(progressControls, 'skip-back', 'Previous chunk', () => {
       this.plugin.jumpToAdjacentChunk(-1);
     }, !state.canPreviousChunk, { triggerOnPointerDown: true });
     const canNavigateProgress = state.canSeek || state.canNextChunk || state.canPreviousChunk;
-    const progressTrack = progressControls.createDiv({
+    const progressTrack = r.track = progressControls.createDiv({
       cls: `note-reader-cosyvoice-progress-track${canNavigateProgress ? ' is-seekable' : ''}`,
     });
-    const progressFill = progressTrack.createDiv({ cls: 'note-reader-cosyvoice-progress-fill' });
-    progressFill.style.width = `${Math.round(state.progress * 100)}%`;
-    const progressInput = progressTrack.createEl('input', {
+    r.fill = progressTrack.createDiv({ cls: 'note-reader-cosyvoice-progress-fill' });
+    const progressInput = r.progress = progressTrack.createEl('input', {
       cls: 'note-reader-cosyvoice-progress-input',
       attr: {
         'aria-label': `${this.translate('Reading progress')} - ${this.plugin.settings?.settingsLanguage === 'chinese'
-          ? '跳转到指定分段的开头；未合成的分段需要等待合成。'
-          : 'Jump to the start of a segment; unprepared segments require synthesis.'}`,
+          ? '当前段内按位置跳转；跨段跳到目标段开头。'
+          : 'Seek within this segment; across segments, jump to the target segment start.'}`,
         max: '1000',
         min: '0',
         step: '1',
         'aria-description': this.plugin.settings?.settingsLanguage === 'chinese'
-          ? '跳转到指定分段的开头；未合成的分段需要等待合成。'
-          : 'Jump to the start of a segment; unprepared segments require synthesis.',
+          ? '松开后跳转；未合成的音频需要等待。'
+          : 'Release to seek; unprepared audio requires synthesis.',
         type: 'range',
         value: String(Math.round(state.progress * 1000)),
       },
     });
-    progressInput.disabled = !canNavigateProgress;
-    progressInput.addEventListener('pointerdown', (event) => {
-      if (!canNavigateProgress || event.button !== 0) return;
-      const bounds = progressInput.getBoundingClientRect();
-      if (!bounds.width) return;
-      event.preventDefault();
-      event.stopPropagation();
-      this.seekToSegment(clampProgress((event.clientX - bounds.left) / bounds.width));
+    r.scrubbing = bindOverallSeek(progressInput, this.plugin, () => this.render(), value => {
+      r.fill.style.width = Math.round(value * 100) + '%';
     });
-    progressInput.addEventListener('input', () => {
-      if (!canNavigateProgress) {
-        return;
-      }
-      const requestedProgress = Number(progressInput.value) / 1000;
-      this.seekToSegment(requestedProgress);
-    });
-    this.createIconButton(progressControls, 'skip-forward', 'Next chunk', () => {
+    r.next = this.createIconButton(progressControls, 'skip-forward', 'Next chunk', () => {
       this.plugin.jumpToAdjacentChunk(1);
     }, !state.canNextChunk, { triggerOnPointerDown: true });
 
     const meta = progressWrap.createDiv({ cls: 'note-reader-cosyvoice-meta' });
-    meta.createSpan({ text: formatProgressLabel(state) });
-    meta.createSpan({ text: `${Math.round(state.progress * 100)}%` });
-
-    const estimate = estimatePlayback(this.plugin.activeSession,
-      Math.max(0, (state.currentChunk || 1) - 1),
-      this.plugin.getSegmentTiming().current, effectiveSynthesisSpeed({ ...(this.plugin.activeSession?.synthesisSettings || this.plugin.settings), speechEngine: this.plugin.activeSession?.speechEngine || this.plugin.settings.speechEngine }),
-      normalizeSpeed(this.plugin.settings.playbackSpeed));
-    if (estimate) {
-      const zh = this.plugin.settings.settingsLanguage === 'chinese';
-      const timing = progressWrap.createDiv({ cls: 'note-reader-cosyvoice-meta' });
-      timing.style.flexWrap = 'wrap';
-      timing.style.gap = '4px 12px';
-      timing.createSpan({ text: `${zh ? '预计总时长' : 'Estimated total'} ${formatDuration(estimate.total)}` });
-      timing.createSpan({ text: `${zh ? '预计剩余' : 'Estimated remaining'} ${formatDuration(estimate.remaining)}` });
-      if (estimate.partial) progressWrap.createDiv({
-        cls: 'note-reader-cosyvoice-meta',
-        text: zh ? '仅计已解析页面，随解析更新' : 'Parsed pages only; updates as parsing continues',
-      });
-      timing.title = zh ? '未合成部分按文本估算；不含网络等待和暂停时间。' : 'Text estimate for unsynthesized chunks; excludes network waits and pauses.';
-    }
+    r.segmentCount = meta.createSpan(); r.percent = meta.createSpan();
+    r.timing = progressWrap.createDiv({ cls: 'note-reader-cosyvoice-meta note-reader-panel-timing' });
+    r.total = r.timing.createSpan(); r.remaining = r.timing.createSpan();
+    r.partial = progressWrap.createDiv({ cls: 'note-reader-cosyvoice-meta',
+      text: language === 'chinese' ? '仅计已解析页面，随解析更新' : 'Parsed pages only; updates as parsing continues' });
+    r.timing.title = language === 'chinese' ? '未合成部分按文本估算；不含等待和暂停时间。' : 'Estimate excludes waits and pauses.';
 
     this.createChunkSeekPanel(root, state);
     const seekControls = root.createDiv({ cls: 'note-reader-cosyvoice-actions' });
     const zhControls = this.plugin.settings?.settingsLanguage === 'chinese';
-    this.createActionButton(seekControls, 'rotate-ccw', zhControls ? '后退 5 秒' : 'Back 5s', () => {
+    r.back = this.createActionButton(seekControls, 'rotate-ccw', zhControls ? '后退 5 秒' : 'Back 5s', () => {
       this.plugin.seekCurrentAudioBySeconds(-KEYBOARD_SEEK_SECONDS);
     }, !state.canSeek && !this.plugin.activeSession?.seekTarget, { triggerOnPointerDown: true });
-    this.createActionButton(seekControls, 'rotate-cw', zhControls ? '前进 5 秒' : 'Forward 5s', () => {
+    r.forward = this.createActionButton(seekControls, 'rotate-cw', zhControls ? '前进 5 秒' : 'Forward 5s', () => {
       this.plugin.seekCurrentAudioBySeconds(KEYBOARD_SEEK_SECONDS);
     }, !state.canSeek && !this.plugin.activeSession?.seekTarget, { triggerOnPointerDown: true });
 
@@ -7520,10 +7479,7 @@ class CosyVoiceReaderView extends ItemView {
     this.sidebarOutline ||= new SidebarOutline(this.plugin, root.ownerDocument, focused => {
       this.outlineFocused = focused; root.classList.toggle('note-reader-outline-focused', focused);
     });
-    root.appendChild(this.sidebarOutline.root); this.sidebarOutline.refresh();
-    if (outlineScroll !== undefined && outlinePath === this.sidebarOutline.path
-      && (outlineCurrent === this.sidebarOutline.current || !this.sidebarOutline.state?.follow || this.sidebarOutline.state?.manual))
-      this.sidebarOutline.list.scrollTop = outlineScroll;
+    root.appendChild(this.sidebarOutline.root);
     const extra = root.createEl('details', { cls: 'note-reader-sidebar-extra' });
     extra.open = Boolean(this.extraOpen);
     extra.createEl('summary', { text: zhControls ? '更多操作' : 'More actions' });
@@ -7532,18 +7488,18 @@ class CosyVoiceReaderView extends ItemView {
     this.createActionButton(secondaryActions, 'audio-lines', 'Reading toolbar', () => {
       this.runPluginAction('Reading toolbar', () => this.plugin.toggleReadingToolbar());
     }, false, { triggerOnPointerDown: true });
-    const readingViewButton = this.createActionButton(secondaryActions, 'book-open', 'Focus reading', () => {
+    const readingViewButton = r.readingView = this.createActionButton(secondaryActions, 'book-open', 'Focus reading', () => {
       this.runPluginAction('Focus reading', () => this.plugin.toggleDocumentView());
     }, false, { triggerOnPointerDown: true });
     readingViewButton.setAttribute('aria-pressed', String(Boolean(this.plugin.documentViews?.size)));
     readingViewButton.setAttribute('aria-description', this.translate(this.plugin.documentViews?.size ? 'Exit reading view' : 'Open reading view'));
-    this.createActionButton(secondaryActions, 'download', 'Export audio', () => {
+    r.export = this.createActionButton(secondaryActions, 'download', 'Export audio', () => {
       this.runPluginAction('Export audio', () => this.plugin.exportCurrentFileAudio({ insertAfterExport: false }));
     }, !canExportFile, {
       title: 'Export all, selected, or remaining audio from the current note, PDF, HTML or web page',
       triggerOnPointerDown: true,
     });
-    this.createActionButton(secondaryActions, 'paperclip', 'Export & insert audio', () => {
+    r.insert = this.createActionButton(secondaryActions, 'paperclip', 'Export & insert audio', () => {
       this.runPluginAction('Export and insert audio', () => this.plugin.exportCurrentFileAudio({ insertAfterExport: true }));
     }, !canInsertExport, {
       title: canInsertExport
@@ -7551,13 +7507,13 @@ class CosyVoiceReaderView extends ItemView {
         : 'Audio can be inserted into Markdown notes, not PDF, HTML or web pages',
       triggerOnPointerDown: true,
     });
-    if (this.plugin.settings.copilotChatEnabled !== false) this.createActionButton(secondaryActions, 'messages-square', zhControls ? '聊天朗读' : 'Read Copilot chat', () => {
+    if (this.plugin.settings.copilotChatEnabled !== false) r.chat = this.createActionButton(secondaryActions, 'messages-square', zhControls ? '聊天朗读' : 'Read Copilot chat', () => {
       this.runPluginAction('Read Copilot chat', () => this.plugin.openCopilotChat());
     }, this.plugin.activeSession?.kind === 'audio-export', { triggerOnPointerDown: true });
     const hasPendingAudioMerge = typeof this.plugin.hasPendingAudioMerge === 'function'
       && this.plugin.hasPendingAudioMerge();
     if (hasPendingAudioMerge) {
-      this.createActionButton(actions, 'refresh-cw', 'Retry merge only', () => {
+      r.retry = this.createActionButton(actions, 'refresh-cw', 'Retry merge only', () => {
         this.runPluginAction('Retry merge only', () => this.plugin.retryPendingAudioMerge());
       }, Boolean(this.plugin.activeSession), {
         title: 'Reuse the kept synthesized segments without making any TTS API requests',
@@ -7566,10 +7522,10 @@ class CosyVoiceReaderView extends ItemView {
     }
     const canResumeFile = typeof this.plugin.canResumeCurrentFile === 'function'
       && this.plugin.canResumeCurrentFile();
-    this.createActionButton(actions, 'history', 'Resume file', () => {
+    r.resume = this.createActionButton(actions, 'history', 'Resume file', () => {
       this.runPluginAction('Resume file', () => this.plugin.resumeCurrentFile());
     }, !canResumeFile, { triggerOnPointerDown: true });
-    this.createActionButton(
+    r.pause = this.createActionButton(
       seekControls,
       state.isPaused ? 'play' : 'pause',
       state.isPaused ? 'Resume' : 'Pause',
@@ -7584,7 +7540,7 @@ class CosyVoiceReaderView extends ItemView {
         triggerOnPointerDown: true,
       }
     );
-    this.createActionButton(
+    r.stop = this.createActionButton(
       seekControls,
       'square',
       'Stop',
@@ -7597,58 +7553,115 @@ class CosyVoiceReaderView extends ItemView {
 
     const details = extra.createDiv({ cls: 'note-reader-cosyvoice-details' });
     details.createDiv({ cls: 'note-reader-cosyvoice-detail-label', text: this.translate('Phase') });
-    details.createDiv({ cls: 'note-reader-cosyvoice-detail-value', text: preparationStatusText(state, this.plugin.settings.settingsLanguage) || state.phase });
+    r.phase = details.createDiv({ cls: 'note-reader-cosyvoice-detail-value' });
     details.createDiv({ cls: 'note-reader-cosyvoice-detail-label', text: this.translate('Source') });
-    details.createDiv({ cls: 'note-reader-cosyvoice-detail-value', text: state.source || '-' });
-
-    if (state.error) {
-      root.createDiv({ cls: 'note-reader-cosyvoice-error', text: state.error });
-    }
+    r.source = details.createDiv({ cls: 'note-reader-cosyvoice-detail-value' });
+    r.error = root.createDiv({ cls: 'note-reader-cosyvoice-error' });
 
     const preview = root.createDiv({ cls: 'note-reader-cosyvoice-preview' });
     preview.createDiv({ cls: 'note-reader-cosyvoice-detail-label', text: this.translate('Text') });
-    preview.createDiv({
+    r.preview = preview.createDiv({
       cls: 'note-reader-cosyvoice-preview-text',
       text: state.currentText || '-',
     });
+    this.updatePanel(state, true);
+    if (outlineScroll !== undefined && outlinePath === this.sidebarOutline.path
+      && (outlineCurrent === this.sidebarOutline.current || !this.sidebarOutline.state?.follow || this.sidebarOutline.state?.manual))
+      this.sidebarOutline.list.scrollTop = outlineScroll;
     if (outlineFocus?.isConnected) outlineFocus.focus({ preventScroll: true });
   }
 
-  seekToSegment(progress) {
-    const state = this.plugin.readerState;
-    const count = this.plugin.activeSession?.chunks?.length || state.totalChunks;
-    if (!count) return;
-    const target = Math.min(count - 1, Math.floor(clampProgress(progress) * count));
-    const current = Math.max(0, (state.currentChunk || 1) - 1);
-    if (target !== current) this.plugin.jumpToAdjacentChunk(target - current);
-    else this.plugin.seekCurrentSegmentToTime(0);
+  updatePanel(state, checkDocument) {
+    const r = this.panel, plugin = this.plugin, session = plugin.activeSession, settings = plugin.settings;
+    const lang = settings.settingsLanguage, zh = lang === 'chinese', exporting = session?.kind === 'audio-export';
+    const text = (el, value) => { if (el.textContent !== value) el.textContent = value; };
+    const label = playbackStatusText(state, lang, exporting);
+    text(r.status, label); r.status.className = 'note-reader-cosyvoice-state is-' + state.status;
+    text(r.phase, preparationStatusText(state, lang) || label); text(r.source, state.source || '-');
+    text(r.error, state.error || ''); r.error.hidden = !state.error; text(r.preview, state.currentText || '-');
+    this.bufferingHintEl = renderBufferingHint(plugin, r.header, this.bufferingHintEl, setIcon);
+    updateFollowButton(r.follow, plugin, kindFor(plugin)); r.locate.disabled = !session || exporting;
+    r.previous.disabled = !state.canPreviousChunk || exporting; r.next.disabled = !state.canNextChunk || exporting;
+    const canSeek = !exporting && (state.canSeek || state.canNextChunk || state.canPreviousChunk);
+    r.progress.disabled = !canSeek; r.track.classList.toggle('is-seekable', !!canSeek);
+    if (!r.scrubbing()) {
+      r.progress.value = String(Math.round(state.progress * 1000));
+      r.fill.style.width = Math.round(state.progress * 100) + '%';
+    }
+    text(r.segmentCount, formatProgressLabel(state)); text(r.percent, Math.round(state.progress * 100) + '%');
+    const timing = plugin.getSegmentTiming(), speed = normalizeSpeed(settings.playbackSpeed);
+    const estimate = estimatePlayback(session, Math.max(0, (state.currentChunk || 1) - 1), timing.current,
+      effectiveSynthesisSpeed({ ...(session?.synthesisSettings || settings), speechEngine: session?.speechEngine || settings.speechEngine }), speed);
+    r.timing.hidden = !estimate; r.partial.hidden = !estimate?.partial;
+    if (estimate) {
+      text(r.total, (zh ? '预计总时长 ' : 'Estimated total ') + formatDuration(estimate.total));
+      text(r.remaining, (zh ? '预计剩余 ' : 'Estimated remaining ') + formatDuration(estimate.remaining));
+    }
+    r.chunk.disabled = !(state.canSeek && timing.duration > 0 && !session?.seekTarget);
+    text(r.chunkTitle, this.translate('Current segment') + ' ' + (state.currentChunk || 0) + ' / ' + (state.totalChunks || 0));
+    if (this.chunkSeekAudio !== plugin.currentAudio || r.chunk.disabled) this.chunkSeekEditing = false;
+    if (!this.chunkSeekEditing) {
+      r.chunk.value = String(timing.duration > 0 ? Math.round(timing.current / timing.duration * 1000) : 0);
+      text(r.chunkTime, r.chunk.disabled ? this.translate('Waiting for audio') : formatDuration(timing.current) + ' / ' + formatDuration(timing.duration));
+    }
+    r.back.disabled = r.forward.disabled = exporting || (!state.canSeek && !session?.seekTarget);
+    r.stop.disabled = !state.canStop; r.pause.disabled = !state.canPause;
+    if (r.paused !== !!state.isPaused) {
+      r.paused = !!state.isPaused;
+      const caption = this.translate(r.paused ? 'Resume' : 'Pause');
+      const hint = this.translate(r.paused ? 'Resume reading (or press Space)' : 'Pause reading (or press Space)');
+      setIcon(r.pause.children[0], r.paused ? 'play' : 'pause'); text(r.pause.children[1], caption);
+      r.pause.setAttribute('aria-label', hint); r.pause.setAttribute('aria-description', hint);
+    }
+    if (r.chat) r.chat.disabled = exporting;
+    if (r.retry) r.retry.disabled = !!session;
+    if (checkDocument || r.lastSession !== session) {
+      r.export.disabled = plugin.canExportCurrentFile?.() === false;
+      r.insert.disabled = plugin.canInsertAudioExportIntoCurrentNote?.() === false;
+      r.resume.disabled = !plugin.canResumeCurrentFile?.();
+      r.readingView.setAttribute('aria-pressed', String(!!plugin.documentViews?.size));
+      r.readingView.setAttribute('aria-description', this.translate(plugin.documentViews?.size ? 'Exit reading view' : 'Open reading view'));
+      this.sidebarOutline.refreshIfChanged();
+    } else if (r.lastChunk !== state.currentChunk || r.lastPart !== session?.currentPartIndex) this.sidebarOutline.updateCurrent();
+    r.lastChunk = state.currentChunk; r.lastPart = session?.currentPartIndex;
+    r.lastSession = session;
+    if (r.speed !== speed) {
+      r.speed = speed; text(r.speedLabel, formatSpeedLabel(speed));
+      for (const [value, button] of r.presets) {
+        button.classList.toggle('is-active', value === speed); button.setAttribute('aria-pressed', String(value === speed));
+      }
+    }
+    if (!this.volumeInteracting) {
+      const volume = Math.round(normalizeVolume(settings.playbackVolume) * 100);
+      r.volume.value = String(volume); text(r.volumeLabel, volume + '%');
+    }
   }
 
   createChunkSeekPanel(parent, state) {
-    const audio = this.plugin.currentAudio;
+    const r = this.panel;
     const timing = this.plugin.getSegmentTiming();
     const duration = timing.duration;
     const enabled = Boolean(state.canSeek && duration > 0 && !this.plugin.activeSession?.seekTarget);
     const panel = parent.createDiv({ cls: 'note-reader-cosyvoice-chunk-seek' });
     const header = panel.createDiv({ cls: 'note-reader-cosyvoice-meta' });
-    header.createSpan({ text: `${this.translate('Current segment')} ${state.currentChunk || 0} / ${state.totalChunks || 0}` });
+    r.chunkTitle = header.createSpan();
     const current = timing.current;
-    const timeLabel = header.createSpan({ text: enabled
+    const timeLabel = r.chunkTime = header.createSpan({ text: enabled
       ? `${formatDuration(current)} / ${formatDuration(duration)}` : this.translate('Waiting for audio') });
-    const slider = panel.createEl('input', { attr: {
+    const slider = r.chunk = panel.createEl('input', { attr: {
       type: 'range', min: '0', max: '1000', step: '1',
       value: String(duration > 0 ? Math.round(current / duration * 1000) : 0),
       'aria-label': this.translate('Current segment progress'),
     } });
     slider.disabled = !enabled;
     const begin = () => {
-      if (!enabled) return;
+      if (slider.disabled) return;
       this.chunkSeekEditing = true;
-      this.chunkSeekAudio = audio;
+      this.chunkSeekAudio = this.plugin.currentAudio;
     };
     const finish = () => { this.chunkSeekEditing = false; };
     slider.addEventListener('pointerdown', (event) => {
-      if (event.button !== 0 || !enabled) return;
+      if (event.button !== 0 || slider.disabled) return;
       begin();
       try { slider.setPointerCapture(event.pointerId); } catch (_) { finish(); }
     });
@@ -7658,12 +7671,13 @@ class CosyVoiceReaderView extends ItemView {
     slider.addEventListener('lostpointercapture', finish);
     slider.addEventListener('pointerup', finish);
     slider.addEventListener('input', () => {
-      timeLabel.textContent = `${formatDuration(Number(slider.value) / 1000 * duration)} / ${formatDuration(duration)}`;
+      const d = this.plugin.getSegmentTiming().duration;
+      timeLabel.textContent = `${formatDuration(Number(slider.value) / 1000 * d)} / ${formatDuration(d)}`;
     });
     slider.addEventListener('change', () => {
-      if (enabled && audio === this.plugin.currentAudio && this.plugin.readerState.canSeek
+      if (!slider.disabled && this.chunkSeekAudio === this.plugin.currentAudio && this.plugin.readerState.canSeek
         && !this.plugin.activeSession?.seekTarget) {
-        this.plugin.seekCurrentSegmentToTime(Number(slider.value) / 1000 * duration);
+        this.plugin.seekCurrentSegmentToTime(Number(slider.value) / 1000 * this.plugin.getSegmentTiming().duration);
       }
       finish();
       this.render();
@@ -7676,8 +7690,8 @@ class CosyVoiceReaderView extends ItemView {
     const header = panel.createDiv({ cls: 'note-reader-cosyvoice-speed-header' });
     header.createSpan({ text: zh ? '\u97f3\u91cf' : 'Volume' });
     const volume = normalizeVolume(this.plugin.settings?.playbackVolume);
-    const label = header.createSpan({ text: `${Math.round(volume * 100)}%` });
-    const slider = panel.createEl('input', { attr: {
+    const label = this.panel.volumeLabel = header.createSpan({ text: `${Math.round(volume * 100)}%` });
+    const slider = this.panel.volume = panel.createEl('input', { attr: {
       type: 'range', min: '0', max: '100', step: '1', value: String(Math.round(volume * 100)),
       'aria-label': zh ? '\u64ad\u653e\u97f3\u91cf' : 'Playback volume',
     } });
@@ -7711,7 +7725,8 @@ class CosyVoiceReaderView extends ItemView {
     header.title = this.plugin.settings?.settingsLanguage === 'chinese'
       ? '立即调节播放倍速，不重新合成音频，不改变导出文件。'
       : 'Immediate playback speed; no resynthesis or changes to exported files.';
-    header.createSpan({ cls: 'note-reader-cosyvoice-speed-current', text: formatSpeedLabel(currentSpeed) });
+    this.panel.speedLabel = header.createSpan({ cls: 'note-reader-cosyvoice-speed-current', text: formatSpeedLabel(currentSpeed) });
+    this.panel.presets = [];
 
     const options = panel.createDiv({ cls: 'note-reader-cosyvoice-speed-options' });
     for (const speed of getSpeedPresets()) {
@@ -7726,6 +7741,7 @@ class CosyVoiceReaderView extends ItemView {
           'aria-pressed': String(isActive),
         },
       });
+      this.panel.presets.push([speed, button]);
       this.wireButtonAction(button, () => {
         this.runPluginAction('Set playback speed', () => this.plugin.setPlaybackSpeed(speed));
       }, { triggerOnPointerDown: true });
@@ -8637,6 +8653,9 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
     containerEl.createEl('h3', { text: 'Copilot' });
     addCopilotChatSettings(containerEl, this.plugin);
     containerEl = pages.academic;
+    const refreshPreview = require('./academic-preview').addAcademicPreview(containerEl, this.plugin.settings.settingsLanguage,
+      sample => this.plugin.settings.stripMarkdown ? sanitizeTextForSpeech(sample, academicOptions(this.plugin.settings)) : sample);
+    const saveAcademic = () => { refreshPreview(); return this.plugin.saveSettings(); };
     addSpeechTermsSettings(containerEl, this.plugin);
     new Setting(containerEl)
       .setName(ui.stripMarkdownName)
@@ -8644,7 +8663,7 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
       .addToggle((toggle) => {
         toggle.setValue(this.plugin.settings.stripMarkdown).onChange(async (value) => {
           this.plugin.settings.stripMarkdown = value;
-          await this.plugin.saveSettings();
+          await saveAcademic();
         });
       });
 
@@ -8652,18 +8671,18 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
       .setDesc(zhReading ? '智能模式跳过复杂公式，尽量保留正文中的短变量和简单关系。PDF 结合字形、字体和排版识别；不确定的内容保留。Markdown/HTML 中支持的短公式在本地转换，需开启“移除 Markdown 格式”。完整模式也不会猜读无法可靠解析的公式。' : 'Smart mode skips complex formulas while keeping short inline variables and simple relations. PDF detection uses glyphs, fonts and layout; uncertain content is retained. Supported Markdown/HTML formulas are converted locally with Strip Markdown enabled. Unsupported notation is never guessed.')
       .addDropdown(dropdown => dropdown.addOption('smart', zhReading ? '智能：跳过复杂公式' : 'Smart: skip complex formulas')
         .addOption('all', zhReading ? '朗读支持的公式' : 'Read supported formulas').addOption('skip', zhReading ? '跳过所有公式' : 'Skip all formulas')
-        .setValue(academicOptions(this.plugin.settings).academicMathMode).onChange(async value => { this.plugin.settings.academicMathMode=value; await this.plugin.saveSettings(); }));
+        .setValue(academicOptions(this.plugin.settings).academicMathMode).onChange(async value => { this.plugin.settings.academicMathMode=value; await saveAcademic(); }));
     new Setting(containerEl).setName(zhReading ? '公式读法' : 'Formula style')
       .setDesc(zhReading ? '简洁模式使用 sub、bar 等符号名；bar 表示上划线，不一定表示平均值。' : 'Short symbols use sub and bar; bar names the symbol, not necessarily a mean.')
       .addDropdown(dropdown => dropdown.addOption('concise',zhReading ? '简洁（sub、bar）' : 'Concise (sub, bar)')
         .addOption('verbose',zhReading ? '明确（下标、subscript）' : 'Explicit (subscript)')
-        .setValue(academicOptions(this.plugin.settings).academicMathStyle).onChange(async value => { this.plugin.settings.academicMathStyle=value; await this.plugin.saveSettings(); }));
+        .setValue(academicOptions(this.plugin.settings).academicMathStyle).onChange(async value => { this.plugin.settings.academicMathStyle=value; await saveAcademic(); }));
     new Setting(containerEl).setName(zhReading ? '区间读法（简洁模式）' : 'Interval speech (concise style)')
       .setDesc(zhReading ? '仅适用于可靠识别的区间。默认保留开闭端点条件；可选择只读“a 到 b”，不读括号及端点是否包含的说明。此简短读法会省略数学细节；明确公式读法仍保留完整说明，不改变原文。'
         : 'For recognized intervals only. Preserve endpoint inclusion by default, or say only "a to b" without bracket or inclusion labels. The shorter option omits mathematical detail; explicit formula style still preserves it. Source text is unchanged.')
       .addDropdown(dropdown => dropdown.addOption('precise', zhReading ? '保留端点条件（推荐）' : 'Preserve endpoints (recommended)')
         .addOption('range', zhReading ? '只读起点到终点' : 'Only read lower to upper bound')
-        .setValue(academicOptions(this.plugin.settings).academicIntervalStyle).onChange(async value => { this.plugin.settings.academicIntervalStyle=value; await this.plugin.saveSettings(); }));
+        .setValue(academicOptions(this.plugin.settings).academicIntervalStyle).onChange(async value => { this.plugin.settings.academicIntervalStyle=value; await saveAcademic(); }));
     new Setting(containerEl).setName(zhReading ? '简单函数读法' : 'Simple function speech')
       .setDesc(zhReading ? '仅用于简洁模式中可靠识别的简单函数。默认读“f of x”，可省略 of，读为“f x”；保留修饰符和下标。不改变完整模式、正文中的 of 或复杂公式规则，下次朗读生效。'
         : 'For recognized simple functions in concise style. Keep "f of x" by default, or omit of and say "f x". Accent and index labels remain. Explicit style, prose and complex-formula rules are unchanged. Applies to the next reading session.')
@@ -8671,7 +8690,7 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
         .addOption('compact', zhReading ? '省略 of：f x' : 'Omit of: f x')
         .setValue(academicOptions(this.plugin.settings).academicFunctionStyle).onChange(async value => {
           this.plugin.settings.academicFunctionStyle = academicOptions({ academicFunctionStyle: value }).academicFunctionStyle;
-          await this.plugin.saveSettings();
+          await saveAcademic();
         }));
     new Setting(containerEl)
       .setName(ui.mathLanguageName)
@@ -8684,7 +8703,7 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
           .setValue(normalizeMathReadingLanguage(this.plugin.settings.mathReadingLanguage))
           .onChange(async (value) => {
             this.plugin.settings.mathReadingLanguage = normalizeMathReadingLanguage(value);
-            await this.plugin.saveSettings();
+            await saveAcademic();
           });
       });
 
@@ -8692,16 +8711,16 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
       .setDesc(zhReading ? '智能模式跳过较长且数字密集的表格，保留标题、小表及文字表。PDF 只过滤能可靠识别的带标题数字表格；无法确定时保留。选中的 HTML 表格仍完整提取。' : 'Smart mode skips long numeric tables, retaining captions, small tables and text tables. PDF filtering requires a recognizable caption and numeric rows; uncertain content is retained. Selected HTML tables are preserved.')
       .addDropdown(dropdown => dropdown.addOption('smart',zhReading ? '智能：跳过长数字表格' : 'Smart: skip long numeric tables')
         .addOption('all',zhReading ? '完整朗读表格' : 'Read all tables').addOption('skip',zhReading ? '跳过所有已识别表格' : 'Skip all recognized tables')
-        .setValue(academicOptions(this.plugin.settings).academicTableMode).onChange(async value => { this.plugin.settings.academicTableMode=value; await this.plugin.saveSettings(); }));
+        .setValue(academicOptions(this.plugin.settings).academicTableMode).onChange(async value => { this.plugin.settings.academicTableMode=value; await saveAcademic(); }));
     new Setting(containerEl).setName(zhReading ? '每行重复表头' : 'Repeat table headers for each row')
       .setDesc(zhReading ? '默认开启。关闭后，已识别表格仅在开头读一次表头，后续读行号和数据；空单元格用“空”占位。不会改变智能跳过策略，PDF 不强行推断表头。下次朗读生效。' : 'On by default. Disable to read recognized column headings once, then row numbers and values. Empty cells keep a placeholder. Smart skipping is unchanged; PDF headings are not guessed. Applies to new reading sessions.')
       .addToggle(toggle => toggle.setValue(academicOptions(this.plugin.settings).academicTableRepeatHeaders).onChange(async value => {
         this.plugin.settings.academicTableRepeatHeaders = value;
-        await this.plugin.saveSettings();
+        await saveAcademic();
       }));
     new Setting(containerEl).setName(zhReading ? '简短提示略过内容' : 'Announce skipped content')
       .setDesc(zhReading ? '略过公式时简短提示“公式。”，英文为“Formula.”；停顿由音色按标点处理。PDF 提示随邻近正文使用中文或英文。关闭后直接继续正文。表格数据提示不变；PDF 保留表格标题，不额外插入提示。' : 'Say "Formula." when a formula is skipped; the voice determines the pause from punctuation. PDF notices follow nearby Chinese or English prose. Disable for uninterrupted prose. Table notices are unchanged; PDF tables keep captions without an extra notice.')
-      .addToggle(toggle => toggle.setValue(this.plugin.settings.academicSkipNotice !== false).onChange(async value => { this.plugin.settings.academicSkipNotice=value; await this.plugin.saveSettings(); }));
+      .addToggle(toggle => toggle.setValue(this.plugin.settings.academicSkipNotice !== false).onChange(async value => { this.plugin.settings.academicSkipNotice=value; await saveAcademic(); }));
     containerEl.createEl('h3', { text: translateInterface(settingsLanguage, 'PDF content', 'PDF 内容') });
     addFootnoteSettings(containerEl, this.plugin, Setting);
     addAncillarySettings(containerEl, this.plugin, Setting);

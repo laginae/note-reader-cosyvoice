@@ -93,6 +93,29 @@ function keyboardFixture() {
   } };
 }
 
+test('primary playback honors every chosen idle scope and never starts a new scope while playing', () => {
+  const f = fixture(); let pauses = 0;
+  f.plugin.pauseOrResume = () => pauses++;
+  for (const scope of ['selection', 'from-selection', 'entire']) {
+    f.toolbar.scope.value = scope; f.toolbar.scope.dispatchEvent(new f.dom.window.Event('change'));
+    assert.equal(f.toolbar.readScope.hidden, true);
+    f.toolbar.play.click(); assert.equal(f.requests.at(-1)[1], scope);
+  }
+  f.plugin.activeSession = {chunks:['Public text.']}; f.plugin.readerState.canPause = true; f.toolbar.render();
+  f.toolbar.play.click();
+  assert.equal(pauses,1); assert.equal(f.requests.length,3);
+  f.plugin.activeSession.kind = 'audio-export'; f.toolbar.render(); f.toolbar.play.click();
+  assert.equal(pauses,1); assert.equal(f.requests.length,3);
+  f.manager.destroy(); f.dom.window.close();
+});
+
+test('narrow pane moves the same seek buttons into More and restores them on widening', () => {
+  const f = fixture(), t = f.toolbar;
+  t.fitWidth(420); assert.ok(t.more.contains(t.back) && t.more.contains(t.forward));
+  t.fitWidth(910); assert.equal(t.more.contains(t.back),false); assert.ok(t.seekHome.contains(t.forward));
+  f.manager.destroy(); f.dom.window.close();
+});
+
 test('locate toolbar action is available for reading but not export and follows language', () => {
   const { plugin, toolbar, manager, dom } = fixture();
   let count = 0; plugin.locateCurrentReading = () => count++;
@@ -297,7 +320,7 @@ test('toolbar discards an uncommitted progress selection when the reading sessio
   toolbar.progress.dispatchEvent(new dom.window.Event('pointerdown'));
   toolbar.progress.value = '500'; toolbar.progress.dispatchEvent(new dom.window.Event('input'));
   toolbar.progress.dispatchEvent(new dom.window.Event('pointercancel'));
-  assert.equal(toolbar.scrubbing, false); assert.equal(toolbar.scrubValue, null);
+  assert.equal(toolbar.isScrubbing(), false);
   assert.deepEqual(seeks, []);
   manager.destroy(); dom.window.close();
 });
@@ -307,16 +330,23 @@ test('PDF toolbar reuses playback and scope actions without changing PDF content
   const doc=dom.window.document, file={path:'public.pdf',extension:'pdf',stat:{mtime:1}}, calls=[];
   const view={file,contentEl:doc.querySelector('article'),getViewType:()=> 'pdf',
     addAction(_icon,_label,callback){const el=doc.createElement('button');doc.querySelector('header').append(el);el.onclick=callback;return el;}};
-  const context={filePath:file.path,fileMtime:1,pageNumber:2,selectedText:'PDF words'};
+  const context={filePath:file.path,fileMtime:1,pageNumber:2,selectedText:'PDF words',
+    selectionLayout:[{pageNumber:2,viewport:{width:600,height:800},items:[
+      {str:'PDF words',width:60,height:12,transform:[12,0,0,12,40,700]}]}]};
   const plugin={settings:{},readerState:{},app:{workspace:{getLeavesOfType:type=>type==='pdf'?[{view}]:[]}},
     runUserAction:(_label,action)=>action(),getPdfSelectionForFile:()=>context,
+    readPdfRange:PluginClass.prototype.readPdfRange,
     captureMarkdownReadingSelection:()=>assert.fail('PDF must not use the editor'),
     readCurrentPdf:async(...args)=>calls.push(['pdf',...args]),startReading:async(...args)=>calls.push(['selection',...args]),
     openPdfOutline:f=>calls.push(['outline',f]),stopReading:()=>assert.fail('Hiding toolbar must not stop reading')};
   const manager=new NativeToolbarManager(plugin);manager.sync();manager.toggle(view);
   const toolbar=manager.toolbars.get(view), span=view.contentEl.querySelector('span');
   toolbar.captureSelection();await toolbar.read('entire');await toolbar.read('from-selection');await toolbar.read('selection');
-  assert.equal(calls[0][1],file);assert.equal(calls[1][2].selectionContext,context);assert.equal(calls[2][1],'PDF words');
+  assert.equal(calls[0][1],file);assert.deepEqual(calls[1][2].selectionContext,{...context,strictMatch:true});assert.equal(calls[2][1],'PDF words');
+  assert.equal(calls[2][3].pdfSelection,context); assert.equal(calls[2][3].skipReadingPosition,true);
+  plugin.lastPdfSelection=context;
+  span.dispatchEvent(new dom.window.MouseEvent('pointerdown',{button:0,bubbles:true}));
+  assert.equal(toolbar.selection,null);assert.equal(plugin.lastPdfSelection,null);
   toolbar.outlineButton.click();assert.equal(calls[3][0],'outline');
   file.stat.mtime=2;await toolbar.read('from-selection');assert.equal(calls.length,4);
   toolbar.selection = null; plugin.getPdfSelectionForFile = () => null;

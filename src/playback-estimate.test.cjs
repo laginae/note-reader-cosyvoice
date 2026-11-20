@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { estimateTextSeconds, estimatePlayback, formatDuration } = require('./playback-estimate');
+const { estimateTextSeconds, estimatePlayback, invalidateEstimate, formatDuration } = require('./playback-estimate');
 test('estimates handle Chinese, English, mixed text and synthesis speed', () => {
   assert.equal(estimateTextSeconds('中文测试'), 1);
   assert.equal(estimateTextSeconds('one two three four five'), 2);
@@ -28,4 +28,16 @@ test('PDF estimates grow as pages arrive and exports do not show playback estima
   assert.equal(estimatePlayback(null, 0, 0), null);
   assert.equal(formatDuration(3661), '1:01:01');
   assert.equal(formatDuration(0), '0:00');
+});
+
+test('ticks do not reread unchanged text; measured segments and progressive appends update the total', () => {
+  const words = Array(200).fill('one two three four five'); let reads = 0;
+  const chunks = new Proxy(words, { get(list, key) { if (/^\d+$/.test(String(key))) reads++; return list[key]; } });
+  const session = {chunks,audioDurations:{},synthesisSpeeds:{}};
+  assert.equal(estimatePlayback(session,0,0).total,400); assert.equal(reads,200);
+  for (let i=0;i<40;i++) estimatePlayback(session,3,i/4);
+  assert.equal(reads,200);
+  session.audioDurations[3]=5; invalidateEstimate(session,3);
+  assert.equal(estimatePlayback(session,3,0).total,403); assert.equal(reads,200);
+  words.push('word'); assert.equal(estimatePlayback(session,3,0).total,403.4); assert.equal(reads,201);
 });

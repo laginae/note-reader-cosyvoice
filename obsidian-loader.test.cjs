@@ -1290,7 +1290,7 @@ const buttonArrowEvent = createKeyboardEvent({
 root.dispatchEvent(buttonArrowEvent);
 assert.deepStrictEqual(seekBySecondsCalls, [-5, 5, 5]);
 
-const progressInput = findElementByAriaLabel(root, 'Reading progress - Jump to the start of a segment; unprepared segments require synthesis.');
+const progressInput = findElementByAriaLabel(root, 'Reading progress - Seek within this segment; across segments, jump to the target segment start.');
 assert.ok(progressInput);
 const progressArrowEvent = createKeyboardEvent({
   code: 'ArrowLeft',
@@ -1298,7 +1298,8 @@ const progressArrowEvent = createKeyboardEvent({
   target: progressInput,
 });
 root.dispatchEvent(progressArrowEvent);
-assert.deepStrictEqual(seekBySecondsCalls, [-5, 5, 5, -5]);
+assert.deepStrictEqual(seekBySecondsCalls, [-5, 5, 5]);
+assert.strictEqual(progressArrowEvent.defaultPrevented, false);
 
 const inputArrowEvent = createKeyboardEvent({
   code: 'ArrowRight',
@@ -1306,7 +1307,7 @@ const inputArrowEvent = createKeyboardEvent({
   target: new FakeElement('input'),
 });
 root.dispatchEvent(inputArrowEvent);
-assert.deepStrictEqual(seekBySecondsCalls, [-5, 5, 5, -5]);
+assert.deepStrictEqual(seekBySecondsCalls, [-5, 5, 5]);
 assert.strictEqual(inputArrowEvent.defaultPrevented, false);
 
 const pauseButton = findElementByAriaLabel(root, 'Pause reading (or press Space)');

@@ -57,8 +57,8 @@ function settingsFixture(language = 'english', engine = 'mimo-tts', overrides = 
     onChange(action) { rows.at(-1).change = action; return this; }
   }
   const loaded={exports:{}};
-  new Function('require','module','exports',fs.readFileSync(path.join(__dirname,'../../main.js'),'utf8'))(
-    name=>name==='obsidian'?{Setting,SecretComponent,Plugin:class{},ItemView:class{},Modal:class{
+  new Function('require','module','exports',fs.readFileSync(path.join(__dirname,'../../main.js'),'utf8') + '\nmodule.exports.__test.ReaderPanel = CosyVoiceReaderView;')(
+    name=>name==='obsidian'?{Setting,SecretComponent,setIcon(el,name){el.dataset.icon=name;},Plugin:class{},ItemView:class{},Modal:class{
       constructor(){ this.contentEl=doc.createElement('section');modals.push(this); }
       open(){ this.onOpen(); }
       close(){ this.closed=true;this.onClose?.(); }

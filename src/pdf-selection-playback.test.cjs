@@ -13,7 +13,7 @@ test('PDF selection reaches playback with sentence chunks, not page-line chunks'
   plugin.getCurrentDocumentView=()=>null;
   plugin.getCurrentWebPageView=()=>null;
   plugin.getCurrentReadableFile=()=>({path:'public.pdf',basename:'public',extension:'pdf'});
-  plugin.getPdfSelectionForFile=()=>({selectedText:text,pageNumber:2,selectionLayout:[{
+  plugin.getPdfSelectionForFile=()=>({filePath:'public.pdf',fileMtime:0,selectedText:text,pageNumber:2,selectionLayout:[{
     pageNumber:2,viewport:{width:600,height:800},items:text.split('\n').map((str,i)=>({
       str,width:500,height:12,transform:[12,0,0,12,40,700-i*15]}))
   }]});
@@ -38,7 +38,7 @@ test('PDF selected math reaches the speech session as words without altering the
   const plugin=Object.create(loaded.exports.default.prototype);
   plugin.settings={...loaded.exports.__test.createDefaultSettings(),mathReadingLanguage:'chinese'};
   const item=(str,x)=>({str,width:str.length*5,height:12,transform:[12,0,0,12,x,700]});
-  const context={selectedText:'The relation is 𝑥 = 𝑦 + 2.',selectionLayout:[{viewport:{width:600,height:800},
+  const context={filePath:'public.pdf',fileMtime:0,selectedText:'The relation is 𝑥 = 𝑦 + 2.',selectionLayout:[{viewport:{width:600,height:800},
     items:[item('The relation is',40),item('𝑥',130),item('=',145),item('𝑦',160),item('+',175),item('2',190),item('.',205)]}]};
   const original=JSON.stringify(context);
   plugin.getCurrentDocumentView=()=>null;
@@ -62,8 +62,8 @@ test('PDF selection without reliable layout does not silently synthesize unfilte
   const plugin=Object.create(loaded.exports.default.prototype);
   plugin.settings=loaded.exports.__test.createDefaultSettings();
   plugin.getCurrentDocumentView=()=>null;plugin.getCurrentWebPageView=()=>null;
-  plugin.getCurrentReadableFile=()=>({extension:'pdf'});
-  plugin.getPdfSelectionForFile=()=>({selectedText:'Public example x = y.'});
+  plugin.getCurrentReadableFile=()=>({path:'public.pdf',extension:'pdf'});
+  plugin.getPdfSelectionForFile=()=>({filePath:'public.pdf',fileMtime:0,selectedText:'Public example x = y.'});
   plugin.activateControlView=async()=>{};
   plugin.startReading=async()=>assert.fail('Unmapped selection must not start synthesis');
   await plugin.readSelection();
@@ -86,4 +86,20 @@ test('multi-page PDF selections retain per-page chunks and only selected source 
   assert.deepEqual(plugin.completed.chunkPageNumbers,[4,5]);
   assert.deepEqual([...plugin.completed.pdfHighlightPages.keys()],[4,5]);
   assert.deepEqual(plugin.completed.chunks,['Public page 4.','Public page 5.']);
+});
+
+test('all PDF range entry points reject missing layout and stale identities without broadening scope', async () => {
+  const plugin = Object.create(loaded.exports.default.prototype);
+  plugin.settings = loaded.exports.__test.createDefaultSettings();
+  const file = {path:'sample.pdf',extension:'pdf',stat:{mtime:5}};
+  const current = {filePath:file.path,fileMtime:5,selectedText:'A public selection.'};
+  const calls = [];
+  plugin.startReading = () => assert.fail('Selection must not be synthesized');
+  plugin.readCurrentPdf = (...args) => calls.push(args);
+  await plugin.readPdfRange(file, current, 'selection');
+  await plugin.readPdfRange(file, {...current,fileMtime:4}, 'from-selection');
+  await plugin.readPdfRange(file, {...current,filePath:'other.pdf'}, 'selection');
+  assert.equal(calls.length, 0);
+  await plugin.readPdfRange(file, current, 'from-selection');
+  assert.deepEqual(calls[0], [file,{selectionContext:{...current,strictMatch:true}}]);
 });

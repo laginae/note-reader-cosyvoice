@@ -67,8 +67,16 @@ class SidebarOutline {
     button.addEventListener('click', event => void this.plugin.runUserAction('Outline', () => action(event)));
     return button;
   }
+  refreshIfChanged() {
+    const file = this.plugin.getCurrentReadableFile?.();
+    if (this.signature == null || this.file !== file || this.path !== file?.path || this.mtime !== file?.stat?.mtime || this.size !== file?.stat?.size
+      || this.language !== this.plugin.settings.settingsLanguage
+      || (this.htmlDoc && this.htmlDoc !== getHtmlReaderDocument(this.view))) return this.refresh();
+    this.updateCurrent();
+  }
   refresh() {
     if (this.destroyed) return;
+    this.language = this.plugin.settings.settingsLanguage;
     const file = this.plugin.getCurrentReadableFile?.();
     const view = file?.extension === 'md'
       ? (this.plugin.findMarkdownViewForFile?.(file) || this.plugin.getActiveMarkdownView?.({ notify: false }))

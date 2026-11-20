@@ -8,7 +8,8 @@ const { estimatePlayback, formatDuration } = require('./playback-estimate');
 const { isElevenLabsModel } = require('./openrouter-elevenlabs');
 const { getHtmlReaderDocument } = require('./html-text');
 const { captureHtmlOutline, htmlSectionText } = require('./html-outline');
-const { preparationStatusText } = require('./preparation-status');
+const { playbackStatusText } = require('./preparation-status');
+const { bindOverallSeek } = require('./overall-seek');
 const { renderBufferingHint } = require('./buffering-hint');
 const { kindFor, toggleFollowing, updateFollowButton } = require('./reading-follow');
 
@@ -35,6 +36,13 @@ class NativeReaderToolbar {
       if (inReadingPane) this.handleKeydown(event, true);
     };
     this.root.ownerDocument.addEventListener('keydown', this.documentKeydown);
+    this.clearAnchor = event => {
+      if (event.type === 'keydown' ? event.key !== 'Escape' : event.button !== 0) return;
+      this.selection = null;
+      if (this.isPdf && plugin.lastPdfSelection?.filePath === view.file?.path) plugin.lastPdfSelection = null;
+    };
+    view.contentEl.addEventListener('pointerdown', this.clearAnchor, true);
+    view.contentEl.addEventListener('keydown', this.clearAnchor, true);
     this.root.addEventListener('pointerdown', event => {
       this.captureSelection();
       if (event.button === 0 && !event.target.closest('button, input, select, textarea, a, [contenteditable]')) {
@@ -43,41 +51,21 @@ class NativeReaderToolbar {
     }, true);
     view.contentEl.parentElement.insertBefore(this.root, view.contentEl);
     const controls = node(this.root, 'div', 'note-reader-native-controls');
-    this.play = this.button(controls, 'play', ['Read file', '朗读全文'], () => plugin.activeSession ? plugin.pauseOrResume() : this.read('entire'), true);
+    this.play = this.button(controls, 'play', ['Read file', '朗读全文'], () =>
+      plugin.activeSession ? plugin.pauseOrResume() : this.read(this.scope.value), true);
+    this.play.classList.add('note-reader-native-primary');
+    this.scopeHome = node(controls, 'div', 'note-reader-native-scope');
     this.stop = this.button(controls, 'square', ['Stop', '停止'], () => plugin.stopReading(), true);
     this.previous = this.button(controls, 'skip-back', ['Previous segment', '上一段'], () => plugin.jumpToAdjacentChunk(-1), true);
-    this.back = this.button(controls, 'rotate-ccw', ['Back 5 seconds (Left Arrow)', '后退 5 秒（左方向键）'], () => plugin.seekCurrentAudioBySeconds(-5), true);
-    this.forward = this.button(controls, 'rotate-cw', ['Forward 5 seconds (Right Arrow)', '前进 5 秒（右方向键）'], () => plugin.seekCurrentAudioBySeconds(5), true);
+    this.seekHome = node(controls, 'div', 'note-reader-native-seek');
+    this.seekGroup = node(this.seekHome, 'div', 'note-reader-native-seek');
+    this.back = this.button(this.seekGroup, 'rotate-ccw', ['Back 5 seconds (Left Arrow)', '后退 5 秒（左方向键）'], () => plugin.seekCurrentAudioBySeconds(-5), true);
+    this.forward = this.button(this.seekGroup, 'rotate-cw', ['Forward 5 seconds (Right Arrow)', '前进 5 秒（右方向键）'], () => plugin.seekCurrentAudioBySeconds(5), true);
     this.next = this.button(controls, 'skip-forward', ['Next segment', '下一段'], () => plugin.jumpToAdjacentChunk(1), true);
     this.back.setAttribute('aria-keyshortcuts', 'ArrowLeft'); this.forward.setAttribute('aria-keyshortcuts', 'ArrowRight');
-    const progress = node(controls, 'div', 'note-reader-native-progress');
+    const progress = this.timeline = node(controls, 'div', 'note-reader-native-progress');
     this.progress = node(progress, 'input'); this.progress.type = 'range'; this.progress.min = '0'; this.progress.max = '1000'; this.progress.step = '1';
-    this.progress.addEventListener('pointerdown', () => {
-      this.scrubbing = true;
-      this.scrubSession = this.plugin.activeSession;
-      this.scrubValue = null;
-    });
-    this.progress.addEventListener('input', () => {
-      if (!this.scrubbing) this.scrubSession = this.plugin.activeSession;
-      this.scrubbing = true;
-      this.scrubValue = Number(this.progress.value) / 1000;
-    });
-    this.progress.addEventListener('pointerup', () => {
-      // Keep the chosen value protected until change commits it.
-      if (this.scrubValue === null) {
-        this.scrubbing = false; this.scrubSession = null; this.render();
-      }
-    });
-    this.progress.addEventListener('change', () => {
-      const value = this.scrubValue ?? Number(this.progress.value) / 1000;
-      const session = this.scrubSession;
-      this.scrubbing = false; this.scrubValue = null; this.scrubSession = null;
-      if (!session || session === this.plugin.activeSession) this.seek(value);
-      this.render();
-    });
-    for (const event of ['blur', 'pointercancel']) this.progress.addEventListener(event, () => {
-      this.scrubbing = false; this.scrubValue = null; this.scrubSession = null; this.render();
-    });
+    this.isScrubbing = bindOverallSeek(this.progress, plugin, () => this.render());
     this.time = node(progress, 'span', 'note-reader-native-time');
     this.speed = node(controls, 'select', 'note-reader-native-speed');
     for (const value of [0.5, 0.75, 1, 1.1, 1.2, 1.25, 1.3, 1.4, 1.5, 1.75, 2, 2.5, 3]) {
@@ -100,6 +88,7 @@ class NativeReaderToolbar {
     this.moreButton = this.button(controls, 'ellipsis', ['More controls', '更多控制'], () => {
       this.more.hidden = !this.more.hidden; this.moreButton.setAttribute('aria-expanded', String(!this.more.hidden));
     });
+    this.moreButton.setAttribute('aria-expanded', 'false');
     this.button(controls, 'x', ['Hide reading toolbar', '隐藏朗读工具栏'], close);
     this.outline = node(this.root, 'div', 'note-reader-native-options'); this.outline.hidden = true;
     this.outlineButton.hidden = this.isWeb;
@@ -109,7 +98,8 @@ class NativeReaderToolbar {
     this.section = this.button(this.outline, 'audio-lines', ['Read this section', '只朗读这一节'], () => this.readHeading(false));
     this.fromSection = this.button(this.outline, 'list-start', ['Read from this section', '从这一节继续朗读'], () => this.readHeading(true));
     this.more = node(this.root, 'div', 'note-reader-native-options'); this.more.hidden = true;
-    this.scope = node(this.more, 'select');
+    this.activeScopeHome = node(this.more, 'div', 'note-reader-native-scope');
+    this.scope = node(this.scopeHome, 'select');
     this.scope.addEventListener('change', () => this.render());
     for (const [value, en, zh] of [['entire', this.isWeb || this.isHtml ? 'Entire page' : this.isPdf ? 'Entire PDF' : 'Entire note', this.isWeb || this.isHtml ? '整个页面' : this.isPdf ? '整篇 PDF' : '整篇笔记'], ['selection', 'Selection only', '仅选中文字'], ['from-selection', 'From selection', '从选中位置']]) {
       const option = node(this.scope, 'option'); option.value = value; this.labels.push([option, en, zh, 'text']);
@@ -118,6 +108,8 @@ class NativeReaderToolbar {
       const option = node(this.scope, 'option'); option.value = value; this.labels.push([option, en, zh, 'text']);
     }
     this.readScope = this.button(this.more, 'play', ['Read selected scope', '朗读所选范围'], () => this.read(this.scope.value));
+    this.overflowSeek = node(this.more, 'div', 'note-reader-native-seek');
+    this.more.appendChild(this.chatButton);
     this.volume = node(this.more, 'input'); this.volume.type = 'range'; this.volume.min = '0'; this.volume.max = '100'; this.volume.step = '1';
     this.volume.className = 'note-reader-native-volume';
     this.volume.addEventListener('input', () => plugin.setPlaybackVolume(Number(this.volume.value) / 100));
@@ -130,7 +122,20 @@ class NativeReaderToolbar {
       await plugin.app.workspace.revealLeaf(view.leaf); await plugin.exportCurrentFileAudio({ insertAfterExport: false });
     });
     this.status = node(this.root, 'div', 'note-reader-native-status');
+    const Observer = this.root.ownerDocument.defaultView?.ResizeObserver;
+    if (Observer) {
+      this.sizeObserver = new Observer(([entry]) => this.fitWidth(entry.contentRect.width));
+      this.sizeObserver.observe(this.root);
+    }
     this.refreshOutline(); this.render();
+  }
+  fitWidth(width) {
+    if (!(width > 0)) return;
+    const dest = width < 640 ? this.overflowSeek : this.seekHome;
+    if (this.seekGroup.parentElement === dest) return;
+    const focus = this.root.ownerDocument.activeElement;
+    dest.appendChild(this.seekGroup);
+    if (this.seekGroup.contains(focus)) (dest === this.overflowSeek && this.more.hidden ? this.moreButton : focus).focus({ preventScroll: true });
   }
   t(en, zh) { return translate(this.plugin.settings.settingsLanguage, en, zh); }
   action(action) { return this.plugin.runUserAction('Reading toolbar', action); }
@@ -146,7 +151,7 @@ class NativeReaderToolbar {
     const button = node(parent, 'button', 'clickable-icon'); button.type = 'button'; setIcon(button, icon);
     this.labels.push([button, ...labels]);
     button.addEventListener('pointerdown', event => {
-      if (event.button === 0) { this.captureSelection(); event.preventDefault(); }
+      if (event.button === 0) event.preventDefault();
     });
     button.addEventListener('click', () => {
       if (button.disabled) return;
@@ -168,12 +173,7 @@ class NativeReaderToolbar {
     const file = this.view.file;
     if (scope === 'entire') return this.plugin.readCurrentPdf(file);
     if (scope === 'glossary' || scope === 'footnotes') return this.plugin.readCurrentPdf(file, { contentScope: scope });
-    const context = this.selection || this.plugin.getPdfSelectionForFile(file);
-    if (!context || context.filePath !== file.path || context.fileMtime !== file.stat?.mtime) {
-      new Notice(this.t('Select text in this PDF first.', '请先在此 PDF 中选中文字。')); return;
-    }
-    if (scope === 'from-selection') return this.plugin.readCurrentPdf(file, { selectionContext: context });
-    return this.plugin.startReading(context.selectedText, `${file.basename || file.name || 'PDF'} (PDF selection)`, { file });
+    return this.plugin.readPdfRange(file, this.plugin.getPdfSelectionForFile(file) || this.selection, scope);
   }
   refreshOutline() {
     if (this.isPdf || this.isWeb) {
@@ -247,11 +247,11 @@ class NativeReaderToolbar {
     this.root.setAttribute('aria-label', this.t('Reading toolbar', '朗读工具栏'));
     const playIcon = state.isPaused ? 'play' : session ? 'pause' : 'play';
     if (this.play.dataset.icon !== playIcon) { setIcon(this.play, playIcon); this.play.dataset.icon = playIcon; }
-    const playTitle = session ? state.isPaused ? this.t('Resume (Space)', '继续（空格）') : this.t('Pause (Space)', '暂停（空格）') : this.t('Read file', '朗读全文');
-    this.play.setAttribute('aria-label', playTitle);
+    this.root.classList.toggle('is-idle', !session);
+    for (const element of [this.stop, this.previous, this.seekGroup, this.next, this.timeline, this.locate]) element.hidden = !session;
     if (session && !exporting) this.play.setAttribute('aria-keyshortcuts', 'Space');
     else this.play.removeAttribute('aria-keyshortcuts');
-    this.play.disabled = Boolean(session && !state.canPause);
+    this.play.disabled = Boolean(exporting || (session && !state.canPause));
     this.stop.disabled = !state.canStop || exporting;
     this.locate.disabled = !session || exporting;
     updateFollowButton(this.follow, this.plugin, kindFor(this.plugin, this.view));
@@ -259,7 +259,7 @@ class NativeReaderToolbar {
     this.next.disabled = !state.canNextChunk || exporting;
     this.back.disabled = this.forward.disabled = (!state.canSeek && !session?.seekTarget) || exporting;
     this.progress.disabled = !(state.canSeek || state.canNextChunk || state.canPreviousChunk) || exporting;
-    if (!this.scrubbing) this.progress.value = String(Math.round((state.progress || 0) * 1000));
+    if (!this.isScrubbing()) this.progress.value = String(Math.round((state.progress || 0) * 1000));
     const progressHint = this.t('Within the current segment: seek to the selected position. Across segments: jump to the target segment start. Unprepared audio requires synthesis.',
       '当前段内：跳到所选位置；跨段：跳到目标段开头。未合成的音频需要等待合成。');
     this.progress.setAttribute('aria-description', progressHint);
@@ -282,6 +282,14 @@ class NativeReaderToolbar {
       : this.scope.value === 'footnotes' ? this.t('Read footnotes only (whole PDF)', '仅朗读脚注（整篇 PDF）')
       : this.t('Read entire document', '朗读全文');
     this.readScope.setAttribute('aria-label', scopeLabel);
+    this.play.setAttribute('aria-label', session
+      ? state.isPaused ? this.t('Resume (Space)', '继续（空格）') : this.t('Pause (Space)', '暂停（空格）')
+      : scopeLabel);
+    const scopeParent = session ? this.activeScopeHome : this.scopeHome;
+    if (this.scope.parentElement !== scopeParent) scopeParent.appendChild(this.scope);
+    this.scopeHome.hidden = !!session;
+    this.activeScopeHome.hidden = this.readScope.hidden = !session;
+    this.scope.disabled = Boolean(exporting);
     this.section.disabled = this.fromSection.disabled = this.heading.value === '' || exporting;
     this.readScope.disabled = this.exportButton.disabled = Boolean(exporting);
     this.chatButton.hidden = this.plugin.settings.copilotChatEnabled === false;
@@ -291,15 +299,18 @@ class NativeReaderToolbar {
       (['system-tts', 'byok-tts'].includes(session?.speechEngine)
         || (session?.speechEngine === 'openrouter-tts' && isElevenLabsModel((session.synthesisSettings || this.plugin.settings).openRouterModel)))
         ? 1 : this.plugin.settings.speed, this.plugin.settings.playbackSpeed);
-    this.time.textContent = estimate ? `${this.t('Remaining ~', '剩余约 ')}${formatDuration(estimate.remaining)}` : `${state.currentChunk || 0} / ${state.totalChunks || 0}`;
+    this.time.textContent = estimate ? `${this.t('Remaining ~', '剩余约 ')}${formatDuration(estimate.remaining)}` : session ? `${state.currentChunk || 0} / ${state.totalChunks || 0}` : '';
     const source = session?.markdownSource, ranges = source && source.filePath === this.view.file?.path
       ? currentSourceRanges(source, { index: session.currentChunkIndex }) : [];
     const current = ranges.length ? [...(this.entries || [])].reverse().find(heading => heading.from <= ranges[0].from) : null;
-    this.status.textContent = state.error || (session ? [preparationStatusText(state, this.plugin.settings.settingsLanguage), session.sourceLabel, current?.title, `${state.currentChunk || 0} / ${state.totalChunks || 0}`].filter(Boolean).join(' · ') : '');
+    this.status.textContent = state.error || (session ? [playbackStatusText(state, this.plugin.settings.settingsLanguage, exporting), session.sourceLabel, current?.title].filter(Boolean).join(' · ') : '');
     this.status.hidden = !this.status.textContent;
     this.bufferingHintEl = renderBufferingHint(this.plugin, this.root, this.bufferingHintEl, setIcon);
   }
   destroy() {
+    this.sizeObserver?.disconnect();
+    this.view.contentEl.removeEventListener('pointerdown', this.clearAnchor, true);
+    this.view.contentEl.removeEventListener('keydown', this.clearAnchor, true);
     this.root.ownerDocument.removeEventListener('keydown', this.documentKeydown);
     this.root.remove(); this.selection = null; this.outlineText = ''; this.entries = [];
   }

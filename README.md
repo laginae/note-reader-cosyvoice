@@ -34,9 +34,9 @@ More ways to start: [Editing Toolbar demo](#editing-toolbar-demo) · [Right-clic
 
 1. **Install and enable** [Cozy Read Aloud](https://community.obsidian.md/plugins/note-reader-cosyvoice) from Obsidian's community plugins on desktop.
 2. **Choose a voice.** In the plugin's **Quick start**, choose **Use system speech** to try a compatible installed Windows/macOS voice without an API key. Prefer an online voice? Configure its credentials and approve text processing first.
-3. **Open a note and listen.** Click the audio icon in the pane header, then Play for the whole note. For a passage, select text and choose **More controls → Selection only → Read selected text**. Pause, resume and change speed in the same toolbar.
+3. **Open a note and listen.** Click the audio icon in the pane header, then Play for the whole note. For a passage, select text, choose **Selection only** beside Play, then press Play. An invalid selection prompts you to reselect; it never switches to the entire file. Pause, resume and change speed in the same toolbar.
 
-Click **More controls** again to fold the extra controls away; click the pane-header audio icon again to hide the playback bar.
+Older recordings open More to choose a scope; the idle toolbar now shows the scope beside Play. Click the pane-header audio icon again to hide the bar without stopping playback.
 
 Prefer a smaller player? Open the document-edge outline entry or run **Toggle mini outline**, then right-click a heading to start reading. Its header provides Pause/Resume during a reading session; the main playback bar can stay closed.
 
@@ -211,14 +211,14 @@ Public demonstration rendered from the current plugin's interface code, with sam
 
 ![Voice engine settings](docs/images/settings-engine.png)
 
-**Reading preferences:** highlighting, online prefetch and PDF bookmark saving.
+**Reading preferences:** expand the academic reading preview to compare simple functions, intervals and table headers. It formats fixed examples locally without reading notes or calling speech services.
 
-![Highlight and reading settings](docs/images/settings-reading.png)
+![Local academic reading preview](docs/images/settings-reading.png)
 
 <details>
-<summary>View the complete settings page</summary>
+<summary>View the full voice setup tab</summary>
 
-![Complete plugin settings, with no personal information](docs/images/plugin-settings.png)
+![Full voice setup tab with a public example and no credential](docs/images/plugin-settings.png)
 
 </details>
 
@@ -263,7 +263,7 @@ Markdown highlights follow the currently playing audio part while the logical se
 
 Use **Reading toolbar** in the control panel, the pane header's audio icon, or **Toggle reading toolbar in current note, PDF, HTML or web page**. The toolbar stays above the original content, preserving images, embeds and layout. It provides pause/resume, segment navigation, five-second seeking, progress, speed, volume and three reading scopes. Close it without stopping playback. Outline controls are available for Markdown, PDF and local HTML Reader, not external Web viewer pages.
 
-The toolbar's outline icon opens the **mini outline**, also available from the document-edge button or **Toggle mini outline** command without starting playback. Search headings, choose expanded levels, or pin the directory. Titles use two lines by default, configurable from one to four, with no trailing menu buttons. Right-click a heading (or press Shift+F10) to reveal its full title, read from it or read only that section including subsections. The same actions are available in the top **Outline options**, with a label identifying the target section, including on touch screens. Clicking a title navigates without starting speech. Common Markdown formatting is cleaned only in directory labels. Accent text indicates the browsing location; a small play marker additionally identifies the reliably located reading section. Browsing the directory pauses its following; the **Return to reading** arrow brings you back. The additional controls support whole-note, selected-text and from-selection reading. Export still requires confirmation. Changed documents invalidate old navigation targets.
+The toolbar's outline icon opens the **mini outline**, also available from the document-edge button or **Toggle mini outline** command without starting playback. Search headings, choose expanded levels, or pin the directory. Titles use two lines by default, configurable from one to four, with no trailing menu buttons. Right-click a heading (or press Shift+F10) to reveal its full title, read from it or read only that section including subsections. The same actions are available in the top **Outline options**, with a label identifying the target section, including on touch screens. Clicking a title navigates without starting speech. Common Markdown formatting is cleaned only in directory labels. A shaded row marks the browsing location; accent text and a small play marker identify the reliably located reading section. Browsing the directory pauses its following; the **Return to reading** arrow brings you back. During playback the main button only pauses or resumes. Use More controls to start a different scope; narrow panes also put five-second seeking there. Export still requires confirmation. Changed documents invalidate old navigation targets.
 
 **Layout and controls:** adjust the width from 180 to 600 pixels, with automatic limits in narrow panes. Reading shortcuts appear above Mini outline in settings; secondary preferences are under **More outline options**. Desktop header icons and scrollbar thumbs appear on hover or keyboard focus, with a pin indicator while idle; touch controls and native scrolling feedback remain available. Top/bottom arrows navigate without starting speech: both stay in the header if the controls fit, or move together into Outline options. Section captions and actions share one compact row; narrow/touch layouts use a section-action menu. Optional mouse double-click reading is off by default. With mouse input, unpin and move outside to collapse; touch unpinning collapses immediately. Close and Escape remain available.
 
@@ -656,7 +656,7 @@ When the `Voice Reader` control panel is focused, Space pauses or resumes readin
 
 The triangle buttons beside the progress bar jump to the previous text chunk or the next text chunk. Already synthesized chunks are reused when possible; otherwise the target chunk is synthesized before playback.
 
-The overall progress bar navigates between reading segments. The separate current-segment slider seeks within the current segment's available audio. A target that is not yet synthesized may require a wait. Playback speed controls adjust audio playback without resynthesis.
+Both overall progress bars seek on release: within the current segment they seek to the chosen time, across segments they jump to the target segment start. The separate current-segment slider seeks within the current segment's available audio. A target that is not yet synthesized may require a wait. Playback speed controls adjust audio playback without resynthesis.
 
 ## PDF Reading
 
