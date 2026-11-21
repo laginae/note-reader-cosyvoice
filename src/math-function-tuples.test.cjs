@@ -5,7 +5,7 @@ const { simpleFunctionCalls } = require('./math-functions');
 const { JSDOM } = require('jsdom');
 const { extractHtmlText } = require('./html-text');
 const { highlightDocument } = require('./dom-highlights');
-const zh = { mathReadingLanguage: 'chinese' };
+const zh = { mathReadingLanguage: 'chinese', academicFunctionStyle: 'of' };
 
 test('concise tuples of short unary calls use neutral pauses rather than spoken brackets', () => {
   assert.equal(mathSpeech('(f(x),g(x))', zh), 'f of x、g of x');

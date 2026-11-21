@@ -9,10 +9,10 @@ const { highlightDocument } = require('./dom-highlights');
 const { JSDOM } = require('jsdom');
 const compact = { academicFunctionStyle: 'compact' };
 
-test('simple function speech defaults to of and accepts only the compact opt-in', () => {
-  assert.equal(ACADEMIC_DEFAULTS.academicFunctionStyle, 'of');
+test('simple functions follow formula language by default and retain explicit overrides', () => {
+  assert.equal(ACADEMIC_DEFAULTS.academicFunctionStyle, 'auto');
   for (const value of [undefined, '', null, 'invalid', true]) {
-    assert.equal(academicOptions({ academicFunctionStyle: value }).academicFunctionStyle, 'of');
+    assert.equal(academicOptions({ academicFunctionStyle: value }).academicFunctionStyle, 'auto');
     assert.equal(mathSpeech('f(x)', { academicFunctionStyle: value }), 'f of x');
   }
   assert.equal(academicOptions(compact).academicFunctionStyle, 'compact');
@@ -58,7 +58,7 @@ test('prose and semantic of phrases are not globally replaced', () => {
 
 test('the English and Chinese academic settings save and reset the choice without touching other preferences', async t => {
   for (const language of ['english', 'chinese']) {
-    const f = settingsFixture(language); t.after(() => f.dom.window.close());
+    const f = settingsFixture(language,'mimo-tts',{readingProfile:'custom',academicFunctionStyle:'of'}); t.after(() => f.dom.window.close());
     const row = f.rows.find(row => row.nameEl.textContent === (language === 'chinese' ? '简单函数读法' : 'Simple function speech'));
     assert.ok(row);
     assert.equal(row.settingEl.closest('[data-settings-page]').dataset.settingsPage, 'academic');

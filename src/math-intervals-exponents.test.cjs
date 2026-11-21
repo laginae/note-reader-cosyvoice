@@ -40,8 +40,8 @@ test('range-only interval speech is opt-in and full style retains endpoint seman
   assert.equal(mathSpeech('(0,1]', { ...context, academicIntervalStyle: 'range', academicMathStyle: 'verbose' }), '左开右闭区间，0 到 1');
   assert.equal(mathSpeech('(0,1]', { ...context, academicIntervalStyle: 'range', academicMathMode: 'skip' }), '公式。');
   assert.match(mathSpeech('f(a+b)', { ...zh, academicIntervalStyle: 'range' }), /括号/);
-  assert.equal(academicOptions().academicIntervalStyle, 'precise');
-  assert.equal(academicOptions({ academicIntervalStyle: 'invalid' }).academicIntervalStyle, 'precise');
+  assert.equal(academicOptions().academicIntervalStyle, 'natural');
+  assert.equal(academicOptions({ readingProfile: 'custom', academicIntervalStyle: 'invalid' }).academicIntervalStyle, 'precise');
 });
 test('short decorated interval endpoints reuse variable speech instead of spelling brackets', () => {
   for (const [endpoint, label] of [[String.raw`\overline b`, 'b bar'], [String.raw`\bar{u}`, 'u bar'],

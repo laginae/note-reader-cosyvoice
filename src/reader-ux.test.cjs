@@ -35,7 +35,7 @@ test('playback ticks preserve focused controls and do not read the editor; a cha
 });
 
 test('local academic preview follows real settings; closing it does not synthesize, save or read a note', async t => {
-  const {dom,doc,rows,plugin}=settingsFixture('english');t.after(()=>dom.window.close());
+  const {dom,doc,rows,plugin}=settingsFixture('english', 'mimo-tts', { readingProfile:'custom', academicTableRepeatHeaders:true });t.after(()=>dom.window.close());
   const details=doc.querySelector('.cozy-academic-preview');
   const results=()=>Array.from(details.querySelectorAll('dd'),el=>el.textContent);
   assert.deepEqual(results(),['','','']); details.open=true;details.dispatchEvent(new dom.window.Event('toggle'));

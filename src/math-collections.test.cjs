@@ -33,7 +33,8 @@ test('interval rendering preserves open and half-open endpoint membership in bot
 });
 test('explicit membership and interval assignment work without guessing ordinary vector assignments', () => {
   assert.equal(mathSpeech(String.raw`x\in[a,b]`, zh), 'x 属于 a 到 b 的区间');
-  assert.equal(mathSpeech('x∈(a,b)', zh), 'x 属于 a 到 b 的开区间');
+  assert.equal(mathSpeech('x∈(a,b)', zh), 'x 大于 a 且小于 b');
+  assert.equal(mathSpeech('x∈(a,b)', { ...zh, academicIntervalStyle:'precise' }), 'x 属于 a 到 b 的开区间');
   assert.equal(mathSpeech('x∉[a,b]', zh), 'x 不属于 a 到 b 的区间');
   assert.equal(mathSpeech(String.raw`x\in[a,b]`), 'x belongs to the interval from a to b');
   assert.match(academicLatex('区间为 $I=[a,b]$。'), /I 等于 a 到 b 的区间/);

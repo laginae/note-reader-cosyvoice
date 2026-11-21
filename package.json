@@ -1,6 +1,6 @@
 {
   "name": "note-reader-cosyvoice",
-  "version": "1.7.9",
+  "version": "1.8.0",
   "private": true,
   "description": "Build and test tooling for the Cozy Read Aloud Obsidian plugin.",
   "scripts": {
@@ -12,7 +12,7 @@
     "jsdom": "26.1.0"
   },
   "dependencies": {
-    "@laginae/note-reader-core": "github:laginae/note-reader-core#18ffde5ef9b723a1244970e35d39e4ea70602c48",
+    "@laginae/note-reader-core": "github:laginae/note-reader-core#429d955ea61131aec65e6bb27c7d368c417cb54a",
     "@mozilla/readability": "0.6.0",
     "htmlparser2": "10.0.0",
     "pdf-lib": "1.17.1"

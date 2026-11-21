@@ -338,10 +338,11 @@ assert.deepStrictEqual(moduleObject.exports.__test.createDefaultSettings(), {
   pdfIncludeGlossary: false,
   academicMathMode: 'smart',
   academicMathStyle: 'concise',
-  academicIntervalStyle: 'precise',
-  academicFunctionStyle: 'of',
+  readingProfile: 'everyday',
+  academicIntervalStyle: 'natural',
+  academicFunctionStyle: 'auto',
   academicTableMode: 'smart',
-  academicTableRepeatHeaders: true,
+  academicTableRepeatHeaders: false,
   academicSkipNotice: true,
   playbackVolume: 1,
   playbackSpeed: 1,
@@ -410,7 +411,7 @@ const reportedMarkdownTable = `**Table I. Coverage**
 | Region | Dataset | Invalid ratio [%] |
 | :----: | :-----: | ----------------: |
 | CN-NE  | 2023    | 0.5               |`;
-const sanitizedMarkdownTable = moduleObject.exports.__test.sanitizeTextForSpeech(reportedMarkdownTable);
+const sanitizedMarkdownTable = moduleObject.exports.__test.sanitizeTextForSpeech(reportedMarkdownTable, { readingProfile: 'custom' });
 assert.ok(sanitizedMarkdownTable.includes('Table columns: Region; Dataset; Invalid ratio [%].'));
 assert.ok(sanitizedMarkdownTable.includes('Row 1. Region: CN-NE; Dataset: 2023; Invalid ratio [%]: 0.5.'));
 assert.ok(!/[|]/.test(sanitizedMarkdownTable));

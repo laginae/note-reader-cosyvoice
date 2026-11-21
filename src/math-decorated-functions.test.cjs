@@ -34,10 +34,10 @@ test('concise short decorated function heads avoid spoken argument brackets', ()
     [String.raw`f_i^{\ast}(x)`, 'f i star of x'],
     [String.raw`\hat{\phi}_i(x)`, 'phi hat i of x'],
   ]) for (const mathReadingLanguage of ['english', 'chinese']) {
-    assert.equal(mathSpeech(input, { mathReadingLanguage }), expected, input);
+    assert.equal(mathSpeech(input, { mathReadingLanguage }), mathReadingLanguage === 'chinese' ? expected.replace(' of ', ' ') : expected, input);
   }
   assert.equal(mathSpeech(String.raw`\vec{f}(x)`), 'vector f of x');
-  assert.equal(mathSpeech(String.raw`\vec{f}(x)`, { mathReadingLanguage: 'chinese' }), '向量 f of x');
+  assert.equal(mathSpeech(String.raw`\vec{f}(x)`, { mathReadingLanguage: 'chinese' }), '向量 f x');
   assert.equal(mathSpeech(String.raw`\overline f[x_i]`), 'f bar of x i');
   assert.equal(mathSpeech(String.raw`\underline f(x,y)`), 'f underbar with arguments x, y');
   assert.equal(mathSpeech(String.raw`\hat f(x,y)`, { mathReadingLanguage: 'chinese' }), 'f hat，参数为 x、y');
@@ -51,14 +51,14 @@ test('short scripted, accented and numeric arguments use the same bounded variab
     [String.raw`f(x^{\prime})`, 'f of x prime'], ['f(0.5)', 'f of 0.5'],
     ['f(-1)', 'f of minus 1'],
   ]) assert.equal(mathSpeech(input), expected, input);
-  assert.equal(mathSpeech('f(-1)', { mathReadingLanguage: 'chinese' }), 'f of 负1');
-  assert.equal(mathSpeech(String.raw`f(x_{i+1})`, { mathReadingLanguage: 'chinese' }), 'f of x i 加 1');
+  assert.equal(mathSpeech('f(-1)', { mathReadingLanguage: 'chinese' }), 'f 负1');
+  assert.equal(mathSpeech(String.raw`f(x_{i+1})`, { mathReadingLanguage: 'chinese' }), 'f x i 加 1');
 });
 
 test('comparisons, short tuples and fractions retain decorated function labels', () => {
   assert.equal(mathSpeech(String.raw`\underline f(x)=\overline g(x)`), 'f underbar of x equals g bar of x');
   assert.equal(mathSpeech(String.raw`\underline f(x)=\overline g(x)`, { mathReadingLanguage: 'chinese' }),
-    'f underbar of x 等于 g bar of x');
+    'f underbar x 等于 g bar x');
   assert.equal(mathSpeech(String.raw`(\hat f(x_i),g^{\prime}(y))`), 'f hat of x i, g prime of y');
   assert.equal(mathSpeech(String.raw`\underline f(x)/\overline g(x)`), 'f underbar of x divided by g bar of x');
   assert.equal(mathSpeech(String.raw`(a-b)/\underline c`), 'the difference of a and b, divided by c underbar');

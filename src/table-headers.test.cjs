@@ -7,9 +7,9 @@ const { sanitizeAcademicTextForSpeech } = require('../core');
 const { extractHtmlText, extractHtmlTreeText } = require('./html-text');
 const { JSDOM } = require('jsdom');
 const markdown = '| Item | Count |\n| --- | --- |\n| Apples | 2 |\n| Pears | 3 |';
-test('both setting languages save the default-on table header switch independently', async t => {
+test('both setting languages preserve and update the legacy custom table header switch independently', async t => {
   for (const language of ['english', 'chinese']) {
-    const f = settingsFixture(language); t.after(() => f.dom.window.close());
+    const f = settingsFixture(language,'mimo-tts',{readingProfile:'custom',academicTableRepeatHeaders:true}); t.after(() => f.dom.window.close());
     const row = f.rows.find(row => row.nameEl.textContent === (language === 'chinese' ? '每行重复表头' : 'Repeat table headers for each row'));
     assert.ok(row); assert.equal(f.plugin.settings.academicTableRepeatHeaders, true);
     const before = { ...f.plugin.settings }; delete before.academicTableRepeatHeaders;

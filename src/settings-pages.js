@@ -3,7 +3,7 @@ const { translate, LANGUAGES } = require('./i18n');
 const PAGES = [
   ['engine', 'Speech engine', '语音引擎'],
   ['playback', 'Playback and interface', '播放与界面'],
-  ['academic', 'Academic reading', '学术阅读'],
+  ['academic', 'Reading content', '阅读内容'],
   ['storage', 'Export and storage', '导出与存储'],
   ['privacy', 'Privacy and help', '隐私与帮助'],
 ];

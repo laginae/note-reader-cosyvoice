@@ -11,7 +11,7 @@ test('settings pages use one visible panel and keyboard-accessible tabs without 
   const dom=new JSDOM('<main></main>'),doc=dom.window.document,selected=[];
   const pages=createSettingsPages(doc.querySelector('main'),'chinese',undefined,id=>selected.push(id));
   const tabs=[...doc.querySelectorAll('[role=tab]')];
-  assert.deepEqual(tabs.map(el=>el.textContent),['语音引擎','播放与界面','学术阅读','导出与存储','隐私与帮助']);
+  assert.deepEqual(tabs.map(el=>el.textContent),['语音引擎','播放与界面','阅读内容','导出与存储','隐私与帮助']);
   assert.deepEqual(selected,[]);
   assert.equal(doc.querySelectorAll('[role=tabpanel]:not([hidden])').length,1);
   tabs[2].click(); assert.equal(pages.academic.hidden,false); assert.equal(pages.engine.hidden,true);
@@ -27,7 +27,7 @@ test('settings pages use one visible panel and keyboard-accessible tabs without 
 });
 
 test('actual settings retain all groups and place global reset last without changing secrets',async()=>{
-  const {dom,doc,plugin,tab,rows}=settingsFixture();
+  const {dom,doc,plugin,tab,rows}=settingsFixture('english','mimo-tts',{readingProfile:'custom'});
   const group=name=>rows.find(row=>row.nameEl.textContent===name)?.settingEl.closest('[role=tabpanel]')?.dataset.settingsPage;
   assert.equal(group('Settings language'),undefined);
   for(const [name,page] of [ ['Reading method','engine'],['Allow MiMo online processing','engine'],

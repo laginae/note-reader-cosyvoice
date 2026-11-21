@@ -23,7 +23,8 @@ const { pathToFileURL } = require('url');
 const { extractPdfTextLayout, extractTextFromPdfItems } = require('./pdf-layout');
 const { partitionFootnotes, footnoteRules, normalizeFootnoteMode, addFootnoteSettings, splitFootnotesInRange } = require('./pdf-footnotes');
 const { recurringEdges, ancillaryLayout, inside: insidePdfRegion, textOf: pdfLinesText, addAncillarySettings } = require('./pdf-ancillary');
-const { ACADEMIC_DEFAULTS, academicOptions, academicLatex, mathSpeech, citations } = require('./academic-speech');
+const { ACADEMIC_DEFAULTS, academicOptions, storedReadingPreferences, academicLatex, mathSpeech, citations } = require('./academic-speech');
+const { loadInitialPreferences, savePreferences } = require('./preferences-storage');
 const { speakGreekCommands } = require('./math-symbols');
 const { numericTableRegions } = require('./pdf-academic');
 const { pdfMathChanges, applyPdfMathChanges, pdfFontNames } = require('./pdf-math');
@@ -1648,6 +1649,7 @@ function createDefaultSettings() {
     floatingRightClickVolume: false,
     readingFloatingAction: 'selection',
     ...ACADEMIC_DEFAULTS,
+    readingProfile: 'everyday',
     ...COPILOT_DEFAULTS,
     ...OCR_DEFAULTS,
     ...MIMO_DEFAULTS,
@@ -2476,6 +2478,7 @@ class CosyVoiceReaderPlugin extends Plugin {
     this.logPath = null;
     this.statusBar = this.addStatusBarItem();
 
+    this.onPreferenceConflict = message => new Notice(message, 9000);
     await this.loadSettings();
     registerOcr(this);
     startDeviceCacheMaintenance(this);
@@ -2849,18 +2852,19 @@ class CosyVoiceReaderPlugin extends Plugin {
 
   async loadSettings() {
     const defaults = createDefaultSettings();
-    const savedSettings = await this.loadData();
+    const savedSettings = await loadInitialPreferences(this);
     const source = savedSettings && typeof savedSettings === 'object' ? savedSettings : {};
     this.firstInstallation = Object.keys(source).length === 0;
     const removedObsoleteSettings = Object.keys(source).some(
       (key) => !Object.prototype.hasOwnProperty.call(defaults, key)
     );
     const missingKnownSettings = Object.keys(defaults).some(
-      (key) => !Object.prototype.hasOwnProperty.call(source, key)
+      (key) => key !== 'readingProfile' && !Object.prototype.hasOwnProperty.call(source, key)
     );
     const hadAzureCredentialSource = Object.prototype.hasOwnProperty.call(source, 'azureSpeechCredentialSource');
     const hadOpenRouterCredentialSource = Object.prototype.hasOwnProperty.call(source, 'openRouterCredentialSource');
     this.settings = selectKnownSettings(defaults, source);
+    Object.assign(this.settings, storedReadingPreferences(source));
     Object.assign(this.settings, normalizeMiniSettings(this.settings));
     this.settings.ocrEnabled = this.settings.ocrEnabled === true;
     this.settings.ocrModel = this.settings.ocrModel === 'tiny' ? 'tiny' : 'small';
@@ -2922,9 +2926,9 @@ class CosyVoiceReaderPlugin extends Plugin {
     this.settings.onlinePrefetchChunks = normalizeOnlinePrefetchChunks(this.settings.onlinePrefetchChunks);
     this.settings.readingPositions = normalizeReadingPositions(this.settings.readingPositions);
     this.settings.rememberReadingPosition = this.settings.rememberReadingPosition === true;
-    if (removedObsoleteSettings || missingKnownSettings
-      || (this.settings.readingHistoryMode !== 'persistent' && Object.keys(source.readingPositions || {}).length)) {
-      await this.saveData(settingsForStorage(this.settings));
+    if (!this.firstInstallation && (removedObsoleteSettings || missingKnownSettings
+      || (this.settings.readingHistoryMode !== 'persistent' && Object.keys(source.readingPositions || {}).length))) {
+      await savePreferences(this, settingsForStorage(this.settings));
     }
   }
 
@@ -2981,7 +2985,7 @@ class CosyVoiceReaderPlugin extends Plugin {
     this.settings.onlinePrefetchChunks = normalizeOnlinePrefetchChunks(this.settings.onlinePrefetchChunks);
     this.settings.readingPositions = normalizeReadingPositions(this.settings.readingPositions);
     this.settings.rememberReadingPosition = this.settings.rememberReadingPosition === true;
-    await this.saveData(settingsForStorage(this.settings));
+    await savePreferences(this, settingsForStorage(this.settings));
     await syncEditingToolbar(this);
   }
 
@@ -8657,6 +8661,7 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
     containerEl.createEl('h3', { text: 'Copilot' });
     addCopilotChatSettings(containerEl, this.plugin);
     containerEl = pages.academic;
+    const customProfile = require('./reading-profile-setting').addReadingProfileSetting(containerEl, this.plugin, Setting, () => this.display());
     const refreshPreview = require('./academic-preview').addAcademicPreview(containerEl, this.plugin.settings.settingsLanguage,
       sample => this.plugin.settings.stripMarkdown ? sanitizeTextForSpeech(sample, academicOptions(this.plugin.settings)) : sample);
     const saveAcademic = () => { refreshPreview(); return this.plugin.saveSettings(); };
@@ -8671,6 +8676,7 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
         });
       });
 
+    if (customProfile) {
     new Setting(containerEl).setName(zhReading ? '公式朗读策略' : 'Formula reading')
       .setDesc(zhReading ? '智能模式跳过复杂公式，尽量保留正文中的短变量和简单关系。PDF 结合字形、字体和排版识别；不确定的内容保留。Markdown/HTML 中支持的短公式在本地转换，需开启“移除 Markdown 格式”。完整模式也不会猜读无法可靠解析的公式。' : 'Smart mode skips complex formulas while keeping short inline variables and simple relations. PDF detection uses glyphs, fonts and layout; uncertain content is retained. Supported Markdown/HTML formulas are converted locally with Strip Markdown enabled. Unsupported notation is never guessed.')
       .addDropdown(dropdown => dropdown.addOption('smart', zhReading ? '智能：跳过复杂公式' : 'Smart: skip complex formulas')
@@ -8682,20 +8688,21 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
         .addOption('verbose',zhReading ? '明确（下标、subscript）' : 'Explicit (subscript)')
         .setValue(academicOptions(this.plugin.settings).academicMathStyle).onChange(async value => { this.plugin.settings.academicMathStyle=value; await saveAcademic(); }));
     new Setting(containerEl).setName(zhReading ? '区间读法（简洁模式）' : 'Interval speech (concise style)')
-      .setDesc(zhReading ? '仅适用于可靠识别的区间。默认保留开闭端点条件；可选择只读“a 到 b”，不读括号及端点是否包含的说明。此简短读法会省略数学细节；明确公式读法仍保留完整说明，不改变原文。'
-        : 'For recognized intervals only. Preserve endpoint inclusion by default, or say only "a to b" without bracket or inclusion labels. The shorter option omits mathematical detail; explicit formula style still preserves it. Source text is unchanged.')
-      .addDropdown(dropdown => dropdown.addOption('precise', zhReading ? '保留端点条件（推荐）' : 'Preserve endpoints (recommended)')
+      .setDesc(zhReading ? '自然读法用比较词保留端点条件；只读起止值会省略端点是否包含的信息。' : 'Natural wording keeps inclusion using comparisons. Bounds only omits inclusion.')
+      .addDropdown(dropdown => dropdown.addOption('natural', zhReading ? '自然读法（保留端点条件）' : 'Natural comparisons')
+        .addOption('precise', zhReading ? '明确端点条件' : 'Explicit endpoints')
         .addOption('range', zhReading ? '只读起点到终点' : 'Only read lower to upper bound')
         .setValue(academicOptions(this.plugin.settings).academicIntervalStyle).onChange(async value => { this.plugin.settings.academicIntervalStyle=value; await saveAcademic(); }));
     new Setting(containerEl).setName(zhReading ? '简单函数读法' : 'Simple function speech')
-      .setDesc(zhReading ? '仅用于简洁模式中可靠识别的简单函数。默认读“f of x”，可省略 of，读为“f x”；保留修饰符和下标。不改变完整模式、正文中的 of 或复杂公式规则，下次朗读生效。'
-        : 'For recognized simple functions in concise style. Keep "f of x" by default, or omit of and say "f x". Accent and index labels remain. Explicit style, prose and complex-formula rules are unchanged. Applies to the next reading session.')
-      .addDropdown(dropdown => dropdown.addOption('of', zhReading ? '保留 of：f of x（默认）' : 'Keep of: f of x (default)')
+      .setDesc(zhReading ? '随公式朗读语言：中文读“f x”，英文读“f of x”。不改变正文或完整读法。' : 'Follow formula language: Chinese uses "f x", English uses "f of x". Prose and explicit wording are unchanged.')
+      .addDropdown(dropdown => dropdown.addOption('auto', zhReading ? '随公式朗读语言' : 'Follow formula language')
+        .addOption('of', zhReading ? '保留 of：f of x' : 'Keep of: f of x')
         .addOption('compact', zhReading ? '省略 of：f x' : 'Omit of: f x')
         .setValue(academicOptions(this.plugin.settings).academicFunctionStyle).onChange(async value => {
           this.plugin.settings.academicFunctionStyle = academicOptions({ academicFunctionStyle: value }).academicFunctionStyle;
           await saveAcademic();
         }));
+    }
     new Setting(containerEl)
       .setName(ui.mathLanguageName)
       .setDesc(zhReading ? '公式转换目前支持中文和英文，与界面语言及语音音色分别设置。' : 'Formula conversion supports Chinese and English, independently of interface language and speech voice.')
@@ -8711,17 +8718,19 @@ class CosyVoiceReaderSettingTab extends PluginSettingTab {
           });
       });
 
+    if (customProfile) {
     new Setting(containerEl).setName(zhReading ? '表格朗读策略' : 'Table reading')
       .setDesc(zhReading ? '智能模式跳过较长且数字密集的表格，保留标题、小表及文字表。PDF 只过滤能可靠识别的带标题数字表格；无法确定时保留。选中的 HTML 表格仍完整提取。' : 'Smart mode skips long numeric tables, retaining captions, small tables and text tables. PDF filtering requires a recognizable caption and numeric rows; uncertain content is retained. Selected HTML tables are preserved.')
       .addDropdown(dropdown => dropdown.addOption('smart',zhReading ? '智能：跳过长数字表格' : 'Smart: skip long numeric tables')
         .addOption('all',zhReading ? '完整朗读表格' : 'Read all tables').addOption('skip',zhReading ? '跳过所有已识别表格' : 'Skip all recognized tables')
         .setValue(academicOptions(this.plugin.settings).academicTableMode).onChange(async value => { this.plugin.settings.academicTableMode=value; await saveAcademic(); }));
     new Setting(containerEl).setName(zhReading ? '每行重复表头' : 'Repeat table headers for each row')
-      .setDesc(zhReading ? '默认开启。关闭后，已识别表格仅在开头读一次表头，后续读行号和数据；空单元格用“空”占位。不会改变智能跳过策略，PDF 不强行推断表头。下次朗读生效。' : 'On by default. Disable to read recognized column headings once, then row numbers and values. Empty cells keep a placeholder. Smart skipping is unchanged; PDF headings are not guessed. Applies to new reading sessions.')
+      .setDesc(zhReading ? '关闭后仅在开头读一次表头，再读行号与数据。保留空单元格位置，不猜测 PDF 的列名。' : 'Turn off to hear headers once, followed by row numbers and values. Empty cells keep their position. PDF headers are not guessed.')
       .addToggle(toggle => toggle.setValue(academicOptions(this.plugin.settings).academicTableRepeatHeaders).onChange(async value => {
         this.plugin.settings.academicTableRepeatHeaders = value;
         await saveAcademic();
       }));
+    }
     new Setting(containerEl).setName(zhReading ? '简短提示略过内容' : 'Announce skipped content')
       .setDesc(zhReading ? '略过公式时简短提示“公式。”，英文为“Formula.”；停顿由音色按标点处理。PDF 提示随邻近正文使用中文或英文。关闭后直接继续正文。表格数据提示不变；PDF 保留表格标题，不额外插入提示。' : 'Say "Formula." when a formula is skipped; the voice determines the pause from punctuation. PDF notices follow nearby Chinese or English prose. Disable for uninterrupted prose. Table notices are unchanged; PDF tables keep captions without an extra notice.')
       .addToggle(toggle => toggle.setValue(this.plugin.settings.academicSkipNotice !== false).onChange(async value => { this.plugin.settings.academicSkipNotice=value; await saveAcademic(); }));
