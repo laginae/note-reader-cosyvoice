@@ -64,6 +64,7 @@ class DockedOutlineView extends ItemView {
   async onClose() { this.dispose(); }
   dispose() {
     this.closed = true; this.generation++; clearTimeout(this.timer); clearTimeout(this.positionTimer);
+    this.readPending = null;
     this.unbindSource?.(); this.unbindSource = null; this.manager.views.delete(this);
     this.states.clear(); this.rows.clear(); this.data = null; this.source = null;
     this.root?.remove(); this.root = null;
@@ -183,7 +184,7 @@ class DockedOutlineView extends ItemView {
     if (this.loading && !this.dirty && source === this.source && file === this.sourceFile) return;
     const token = ++this.generation;
     if (source !== this.source) this.bindSource(source);
-    this.source = source; this.sourceFile = file; this.data = null; this.selected = -1;
+    this.source = source; this.sourceFile = file; this.data = null; this.selected = -1; this.readPending = null;
     this.fileTitle.textContent = file?.basename || file?.name || this.t('未打开文档', 'No document open');
     this.state = this.states.get(file?.path) || { collapsed: new Set(), query: '', scroll: 0 };
     if (file) {
@@ -291,11 +292,16 @@ class DockedOutlineView extends ItemView {
     const data = this.data;
     if (!this.current(data) || !data.entries[index]) { this.invalidate(); return; }
     if (this.adapter.busy() || this.readPending) return;
-    const source = this.source; this.readPending = true; this.priorSession = this.plugin.activeSession;
+    const source = this.source, request = this.readPending = {};
+    const release = () => {
+      if (this.readPending === request) { this.readPending = null; this.updatePlayback(); }
+    };
     this.updatePlayback();
     this.action('Read section', async () => {
-      try { await this.adapter.read(source, data, index, remaining, { keepControls: true }); }
-      finally { this.readPending = false; this.updatePlayback(); }
+      try {
+        await this.adapter.read(source, data, index, remaining, { keepControls: true, onStarted: release,
+          cancelled: () => this.readPending !== request || this.closed || this.data !== data || this.currentSource() !== source });
+      } finally { release(); }
     });
   }
   sectionMenu(index, event, target) {
@@ -343,7 +349,6 @@ class DockedOutlineView extends ItemView {
   updatePlayback() {
     if (!this.visible()) return;
     if (this.source !== this.currentSource() || this.sourceFile !== this.source?.file) this.schedule();
-    if (this.readPending && this.plugin.activeSession !== this.priorSession) this.readPending = false;
     const playback = this.adapter.playback();
     this.pause.hidden = this.stop.hidden = !playback.active;
     this.pause.disabled = !playback.canToggle; this.stop.disabled = !playback.canStop;

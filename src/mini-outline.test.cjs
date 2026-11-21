@@ -814,6 +814,75 @@ test('double-click playback waits for navigation, blocks duplicate starts and re
   assert.equal(f.calls.filter(c=>c[0]==='read').length,1);
 });
 
+test('section commands unlock on startup and replace a playing or paused chapter without waiting for it to end', async t => {
+  const f = fixture(); t.after(f.cleanup);
+  const p = f.panel, starts = [];
+  let paused = false;
+  f.adapter.playback = () => ({ active: !!starts.length, canToggle: true, paused });
+  f.adapter.read = (_view, _data, index, remaining, options) => new Promise(resolve => {
+    starts.push({ index, remaining, options, resolve });
+  });
+  await p.open({ pin: true });
+  const first = sectionMenu(f, 0).items[0].click();
+  await tick();
+  assert.equal(sectionMenu(f, 3).items[1].disabled, true);
+  await p.read(3, false);
+  assert.equal(starts.length, 1);
+
+  f.setPositions({ reading: 0, browsing: 3 });
+  starts[0].options.onStarted();
+  f.manager.update();
+  assert.equal(p.rows.get(0).row.classList.contains('is-reading'), true);
+  p.rows.get(3).title.click();
+  await tick();
+  assert.equal(starts.length, 1, 'single click only navigates');
+  const next = sectionMenu(f, 3).items[1];
+  assert.equal(next.disabled, false);
+  const second = next.click();
+  await tick();
+  assert.deepEqual(starts.map(s => [s.index, s.remaining]), [[0, true], [3, false]]);
+  starts[0].resolve(); await first;
+  assert.equal(p.sectionButtons[0].disabled, true, 'old completion cannot unlock a newer start');
+
+  starts[1].options.onStarted();
+  paused = true;
+  f.manager.update();
+  assert.equal(p.sectionButtons[0].disabled, false);
+  p.rows.get(1).title.focus();
+  p.sectionButtons[0].click();
+  await tick();
+  assert.deepEqual(starts.map(s => [s.index, s.remaining]), [[0, true], [3, false], [1, true]]);
+  starts[2].options.onStarted();
+
+  f.setBusy(true); f.manager.update();
+  const duringExport = sectionMenu(f, 0);
+  assert.deepEqual(duringExport.items.map(i => i.disabled), [true, true, false]);
+  await p.read(0, true);
+  assert.equal(starts.length, 3);
+  starts[1].resolve(); starts[2].resolve(); await second;
+});
+
+test('enabled double-click can restart the same heading while earlier playback is still pending', async t => {
+  const f = fixture(undefined, { miniOutlineDoubleClick: true }); t.after(f.cleanup);
+  await f.panel.open({pin:true});
+  const finish = [];
+  f.adapter.read = (_view, _data, index, remaining, {onStarted}) => {
+    f.calls.push(['read',index,remaining]);
+    onStarted();
+    return new Promise(resolve=>finish.push(resolve));
+  };
+  const title = f.panel.rows.get(1).title;
+  for (let i = 0; i < 2; i++) {
+    headingEvent(f,title,'click');
+    await tick();
+    headingEvent(f,title,'click',2);
+    headingEvent(f,title,'dblclick',2);
+    await tick();
+  }
+  assert.deepEqual(f.calls.filter(c=>c[0]==='read'),[['read',1,true],['read',1,true]]);
+  finish.forEach(resolve=>resolve());
+});
+
 test('queued double-click playback is cancelled by closing, another heading or a changed document', async t => {
   for (const change of ['close','other-heading','new-document','disable','document-edge']) {
     const f=fixture(); t.after(f.cleanup); f.plugin.settings.miniOutlineDoubleClick=true; await f.panel.open();

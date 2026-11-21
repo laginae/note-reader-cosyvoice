@@ -58,6 +58,34 @@ test('progressive PDF starts also bypass stopped-session cleanup and retain sour
   assert.equal(Number.isFinite(f.started[0].preparationStarted), true);
   saving.resolve(); await Promise.all(f.plugin.sessionCleanupJobs);
 });
+
+test('chapter handoff is reported before speech completes and a new PDF heading cancels the old playback', async () => {
+  const f = fixture(), completions = [deferred(), deferred()], accepted = [];
+  f.plugin.runSpeechSession = session => {
+    f.started.push(session);
+    return completions[f.started.length - 1].promise;
+  };
+  const onStarted = () => accepted.push(f.plugin.activeSession);
+  const first = f.plugin.startReading('Public first chapter.', 'First', { onStarted });
+  await tick(); assert.equal(accepted.length, 1); assert.equal(accepted[0], f.started[0]);
+  let cancelled = 0;
+  f.plugin.currentRequests.add({ destroy() { cancelled++; } });
+  f.plugin.pauseRequested = true;
+
+  f.plugin.producePdfSpeechChunks = async () => {};
+  f.plugin.completeSessionChunks = () => {};
+  f.plugin.activateControlView = () => assert.fail('Chapter switch should not open the control sidebar');
+  const file = { path:'public.pdf', extension:'pdf', stat:{mtime:1,size:30} };
+  const range = { startPage:2, startOffset:5, endPage:2, endOffset:15, fileMtime:1, title:'Next' };
+  const second = f.plugin.readCurrentPdf(file, { keepControls:true, outlineRange:range, onStarted });
+  await tick();
+  assert.equal(accepted.length, 2); assert.equal(accepted[1], f.started[1]);
+  assert.equal(f.started[0].stopped, true); assert.equal(cancelled, 1); assert.equal(f.plugin.pauseRequested, false);
+  assert.equal(f.started[1].pdfOutlineRange, range);
+  completions[0].resolve(); await first;
+  assert.equal(f.plugin.activeSession, f.started[1]);
+  completions[1].resolve(); await second;
+});
 test('Stop while the PDF controls open prevents an obsolete PDF start', async () => {
   const f = fixture(), opening = deferred();
   f.plugin.activateControlView = () => opening.promise;

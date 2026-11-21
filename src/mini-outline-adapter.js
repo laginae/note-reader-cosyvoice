@@ -106,15 +106,19 @@ function desktopMiniAdapter(plugin) {
         else await workspace.openLinkText(data.file.path + '#page=' + entry.page + '&offset=' + Math.round(entry.x) + ',' + Math.round(entry.y) + ',0', '', false);
       }
     },
-    async read(view, data, index, remaining, options = {}) {
+    async read(view, data, index, remaining, { keepControls, cancelled = () => false, onStarted } = {}) {
+      if (cancelled()) return;
       if (!valid(view, data) || adapter.busy()) throw Error('Changed');
-      await workspace.revealLeaf?.(view.leaf); if (!valid(view, data)) throw Error('Changed');
+      await workspace.revealLeaf?.(view.leaf);
+      if (cancelled() || adapter.busy()) return;
+      if (!valid(view, data)) throw Error('Changed');
       const entry = data.entries[index];
-      if (data.kind === 'pdf') return plugin.readCurrentPdf(data.file, { ...(options.keepControls ? { keepControls: true } : {}), outlineRange: {
+      const start = onStarted ? { onStarted } : {};
+      if (data.kind === 'pdf') return plugin.readCurrentPdf(data.file, { ...start, ...(keepControls ? { keepControls: true } : {}), outlineRange: {
         ...require('./pdf-outline').sectionRange(data.entries, index, data.model.pages, remaining), fileMtime: data.mtime, title: entry.title } });
-      if (data.kind === 'html') return plugin.startReading(htmlSectionText(data.doc, entry, captureHtmlOutline(data.doc), remaining), entry.title, { file: data.file, sourceKind: 'html', plainText: true });
+      if (data.kind === 'html') return plugin.startReading(htmlSectionText(data.doc, entry, captureHtmlOutline(data.doc), remaining), entry.title, { ...start, file: data.file, sourceKind: 'html', plainText: true });
       return plugin.startReading(data.text.slice(entry.from, remaining ? undefined : entry.to), entry.title,
-        { file: data.file, sourceKind: 'markdown', sourceText: data.text, sourceOffset: entry.from });
+        { ...start, file: data.file, sourceKind: 'markdown', sourceText: data.text, sourceOffset: entry.from });
     },
     positions(view, data) {
       let reading = -1; const session = plugin.activeSession;

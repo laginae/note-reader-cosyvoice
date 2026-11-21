@@ -44,6 +44,18 @@ test('Markdown titles navigate only; section audio includes descendants and reje
   f.view.editor.getValue=()=>f.text+'\nNew edit'; assert.equal(f.adapter.valid(f.view,data),false);
   await assert.rejects(f.adapter.read(f.view,data,0,true));
 });
+test('outline start is rechecked after revealing the pane; it does not bypass export or dispatch stale input', async () => {
+  const f = fixture(), data = await f.adapter.load(f.view, () => false);
+  let closing = false;
+  const start = { cancelled: () => closing, onStarted: () => assert.fail('Start must not be acknowledged') };
+  f.plugin.app.workspace.revealLeaf = async () => { closing = true; };
+  await f.adapter.read(f.view, data, 0, true, start);
+  closing = false;
+  f.plugin.app.workspace.revealLeaf = async () => { f.plugin.activeSession = {kind:'audio-export'}; };
+  await f.adapter.read(f.view, data, 0, false, start);
+  assert.deepEqual(f.calls, []);
+});
+
 test('HTML duplicate headings locate by element and a renamed target cannot be reused', async t => {
   const f=fixture(), dom=new JSDOM('<h1>Overview</h1><p>First public text.</p><h1>Overview</h1><p>Second public text.</p>');t.after(()=>dom.window.close());
   f.file.extension='html'; f.view.mainView={iframe:{contentDocument:dom.window.document}};

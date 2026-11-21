@@ -17855,6 +17855,7 @@ var require_mini_outline = __commonJS({
       close(focus = false, cancelStartup = true) {
         if (this.opened && cancelStartup) this.manager.cancelStartup();
         this.headingAction = (this.headingAction || 0) + 1;
+        this.sectionRequest = null;
         this.selectedSection = null;
         this.positionKey = null;
         clearTimeout(this.hoverTimer);
@@ -17944,6 +17945,7 @@ var require_mini_outline = __commonJS({
       }
       async load(force = false, collapsed = false) {
         this.dismissMenu();
+        this.sectionRequest = null;
         const generation = ++this.generation, file = this.view.file;
         const cancelled = () => this.destroyed || generation !== this.generation || file !== this.view.file || (collapsed ? this.opened || this.launcher.hidden || this.manager.startupView() !== this.view : !this.opened);
         this.loading = true;
@@ -18015,6 +18017,7 @@ var require_mini_outline = __commonJS({
       }
       invalidate() {
         this.dismissMenu();
+        this.sectionRequest = null;
         this.invalid = true;
         this.generation++;
         this.loading = false;
@@ -18063,8 +18066,8 @@ var require_mini_outline = __commonJS({
           const current = () => !this.destroyed && this.opened && this.data === data && title.isConnected;
           const title = this.button(row, "heading", this.t("\u5B9A\u4F4D\uFF1A", "Go to: ") + this.titles[index], (event) => {
             if (event.detail > 1) return;
-            this.selectSection(index);
             const action = this.headingAction = (this.headingAction || 0) + 1;
+            this.selectSection(index);
             const keepOpen = event.detail > 0 && this.mouseDoubleClick(event.pointerType || pointerType);
             navigation = (async () => {
               if (!current() || !await this.valid()) return;
@@ -18090,10 +18093,12 @@ var require_mini_outline = __commonJS({
             event.stopPropagation();
             startingRead = true;
             const action = this.headingAction;
-            Promise.resolve(navigation).then(async () => {
-              if (current() && action === this.headingAction && this.mouseDoubleClick(event.pointerType || pointerType)) await this.read(index, true);
-            }).catch(() => this.error()).finally(() => {
+            Promise.resolve(navigation).finally(() => {
               startingRead = false;
+            }).then(() => {
+              if (current() && action === this.headingAction && this.mouseDoubleClick(event.pointerType || pointerType)) return this.read(index, true);
+            }).catch(() => {
+              if (current() && action === this.headingAction) this.error();
             });
           });
           row.addEventListener("contextmenu", (event) => {
@@ -18151,9 +18156,10 @@ var require_mini_outline = __commonJS({
             this.error();
           }
         };
+        const readingDisabled = this.sectionStarting() || this.adapter.busy();
         return [
-          { label: this.t("\u4ECE\u672C\u8282\u6717\u8BFB", "Read from this section"), icon: "play", disabled: this.sectionReadPending || this.adapter.busy(), action: scoped(() => this.read(index, true)) },
-          { label: this.t("\u53EA\u6717\u8BFB\u672C\u8282", "Read this section only"), icon: "audio-lines", disabled: this.sectionReadPending || this.adapter.busy(), action: scoped(() => this.read(index, false)) },
+          { label: this.t("\u4ECE\u672C\u8282\u6717\u8BFB", "Read from this section"), icon: "play", disabled: readingDisabled, action: scoped(() => this.read(index, true)) },
+          { label: this.t("\u53EA\u6717\u8BFB\u672C\u8282", "Read this section only"), icon: "audio-lines", disabled: readingDisabled, action: scoped(() => this.read(index, false)) },
           { label: expanded ? this.t("\u6536\u8D77\u6807\u9898", "Collapse heading") : this.t("\u5C55\u5F00\u5B8C\u6574\u6807\u9898", "Show full heading"), icon: "wrap-text", action: scoped(async () => {
             const show = !this.expandedTitles.has(index);
             if (show) this.expandedTitles.add(index);
@@ -18211,18 +18217,30 @@ var require_mini_outline = __commonJS({
         this.error();
         return false;
       }
+      sectionStarting() {
+        const request = this.sectionRequest;
+        return !!request?.starting && request.epoch === this.headingAction;
+      }
       async read(index, remaining) {
         const data = this.data, epoch = this.headingAction;
-        if (this.sectionReadPending || this.adapter.busy() || !this.opened) return;
-        this.sectionReadPending = true;
+        if (this.sectionStarting() || this.adapter.busy() || !this.opened || !data?.entries[index]) return;
+        const request = this.sectionRequest = { starting: true, epoch };
+        const current = () => this.sectionRequest === request && !this.destroyed && this.opened && this.data === data && !this.invalid && this.headingAction === epoch && this.file === this.view.file;
+        const release = () => {
+          if (!request.starting) return;
+          request.starting = false;
+          if (this.sectionRequest === request && !this.destroyed) this.updateSectionControls();
+        };
         this.updateSectionControls();
         try {
-          if (!await this.valid() || this.destroyed || !this.opened || this.data !== data || this.headingAction !== epoch || this.file !== this.view.file || !data?.entries[index]) return;
+          if (!await this.valid() || !current() || this.adapter.busy()) return;
           this.state.manual = false;
-          await this.adapter.read(this.view, data, index, remaining);
+          await this.adapter.read(this.view, data, index, remaining, { keepControls: true, cancelled: () => !current(), onStarted: release });
+        } catch (error) {
+          if (current()) throw error;
         } finally {
-          this.sectionReadPending = false;
-          if (!this.destroyed) this.updateSectionControls();
+          release();
+          if (this.sectionRequest === request) this.sectionRequest = null;
         }
       }
       update(force = false) {
@@ -18766,21 +18784,24 @@ var require_mini_outline_adapter = __commonJS({
             else await workspace.openLinkText(data.file.path + "#page=" + entry.page + "&offset=" + Math.round(entry.x) + "," + Math.round(entry.y) + ",0", "", false);
           }
         },
-        async read(view, data, index, remaining, options = {}) {
+        async read(view, data, index, remaining, { keepControls, cancelled = () => false, onStarted } = {}) {
+          if (cancelled()) return;
           if (!valid(view, data) || adapter.busy()) throw Error("Changed");
           await workspace.revealLeaf?.(view.leaf);
+          if (cancelled() || adapter.busy()) return;
           if (!valid(view, data)) throw Error("Changed");
           const entry = data.entries[index];
-          if (data.kind === "pdf") return plugin.readCurrentPdf(data.file, { ...options.keepControls ? { keepControls: true } : {}, outlineRange: {
+          const start = onStarted ? { onStarted } : {};
+          if (data.kind === "pdf") return plugin.readCurrentPdf(data.file, { ...start, ...keepControls ? { keepControls: true } : {}, outlineRange: {
             ...require_pdf_outline().sectionRange(data.entries, index, data.model.pages, remaining),
             fileMtime: data.mtime,
             title: entry.title
           } });
-          if (data.kind === "html") return plugin.startReading(htmlSectionText(data.doc, entry, captureHtmlOutline(data.doc), remaining), entry.title, { file: data.file, sourceKind: "html", plainText: true });
+          if (data.kind === "html") return plugin.startReading(htmlSectionText(data.doc, entry, captureHtmlOutline(data.doc), remaining), entry.title, { ...start, file: data.file, sourceKind: "html", plainText: true });
           return plugin.startReading(
             data.text.slice(entry.from, remaining ? void 0 : entry.to),
             entry.title,
-            { file: data.file, sourceKind: "markdown", sourceText: data.text, sourceOffset: entry.from }
+            { ...start, file: data.file, sourceKind: "markdown", sourceText: data.text, sourceOffset: entry.from }
           );
         },
         positions(view, data) {
@@ -18909,6 +18930,7 @@ var require_docked_outline_view = __commonJS({
         this.generation++;
         clearTimeout(this.timer);
         clearTimeout(this.positionTimer);
+        this.readPending = null;
         this.unbindSource?.();
         this.unbindSource = null;
         this.manager.views.delete(this);
@@ -19096,6 +19118,7 @@ var require_docked_outline_view = __commonJS({
         this.sourceFile = file;
         this.data = null;
         this.selected = -1;
+        this.readPending = null;
         this.fileTitle.textContent = file?.basename || file?.name || this.t("\u672A\u6253\u5F00\u6587\u6863", "No document open");
         this.state = this.states.get(file?.path) || { collapsed: /* @__PURE__ */ new Set(), query: "", scroll: 0 };
         if (file) {
@@ -19269,16 +19292,23 @@ var require_docked_outline_view = __commonJS({
           return;
         }
         if (this.adapter.busy() || this.readPending) return;
-        const source = this.source;
-        this.readPending = true;
-        this.priorSession = this.plugin.activeSession;
+        const source = this.source, request = this.readPending = {};
+        const release = () => {
+          if (this.readPending === request) {
+            this.readPending = null;
+            this.updatePlayback();
+          }
+        };
         this.updatePlayback();
         this.action("Read section", async () => {
           try {
-            await this.adapter.read(source, data, index, remaining, { keepControls: true });
+            await this.adapter.read(source, data, index, remaining, {
+              keepControls: true,
+              onStarted: release,
+              cancelled: () => this.readPending !== request || this.closed || this.data !== data || this.currentSource() !== source
+            });
           } finally {
-            this.readPending = false;
-            this.updatePlayback();
+            release();
           }
         });
       }
@@ -19334,7 +19364,6 @@ var require_docked_outline_view = __commonJS({
       updatePlayback() {
         if (!this.visible()) return;
         if (this.source !== this.currentSource() || this.sourceFile !== this.source?.file) this.schedule();
-        if (this.readPending && this.plugin.activeSession !== this.priorSession) this.readPending = false;
         const playback = this.adapter.playback();
         this.pause.hidden = this.stop.hidden = !playback.active;
         this.pause.disabled = !playback.canToggle;
@@ -47568,7 +47597,9 @@ ${embed}
       `${configuration.engineLabel}: progressively reading ${readingSourceLabel}. ${prefetchNotice}`,
       6e3
     );
-    await this.runSpeechSession(session);
+    const playback = this.runSpeechSession(session);
+    options.onStarted?.();
+    await playback;
   }
   async producePdfSpeechChunks(file, session, selectionContext, chunkLimits) {
     let chunker = createPdfSpeechChunker(chunkLimits);
@@ -48029,7 +48060,9 @@ ${embed}
     });
     new Notice(`${configuration.engineLabel}: reading ${sourceLabel}. First synthesis may take a while.`, 6e3);
     this.playbackTimings.record("textPreparation", this.playbackTimings.now() - preparationStarted);
-    await this.runSpeechSession(session);
+    const playback = this.runSpeechSession(session);
+    options.onStarted?.();
+    await playback;
     return session.previewResult;
   }
   async runSpeechSession(session) {

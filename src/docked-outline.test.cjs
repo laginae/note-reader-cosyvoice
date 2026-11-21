@@ -111,6 +111,23 @@ test('context menu reads only one section, includes descendants, and rejects sta
   stale.items[1].run(); await tick(); assert.equal(f.calls.filter(c => c[0] === 'read').length, 1);
 });
 
+test('docked outline can hand off a new section while the previous playback promise is still open', async t => {
+  const f = await fixture(t), v = f.view, starts = [];
+  f.plugin.startReading = (text, title, options) => new Promise(resolve => starts.push({ title, options, resolve }));
+  v.read(1, true); await tick();
+  assert.equal(v.readOnly.disabled, true);
+  starts[0].options.onStarted();
+  assert.equal(v.readOnly.disabled, false);
+  v.sectionMenu(3, {}); assert.equal(lastMenu.items[0].disabled, false);
+  lastMenu.items[0].run(); await tick();
+  assert.deepEqual(starts.map(s => s.title), ['Child', 'Two']);
+  starts[0].resolve(); await tick();
+  assert.equal(v.readOnly.disabled, true);
+  starts[1].options.onStarted();
+  starts[1].resolve(); await tick();
+  assert.equal(v.readOnly.disabled, false);
+});
+
 test('note switching preserves per-document search and folds without stopping playback', async t => {
   const f = await fixture(t), v = f.view;
   v.expand(false); assert.deepEqual([...v.rows.keys()], [0, 3]);

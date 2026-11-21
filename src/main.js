@@ -5158,7 +5158,9 @@ class CosyVoiceReaderPlugin extends Plugin {
       `${configuration.engineLabel}: progressively reading ${readingSourceLabel}. ${prefetchNotice}`,
       6000
     );
-    await this.runSpeechSession(session);
+    const playback = this.runSpeechSession(session);
+    options.onStarted?.();
+    await playback;
   }
 
   async producePdfSpeechChunks(file, session, selectionContext, chunkLimits) {
@@ -5636,7 +5638,9 @@ class CosyVoiceReaderPlugin extends Plugin {
     new Notice(`${configuration.engineLabel}: reading ${sourceLabel}. First synthesis may take a while.`, 6000);
 
     this.playbackTimings.record('textPreparation', this.playbackTimings.now() - preparationStarted);
-    await this.runSpeechSession(session);
+    const playback = this.runSpeechSession(session);
+    options.onStarted?.();
+    await playback;
     return session.previewResult;
   }
 

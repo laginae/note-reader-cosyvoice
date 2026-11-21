@@ -321,6 +321,7 @@ class MiniOutlinePanel {
   close(focus = false, cancelStartup = true) {
     if (this.opened && cancelStartup) this.manager.cancelStartup();
     this.headingAction = (this.headingAction || 0) + 1;
+    this.sectionRequest = null;
     this.selectedSection = null; this.positionKey = null;
     clearTimeout(this.hoverTimer); clearTimeout(this.reloadTimer); clearTimeout(this.collapseTimer); clearTimeout(this.railUpdateTimer); this.railUpdateTimer = null;
     if (this.opened && cancelStartup) this.manager.collapsedEntryRequested = true;
@@ -401,6 +402,7 @@ class MiniOutlinePanel {
   }
   async load(force = false, collapsed = false) {
     this.dismissMenu();
+    this.sectionRequest = null;
     const generation = ++this.generation, file = this.view.file;
     const cancelled = () => this.destroyed || generation !== this.generation || file !== this.view.file
       || (collapsed ? this.opened || this.launcher.hidden || this.manager.startupView() !== this.view : !this.opened);
@@ -446,6 +448,7 @@ class MiniOutlinePanel {
   applyDepth() { this.state.collapsed = new Set(this.data.entries.map((_, i) => i).filter(i => this.parents[i].length >= this.state.depth - 1)); }
   invalidate() {
     this.dismissMenu();
+    this.sectionRequest = null;
     this.invalid = true; this.generation++; this.loading = false; this.data = null; this.selectedSection = null; this.rows.clear(); this.list.replaceChildren(); this.more.hidden = true; this.setLoading(true);
     this.reading = this.browsing = -1;
     this.positionKey = null; this.updateLauncher();
@@ -473,8 +476,8 @@ class MiniOutlinePanel {
       const current = () => !this.destroyed && this.opened && this.data === data && title.isConnected;
       const title = this.button(row, 'heading', this.t('定位：', 'Go to: ') + this.titles[index], event => {
         if (event.detail > 1) return;
-        this.selectSection(index);
         const action = this.headingAction = (this.headingAction || 0) + 1;
+        this.selectSection(index);
         const keepOpen = event.detail > 0 && this.mouseDoubleClick(event.pointerType || pointerType);
         navigation = (async () => {
           if (!current() || !await this.valid()) return;
@@ -494,9 +497,9 @@ class MiniOutlinePanel {
         if (!current() || startingRead || !this.mouseDoubleClick(event.pointerType || pointerType)) return;
         event.preventDefault(); event.stopPropagation(); startingRead = true;
         const action = this.headingAction;
-        Promise.resolve(navigation).then(async () => {
-          if (current() && action === this.headingAction && this.mouseDoubleClick(event.pointerType || pointerType)) await this.read(index, true);
-        }).catch(() => this.error()).finally(() => { startingRead = false; });
+        Promise.resolve(navigation).finally(() => { startingRead = false; }).then(() => {
+          if (current() && action === this.headingAction && this.mouseDoubleClick(event.pointerType || pointerType)) return this.read(index, true);
+        }).catch(() => { if (current() && action === this.headingAction) this.error(); });
       });
       row.addEventListener('contextmenu', event => { event.preventDefault(); event.stopPropagation(); this.selectSection(index); this.sectionMenu(event, index, title); });
       this.rows.set(index, { row, title });
@@ -538,9 +541,10 @@ class MiniOutlinePanel {
         || this.destroyed || !this.opened || this.data !== data || this.headingAction !== epoch || this.file !== this.view.file) return;
       try { await action(); } catch { this.error(); }
     };
+    const readingDisabled = this.sectionStarting() || this.adapter.busy();
     return [
-      { label: this.t('从本节朗读', 'Read from this section'), icon: 'play', disabled: this.sectionReadPending || this.adapter.busy(), action: scoped(() => this.read(index, true)) },
-      { label: this.t('只朗读本节', 'Read this section only'), icon: 'audio-lines', disabled: this.sectionReadPending || this.adapter.busy(), action: scoped(() => this.read(index, false)) },
+      { label: this.t('从本节朗读', 'Read from this section'), icon: 'play', disabled: readingDisabled, action: scoped(() => this.read(index, true)) },
+      { label: this.t('只朗读本节', 'Read this section only'), icon: 'audio-lines', disabled: readingDisabled, action: scoped(() => this.read(index, false)) },
       { label: expanded ? this.t('收起标题', 'Collapse heading') : this.t('展开完整标题', 'Show full heading'), icon: 'wrap-text', action: scoped(async () => {
         const show = !this.expandedTitles.has(index);
         if (show) this.expandedTitles.add(index); else this.expandedTitles.delete(index);
@@ -591,15 +595,33 @@ class MiniOutlinePanel {
     if (this.data && !this.invalid && this.file === this.view.file && this.adapter.valid(this.view, this.data)) return true;
     this.invalidate(); this.error(); return false;
   }
+  sectionStarting() {
+    const request = this.sectionRequest;
+    return !!request?.starting && request.epoch === this.headingAction;
+  }
   async read(index, remaining) {
     const data = this.data, epoch = this.headingAction;
-    if (this.sectionReadPending || this.adapter.busy() || !this.opened) return;
-    this.sectionReadPending = true; this.updateSectionControls();
+    if (this.sectionStarting() || this.adapter.busy() || !this.opened || !data?.entries[index]) return;
+    const request = this.sectionRequest = { starting: true, epoch };
+    const current = () => this.sectionRequest === request && !this.destroyed && this.opened && this.data === data
+      && !this.invalid && this.headingAction === epoch && this.file === this.view.file;
+    const release = () => {
+      if (!request.starting) return;
+      request.starting = false;
+      if (this.sectionRequest === request && !this.destroyed) this.updateSectionControls();
+    };
+    this.updateSectionControls();
     try {
-      if (!await this.valid() || this.destroyed || !this.opened || this.data !== data || this.headingAction !== epoch
-        || this.file !== this.view.file || !data?.entries[index]) return;
-      this.state.manual = false; await this.adapter.read(this.view, data, index, remaining);
-    } finally { this.sectionReadPending = false; if (!this.destroyed) this.updateSectionControls(); }
+      if (!await this.valid() || !current() || this.adapter.busy()) return;
+      this.state.manual = false;
+      // Playback can run until the end of the document; only guard the start.
+      await this.adapter.read(this.view, data, index, remaining, { keepControls: true, cancelled: () => !current(), onStarted: release });
+    } catch (error) {
+      if (current()) throw error;
+    } finally {
+      release();
+      if (this.sectionRequest === request) this.sectionRequest = null;
+    }
   }
   update(force = false) {
     if (!this.data || this.invalid || this.destroyed || this.file !== this.view.file) return;

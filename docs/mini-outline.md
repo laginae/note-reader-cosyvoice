@@ -2,6 +2,8 @@
 
 Available for Markdown, text PDFs and local HTML displayed in HTML Reader. External Web viewer pages are not included. It works without starting speech and does not edit notes or PDF bookmarks.
 
+Playback does not lock the chapter menu. Choose **Read from this section** or **Read this section only** while listening or paused to replace the current reading. Single-click still only navigates, and section reading is unavailable during audio export.
+
 ## Controls
 
 - **Pause/resume** beside Pin controls the existing reading session, independently of the main toolbar or selected heading. **More outline options > Playback button visibility** defaults to **Follow header**: on desktop it hides with the header when idle, including while playing or paused. Choose **Visible during reading** to keep this button visible during an active/paused session. Touch/mobile keeps it visible in either mode. Hiding preserves its space and keyboard access; it does not pause playback or change the separate floating button. The button is disabled when no reading can be paused, including exports. Its accessible hint includes the source label; it never starts speech or jumps to a chapter.
@@ -74,6 +76,8 @@ PDF headings and exact positions depend on bookmarks, text layout and the viewer
 标题使用界面字体，“标题显示行数”可选一、二、三或四行，默认两行，超出后省略。悬停提示和无障碍标签保留完整标题；标题右键菜单和顶部“目录选项”中都提供“展开完整标题”，触屏也可使用后者。更改行数不会收起已手动展开的标题。目录标签清理常见 Markdown 格式标记，例如 `$x$` 显示为 `x`；不改原文、定位偏移、朗读范围或 PDF/HTML 标题，也不加载完整公式渲染器。
 
 点击标题只跳转；标题行不显示或预留行末菜单按钮，当前朗读行也一样。右键标题，或聚焦标题后按 Shift+F10／菜单键，可选择“从本节朗读”“只朗读本节”和完整标题选项。顶部“目录选项”中也提供相同操作，方便触屏和键盘使用，并标明目标章节：优先使用已选择的章节，否则使用可靠定位的浏览／朗读章节；无法确定时禁用操作，不猜测首个标题。切换文档或关闭目录会取消尚未执行的操作。朗读仍遵循原有引擎授权，在线接口可能计费。搜索会保留匹配标题的父级，支持层级折叠和固定显示。淡底表示浏览位置；主题色文字和小播放标记表示可靠定位的朗读章节。手动浏览目录后不会强行抢回滚动位置，可用“回到朗读位置”恢复。桌面端主动跳转章节也会暂停已开启的正文自动跟随。
+
+朗读或暂停时，无需先点停止：在另一标题选择「从本节朗读」或「只朗读本节」即可切换；单击仍只定位。正在导出音频时，不会打断导出改读其他章节。
 
 章节名和操作共用紧凑的一行，不再固定预留两行标题高度。长章节名显示省略号，无障碍标签仍保留全文。空间不足或使用触屏／移动布局时，通过“章节操作”菜单打开相同的三个命令，不挤压或换行堆叠图标。调整宽度不会改变目标章节，并保留必要的键盘焦点；打开选项或菜单本身不启动朗读。
 
