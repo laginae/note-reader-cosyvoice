@@ -335,7 +335,7 @@ test('PDF toolbar reuses playback and scope actions without changing PDF content
       {str:'PDF words',width:60,height:12,transform:[12,0,0,12,40,700]}]}]};
   const plugin={settings:{},readerState:{},app:{workspace:{getLeavesOfType:type=>type==='pdf'?[{view}]:[]}},
     runUserAction:(_label,action)=>action(),getPdfSelectionForFile:()=>context,
-    readPdfRange:PluginClass.prototype.readPdfRange,
+    readPdfRange:PluginClass.prototype.readPdfRange,withPdfSelectionMath:PluginClass.prototype.withPdfSelectionMath,
     captureMarkdownReadingSelection:()=>assert.fail('PDF must not use the editor'),
     readCurrentPdf:async(...args)=>calls.push(['pdf',...args]),startReading:async(...args)=>calls.push(['selection',...args]),
     openPdfOutline:f=>calls.push(['outline',f]),stopReading:()=>assert.fail('Hiding toolbar must not stop reading')};

@@ -82,10 +82,11 @@ function splitFootnotesInRange(text, partition) {
   return { body: body.trim(), notes: notes.join('\n') };
 }
 
-async function footnoteRules(page, OPS) {
+async function footnoteRules(page, OPS, onOperators) {
   if (!page.getOperatorList || !OPS) return [];
   try {
     const list = await page.getOperatorList(), rules = [];
+    onOperators?.(list);
     for (let i = 0; i < list.fnArray.length; i++) {
       if (list.fnArray[i] !== OPS.constructPath) continue;
       const [ops, coords] = list.argsArray[i] || [];

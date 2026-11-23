@@ -3,6 +3,12 @@
 const core = require('@laginae/note-reader-core/pdf-layout');
 
 function extractPdfTextLayout(items, options) {
+  if (options?.singleColumn && items?.length > 1) {
+    const { width, height } = options.viewport;
+    const lines = core.groupItemsIntoLines(items, width, {splitColumns:false});
+    if (lines.length) return { lines, twoColumn:false, pageWidth:width, pageHeight:height,
+      text:lines.map(l=>l.text).join('\n').replace(/([A-Za-z])-\n(?=[a-z])/g,'$1').trim() };
+  }
   const layout = core.extractPdfTextLayout(items, options);
   const visible = (items || []).filter(item => item?.str?.trim());
   // The core's multi-item grouping omits geometry for a one-span selection.

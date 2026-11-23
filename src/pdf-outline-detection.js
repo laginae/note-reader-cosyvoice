@@ -8,6 +8,8 @@ const SENTENCE = /[;\u3002\uFF1B]|[a-z]{2}\.\s+[A-Z]/;
 const INVALID = /[=+\u2212\u00d7\u2211\u222b{}\[\]\\\x00-\x08\x0e-\x1f]|https?:\/\/|doi\s*:|@|\u00a9/i;
 const UNITS = /^(?:[kMGTmun]?W(?:h)?|[kMGT]?Hz|kg|kPa|MPa|mol|%)(?:\b|\s|[,\uFF0C])/;
 const CJK = /[\u3400-\u9fff]/;
+const REFERENCES = /^(?:references|bibliography|\u53c2\u8003\u6587\u732e)\s*[.:\uFF1A\u3002]?$/i;
+const APPENDIX = /^(?:appendix|appendices|\u9644\u5f55)/i;
 const mode = weights => [...weights].sort((a, b) => b[1] - a[1])[0]?.[0];
 function addWeight(weights, key, count) { if (key) weights.set(key, (weights.get(key) || 0) + count); }
 function numbering(text) {
@@ -91,6 +93,8 @@ function outlineTypography(layout, items, styles = {}, viewport = {}) {
   return { ...layout, lines, bodySize, bodyFont, origin, height, rotated: !!((Number(viewport.rotation) || 0) % 360) };
 }
 
+const { centerX, capitalHeading, markRomanHierarchy } = require('@laginae/note-reader-core/pdf-heading-hierarchy');
+
 function detectPdfHeadings(pages) {
   const repeats = new Map(), headingFonts = new Set();
   const sizes = new Map(), fonts = new Map();
@@ -136,6 +140,7 @@ function detectPdfHeadings(pages) {
     }
   }
   for (const row of eligible) row.prominent = row.strong || (row.distinct && headingFonts.has(row.line.font));
+  markRomanHierarchy(eligible, bodySize);
   const numeric = new Map();
   for (const row of eligible) if (row.num?.kind === 'decimal') {
     if (!numeric.has(row.num.token)) numeric.set(row.num.token, []);
@@ -152,7 +157,7 @@ function detectPdfHeadings(pages) {
   for (const row of eligible) {
     const { page, line, num, semantic, prominent, text } = row;
     if (consumed.has(line)) continue;
-    if (/^(?:appendix|appendices|\u9644\u5f55)/i.test(num?.body || text)) inReferences = false;
+    if (APPENDIX.test(num?.body || text)) inReferences = false;
     if (inReferences && !semantic && (num || !prominent)) continue;
     if (numericBodyContinuation(row, bodySize)) continue;
     if (num) {
@@ -163,14 +168,15 @@ function detectPdfHeadings(pages) {
       || /[.;:\u3002\uFF1B\uFF1A]$/.test(text) || (headingFonts.size && !headingFonts.has(line.font)))) continue;
     let title = text, lastLine = line;
     // Only join matching heading typography; source offsets/text remain untouched.
-    if (!semantic && prominent && (row.distinct || line.fontSize >= bodySize * 1.12)) {
+    if (!semantic && prominent && (row.romanSection || row.distinct || line.fontSize >= bodySize * 1.12)) {
       for (let step = 1; step <= 3; step++) {
         const next = page.lines[row.index + step];
         const reference = next && academicContinuation(title, next.text);
         if (!next || next.footnote || next.offset < 0 || next.text.length > 85 || numbering(next.text.trim()) || SEMANTIC.test(next.text.trim())
           || CAPTION.test(next.text) || (academicBlock(next.text) && !reference)
           || INVALID.test(next.text) || (!reference && /[.;!?\u3002\uFF1B\uFF01\uFF1F]/.test(next.text))
-          || Math.abs(next.xMin - line.xMin) > line.fontSize * 1.5 || lastLine.y - next.y < line.fontSize * .65
+          || (row.romanSection ? !capitalHeading(next.text.trim()) || Math.abs(centerX(next) - centerX(line)) > line.fontSize
+            : Math.abs(next.xMin - line.xMin) > line.fontSize * 1.5) || lastLine.y - next.y < line.fontSize * .65
           || lastLine.y - next.y > line.fontSize * 1.8 || next.font !== line.font || Math.abs(next.fontSize - line.fontSize) > .5) break;
         title += CJK.test(title.slice(-1)) && CJK.test(next.text[0]) ? next.text.trim() : ' ' + next.text.trim();
         consumed.add(next);
@@ -179,7 +185,7 @@ function detectPdfHeadings(pages) {
     }
     entries.push({ title, level: num?.level || 1, page: page.number, offset: line.offset,
       x: line.xMin, y: line.y, inferred: true });
-    if (/^(?:references|bibliography|\u53c2\u8003\u6587\u732e)\s*[.:\uFF1A\u3002]?$/i.test(num?.body || text)) inReferences = true;
+    if (REFERENCES.test(num?.body || text)) inReferences = true;
     if (entries.length >= 1000) break;
   }
   return entries;

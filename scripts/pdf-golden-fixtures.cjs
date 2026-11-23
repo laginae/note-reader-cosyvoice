@@ -10,7 +10,7 @@ const cases = [
     expected:/Left first\. Left next\. Left last\. Right first\. Right next\. Right last\./ },
   { name:'line wrapping', items:[item('An ordinary expla-',40,740),item('nation continues here.',40,724)], expected:/explanation continues/ },
   { name:'encoded inline operator', items:[item('For',40,740),item('q',65,740,'italic'),item('\u0d4c',75,740,'encoded'),item('2',85,740),item('the result holds.',100,740)], expected:/q equals 2/ },
-  { name:'Greek letters', items:[item('Compare',40,740),item('\u03b1',85,740,'greek'),item('\u0d51',95,740,'encoded'),item('\u03b2',105,740,'greek')], expected:/alpha less than beta/ },
+  { name:'Greek letters', items:[item('Compare',40,740),item('\u03b1',85,740,'greek'),item('\u0d4f',95,740,'encoded'),item('\u03b2',105,740,'greek')], expected:/alpha less than beta/ },
   { name:'display math', items:[item('A generic equation follows.',40,740,'body',12,450),
     item('k',210,718,'italic',8),item('y',180,700,'italic'),item('\u0d4c \u0dcd',195,700,'encoded'),item('z',225,700,'italic'),
     item('j',200,686,'italic',8),item('\u0b40',210,686,'encoded',8),item('0',218,686,'body',8),item('(9)',290,675),

@@ -21,6 +21,49 @@ function page(number, specifications, { origin = 0, rotation = 0 } = {}) {
   return { ...layout, number };
 }
 
+test('centered body-size Roman sections and left-aligned lettered subsections retain levels across columns and pages', () => {
+  const p1 = page(1, [
+    { text: 'I. SHELF MAPS', x: 110, y: 720, width: 100 },
+    { text: prose, x: 40, y: 704 }, { text: prose, x: 40, y: 692 },
+    { text: 'II. READING ROOM', x: 370, y: 720, width: 140 },
+    { text: 'SCHEDULES', x: 408, y: 708, width: 64 },
+    { text: 'A. Morning Hours', x: 320, y: 680, width: 130, font: 'alternate' },
+    { text: prose, x: 320, y: 665 }, { text: prose, x: 320, y: 653 },
+  ]);
+  const p2 = page(2, [
+    { text: 'B. Evening Hours', y: 720, width: 130, font: 'alternate' }, { text: prose, y: 704 },
+    { text: 'C. Weekend Hours', y: 680, width: 130, font: 'alternate' }, { text: prose, y: 664 },
+    { text: 'D. Holiday Hours', y: 640, width: 130, font: 'alternate' }, { text: prose, y: 624 },
+    { text: 'III. DESK SERVICES', x: 375, y: 720, width: 130 },
+    { text: 'A. A regular list item', x: 320, y: 704, width: 130 }, { text: 'B. Another list item', x: 320, y: 691, width: 130 },
+    { text: prose, x: 320, y: 677 },
+  ]);
+  const pages = [p1, p2], before = JSON.stringify(pages), entries = detectPdfHeadings(pages);
+  assert.deepEqual(entries.map(e => [e.page, e.level, e.title]), [
+    [1, 1, 'I. SHELF MAPS'], [1, 1, 'II. READING ROOM SCHEDULES'], [1, 2, 'A. Morning Hours'],
+    [2, 2, 'B. Evening Hours'], [2, 2, 'C. Weekend Hours'], [2, 2, 'D. Holiday Hours'], [2, 1, 'III. DESK SERVICES'],
+  ]);
+  assert.ok(p1.text.slice(entries[1].offset).startsWith('II. READING ROOM\nSCHEDULES'));
+  for (const e of entries) assert.ok(pages[e.page - 1].text.slice(e.offset).startsWith(e.title.split(' ')[0]));
+  assert.equal(JSON.stringify(pages), before);
+});
+
+test('a lone centered label, flush-left or tightly spaced Roman lists do not establish a heading series', () => {
+  for (const specs of [
+    [{ text: 'IV. PUBLIC NOTICE', x: 100, width: 120, y: 710 }],
+    [{ text: 'I. SHORT ITEM', x: 40, width: 90, y: 710 }, { text: 'II. ANOTHER ITEM', x: 40, width: 94, y: 685 }],
+    [{ text: 'I. SHORT ITEM', x: 115, width: 90, y: 710 }, { text: 'II. ANOTHER ITEM', x: 113, width: 94, y: 699 }],
+  ]) assert.deepEqual(detectPdfHeadings([page(2, [...specs, { text: prose, x: 40, y: 658 }])]), []);
+});
+
+test('Roman labels in the bibliography cannot corroborate an isolated heading in the body', () => {
+  const p = page(2, [
+    {text:'I. PUBLIC NOTICE', x:110, width:100, y:720}, {text:prose, y:700},
+    {text:'References', y:670}, {text:'II. PRINTED INDEX', x:110, width:100, y:645}, {text:prose, y:630},
+  ]);
+  assert.deepEqual(detectPdfHeadings([p]).map(e=>e.title), ['References']);
+});
+
 test('CJK main headings and same-size children use relative size and learned font identity', () => {
   const pages = [page(1, [
     { text: '1 \u7814\u7a76\u6982\u8ff0', size: 12, font: 'f_head' },

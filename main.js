@@ -2550,6 +2550,17 @@ var require_pdf_layout2 = __commonJS({
     "use strict";
     var core = require_pdf_layout();
     function extractPdfTextLayout2(items, options) {
+      if (options?.singleColumn && items?.length > 1) {
+        const { width, height } = options.viewport;
+        const lines = core.groupItemsIntoLines(items, width, { splitColumns: false });
+        if (lines.length) return {
+          lines,
+          twoColumn: false,
+          pageWidth: width,
+          pageHeight: height,
+          text: lines.map((l) => l.text).join("\n").replace(/([A-Za-z])-\n(?=[a-z])/g, "$1").trim()
+        };
+      }
       const layout = core.extractPdfTextLayout(items, options);
       const visible = (items || []).filter((item) => item?.str?.trim());
       if (!layout.lines.length && visible.length === 1) {
@@ -3630,26 +3641,47 @@ var require_pdf_math = __commonJS({
       "\u0B40": "=",
       "\u0D46": "-",
       "\u0D45": "+",
+      "\u0D4F": "<",
       "\u0D50": ">",
-      "\u0D51": "<",
+      "\u0D51": "\u2264",
+      "\u0D52": "\u2265",
+      "\u123E": "[",
+      "\u123F": "]",
       "\u0DCD": "\u2211",
-      "\u0DA8": "\u221A"
+      "\u0DA8": "\u221A",
+      "\u0DB1": "\u222B"
     }));
-    var encodingScript = /[\u0b00-\u0b7f\u0d00-\u0dff\u1200-\u137f]/u;
+    var encodedScripts = /* @__PURE__ */ new Map([["\u0B3F", "-"]]);
+    for (const [first, base, count] of [
+      [2868, 48, 10],
+      [2885, 65, 26],
+      [2911, 97, 26],
+      [3002, 65, 26],
+      [3028, 97, 26],
+      [3116, 48, 10],
+      [3133, 65, 26],
+      [3159, 97, 26],
+      [3250, 65, 26],
+      [3276, 97, 26]
+    ]) for (let i = 0; i < count; i++) encodedScripts.set(String.fromCharCode(first + i), String.fromCharCode(base + i));
+    var encodingScript = /[\u0b00-\u0dff\u1200-\u137f]/u;
     function encodedMathFonts(items, known = /* @__PURE__ */ new Set()) {
       const evidence = /* @__PURE__ */ new Map();
       for (const item of items) {
         const key = item.fontName || "";
-        const data = evidence.get(key) || { chars: /* @__PURE__ */ new Set(), scripts: /* @__PURE__ */ new Set(), prose: false };
+        const data = evidence.get(key) || { chars: /* @__PURE__ */ new Set(), scripts: /* @__PURE__ */ new Set(), prose: false, mixedAtom: false };
+        let operators = 0;
         for (const char of item.str) {
           if (encodedMath.has(char)) {
+            operators++;
             data.chars.add(char);
             data.scripts.add(char.codePointAt(0) >= 4608 ? "ethiopic" : char.codePointAt(0) >= 3456 ? "sinhala" : char.codePointAt(0) >= 3328 ? "malayalam" : "oriya");
-          } else if (encodingScript.test(char) && /\p{L}/u.test(char)) data.prose = true;
+          } else if (encodingScript.test(char) && /\p{L}/u.test(char) && !encodedScripts.has(char)) data.prose = true;
         }
+        if (operators && /[\u{1d400}-\u{1d7ff}]/u.test(item.str) && !prose(item.str)) data.mixedAtom = true;
         evidence.set(key, data);
       }
-      return new Set([...evidence].filter(([font, data]) => !data.prose && (font && known.has(font) || data.chars.size >= 3 && data.scripts.size >= 2)).map(([font]) => font));
+      return new Set([...evidence].filter(([font, data]) => !data.prose && (font && known.has(font) || data.mixedAtom || data.chars.size >= 3 && data.scripts.size >= 2)).map(([font]) => font));
     }
     function mathFonts(items, names = {}) {
       const fonts = /* @__PURE__ */ new Map();
@@ -3672,7 +3704,17 @@ var require_pdf_math = __commonJS({
       }
       return names;
     }
-    function pdfMathChanges2(layout, items, settings = {}, names = {}, encodingContext = /* @__PURE__ */ new Set()) {
+    function referenceMarkerLine(text) {
+      if (text.length > 160 || !/^[ \t\u3000]*[\[\uFF3B]/.test(text)) return null;
+      const value = text.normalize("NFKC").trim();
+      if (!/^\[[ \t]*[1-9]\d{0,2}[ \t]*\](?:[ \t]*(?:[,;–—-][ \t]*)?\[[ \t]*[1-9]\d{0,2}[ \t]*\])*[ \t]*[.,;:!?。、！？]?$/.test(value)) return null;
+      return value.replace(/\[[ \t]*(\d+)[ \t]*\]/g, "[$1]");
+    }
+    function normalizePdfReferenceRows(text) {
+      if (!/\[[ \t]|[ \t]\]|[\u3000\uFF10-\uFF19\uFF3B\uFF3D]/.test(text)) return text;
+      return text.split("\n").map((line) => referenceMarkerLine(line) ?? line).join("\n");
+    }
+    function pdfMathChanges2(layout, items, settings = {}, names = {}, encodingContext = /* @__PURE__ */ new Set(), bars = /* @__PURE__ */ new Map()) {
       const options = academicOptions2(settings);
       const skipAll = options.academicMathMode === "skip" || options.mathReadingLanguage === "skip";
       const filtering = skipAll || options.academicMathMode === "smart";
@@ -3682,7 +3724,8 @@ var require_pdf_math = __commonJS({
       const height = heights[Math.floor(heights.length / 2)], tolerance = Math.max(2, height * 0.5);
       const encodedFonts = encodedMathFonts(positioned, encodingContext);
       for (const font of encodedFonts) if (font) encodingContext.add(font);
-      const decoded = (item) => encodedFonts.has(item.fontName || "") ? [...item.str].map((char) => encodedMath.get(char) || (encodingScript.test(char) ? "\uFFFD" : char)).join("") : item.str;
+      const decodeChar = (char) => encodedMath.get(char) || encodedScripts.get(char) || (encodingScript.test(char) ? "\uFFFD" : char);
+      const decoded = (item) => encodedFonts.has(item.fontName || "") ? [...item.str].map(decodeChar).join("") : item.str;
       const fonts = mathFonts(positioned.map((item) => ({ ...item, str: decoded(item) })), names), groups = layout.lines.map(() => []);
       for (const item of positioned) {
         let nearest = -1, distance = Infinity;
@@ -3703,17 +3746,29 @@ var require_pdf_math = __commonJS({
           const start = line.text.indexOf(value, cursor);
           if (start >= 0) cursor = start + value.length;
           const speechText = decoded(item).replace(/[ \t]+/g, " ").trim();
+          const marks = bars.get(item) || item.mathBarOffsets;
+          let decorated = "";
+          if (marks?.length) {
+            let offset = 0;
+            for (const char of item.str) {
+              decorated += marks.includes(offset) ? "\\bar{" + char.normalize("NFKC") + "}" : encodedFonts.has(item.fontName || "") ? decodeChar(char) : char;
+              offset += char.length;
+            }
+          }
           return {
             item,
             start,
             end: start + value.length,
             speechText,
+            decorated,
             repaired: speechText !== value,
             unsafe: speechText.includes("\uFFFD"),
             math: fonts.has(item.fontName) || mathGlyph.test(speechText) && !prose(speechText) || speechText !== value
           };
         });
-        if (!mapped.length || mapped.some((token) => token.start < 0)) return { line, mapped: [], display: false };
+        if (!mapped.length || mapped.some((token) => token.start < 0) || referenceMarkerLine(line.text) !== null && !mapped.some((token) => token.math)) {
+          return { line, mapped: [], display: false, analysisText: "" };
+        }
         mapped.forEach((token, i) => {
           const previous = mapped[i - 1];
           const label = token.item.str.trim();
@@ -3826,13 +3881,13 @@ var require_pdf_math = __commonJS({
         const selected = runs.filter((run) => {
           const tokens = mapped.filter((token) => token.start >= run.start && token.end <= run.end);
           const source = tokens.map((token) => token.speechText).join(" ");
-          const expression = tokens.map((token) => token.script ? `${token.script}{${token.speechText}}` : token.speechText).join(" ");
-          run.omit = row.skipDisplay || tokens.some((token) => token.unsafe) || skipAll && row.supported !== false || filtering && !row.display && complex(expression);
+          const expression = tokens.map((token) => token.script ? `${token.script}{${token.decorated || token.speechText}}` : token.decorated || token.speechText).join(" ");
+          run.omit = row.skipDisplay || tokens.some((token) => token.unsafe) || skipAll && row.supported !== false || filtering && !row.display && complex(expression.replace(/\\bar\{([^{}]+)\}/g, "$1"));
           if (run.omit) return true;
           const shortLabel = options.academicMathStyle === "concise" && conciseMathLabels(greekMathCommands(source)).changed;
           const local = contextualMathOptions(options, line.text.slice(0, run.start) || row.noticeContext, line.text.slice(run.end));
           const bracketed = /^[\[({]/.test(source.trim());
-          if (!mathOperator.test(source) && !tokens.some((token) => token.repaired || token.script) && !shortLabel && !bracketed) return false;
+          if (!mathOperator.test(source) && !tokens.some((token) => token.repaired || token.script || token.decorated) && !shortLabel && !bracketed) return false;
           const spoken = mathSpeech2(expression, { ...local, academicMathMode: "all", academicSkipNotice: true, literalMathSets: true });
           if (!spoken || spoken === "Formula." || spoken === "\u516C\u5F0F\u3002") return false;
           run.speech = spoken;
@@ -3893,7 +3948,116 @@ var require_pdf_math = __commonJS({
         return line;
       }).join("\n").trim();
     }
-    module2.exports = { pdfMathChanges: pdfMathChanges2, applyPdfMathChanges: applyPdfMathChanges2, pdfFontNames: pdfFontNames2 };
+    module2.exports = { pdfMathChanges: pdfMathChanges2, applyPdfMathChanges: applyPdfMathChanges2, pdfFontNames: pdfFontNames2, normalizePdfReferenceRows, encodedMathFonts };
+  }
+});
+
+// src/pdf-math-bars.js
+var require_pdf_math_bars = __commonJS({
+  "src/pdf-math-bars.js"(exports2, module2) {
+    "use strict";
+    var styled = /[\u{1d400}-\u{1d7ff}]/u;
+    var atom = (c) => styled.test(c) && /^[A-Za-z\u0391-\u03c9]$/u.test(c.normalize("NFKC"));
+    var series = (v) => Array.isArray(v) || ArrayBuffer.isView(v);
+    function rectangle(points) {
+      if (points.length !== 4 || !points.flat().every(Number.isFinite)) return null;
+      const xs = [...new Set(points.map((p) => p[0]))], ys = [...new Set(points.map((p) => p[1]))];
+      if (xs.length !== 2 || ys.length !== 2 || new Set(points.map((p) => p.join(","))).size !== 4) return null;
+      for (let i = 0; i < 4; i++) {
+        const [x, y] = points[i], next = points[(i + 1) % 4];
+        if (x !== next[0] && y !== next[1]) return null;
+      }
+      return [Math.min(...xs), Math.min(...ys), Math.abs(xs[1] - xs[0]), Math.abs(ys[1] - ys[0])];
+    }
+    function filledRectangle(args, next, ops) {
+      const [a, b] = args || [];
+      const fill = (op) => op != null && (op === ops.fill || op === ops.eoFill);
+      if (typeof a === "number") {
+        const p = b?.[0];
+        if (!fill(a) || b?.length !== 1 || !series(p) || p.length !== 13 || p[0] !== 0 || p[3] !== 1 || p[6] !== 1 || p[9] !== 1 || p[12] !== 3 && p[12] !== 4) return null;
+        return rectangle([[p[1], p[2]], [p[4], p[5]], [p[7], p[8]], [p[10], p[11]]]);
+      }
+      if (!fill(next) || !series(a) || !series(b)) return null;
+      if (a.length === 1 && a[0] === ops.rectangle && b.length === 4) {
+        const [x, y, w, h] = b;
+        return [Math.min(x, x + w), Math.min(y, y + h), Math.abs(w), Math.abs(h)];
+      }
+      if (a.length !== 5 || b.length !== 8 || a[0] !== ops.moveTo || a[1] !== ops.lineTo || a[2] !== ops.lineTo || a[3] !== ops.lineTo || a[4] !== ops.closePath) return null;
+      return rectangle([[b[0], b[1]], [b[2], b[3]], [b[4], b[5]], [b[6], b[7]]]);
+    }
+    function pdfBarOffsets(items, list, ops) {
+      const marks = /* @__PURE__ */ new Map();
+      if (!list?.fnArray || !ops || !items.some((i) => styled.test(i.str))) return marks;
+      const bars = /* @__PURE__ */ new Map(), above = /* @__PURE__ */ new Map(), widths = /* @__PURE__ */ new Map(), candidates = [];
+      const insert = (map, y, v) => {
+        const k = Math.floor(y / 8);
+        if (!map.has(k)) map.set(k, []);
+        map.get(k).push(v);
+      };
+      const nearby = (map, lo, hi, visit) => {
+        for (let k = Math.floor(lo / 8); k <= Math.floor(hi / 8); k++) for (const v of map.get(k) || []) if (visit(v)) return true;
+        return false;
+      };
+      let transform = [1, 1, 0, 0], nested = 0;
+      const stack = [];
+      for (let i = 0; i < list.fnArray.length; i++) {
+        const op = list.fnArray[i], args = list.argsArray[i];
+        if (op === ops.paintFormXObjectBegin || op === ops.beginGroup || op === ops.beginAnnotation) {
+          nested++;
+          continue;
+        }
+        if (op === ops.paintFormXObjectEnd || op === ops.endGroup || op === ops.endAnnotation) {
+          nested = Math.max(0, nested - 1);
+          continue;
+        }
+        if (nested) continue;
+        if (op === ops.save) stack.push(transform);
+        else if (op === ops.restore) transform = stack.pop() || null;
+        else if (op === ops.transform && transform) {
+          const [sx, sy, tx, ty] = transform, [a, b, c, d, e, f] = args;
+          transform = !b && !c && a > 0 && d > 0 ? [sx * a, sy * d, tx + sx * e, ty + sy * f] : null;
+        } else if (op === ops.constructPath && transform) {
+          const rect = filledRectangle(args, list.fnArray[i + 1], ops);
+          if (!rect) continue;
+          const [sx, sy, tx, ty] = transform, [left, bottom, w, h] = rect;
+          const x = left * sx + tx, y = bottom * sy + ty, width = w * sx, thickness = h * sy;
+          if (Number.isFinite(x + y + width + thickness) && width > 0 && thickness > 0 && width >= thickness * 4) insert(bars, y, { x, y, width, thickness });
+        }
+      }
+      if (!bars.size) return marks;
+      for (const item of items) {
+        const t = item.transform, s = item.str?.trim();
+        if (!s || !t || t[1] || t[2] || !(item.width > 0) || !(item.height > 0) || item.height > 200) continue;
+        const x = t[4], y = t[5], h = item.height, w = item.width;
+        if (s.length < 24 && (styled.test(s) || /^[a-zA-Z0-9]$/.test(s))) insert(above, y, { x, y, w, h });
+        if (!styled.test(s)) continue;
+        const chars = [...s], first = chars[0], last = chars.at(-1), pad = item.str.indexOf(s);
+        const key = (c) => (item.fontName || "") + ":" + c;
+        if (chars.length === 1 && atom(first)) {
+          widths.set(key(first), w / h);
+          candidates.push({ item, c: first, idx: pad, side: "solo", x, y, h, w, key: key(first) });
+        } else {
+          if (atom(first) && /^[\s=+\-−<>≤≥\u0d45-\u0d52]/u.test(s.slice(first.length)))
+            candidates.push({ item, c: first, idx: pad, side: "left", x, y, h, w, key: key(first) });
+          if (atom(last) && /[\s=+\-−<>≤≥\u0d45-\u0d52]$/u.test(s.slice(0, -last.length)))
+            candidates.push({ item, c: last, idx: pad + s.length - last.length, side: "right", x, y, h, w, key: key(last) });
+        }
+      }
+      for (const v of candidates) {
+        const w = v.side === "solo" ? v.w : widths.get(v.key) * v.h;
+        if (!(w >= v.h * 0.24 && w <= v.h * 1.15)) continue;
+        const x = v.side === "right" ? v.x + v.w - w : v.x, lo = v.y + v.h * 0.65, hi = v.y + v.h * 1.1;
+        nearby(bars, lo, hi, (b) => {
+          if (b.y < lo || b.y > hi || b.thickness > v.h * 0.14 || Math.abs(b.width - w) > w * 0.25 || Math.abs(b.x - x) > v.h * 0.14 || Math.abs(b.x + b.width - x - w) > v.h * 0.14) return false;
+          if (nearby(above, b.y, b.y + v.h * 1.25, (a) => a.y > b.y && a.y < b.y + v.h * 1.25 && a.x < x + w * 0.8 && a.x + a.w > x + w * 0.2)) return false;
+          if (!marks.has(v.item)) marks.set(v.item, []);
+          marks.get(v.item).push(v.idx);
+          return true;
+        });
+      }
+      return marks;
+    }
+    module2.exports = { pdfBarOffsets };
   }
 });
 
@@ -3902,10 +4066,11 @@ var require_pdf_selection = __commonJS({
   "src/pdf-selection.js"(exports2, module2) {
     "use strict";
     var { extractPdfTextLayout: extractPdfTextLayout2 } = require_pdf_layout2();
-    var { pdfMathChanges: pdfMathChanges2, applyPdfMathChanges: applyPdfMathChanges2 } = require_pdf_math();
+    var { pdfMathChanges: pdfMathChanges2, applyPdfMathChanges: applyPdfMathChanges2, normalizePdfReferenceRows, encodedMathFonts } = require_pdf_math();
     var { speakGreekSymbols } = require_math_symbols2();
     function normalizePdfSpeechText2(text) {
-      return speakGreekSymbols(String(text || "").normalize("NFKC").replace(/\u00ad/g, "").replace(/([A-Za-z])-\s*\n\s*(?=[a-z])/g, "$1")).replace(/[ \t]+/g, " ");
+      const normalized = String(text || "").normalize("NFKC").replace(/\u00ad/g, "").replace(/([A-Za-z])-\s*\n\s*(?=[a-z])/g, "$1");
+      return speakGreekSymbols(normalizePdfReferenceRows(normalized)).replace(/[ \t]+/g, " ");
     }
     function capturePdfSelectionLayout2(range, root, selectedText) {
       if (!root.querySelectorAll || !range.intersectsNode) return null;
@@ -3960,15 +4125,77 @@ var require_pdf_selection = __commonJS({
         return null;
       }
     }
+    function selectedPageMathChanges2(page, layout, settings) {
+      return pdfMathChanges2(layout, page.items, settings, {}, new Set(page.mathEncodedFonts || []));
+    }
+    var needsPdfMathEvidence2 = (page) => page.items?.some((i) => /[\u{1d400}-\u{1d7ff}\u0d45-\u0d52]/u.test(i.str));
+    async function enrichPdfSelection2(context, getPage, ops) {
+      const selectionLayout = [];
+      for (const selected of context.selectionLayout) {
+        let result = selected;
+        try {
+          const page = needsPdfMathEvidence2(selected) && getPage(selected.pageNumber);
+          if (page) {
+            const vp = page.getViewport({ scale: 1 }), bounds = selected.viewport;
+            if (vp.rotation || !vp.convertToViewportPoint || !(bounds?.width > 0 && bounds.height > 0)) throw Error();
+            const items = (await page.getTextContent()).items.filter((i) => i.str?.trim());
+            const sx = vp.width / bounds.width, sy = vp.height / bounds.height;
+            const matches = selected.items.map((s) => {
+              const o = items[s.spanIndex];
+              if (!o?.transform || !Number.isInteger(s.selectionStart) || !Number.isInteger(s.selectionEnd) || s.selectionStart < 0 || s.selectionEnd > o.str.length || s.selectionEnd - s.selectionStart !== s.str.length || o.str.slice(s.selectionStart, s.selectionEnd) !== s.str) throw Error();
+              const [x, y] = vp.convertToViewportPoint(o.transform[4], o.transform[5]);
+              const left = s.transform[4] * sx, right = left + s.width * sx, top = (bounds.height - s.transform[5]) * sy;
+              const whole = s.selectionStart === 0 && s.selectionEnd === o.str.length;
+              if (!(o.height > 0 && Number.isFinite(left + right + top + x + y)) || Math.abs(top - y) > o.height * 0.9) throw Error();
+              if (whole ? Math.abs(left - x) > o.height * 0.55 || Math.abs(right - left - o.width) > Math.max(o.height * 1.5, o.width * 0.45) : left < x - o.height * 0.55 || right > x + o.width + o.height * 0.55) throw Error();
+              const start = whole ? 0 : Math.max(0, Math.min(left - x, o.width));
+              const w = whole ? o.width : Math.min(o.width - start, s.width * sx);
+              if (!(w > 0)) throw Error();
+              return { s, o, shape: {
+                ...s,
+                fontName: o.fontName,
+                height: o.height,
+                width: w,
+                transform: [...o.transform.slice(0, 4), o.transform[4] + start, o.transform[5]]
+              } };
+            });
+            let bars;
+            if (ops && page.getOperatorList && matches.some((m) => /[\u{1d400}-\u{1d7ff}]/u.test(m.s.str))) {
+              try {
+                bars = require_pdf_math_bars().pdfBarOffsets(items, await page.getOperatorList(), ops);
+              } catch {
+              }
+            }
+            const fonts = encodedMathFonts(items);
+            const pageLayout = extractPdfTextLayout2(items, { viewport: vp });
+            const midpoint = (Math.min(...pageLayout.lines.map((l) => l.xMin)) + Math.max(...pageLayout.lines.map((l) => l.xMax))) / 2;
+            const singleColumn = !pageLayout.twoColumn || matches.every(({ o }) => o.transform[4] + o.width <= midpoint) || matches.every(({ o }) => o.transform[4] >= midpoint);
+            result = {
+              ...selected,
+              singleColumn,
+              viewport: { width: vp.width, height: vp.height },
+              mathEncodedFonts: [...new Set(matches.map((m) => m.o.fontName).filter((f) => fonts.has(f)))],
+              items: matches.map(({ s, o, shape }) => {
+                const offsets = (bars?.get(o) || []).filter((i) => i >= s.selectionStart && i < s.selectionEnd);
+                return offsets.length ? { ...shape, mathBarOffsets: offsets.map((i) => i - s.selectionStart) } : shape;
+              })
+            };
+          }
+        } catch {
+        }
+        selectionLayout.push(result);
+      }
+      return { ...context, selectionLayout };
+    }
     function preparePdfSelection2(context, settings) {
       if (!context.selectionLayout?.length) return normalizePdfSpeechText2(context.selectedText);
       return context.selectionLayout.map((page) => {
-        const layout = extractPdfTextLayout2(page.items, { viewport: page.viewport });
-        const changes = pdfMathChanges2(layout, page.items, settings);
+        const layout = extractPdfTextLayout2(page.items, { viewport: page.viewport, singleColumn: page.singleColumn });
+        const changes = selectedPageMathChanges2(page, layout, settings);
         return normalizePdfSpeechText2(applyPdfMathChanges2(layout.text, changes));
       }).join("\n\n");
     }
-    module2.exports = { capturePdfSelectionLayout: capturePdfSelectionLayout2, preparePdfSelection: preparePdfSelection2, normalizePdfSpeechText: normalizePdfSpeechText2 };
+    module2.exports = { capturePdfSelectionLayout: capturePdfSelectionLayout2, preparePdfSelection: preparePdfSelection2, normalizePdfSpeechText: normalizePdfSpeechText2, needsPdfMathEvidence: needsPdfMathEvidence2, enrichPdfSelection: enrichPdfSelection2, selectedPageMathChanges: selectedPageMathChanges2 };
   }
 });
 
@@ -4660,10 +4887,11 @@ var require_pdf_footnotes = __commonJS({
       }
       return { body: body.trim(), notes: notes.join("\n") };
     }
-    async function footnoteRules2(page, OPS) {
+    async function footnoteRules2(page, OPS, onOperators) {
       if (!page.getOperatorList || !OPS) return [];
       try {
         const list = await page.getOperatorList(), rules = [];
+        onOperators?.(list);
         for (let i = 0; i < list.fnArray.length; i++) {
           if (list.fnArray[i] !== OPS.constructPath) continue;
           const [ops, coords] = list.argsArray[i] || [];
@@ -15427,7 +15655,7 @@ var require_pdf_highlights = __commonJS({
       const original = source?.items?.filter((item) => item.str?.trim());
       const exact = original?.length === spans.length && original.every((item, index) => item.str === (selected.get(spans[index])?.str ?? spans[index].textContent));
       if (exact) items = original;
-      const layout = extractPdfTextLayout2(items, { viewport: exact ? source.viewport : { width: bounds.width, height: bounds.height } });
+      const layout = extractPdfTextLayout2(items, { singleColumn: exact && source.singleColumn, viewport: exact ? source.viewport : { width: bounds.width, height: bounds.height } });
       const heights = items.map((item) => Math.max(1, Math.abs(item.height || 0), Math.abs(item.transform?.[1] || 0), Math.abs(item.transform?.[3] || 0))).sort((a, b) => a - b);
       const middle = Math.floor(heights.length / 2);
       const medianHeight = heights.length % 2 ? heights[middle] : (heights[middle - 1] + heights[middle]) / 2;
@@ -15453,7 +15681,7 @@ var require_pdf_highlights = __commonJS({
     }
     function pdfSourceLines(source, clean, footnote = false) {
       if (!source?.items?.length || !source.viewport) return null;
-      const layout = extractPdfTextLayout2(source.items, { viewport: source.viewport });
+      const layout = extractPdfTextLayout2(source.items, { viewport: source.viewport, singleColumn: source.singleColumn });
       return finishPageLines(layout, layout.lines.map(() => []), clean, source, footnote, true);
     }
     function finishPageLines(layout, lineNodes, clean, source, footnote, exact, selected = /* @__PURE__ */ new Map()) {
@@ -16744,6 +16972,84 @@ var require_reader_appearance = __commonJS({
   }
 });
 
+// node_modules/@laginae/note-reader-core/src/pdf-heading-hierarchy.js
+var require_pdf_heading_hierarchy = __commonJS({
+  "node_modules/@laginae/note-reader-core/src/pdf-heading-hierarchy.js"(exports2, module2) {
+    "use strict";
+    var REFERENCES = /^(?:references|bibliography|\u53c2\u8003\u6587\u732e)\s*[.:\uFF1A\u3002]?$/i;
+    var APPENDIX = /^(?:appendix|appendices|\u9644\u5f55)/i;
+    var centerX = (line) => (line.xMin + line.xMax) / 2;
+    var capitalHeading = (text) => /[A-Z]{2}/.test(text) && !/\p{Ll}/u.test(text) && !/[.;:!?]$/.test(text);
+    function romanRank(token) {
+      if (!/^(?:XC|XL|L?X{0,3})(?:IX|IV|V?I{0,3})$/.test(token)) return 0;
+      const rank = { I: 1, V: 5, X: 10, L: 50, C: 100 };
+      return [...token].reduce((n, ch, i) => n + (rank[ch] < rank[token[i + 1]] ? -rank[ch] : rank[ch]), 0);
+    }
+    function neighboringColumn({ page, index, line }, size) {
+      const x = centerX(line);
+      let widest = null;
+      for (let i = Math.max(0, index - 8); i <= Math.min(page.lines.length - 1, index + 8); i++) {
+        const other = page.lines[i], width = other.xMax - other.xMin;
+        if (i === index || other.footnote || other.offset < 0 || page.bodyFont && other.font !== page.bodyFont || Math.abs(other.fontSize - size) > size * 0.15 || width < size * 12 || x < other.xMin || x > other.xMax || other.text.length < 24 || !/[a-z]{3,}/.test(other.text)) continue;
+        if (!widest || width > widest.xMax - widest.xMin) widest = other;
+      }
+      return widest;
+    }
+    function markRomanHierarchy(rows, size) {
+      let previous = null, inReferences = false, foundSeries = false;
+      for (const row of rows) {
+        const { num, line, page, index } = row;
+        const label = num?.body || row.text;
+        if (APPENDIX.test(label)) {
+          previous = null;
+          inReferences = false;
+        }
+        if (REFERENCES.test(label)) {
+          previous = null;
+          inReferences = true;
+        }
+        if (inReferences || num?.kind !== "roman" || !capitalHeading(num.body)) continue;
+        const rank = romanRank(num.token), column = rank && neighboringColumn(row, size);
+        if (!column || Math.abs(centerX(line) - centerX(column)) > Math.max(size, (column.xMax - column.xMin) * 0.04)) continue;
+        const before = page.lines[index - 1];
+        if (before && centerX(line) >= before.xMin && centerX(line) <= before.xMax && before.y >= line.y && before.y - line.y < size * 1.25) continue;
+        if (previous && rank === previous.rank + 1 && (page !== previous.row.page || line.font === previous.row.line.font) && Math.abs(line.fontSize - previous.row.line.fontSize) <= size * 0.12) {
+          previous.row.romanSection = row.romanSection = true;
+          previous.row.prominent = row.prominent = true;
+          foundSeries = true;
+        }
+        previous = { rank, row };
+      }
+      if (!foundSeries) return;
+      let parent = false, children = [];
+      const finish = () => {
+        if (children.length >= 2) for (const child of children) {
+          child.letterSection = child.prominent = true;
+          child.num = { ...child.num, kind: "letter", level: 2 };
+        }
+        children = [];
+      };
+      for (const row of rows) {
+        const { num, line, page } = row;
+        if (row.romanSection || row.semantic && !num || REFERENCES.test(num?.body || row.text) || APPENDIX.test(num?.body || row.text) || num?.level === 1 && num.kind === "decimal" && row.prominent) {
+          finish();
+          parent = !!row.romanSection;
+          continue;
+        }
+        if (!parent || !num || !/^[A-H]$/.test(num.token) || !/^[A-Z]/.test(num.body) || /[.;:]$/.test(num.body) || !(line.bold || line.font && (page.bodyFont ? line.font !== page.bodyFont : row.distinct))) continue;
+        const column = neighboringColumn(row, size);
+        if (!column || Math.abs(line.xMin - column.xMin) > size * 1.6) continue;
+        if (num.token === "A") {
+          finish();
+          children.push(row);
+        } else if (children.length && num.token.charCodeAt(0) === 65 + children.length && line.font === children[0].line.font && Math.abs(line.fontSize - children[0].line.fontSize) < 1) children.push(row);
+      }
+      finish();
+    }
+    module2.exports = { centerX, capitalHeading, markRomanHierarchy };
+  }
+});
+
 // src/pdf-outline-detection.js
 var require_pdf_outline_detection = __commonJS({
   "src/pdf-outline-detection.js"(exports2, module2) {
@@ -16756,6 +17062,8 @@ var require_pdf_outline_detection = __commonJS({
     var INVALID = /[=+\u2212\u00d7\u2211\u222b{}\[\]\\\x00-\x08\x0e-\x1f]|https?:\/\/|doi\s*:|@|\u00a9/i;
     var UNITS = /^(?:[kMGTmun]?W(?:h)?|[kMGT]?Hz|kg|kPa|MPa|mol|%)(?:\b|\s|[,\uFF0C])/;
     var CJK = /[\u3400-\u9fff]/;
+    var REFERENCES = /^(?:references|bibliography|\u53c2\u8003\u6587\u732e)\s*[.:\uFF1A\u3002]?$/i;
+    var APPENDIX = /^(?:appendix|appendices|\u9644\u5f55)/i;
     var mode = (weights) => [...weights].sort((a, b) => b[1] - a[1])[0]?.[0];
     function addWeight(weights, key, count) {
       if (key) weights.set(key, (weights.get(key) || 0) + count);
@@ -16832,6 +17140,7 @@ var require_pdf_outline_detection = __commonJS({
       const height = viewport.viewBox ? viewport.viewBox[3] - origin : viewport.height;
       return { ...layout, lines, bodySize, bodyFont, origin, height, rotated: !!((Number(viewport.rotation) || 0) % 360) };
     }
+    var { centerX, capitalHeading, markRomanHierarchy } = require_pdf_heading_hierarchy();
     function detectPdfHeadings(pages) {
       const repeats = /* @__PURE__ */ new Map(), headingFonts = /* @__PURE__ */ new Set();
       const sizes = /* @__PURE__ */ new Map(), fonts = /* @__PURE__ */ new Map();
@@ -16876,6 +17185,7 @@ var require_pdf_outline_detection = __commonJS({
         }
       }
       for (const row of eligible) row.prominent = row.strong || row.distinct && headingFonts.has(row.line.font);
+      markRomanHierarchy(eligible, bodySize);
       const numeric = /* @__PURE__ */ new Map();
       for (const row of eligible) if (row.num?.kind === "decimal") {
         if (!numeric.has(row.num.token)) numeric.set(row.num.token, []);
@@ -16893,7 +17203,7 @@ var require_pdf_outline_detection = __commonJS({
       for (const row of eligible) {
         const { page, line, num, semantic, prominent, text } = row;
         if (consumed.has(line)) continue;
-        if (/^(?:appendix|appendices|\u9644\u5f55)/i.test(num?.body || text)) inReferences = false;
+        if (APPENDIX.test(num?.body || text)) inReferences = false;
         if (inReferences && !semantic && (num || !prominent)) continue;
         if (numericBodyContinuation(row, bodySize)) continue;
         if (num) {
@@ -16902,11 +17212,11 @@ var require_pdf_outline_detection = __commonJS({
           if (num.kind === "letter" && !entries.length) continue;
         } else if (!semantic && (!prominent || page.number === 1 || text.length < 5 || /[.;:\u3002\uFF1B\uFF1A]$/.test(text) || headingFonts.size && !headingFonts.has(line.font))) continue;
         let title = text, lastLine = line;
-        if (!semantic && prominent && (row.distinct || line.fontSize >= bodySize * 1.12)) {
+        if (!semantic && prominent && (row.romanSection || row.distinct || line.fontSize >= bodySize * 1.12)) {
           for (let step = 1; step <= 3; step++) {
             const next = page.lines[row.index + step];
             const reference = next && academicContinuation(title, next.text);
-            if (!next || next.footnote || next.offset < 0 || next.text.length > 85 || numbering(next.text.trim()) || SEMANTIC.test(next.text.trim()) || CAPTION.test(next.text) || academicBlock(next.text) && !reference || INVALID.test(next.text) || !reference && /[.;!?\u3002\uFF1B\uFF01\uFF1F]/.test(next.text) || Math.abs(next.xMin - line.xMin) > line.fontSize * 1.5 || lastLine.y - next.y < line.fontSize * 0.65 || lastLine.y - next.y > line.fontSize * 1.8 || next.font !== line.font || Math.abs(next.fontSize - line.fontSize) > 0.5) break;
+            if (!next || next.footnote || next.offset < 0 || next.text.length > 85 || numbering(next.text.trim()) || SEMANTIC.test(next.text.trim()) || CAPTION.test(next.text) || academicBlock(next.text) && !reference || INVALID.test(next.text) || !reference && /[.;!?\u3002\uFF1B\uFF01\uFF1F]/.test(next.text) || (row.romanSection ? !capitalHeading(next.text.trim()) || Math.abs(centerX(next) - centerX(line)) > line.fontSize : Math.abs(next.xMin - line.xMin) > line.fontSize * 1.5) || lastLine.y - next.y < line.fontSize * 0.65 || lastLine.y - next.y > line.fontSize * 1.8 || next.font !== line.font || Math.abs(next.fontSize - line.fontSize) > 0.5) break;
             title += CJK.test(title.slice(-1)) && CJK.test(next.text[0]) ? next.text.trim() : " " + next.text.trim();
             consumed.add(next);
             lastLine = next;
@@ -16921,7 +17231,7 @@ var require_pdf_outline_detection = __commonJS({
           y: line.y,
           inferred: true
         });
-        if (/^(?:references|bibliography|\u53c2\u8003\u6587\u732e)\s*[.:\uFF1A\u3002]?$/i.test(num?.body || text)) inReferences = true;
+        if (REFERENCES.test(num?.body || text)) inReferences = true;
         if (entries.length >= 1e3) break;
       }
       return entries;
@@ -43136,7 +43446,7 @@ var { speakGreekCommands } = require_math_symbols2();
 var { numericTableRegions } = require_pdf_academic();
 var { pdfMathChanges, applyPdfMathChanges, pdfFontNames } = require_pdf_math();
 var { pdfSelectionSourceMap } = require_pdf_selection_source();
-var { capturePdfSelectionLayout, preparePdfSelection, normalizePdfSpeechText } = require_pdf_selection();
+var { capturePdfSelectionLayout, preparePdfSelection, normalizePdfSpeechText, needsPdfMathEvidence, enrichPdfSelection, selectedPageMathChanges } = require_pdf_selection();
 var { MAX_HTML_BYTES, captureHtmlSelection, extractHtmlText, getHtmlReaderDocument, isHtmlFile } = require_html_text();
 var { WEB_VIEW_TYPE, captureWebPage, getWebPageUrl, isWebPageView } = require_web_page();
 var { createViewObservation } = require_view_observation();
@@ -46217,6 +46527,18 @@ var CosyVoiceReaderPlugin = class extends Plugin {
     const context = liveSelection || this.lastPdfSelection;
     return context && context.filePath === getPdfFileIdentity(file) && context.fileMtime === getFileMtime(file) ? context : null;
   }
+  async withPdfSelectionMath(file, context) {
+    if (!context?.selectionLayout?.some(needsPdfMathEvidence) || typeof loadPdfJs !== "function") return context;
+    const leaf = this.app?.workspace?.getLeavesOfType?.("pdf")?.find((l) => l.view?.file === file);
+    const viewer = leaf && require_mini_outline_position().pdfViewer(leaf.view);
+    if (!viewer?.getPageView) return context;
+    try {
+      const lib = await loadPdfJs();
+      return await enrichPdfSelection(context, (n) => viewer.getPageView(n - 1)?.pdfPage, lib.OPS);
+    } catch {
+      return context;
+    }
+  }
   async readPdfRange(file, context, scope, showControls = false) {
     const valid = () => isPdfFile(file) && context?.selectedText?.trim() && context.filePath === getPdfFileIdentity(file) && context.fileMtime === getFileMtime(file);
     const reselect = () => new Notice(translateInterface(
@@ -46238,7 +46560,10 @@ var CosyVoiceReaderPlugin = class extends Plugin {
       ), 8e3);
       return;
     }
+    const sequence = this.sequence, request = this.pdfRangeRequest = (this.pdfRangeRequest || 0) + 1;
     if (showControls) await this.activateControlView();
+    context = await this.withPdfSelectionMath(file, context);
+    if (sequence !== this.sequence || request !== this.pdfRangeRequest) return;
     if (!valid()) {
       reselect();
       return;
@@ -47098,7 +47423,8 @@ ${embed}
       const htmlText = scope === "entire" ? await this.getHtmlFileText(context.file) : scope === "selection" ? context.selectionContext.selectedText : context.selectionContext.text.slice(context.selectionContext.startOffset);
       text = this.prepareHtmlSpeechText(htmlText);
     } else if (scope === "selection") {
-      text = this.sanitizeAudioExportText(preparePdfSelection(context.selectionContext, this.settings));
+      const selection = await this.withPdfSelectionMath(context.file, context.selectionContext);
+      text = this.sanitizeAudioExportText(preparePdfSelection(selection, this.settings));
     } else {
       text = await this.extractPdfAudioExportText(context, scope, configuration);
       if (!text) {
@@ -47896,7 +48222,10 @@ ${embed}
             return "";
           }
           const viewport = typeof page.getViewport === "function" ? page.getViewport({ scale: 1 }) : null;
-          const rules = await footnoteRules(page, pdfjsLib.OPS);
+          let bars;
+          const rules = await footnoteRules(page, pdfjsLib.OPS, (list) => {
+            bars = require_pdf_math_bars().pdfBarOffsets(textContent.items, list, pdfjsLib.OPS);
+          });
           const partition = footnoteMode === "inline" ? null : partitionFootnotes(textContent.items, viewport, rules, { pageNumber });
           const ancillary = ancillaryLayout(textContent.items, viewport, rules, skipHeaders ? repeatedHeaders : /* @__PURE__ */ new Set());
           const omittedRegions = [
@@ -47906,7 +48235,7 @@ ${embed}
           ];
           if (!isCurrent()) return "";
           const pageLayout = extractPdfTextLayout(textContent && textContent.items, { viewport });
-          const mathChanges = pdfMathChanges(pageLayout, textContent.items, settings, pdfFontNames(page, textContent.items), pdfEncodingContext);
+          const mathChanges = pdfMathChanges(pageLayout, textContent.items, settings, pdfFontNames(page, textContent.items), pdfEncodingContext, bars);
           if (session.kind === "pdf-progressive") {
             session.pdfHighlightPages || (session.pdfHighlightPages = /* @__PURE__ */ new Map());
             session.pdfHighlightPages.set(pageNumber, {
@@ -48155,11 +48484,11 @@ ${embed}
     if (selectedPages?.length) {
       session.chunkPageNumbers = selectionPageNumbers;
       session.pdfHighlightPages = new Map(selectedPages.map((page, index) => {
-        const layout = extractPdfTextLayout(page.items, { viewport: page.viewport });
+        const layout = extractPdfTextLayout(page.items, { viewport: page.viewport, singleColumn: page.singleColumn });
         return [page.pageNumber || options.pdfSelection.pageNumber + index, {
           ...page,
           selectedOnly: true,
-          mathChanges: pdfMathChanges(layout, page.items, this.settings)
+          mathChanges: selectedPageMathChanges(page, layout, this.settings)
         }];
       }));
     }

@@ -29,7 +29,7 @@ const { speakGreekCommands } = require('./math-symbols');
 const { numericTableRegions } = require('./pdf-academic');
 const { pdfMathChanges, applyPdfMathChanges, pdfFontNames } = require('./pdf-math');
 const { pdfSelectionSourceMap } = require('./pdf-selection-source');
-const { capturePdfSelectionLayout, preparePdfSelection, normalizePdfSpeechText } = require('./pdf-selection');
+const { capturePdfSelectionLayout, preparePdfSelection, normalizePdfSpeechText, needsPdfMathEvidence, enrichPdfSelection, selectedPageMathChanges } = require('./pdf-selection');
 const { MAX_HTML_BYTES, captureHtmlSelection, extractHtmlText, getHtmlReaderDocument, isHtmlFile } = require('./html-text');
 const { WEB_VIEW_TYPE, captureWebPage, getWebPageUrl, isWebPageView } = require('./web-page');
 const { createViewObservation } = require('./view-observation');
@@ -3485,6 +3485,17 @@ class CosyVoiceReaderPlugin extends Plugin {
     return context && context.filePath === getPdfFileIdentity(file) && context.fileMtime === getFileMtime(file) ? context : null;
   }
 
+  async withPdfSelectionMath(file, context) {
+    if (!context?.selectionLayout?.some(needsPdfMathEvidence) || typeof loadPdfJs !== 'function') return context;
+    const leaf = this.app?.workspace?.getLeavesOfType?.('pdf')?.find(l => l.view?.file === file);
+    const viewer = leaf && require('./mini-outline-position').pdfViewer(leaf.view);
+    if (!viewer?.getPageView) return context;
+    try {
+      const lib = await loadPdfJs();
+      return await enrichPdfSelection(context, n => viewer.getPageView(n-1)?.pdfPage, lib.OPS);
+    } catch { return context; }
+  }
+
   async readPdfRange(file, context, scope, showControls = false) {
     const valid = () => isPdfFile(file) && context?.selectedText?.trim()
       && context.filePath === getPdfFileIdentity(file) && context.fileMtime === getFileMtime(file);
@@ -3499,7 +3510,10 @@ class CosyVoiceReaderPlugin extends Plugin {
         '无法可靠读取 PDF 选区版面。请等待页面显示完整后重新选择文字。'), 8000);
       return;
     }
+    const sequence = this.sequence, request = this.pdfRangeRequest = (this.pdfRangeRequest || 0) + 1;
     if (showControls) await this.activateControlView();
+    context = await this.withPdfSelectionMath(file, context);
+    if (sequence !== this.sequence || request !== this.pdfRangeRequest) return;
     if (!valid()) { reselect(); return; }
     return this.startReading(preparePdfSelection(context, this.settings), `${file.basename || file.name} (PDF selection)`, {
       plainText: true, pdfText: true, skipReadingPosition: true, file, sourceKind: 'pdf', pdfSelection: context,
@@ -4441,7 +4455,8 @@ class CosyVoiceReaderPlugin extends Plugin {
           : context.selectionContext.text.slice(context.selectionContext.startOffset);
       text = this.prepareHtmlSpeechText(htmlText);
     } else if (scope === 'selection') {
-      text = this.sanitizeAudioExportText(preparePdfSelection(context.selectionContext, this.settings));
+      const selection = await this.withPdfSelectionMath(context.file, context.selectionContext);
+      text = this.sanitizeAudioExportText(preparePdfSelection(selection, this.settings));
     } else {
       text = await this.extractPdfAudioExportText(context, scope, configuration);
       if (!text) {
@@ -5349,7 +5364,10 @@ class CosyVoiceReaderPlugin extends Plugin {
           const viewport = typeof page.getViewport === 'function'
             ? page.getViewport({ scale: 1 })
             : null;
-          const rules = await footnoteRules(page, pdfjsLib.OPS);
+          let bars;
+          const rules = await footnoteRules(page, pdfjsLib.OPS, list => {
+            bars = require('./pdf-math-bars').pdfBarOffsets(textContent.items, list, pdfjsLib.OPS);
+          });
           const partition = footnoteMode === 'inline' ? null : partitionFootnotes(textContent.items, viewport, rules, { pageNumber });
           const ancillary = ancillaryLayout(textContent.items, viewport, rules, skipHeaders ? repeatedHeaders : new Set());
           const omittedRegions = [...(skipHeaders ? ancillary.headers : []),
@@ -5357,7 +5375,7 @@ class CosyVoiceReaderPlugin extends Plugin {
             ...(contentScope === 'body' && footnoteMode !== 'footnotes' ? numericTableRegions(ancillary.layout,viewport,settings) : [])];
           if (!isCurrent()) return '';
           const pageLayout = extractPdfTextLayout(textContent && textContent.items, { viewport });
-          const mathChanges = pdfMathChanges(pageLayout, textContent.items, settings, pdfFontNames(page, textContent.items), pdfEncodingContext);
+          const mathChanges = pdfMathChanges(pageLayout, textContent.items, settings, pdfFontNames(page, textContent.items), pdfEncodingContext, bars);
           if (session.kind === 'pdf-progressive') {
             session.pdfHighlightPages ||= new Map();
             session.pdfHighlightPages.set(pageNumber, {
@@ -5598,10 +5616,10 @@ class CosyVoiceReaderPlugin extends Plugin {
     if (selectedPages?.length) {
       session.chunkPageNumbers = selectionPageNumbers;
       session.pdfHighlightPages = new Map(selectedPages.map((page, index) => {
-        const layout = extractPdfTextLayout(page.items, { viewport: page.viewport });
+        const layout = extractPdfTextLayout(page.items, { viewport: page.viewport, singleColumn:page.singleColumn });
         return [page.pageNumber || options.pdfSelection.pageNumber + index, {
           ...page, selectedOnly: true,
-          mathChanges: pdfMathChanges(layout, page.items, this.settings),
+          mathChanges: selectedPageMathChanges(page, layout, this.settings),
         }];
       }));
     }

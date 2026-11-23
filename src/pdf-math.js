@@ -16,24 +16,35 @@ const prose = value => /[\u3400-\u9fff]/u.test(value)
 const encodedMath = new Map(Object.entries({
   '\u123a':'(', '\u123b':')', '\u123c':'{', '\u123d':'}',
   '\u0d4c':'=', '\u0b40':'=', '\u0d46':'-', '\u0d45':'+',
-  '\u0d50':'>', '\u0d51':'<', '\u0dcd':'\u2211', '\u0da8':'\u221a'
+  '\u0d4f':'<', '\u0d50':'>', '\u0d51':'\u2264', '\u0d52':'\u2265',
+  '\u123e':'[', '\u123f':']', '\u0dcd':'\u2211', '\u0da8':'\u221a', '\u0db1':'\u222b'
 }));
-const encodingScript = /[\u0b00-\u0b7f\u0d00-\u0dff\u1200-\u137f]/u;
+// Script-style alternates in the same Cambria Math glyph order. These are
+// NOT evidence of math by themselves: the code points also occur in real text.
+const encodedScripts = new Map([['\u0b3f', '-']]);
+for (const [first, base, count] of [
+  [0xb34,48,10], [0xb45,65,26], [0xb5f,97,26], [0xbba,65,26], [0xbd4,97,26],
+  [0xc2c,48,10], [0xc3d,65,26], [0xc57,97,26], [0xcb2,65,26], [0xccc,97,26],
+]) for (let i = 0; i < count; i++) encodedScripts.set(String.fromCharCode(first+i), String.fromCharCode(base+i));
+const encodingScript = /[\u0b00-\u0dff\u1200-\u137f]/u;
 function encodedMathFonts(items, known = new Set()) {
   const evidence = new Map();
   for (const item of items) {
     const key = item.fontName || '';
-    const data = evidence.get(key) || { chars: new Set(), scripts: new Set(), prose: false };
+    const data = evidence.get(key) || { chars: new Set(), scripts: new Set(), prose: false, mixedAtom: false };
+    let operators = 0;
     for (const char of item.str) {
       if (encodedMath.has(char)) {
+        operators++;
         data.chars.add(char);
         data.scripts.add(char.codePointAt(0) >= 0x1200 ? 'ethiopic' : char.codePointAt(0) >= 0x0d80 ? 'sinhala' : char.codePointAt(0) >= 0x0d00 ? 'malayalam' : 'oriya');
-      } else if (encodingScript.test(char) && /\p{L}/u.test(char)) data.prose = true;
+      } else if (encodingScript.test(char) && /\p{L}/u.test(char) && !encodedScripts.has(char)) data.prose = true;
     }
+    if (operators && /[\u{1d400}-\u{1d7ff}]/u.test(item.str) && !prose(item.str)) data.mixedAtom = true;
     evidence.set(key, data);
   }
   return new Set([...evidence].filter(([font, data]) => !data.prose
-    && ((font && known.has(font)) || (data.chars.size >= 3 && data.scripts.size >= 2))).map(([font]) => font));
+    && ((font && known.has(font)) || data.mixedAtom || (data.chars.size >= 3 && data.scripts.size >= 2))).map(([font]) => font));
 }
 
 // Infer a dedicated math font only when its glyphs support it. Italic prose,
@@ -62,7 +73,21 @@ function pdfFontNames(page, items) {
   return names;
 }
 
-function pdfMathChanges(layout, items, settings = {}, names = {}, encodingContext = new Set()) {
+// A wrapped numeric reference can occupy a whole PDF line. Do not send it
+// through the formula reader before the normal citation formatter sees it.
+function referenceMarkerLine(text) {
+  if (text.length > 160 || !/^[ \t\u3000]*[\[\uFF3B]/.test(text)) return null;
+  const value = text.normalize('NFKC').trim();
+  if (!/^\[[ \t]*[1-9]\d{0,2}[ \t]*\](?:[ \t]*(?:[,;–—-][ \t]*)?\[[ \t]*[1-9]\d{0,2}[ \t]*\])*[ \t]*[.,;:!?。、！？]?$/.test(value)) return null;
+  return value.replace(/\[[ \t]*(\d+)[ \t]*\]/g, '[$1]');
+}
+
+function normalizePdfReferenceRows(text) {
+  if (!/\[[ \t]|[ \t]\]|[\u3000\uFF10-\uFF19\uFF3B\uFF3D]/.test(text)) return text;
+  return text.split('\n').map(line => referenceMarkerLine(line) ?? line).join('\n');
+}
+
+function pdfMathChanges(layout, items, settings = {}, names = {}, encodingContext = new Set(), bars = new Map()) {
   const options = academicOptions(settings);
   const skipAll = options.academicMathMode === 'skip' || options.mathReadingLanguage === 'skip';
   const filtering = skipAll || options.academicMathMode === 'smart';
@@ -73,8 +98,8 @@ function pdfMathChanges(layout, items, settings = {}, names = {}, encodingContex
   const encodedFonts = encodedMathFonts(positioned, encodingContext);
   // Callers may reuse evidence only within the same loaded PDF document.
   for (const font of encodedFonts) if (font) encodingContext.add(font);
-  const decoded = item => encodedFonts.has(item.fontName || '')
-    ? [...item.str].map(char => encodedMath.get(char) || (encodingScript.test(char) ? '\ufffd' : char)).join('') : item.str;
+  const decodeChar = char => encodedMath.get(char) || encodedScripts.get(char) || (encodingScript.test(char) ? '\ufffd' : char);
+  const decoded = item => encodedFonts.has(item.fontName || '') ? [...item.str].map(decodeChar).join('') : item.str;
   const fonts = mathFonts(positioned.map(item => ({ ...item, str: decoded(item) })), names), groups = layout.lines.map(() => []);
   for (const item of positioned) {
     let nearest = -1, distance = Infinity;
@@ -93,10 +118,23 @@ function pdfMathChanges(layout, items, settings = {}, names = {}, encodingContex
       const start = line.text.indexOf(value, cursor);
       if (start >= 0) cursor = start + value.length;
       const speechText = decoded(item).replace(/[ \t]+/g, ' ').trim();
-      return { item, start, end: start + value.length, speechText, repaired: speechText !== value, unsafe: speechText.includes('\ufffd'),
+      const marks = bars.get(item) || item.mathBarOffsets;
+      let decorated = '';
+      if (marks?.length) {
+        let offset = 0;
+        for (const char of item.str) {
+          decorated += marks.includes(offset) ? '\\bar{' + char.normalize('NFKC') + '}'
+            : encodedFonts.has(item.fontName || '') ? decodeChar(char) : char;
+          offset += char.length;
+        }
+      }
+      return { item, start, end: start + value.length, speechText, decorated, repaired: speechText !== value, unsafe: speechText.includes('\ufffd'),
         math: fonts.has(item.fontName) || (mathGlyph.test(speechText) && !prose(speechText)) || speechText !== value };
     });
-    if (!mapped.length || mapped.some(token => token.start < 0)) return { line, mapped: [], display: false };
+    if (!mapped.length || mapped.some(token => token.start < 0)
+      || (referenceMarkerLine(line.text) !== null && !mapped.some(token => token.math))) {
+      return { line, mapped: [], display: false, analysisText: '' };
+    }
     // Text-layer selections can expose one shared fallback font. Recover short
     // script labels only from their smaller size and proximity to a math atom.
     mapped.forEach((token, i) => {
@@ -226,14 +264,14 @@ function pdfMathChanges(layout, items, settings = {}, names = {}, encodingContex
     const selected = runs.filter(run => {
       const tokens = mapped.filter(token => token.start >= run.start && token.end <= run.end);
       const source = tokens.map(token => token.speechText).join(' ');
-      const expression = tokens.map(token => token.script ? `${token.script}{${token.speechText}}` : token.speechText).join(' ');
+      const expression = tokens.map(token => token.script ? `${token.script}{${token.decorated || token.speechText}}` : token.decorated || token.speechText).join(' ');
       run.omit = row.skipDisplay || tokens.some(token => token.unsafe) || (skipAll && row.supported !== false)
-        || (filtering && !row.display && complex(expression));
+        || (filtering && !row.display && complex(expression.replace(/\\bar\{([^{}]+)\}/g,'$1')));
       if (run.omit) return true;
       const shortLabel = options.academicMathStyle === 'concise' && conciseMathLabels(greekMathCommands(source)).changed;
       const local = contextualMathOptions(options, line.text.slice(0, run.start) || row.noticeContext, line.text.slice(run.end));
       const bracketed = /^[\[({]/.test(source.trim());
-      if (!mathOperator.test(source) && !tokens.some(token => token.repaired || token.script) && !shortLabel && !bracketed) return false;
+      if (!mathOperator.test(source) && !tokens.some(token => token.repaired || token.script || token.decorated) && !shortLabel && !bracketed) return false;
       const spoken = mathSpeech(expression, { ...local, academicMathMode:'all', academicSkipNotice:true, literalMathSets:true });
       if (!spoken || spoken === 'Formula.' || spoken === '公式。') return false;
       run.speech = spoken;
@@ -299,4 +337,4 @@ function applyPdfMathChanges(text, changes = []) {
   }).join('\n').trim();
 }
 
-module.exports = { pdfMathChanges, applyPdfMathChanges, pdfFontNames };
+module.exports = { pdfMathChanges, applyPdfMathChanges, pdfFontNames, normalizePdfReferenceRows, encodedMathFonts };

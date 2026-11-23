@@ -36,7 +36,7 @@ test('damaged font signature filters complete display math and repairs short inl
   assert.equal((speech.match(/Formula\./g)||[]).length,1);
   assert.doesNotMatch(speech,/[\u0b00-\u0dff\u1200-\u137f]|\(9\)/);
   assert.match(speech,/For q equals 2 the result holds/);
-  assert.match(speech,/alpha less than beta/);
+  assert.match(speech,/alpha less than or equal to beta/);
   assert.match(speech,/open parenthesis 1 minus q close parenthesis/);
   assert.match(speech,/Ordinary ending/);
 });

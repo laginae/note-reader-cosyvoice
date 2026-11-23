@@ -9,6 +9,37 @@ const item = (str, x, y, fontName = 'body', size = 12) =>
   ({ str, width: str.length * 5, height: size, fontName, transform: [size, 0, 0, size, x, y] });
 const viewport = { width: 600, height: 800 };
 
+test('wrapped PDF references reach the citation formatter in full and selected reading without changing source spans', () => {
+  const { citations } = require('./academic-speech');
+  const { normalizePdfSpeechText, preparePdfSelection } = require('./pdf-selection');
+  for (const settings of [{academicIntervalStyle:'range'}, {readingProfile:'study'}, {academicMathMode:'skip'}]) {
+    for (const [body, marker, expected] of [
+      ['See the public guide', '[6].', /reference 6\s*\./],
+      ['参见公开示例', '［ ６ ］。', /文献6\s*。/],
+      ['See the guides', '[2], [6].', /references 2 and 6/],
+    ]) {
+      const parts = [item(body, 40, 700), item(marker, 40, 685)];
+      const layout = extractPdfTextLayout(parts, { viewport }), before = JSON.stringify(layout);
+      const changes = pdfMathChanges(layout, parts, settings);
+      const full = citations(normalizePdfSpeechText(applyPdfMathChanges(layout.text, changes)));
+      const selected = citations(preparePdfSelection({selectionLayout:[{items:parts, viewport}]}, settings));
+      for (const text of [full, selected]) { assert.match(text, expected); assert.doesNotMatch(text, /bracket|方括号|Formula\.|公式。/); }
+      const alone = citations(preparePdfSelection({selectionLayout:[{items:[parts[1]], viewport}]}, settings));
+      assert.doesNotMatch(alone, /bracket|方括号/); assert.ok(!alone.includes(body)); assert.match(alone, /6/);
+      assert.equal(JSON.stringify(layout), before);
+    }
+  }
+});
+
+test('reference normalization does not rewrite index expressions, intervals, units or years', () => {
+  const { normalizePdfReferenceRows } = require('./pdf-math');
+  for (const s of ['a[ 6 ]', '[ 0, 6 ]', '[ 2026 ]', '[ Hz ]', '[ 0 ]']) assert.equal(normalizePdfReferenceRows(s), s);
+  const parts = [item('A public example.', 40, 720), item('[6]', 120, 680, 'dedicated')];
+  const layout = extractPdfTextLayout(parts, { viewport });
+  const changes = pdfMathChanges(layout, parts, {academicMathStyle:'verbose'}, {dedicated:'CMMI10'});
+  assert.match(changes.find(c=>c.source==='[6]').text,/open bracket/);
+});
+
 test('smart PDF filtering groups plain-font absolute-value bars with a fraction equation', () => {
   const items = [item('An ordinary introduction.',40,730),
     item('|',200,690),item('𝑎',210,690,'math'),item('−',225,690,'math'),item('𝑏',240,690,'math'),item('|',250,690),

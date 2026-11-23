@@ -32,7 +32,7 @@ function pdfPageLines(page, clean, source = null, footnote = false) {
   // they cannot produce a rectangle. Verify before filtering by visible area.
   const exact = original?.length === spans.length && original.every((item, index) => item.str === (selected.get(spans[index])?.str ?? spans[index].textContent));
   if (exact) items = original;
-  const layout = extractPdfTextLayout(items, { viewport: exact ? source.viewport : { width: bounds.width, height: bounds.height } });
+  const layout = extractPdfTextLayout(items, { singleColumn:exact && source.singleColumn, viewport: exact ? source.viewport : { width: bounds.width, height: bounds.height } });
   const heights = items.map(item => Math.max(1, Math.abs(item.height || 0), Math.abs(item.transform?.[1] || 0), Math.abs(item.transform?.[3] || 0))).sort((a, b) => a - b);
   const middle = Math.floor(heights.length / 2);
   const medianHeight = heights.length % 2 ? heights[middle] : (heights[middle - 1] + heights[middle]) / 2;
@@ -59,7 +59,7 @@ function pdfPageLines(page, clean, source = null, footnote = false) {
 
 function pdfSourceLines(source, clean, footnote = false) {
   if (!source?.items?.length || !source.viewport) return null;
-  const layout = extractPdfTextLayout(source.items, { viewport: source.viewport });
+  const layout = extractPdfTextLayout(source.items, { viewport: source.viewport, singleColumn:source.singleColumn });
   return finishPageLines(layout, layout.lines.map(() => []), clean, source, footnote, true);
 }
 
