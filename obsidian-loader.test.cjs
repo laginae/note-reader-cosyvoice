@@ -1190,10 +1190,12 @@ const forwardFive = findElementByAriaLabel(root, 'Forward 5s');
 assert.ok(backFive);
 assert.ok(forwardFive);
 const previousSeekCount = seekBySecondsCalls.length;
+const focusBeforePointer = root.focusCount;
 backFive.dispatchEvent(createPointerEvent());
 forwardFive.dispatchEvent(createPointerEvent());
 forwardFive.dispatchEvent(createPointerEvent());
 assert.deepStrictEqual(seekBySecondsCalls.slice(previousSeekCount), [-5, 5, 5]);
+assert.ok(root.focusCount > focusBeforePointer, 'Pointer-operated sidebar controls must focus their player for subsequent keys');
 seekBySecondsCalls.length = previousSeekCount;
 
 assert.strictEqual(root.attributes.tabindex, '0');
@@ -1220,6 +1222,11 @@ bilingualView.plugin.seekCurrentSegmentToTime = (time) => { segmentSeeks.push(ti
 bilingualView.render();
 let segmentSlider = findElementByAriaLabel(bilingualRoot, 'Current segment progress');
 assert.strictEqual(segmentSlider.disabled, false);
+const segmentKey = createKeyboardEvent({ code: 'ArrowRight', key: 'ArrowRight' });
+segmentSlider.dispatchEvent(segmentKey);
+assert.equal(segmentKey.defaultPrevented, true);
+assert.deepStrictEqual(seekBySecondsCalls.splice(previousSeekCount), [5]);
+assert.equal(bilingualView.chunkSeekEditing, false);
 segmentSlider.value = '750';
 segmentSlider.dispatchEvent({ type: 'input' });
 assert.deepStrictEqual(segmentSeeks, []);
@@ -1270,16 +1277,17 @@ assert.strictEqual(pauseOrResumeCalls, 1);
 assert.strictEqual(inputSpaceEvent.defaultPrevented, false);
 
 const leftArrowEvent = createKeyboardEvent({ code: 'ArrowLeft', key: 'ArrowLeft' });
+const focusBeforeArrows = root.focusCount;
 root.dispatchEvent(leftArrowEvent);
 assert.deepStrictEqual(seekBySecondsCalls, [-5]);
 assert.strictEqual(leftArrowEvent.defaultPrevented, true);
 assert.strictEqual(leftArrowEvent.propagationStopped, true);
-assert.strictEqual(root.focusCount, 1);
+assert.strictEqual(root.focusCount, focusBeforeArrows + 1);
 
 const rightArrowEvent = createKeyboardEvent({ code: 'ArrowRight', key: 'ArrowRight' });
 root.dispatchEvent(rightArrowEvent);
 assert.deepStrictEqual(seekBySecondsCalls, [-5, 5]);
-assert.strictEqual(root.focusCount, 2);
+assert.strictEqual(root.focusCount, focusBeforeArrows + 2);
 
 const nextChunkButton = findElementByAriaLabel(root, 'Next chunk');
 assert.ok(nextChunkButton);
@@ -1310,6 +1318,10 @@ const inputArrowEvent = createKeyboardEvent({
 root.dispatchEvent(inputArrowEvent);
 assert.deepStrictEqual(seekBySecondsCalls, [-5, 5, 5]);
 assert.strictEqual(inputArrowEvent.defaultPrevented, false);
+const timelineKey = createKeyboardEvent({ code: 'ArrowLeft', key: 'ArrowLeft' });
+progressInput.dispatchEvent(timelineKey);
+assert.equal(timelineKey.defaultPrevented, true);
+assert.deepStrictEqual(seekBySecondsCalls, [-5, 5, 5, -5]);
 
 const pauseButton = findElementByAriaLabel(root, 'Pause reading (or press Space)');
 assert.ok(pauseButton);

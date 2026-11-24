@@ -1,6 +1,9 @@
 'use strict';
 
+const { bindTimelineKeys } = require('./playback-keyboard');
+
 function bindOverallSeek(slider, plugin, onRelease, preview = () => {}) {
+  bindTimelineKeys(slider, plugin);
   let editing = false, owner = null, value = null, cancelled = false;
   const begin = () => { editing = true; owner = plugin.activeSession; value = null; cancelled = false; };
   const reset = () => { editing = false; owner = null; value = null; };

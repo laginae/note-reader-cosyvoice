@@ -871,6 +871,11 @@
 .note-reader-buffering-hint > span { flex: 1 1 240px; overflow-wrap: anywhere; }
 .note-reader-buffering-hint > button { height: auto; min-height: 28px; white-space: normal; box-shadow: none; }
 .note-reader-buffering-hint svg { width: 16px; height: 16px; }
+.note-reader-long-wait { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; max-width: 100%; color: var(--text-muted); font-size: var(--font-ui-small); }
+.note-reader-long-wait > [role="timer"] { font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.note-reader-long-wait button { display: inline-flex; gap: 4px; align-items: center; height: auto; min-height: 22px; padding: 2px 5px; box-shadow: none; }
+.note-reader-long-wait button svg { width: 14px; height: 14px; }
+.note-reader-long-wait [hidden], .note-reader-buffering-hint[hidden] { display: none; }
 .note-reader-native-controls button[aria-pressed="true"], .note-reader-progress-heading button[aria-pressed="true"] { color: var(--interactive-accent); background: var(--background-modifier-hover); }
 .note-reader-native-controls button.is-paused, .note-reader-progress-heading button.is-paused { color: var(--text-muted); }
 .note-reader-follow-actions { display: flex; align-items: center; gap: 4px; margin-left: auto; flex: 0 0 auto; }

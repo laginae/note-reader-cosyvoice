@@ -211,9 +211,9 @@ test('source mode leaves typing alone; readonly preview enables body shortcuts o
   assert.deepEqual(calls, [5, -5]); dom.window.close();
 });
 
-test('sliders, selects, editable fields, composition, modifiers and exports retain their native keyboard behavior', () => {
+test('volume, selects, editable fields, composition, modifiers and exports retain their native keyboard behavior', () => {
   const f = keyboardFixture(), { toolbar, dom, key, calls, plugin } = f;
-  for (const target of [toolbar.progress, toolbar.volume, toolbar.speed, toolbar.scope, toolbar.heading]) {
+  for (const target of [toolbar.volume, toolbar.speed, toolbar.scope, toolbar.heading]) {
     target.focus(); assert.equal(key(target, 'ArrowRight').defaultPrevented, false); key(target, ' ');
   }
   const editable = dom.window.document.createElement('div'); editable.setAttribute('contenteditable', 'true'); editable.tabIndex = 0; toolbar.root.appendChild(editable);
@@ -224,6 +224,181 @@ test('sliders, selects, editable fields, composition, modifiers and exports reta
   }
   plugin.activeSession.kind = 'audio-export'; key(toolbar.root, ' '); key(toolbar.root, 'ArrowLeft');
   assert.deepEqual(calls, []); f.manager.destroy(); dom.window.close();
+});
+
+function pdfKeysFixture(t) {
+  const leaves = [], plugin = Object.create(PluginClass.prototype);
+  const workspace = { getLeavesOfType: type => type === 'pdf' ? leaves : [] };
+  const manager = new NativeToolbarManager(plugin);
+  const pane = (path, doc) => {
+    if (!doc) {
+      const dom = new JSDOM('<main></main>'); t.after(() => dom.window.close()); doc = dom.window.document;
+    }
+    const wrapper = doc.createElement('section');
+    wrapper.innerHTML = '<header></header><article><div class="pdf-toolbar"><input type="search"></div><div class="pdf-viewer-container" tabindex="0"><div class="pdfViewer"><div class="page" data-page-number="1"><div class="textLayer"><span>Public example.</span></div><div class="annotationLayer"><input></div></div></div></div></article>';
+    doc.querySelector('main').appendChild(wrapper);
+    const view = { contentEl: wrapper.querySelector('article'), getViewType: () => 'pdf',
+      file: { path, extension: 'pdf' }, addAction(_icon, _title, click) {
+        const button = doc.createElement('button'); wrapper.querySelector('header').appendChild(button); button.onclick = click; return button;
+      } };
+    leaves.push({ view }); return view;
+  };
+  const view = pane('Examples/one.pdf'), doc = view.contentEl.ownerDocument;
+  workspace.activeLeaf = leaves[0];
+  Object.assign(plugin, { app: { workspace }, settings: {}, sequence: 1, getPdfSelectionForFile: () => null,
+    activeSession: { id: 1, sourceKind: 'pdf', filePath: view.file.path, chunks: ['Example.'] },
+    readerState: { canPause: true, canSeek: true, currentChunk: 1, totalChunks: 1, isPaused: false },
+    currentAudio: { paused: false, currentTime: 17, duration: 45, pause() { this.paused = true; }, async play() { this.paused = false; } },
+    runUserAction: (_label, run) => run(), saveSessionReadingPosition: async () => {},
+    updateStatus: (_label, patch) => Object.assign(plugin.readerState, patch),
+    setReaderState: patch => Object.assign(plugin.readerState, patch),
+    getSegmentTiming: () => ({ current: plugin.currentAudio.currentTime, duration: 45, fraction: plugin.currentAudio.currentTime / 45 }),
+  });
+  manager.sync(); t.after(() => manager.destroy());
+  const key = (el, key, init = {}) => {
+    const event = new el.ownerDocument.defaultView.KeyboardEvent('keydown', { key, code: key === ' ' ? 'Space' : key,
+      bubbles: true, cancelable: true, ...init }); el.dispatchEvent(event); return event.defaultPrevented;
+  };
+  return { plugin, workspace, manager, view, doc, pane, leaves, key };
+}
+
+test('PDF body Space pauses and resumes the same audio with the toolbar closed; holding Space does not turn a page', async t => {
+  const { plugin, view, doc, key, manager } = pdfKeysFixture(t);
+  manager.sync();
+  const text = view.contentEl.querySelector('.textLayer span');
+  let pageKeys = 0;
+  view.contentEl.addEventListener('keydown', () => pageKeys++);
+  assert.equal(manager.toolbars.size, 0);
+  assert.equal(key(text, ' '), true); assert.equal(plugin.currentAudio.paused, true);
+  assert.equal(key(text, ' ', { repeat: true }), true);
+  assert.equal(plugin.currentAudio.paused, true); assert.equal(pageKeys, 0);
+  assert.equal(key(doc.body, ' '), true); await Promise.resolve();
+  assert.equal(plugin.currentAudio.paused, false); assert.equal(plugin.currentAudio.currentTime, 17);
+  assert.equal(key(text, 'ArrowDown'), false);
+  assert.equal(pageKeys, 1);
+  plugin.activeSession = null; assert.equal(key(text, ' '), false); assert.equal(pageKeys, 2);
+});
+
+test('PDF body arrows seek five seconds without a toolbar or focus change, and do not resume paused audio', t => {
+  const { plugin, view, manager, doc, key } = pdfKeysFixture(t);
+  const body = view.contentEl.querySelector('.pdf-viewer-container'), audio = plugin.currentAudio;
+  let viewerKeys = 0;
+  view.contentEl.addEventListener('keydown', () => viewerKeys++);
+  body.focus();
+  assert.equal(manager.toolbars.size, 0);
+  assert.equal(key(body, 'ArrowLeft'), true); assert.equal(audio.currentTime, 12); assert.equal(audio.paused, false);
+  audio.paused = plugin.pauseRequested = plugin.readerState.isPaused = true;
+  assert.equal(key(body, 'ArrowRight'), true); assert.equal(audio.currentTime, 17);
+  assert.equal(key(body, 'ArrowRight', { repeat: true }), true); assert.equal(audio.currentTime, 22);
+  assert.equal(doc.activeElement, body); assert.equal(audio.paused, true); assert.equal(viewerKeys, 0);
+  body.blur();
+  assert.equal(key(doc.body, 'ArrowLeft'), true); assert.equal(audio.currentTime, 17);
+  plugin.activeSession = null;
+  assert.equal(key(body, 'ArrowLeft'), false); assert.equal(key(body, 'ArrowRight'), false);
+  assert.equal(viewerKeys, 2); assert.equal(audio.currentTime, 17);
+});
+
+test('PDF body arrows do not turn a page or queue an unready seek, but can adjust a pending cross-part seek', t => {
+  const { plugin, view, key } = pdfKeysFixture(t);
+  const page = view.contentEl.querySelector('.page'), audio = plugin.currentAudio, session = plugin.activeSession;
+  plugin.readerState.canPause = plugin.readerState.canSeek = false;
+  plugin.currentAudio = null;
+  assert.equal(key(page, 'ArrowRight'), true); assert.equal(session.seekTarget, undefined);
+  plugin.currentAudio = audio; audio.currentTime = 43; audio.paused = plugin.pauseRequested = true;
+  plugin.readerState.canPause = plugin.readerState.canSeek = true;
+  session.chunks.push('Second public segment.');
+  assert.equal(key(page, 'ArrowRight'), true);
+  assert.deepEqual(session.seekTarget, { index: 1, part: 0, time: 3, fromEnd: false });
+  plugin.readerState.canSeek = false; plugin.currentAudio = null;
+  assert.equal(key(page, 'ArrowRight', { repeat: true }), true);
+  assert.equal(session.seekTarget.time, 8); assert.equal(plugin.pauseRequested, true);
+});
+
+test('PDF playback keys leave search, forms, overlays, modifiers, composition and other sessions alone', t => {
+  const { plugin, view, doc, key } = pdfKeysFixture(t);
+  const page = view.contentEl.querySelector('.page');
+  const expectNative = (el, options) => {
+    for (const name of [' ', 'ArrowLeft', 'ArrowRight']) assert.equal(key(el, name, options), false, name);
+  };
+  for (const input of view.contentEl.querySelectorAll('input')) {
+    input.focus(); expectNative(input); expectNative(doc.body);
+  }
+  for (const html of ['<a href="#">link</a>', '<button>ok</button>', '<div contenteditable="plaintext-only"></div>',
+    '<div role="textbox"></div>', '<div role="listbox"></div>', '<div class="annotationEditorLayer"></div>']) {
+    page.insertAdjacentHTML('beforeend', html); expectNative(page.lastChild);
+  }
+  doc.activeElement.blur();
+  const menu = doc.body.appendChild(doc.createElement('div')); menu.className = 'menu';
+  menu.getClientRects = () => [{}];
+  expectNative(doc.body); expectNative(page); menu.remove();
+  for (const name of ['shiftKey', 'ctrlKey', 'altKey', 'metaKey', 'isComposing']) expectNative(page, { [name]: true });
+  for (const patch of [{ kind: 'audio-export' }, { sourceKind: 'markdown' }, { stopped: true }]) {
+    const session = plugin.activeSession; plugin.activeSession = { ...session, ...patch };
+    expectNative(page); plugin.activeSession = session;
+  }
+  plugin.readerState.canPause = false; assert.equal(key(page, ' '), false); assert.equal(plugin.currentAudio.paused, false);
+});
+
+test('PDF shortcut is scoped to the active file, pane and window, and is released on close and unload', t => {
+  const { plugin, workspace, manager, view, doc, pane, leaves, key } = pdfKeysFixture(t);
+  const other = pane('Different/one.pdf', doc), popout = pane(view.file.path);
+  const popDoc = popout.contentEl.ownerDocument;
+  manager.sync(); manager.sync();
+  assert.equal(key(other.contentEl, ' '), false); assert.equal(key(popDoc.body, ' '), false);
+  assert.equal(key(other.contentEl, 'ArrowRight'), false); assert.equal(key(popDoc.body, 'ArrowLeft'), false);
+  workspace.activeLeaf = leaves[1]; assert.equal(key(doc.body, ' '), false);
+  assert.equal(key(doc.body, 'ArrowRight'), false); assert.equal(key(other.contentEl, 'ArrowLeft'), false);
+  workspace.activeLeaf = { view: { getViewType: () => 'markdown', contentEl: view.contentEl } };
+  assert.equal(key(doc.body, 'ArrowRight'), false);
+  workspace.activeLeaf = leaves[2];
+  assert.equal(key(doc.body, ' '), false); assert.equal(key(popDoc.body, ' '), true);
+  assert.equal(key(doc.body, 'ArrowRight'), false); assert.equal(key(popDoc.body, 'ArrowRight'), true);
+  assert.equal(plugin.currentAudio.currentTime, 22);
+  assert.equal(plugin.currentAudio.paused, true);
+  leaves.pop(); manager.sync(); assert.equal(key(popDoc.body, ' '), false);
+  assert.equal(key(popDoc.body, 'ArrowRight'), false);
+  workspace.activeLeaf = leaves[0]; assert.equal(key(doc.body, 'ArrowLeft'), true); assert.equal(plugin.currentAudio.currentTime, 17);
+  manager.destroy(); assert.equal(key(doc.body, ' '), false); assert.equal(key(doc.body, 'ArrowLeft'), false);
+});
+
+test('switching to a Markdown preview with its own toolbar restores the document keys during PDF playback', () => {
+  const { toolbar, plugin, view, dom, manager, key, calls } = keyboardFixture();
+  try {
+    plugin.activeSession.sourceKind = 'pdf'; plugin.activeSession.filePath = 'Examples/one.pdf';
+    const paragraph = view.contentEl.querySelector('p'); paragraph.tabIndex = 0; paragraph.focus();
+    for (const name of ['ArrowLeft', 'ArrowRight', ' ']) assert.equal(key(paragraph, name).defaultPrevented, false);
+    paragraph.blur();
+    assert.equal(key(dom.window.document.body, 'ArrowLeft').defaultPrevented, false);
+    assert.deepEqual(calls, []);
+    // Explicitly focused playback controls still operate the current session.
+    toolbar.root.focus(); assert.equal(key(toolbar.root, 'ArrowRight').defaultPrevented, true);
+    assert.deepEqual(calls, [5]);
+  } finally { manager.destroy(); dom.window.close(); }
+});
+
+test('opening the player focuses it; arrows seek five seconds even on its timeline and keep paused audio paused', t => {
+  const { plugin, view, manager, doc, key } = pdfKeysFixture(t);
+  const audio = plugin.currentAudio;
+  audio.paused = plugin.pauseRequested = plugin.readerState.isPaused = true;
+  manager.actions.get(view).click();
+  const bar = manager.toolbars.get(view);
+  assert.equal(doc.activeElement, bar.root);
+  assert.equal(key(doc.activeElement, 'ArrowRight'), true); assert.equal(audio.currentTime, 22);
+  bar.progress.focus();
+  assert.equal(key(bar.progress, 'ArrowLeft'), true); assert.equal(audio.currentTime, 17);
+  assert.equal(key(bar.progress, 'ArrowLeft', { repeat: true }), true); assert.equal(audio.currentTime, 12);
+  assert.equal(doc.activeElement, bar.progress); assert.equal(audio.paused, true);
+  assert.equal(key(bar.progress, 'ArrowRight', { shiftKey: true }), false); assert.equal(audio.currentTime, 12);
+  assert.equal(key(bar.progress, 'Home'), false);
+  bar.progress.blur();
+  bar.moreButton.dispatchEvent(new doc.defaultView.MouseEvent('pointerdown', { bubbles: true, cancelable: true, button: 0 }));
+  assert.equal(doc.activeElement, bar.moreButton);
+  assert.equal(key(doc.activeElement, 'ArrowRight'), true); assert.equal(audio.currentTime, 17);
+  view.contentEl.querySelector('.pdf-viewer-container').focus();
+  assert.equal(key(doc.activeElement, 'ArrowRight'), true); assert.equal(audio.currentTime, 22);
+  bar.root.focus();
+  plugin.readerState.canSeek = false; plugin.currentAudio = null;
+  assert.equal(key(bar.root, 'ArrowLeft'), false);
 });
 
 test('playback button clicks focus the toolbar without losing the captured source selection', () => {
@@ -342,7 +517,8 @@ test('PDF toolbar reuses playback and scope actions without changing PDF content
   const manager=new NativeToolbarManager(plugin);manager.sync();manager.toggle(view);
   const toolbar=manager.toolbars.get(view), span=view.contentEl.querySelector('span');
   toolbar.captureSelection();await toolbar.read('entire');await toolbar.read('from-selection');await toolbar.read('selection');
-  assert.equal(calls[0][1],file);assert.deepEqual(calls[1][2].selectionContext,{...context,strictMatch:true});assert.equal(calls[2][1],'PDF words');
+  assert.equal(calls[0][1],file);assert.deepEqual(calls[0][2],{keepControls:true});assert.equal(calls[1][2].keepControls,true);
+  assert.deepEqual(calls[1][2].selectionContext,{...context,strictMatch:true});assert.equal(calls[2][1],'PDF words');
   assert.equal(calls[2][3].pdfSelection,context); assert.equal(calls[2][3].skipReadingPosition,true);
   plugin.lastPdfSelection=context;
   span.dispatchEvent(new dom.window.MouseEvent('pointerdown',{button:0,bubbles:true}));
@@ -351,7 +527,7 @@ test('PDF toolbar reuses playback and scope actions without changing PDF content
   file.stat.mtime=2;await toolbar.read('from-selection');assert.equal(calls.length,4);
   toolbar.selection = null; plugin.getPdfSelectionForFile = () => null;
   await toolbar.read('glossary'); await toolbar.read('footnotes');
-  assert.deepEqual(calls.slice(4).map(call=>call[2]),[{contentScope:'glossary'},{contentScope:'footnotes'}]);
+  assert.deepEqual(calls.slice(4).map(call=>call[2]),[{contentScope:'glossary',keepControls:true},{contentScope:'footnotes',keepControls:true}]);
   assert.deepEqual([...toolbar.scope.options].map(option=>option.value),['entire','selection','from-selection','glossary','footnotes']);
   plugin.settings.settingsLanguage='chinese';toolbar.scope.value='glossary';toolbar.render();
   assert.equal(toolbar.readScope.getAttribute('aria-label'),'仅朗读术语表（整篇 PDF）');

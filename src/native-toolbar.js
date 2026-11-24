@@ -10,7 +10,9 @@ const { getHtmlReaderDocument } = require('./html-text');
 const { captureHtmlOutline, htmlSectionText } = require('./html-outline');
 const { playbackStatusText } = require('./preparation-status');
 const { bindOverallSeek } = require('./overall-seek');
+const { bindPdfPlaybackKeys, plainPlaybackKey } = require('./playback-keyboard');
 const { renderBufferingHint } = require('./buffering-hint');
+const { renderReadingWait } = require('./reading-wait-ui');
 const { kindFor, toggleFollowing, updateFollowButton } = require('./reading-follow');
 
 function node(parent, tag, className = '') {
@@ -29,7 +31,7 @@ class NativeReaderToolbar {
     this.root.tabIndex = 0;
     this.root.addEventListener('keydown', event => this.handleKeydown(event));
     this.documentKeydown = event => {
-      if (this.view.getMode?.() !== 'preview' || this.root.contains(event.target)) return;
+      if (this.view.getMode?.() !== 'preview' || this.plugin.activeSession?.sourceKind === 'pdf' || this.root.contains(event.target)) return;
       const doc = this.root.ownerDocument;
       const inReadingPane = this.view.contentEl.contains(event.target)
         || (event.target === doc.body && this.plugin.app.workspace.activeLeaf?.view === this.view);
@@ -142,7 +144,7 @@ class NativeReaderToolbar {
   handleKeydown(event, readOnlyBody = false) {
     if ((!readOnlyBody && !this.root.contains(this.root.ownerDocument.activeElement))
       || this.plugin.activeSession?.kind === 'audio-export'
-      || event.isComposing || event.ctrlKey || event.altKey || event.metaKey || event.shiftKey
+      || !plainPlaybackKey(event)
       || (readOnlyBody && event.target.closest('button, [role="button"]'))
       || event.target.closest('input, select, textarea, a, [contenteditable], [role="textbox"]')) return;
     this.plugin.handleReaderKeydown(event, { allowPause: true, focusPanel: readOnlyBody ? null : this.root });
@@ -151,7 +153,9 @@ class NativeReaderToolbar {
     const button = node(parent, 'button', 'clickable-icon'); button.type = 'button'; setIcon(button, icon);
     this.labels.push([button, ...labels]);
     button.addEventListener('pointerdown', event => {
-      if (event.button === 0) event.preventDefault();
+      if (event.button !== 0) return;
+      event.preventDefault();
+      (focusToolbar ? this.root : button).focus({ preventScroll: true });
     });
     button.addEventListener('click', () => {
       if (button.disabled) return;
@@ -159,6 +163,10 @@ class NativeReaderToolbar {
       void this.action(action);
     });
     return button;
+  }
+  focusForPlayback() {
+    this.captureSelection();
+    this.root.focus({ preventScroll: true });
   }
   captureSelection() {
     if (this.isWeb) { this.plugin.captureWebReaderRange(); return; }
@@ -171,9 +179,9 @@ class NativeReaderToolbar {
     if (this.isHtml) return this.plugin.readCurrentHtml(this.view.file, scope);
     if (!this.isPdf) return this.plugin.readMarkdownView(this.view, scope, this.selection);
     const file = this.view.file;
-    if (scope === 'entire') return this.plugin.readCurrentPdf(file);
-    if (scope === 'glossary' || scope === 'footnotes') return this.plugin.readCurrentPdf(file, { contentScope: scope });
-    return this.plugin.readPdfRange(file, this.plugin.getPdfSelectionForFile(file) || this.selection, scope);
+    if (scope === 'entire') return this.plugin.readCurrentPdf(file, { keepControls: true });
+    if (scope === 'glossary' || scope === 'footnotes') return this.plugin.readCurrentPdf(file, { contentScope: scope, keepControls: true });
+    return this.plugin.readPdfRange(file, this.plugin.getPdfSelectionForFile(file) || this.selection, scope, { keepLayout: true });
   }
   refreshOutline() {
     if (this.isPdf || this.isWeb) {
@@ -306,6 +314,11 @@ class NativeReaderToolbar {
     this.status.textContent = state.error || (session ? [playbackStatusText(state, this.plugin.settings.settingsLanguage, exporting), session.sourceLabel, current?.title].filter(Boolean).join(' · ') : '');
     this.status.hidden = !this.status.textContent;
     this.bufferingHintEl = renderBufferingHint(this.plugin, this.root, this.bufferingHintEl, setIcon);
+    this.updateReadingWait(session?.readingWait?.view());
+  }
+  updateReadingWait(model) {
+    this.waitEl = renderReadingWait(this.plugin,this.root,this.waitEl,model,setIcon);
+    if (this.bufferingHintEl) this.bufferingHintEl.hidden = !!model;
   }
   destroy() {
     this.sizeObserver?.disconnect();
@@ -317,23 +330,30 @@ class NativeReaderToolbar {
 }
 
 class NativeToolbarManager {
-  constructor(plugin) { this.plugin = plugin; this.toolbars = new Map(); this.actions = new Map(); }
+  constructor(plugin) { this.plugin = plugin; this.toolbars = new Map(); this.actions = new Map(); this.pdfKeys = new Map(); }
   sync() {
     const views = new Set(['markdown', 'pdf', 'html-view', 'webviewer'].flatMap(type => this.plugin.app.workspace.getLeavesOfType(type).map(leaf => leaf.view)));
+    const pdfDocs = new Set([...views].filter(v => v?.getViewType?.() === 'pdf').map(v => v.contentEl?.ownerDocument).filter(d => d?.defaultView));
+    for (const [doc, remove] of this.pdfKeys) if (!pdfDocs.has(doc)) { remove(); this.pdfKeys.delete(doc); }
+    for (const doc of pdfDocs) if (!this.pdfKeys.has(doc)) this.pdfKeys.set(doc, bindPdfPlaybackKeys(this.plugin, doc));
     for (const [view, toolbar] of this.toolbars) if (!views.has(view)) { toolbar.destroy(); this.toolbars.delete(view); }
     for (const [view, action] of this.actions) if (!views.has(view)) { action.remove(); this.actions.delete(view); }
     for (const view of views) if (!this.actions.has(view) && typeof view.addAction === 'function') {
-      const action = view.addAction('audio-lines', 'Reading toolbar', () => this.toggle(view));
+      const action = view.addAction('audio-lines', 'Reading toolbar', () => this.toggle(view, true));
       this.actions.set(view, action);
     }
     for (const [view, toolbar] of this.toolbars) if (toolbar.outlinePath !== view.file?.path) toolbar.refreshOutline();
     this.render();
   }
-  toggle(view) {
+  toggle(view, focus = false) {
     if ((!view?.editor && !['pdf', 'html-view', 'webviewer'].includes(view?.getViewType?.()) && view?.file?.extension !== 'pdf') || !view.contentEl?.parentElement) return;
     const old = this.toolbars.get(view);
     if (old) { old.destroy(); this.toolbars.delete(view); }
-    else this.toolbars.set(view, new NativeReaderToolbar(this.plugin, view, () => this.toggle(view)));
+    else {
+      const toolbar = new NativeReaderToolbar(this.plugin, view, () => this.toggle(view));
+      this.toolbars.set(view, toolbar);
+      if (focus) toolbar.focusForPlayback();
+    }
     this.render();
     this.plugin.miniOutline?.schedule();
   }
@@ -353,6 +373,8 @@ class NativeToolbarManager {
     }
   }
   destroy() {
+    for (const remove of this.pdfKeys.values()) remove();
+    this.pdfKeys.clear();
     for (const toolbar of this.toolbars.values()) toolbar.destroy();
     for (const action of this.actions.values()) action.remove();
     this.toolbars.clear(); this.actions.clear();

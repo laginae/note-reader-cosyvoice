@@ -150,7 +150,9 @@ Open a note, text PDF, local HTML file or a loaded Web viewer page. Open the rea
 
 Use pause/resume, playback speed, volume, segment navigation and seeking without starting a new synthesis just to change playback speed. For exports, review the scope, character count and destination before confirming.
 
-**Toolbar shortcuts (0.8.1):** **Space** pauses/resumes, and **Left/Right Arrow** seeks backward/forward five seconds, including across audio parts. In live preview and editing mode, these shortcuts work only while the toolbar or its buttons have focus; click a playback control or the toolbar background to focus it. In Markdown reading mode, they also work in the original reading pane while the toolbar is open. Text fields, sliders, menus and modified key combinations keep their normal keyboard behavior. Hover the pause/resume and seek buttons for shortcut hints.
+**Keyboard playback:** In the PDF you are listening to, press **Space** to pause or resume, **Left Arrow** to go back five seconds, or **Right Arrow** to go forward five seconds. The toolbar can stay closed. Seeking while paused does not resume playback. During buffering, the arrows do not turn the page. Stop reading or switch to another file and the keys work as usual. Switch back to the PDF while its session is still active to use the shortcuts again.
+
+Open the reading toolbar or click a playback control to use **Left/Right Arrow** to move back/forward five seconds when audio is ready. This also works on the playback timelines and while paused. PDF search and forms, volume and speed controls, and modified key combinations keep their usual keys. In Markdown Reading view, playback shortcuts also work in the text while the toolbar is open; in Live Preview and Source mode they do not intercept typing.
 
 ### Mini outline and floating playback controls
 
@@ -176,7 +178,7 @@ Enable **Playback and interface > Reading shortcuts > Floating playback controls
 
 ### Context menu and floating toolbar
 
-In Markdown **Live Preview** or **Source mode**, right-click to **Read aloud from here**; when text is selected, you can also **Read selected text**. PDF text also supports these menu actions: a selection takes priority; otherwise, reading starts near the clicked text, preferably at the sentence beginning within the same column. Blank space and images do not provide a text starting point. An unverified starting point is rejected rather than silently reading from the page beginning. Existing built-in PDF and PDF++ menu items are preserved. HTML and Markdown Reading view retain their reading-toolbar actions.
+In Markdown **Live Preview** or **Source mode**, right-click to **Read aloud from here**; when text is selected, you can also **Read selected text**. PDF text also supports these menu actions: a selection takes priority; otherwise, reading starts near the clicked text, preferably at the sentence beginning within the same column. Blank space and images do not provide a text starting point. An unverified starting point is rejected rather than silently reading from the page beginning. Existing built-in PDF and PDF++ menu items are preserved. HTML and Markdown Reading view retain their reading-toolbar actions. Right-click reading keeps the current layout and does not open the sidebar. Controls already on screen continue to work.
 
 For a floating speaker icon, separately install and enable the optional **Editing Toolbar** community plugin. Ordinary reading does not require it. In **Playback and interface**, enable **Floating toolbar reading icon** and choose its action: **Read selected text** (default), or **Read from selection** to continue to the document end. Both require a selection.
 
@@ -616,6 +618,8 @@ HTTP speech engines use at most two synthesis operations; local and Edge helper 
 Balanced normally synthesizes each segment in one request, not one request per sentence. Quick start and provider hard limits can produce several audio parts; playback plays them in order rather than waiting to merge the entire document. Continuous listening can group several sentences into each smaller request. Open **How buffering works** below the mode selector for technical limits and caveats.
 
 In Balanced mode, a quiet inline suggestion can appear after a five-second natural gap, or two three-second gaps in one reading session. It excludes startup, navigation, pauses, PDF extraction time and speech request failures. It appears at most once per app instance, never changes modes automatically, and offers **Buffer settings**, **Don't show again**, and a close button. Re-enable it under **Playback and interface > Advanced options**. The suggestion makes no network requests and stores no note text.
+
+For MiMo, OpenRouter and Azure, a foreground wait of 8 seconds shows its stage and elapsed time in the status bar and any open player. After 15 seconds without progress, **Retry current part** can resend just that part after confirmation. The local request closes first; the provider may still charge for the original. This is unavailable during pause or rate-limit backoff.
 
 Prepared audio and in-flight requests are reused within the reading session. The scheduler retains up to 256 ready part references; temporary files keep the existing cleanup policy. Changing synthesis settings continues to follow the existing session snapshot behavior. Exports are unchanged.
 

@@ -56,7 +56,10 @@ const { PdfOutlineModal, addPdfOutlineSettings } = require('./pdf-outline-ui');
 const { readerRange } = require('./reader-selection');
 const { getSpeechParts, planSpeechParts, adjacentSpeechPart, getSpeechPartTiming } = require('./speech-parts');
 const { preparationStatusText, playbackStatusText } = require('./preparation-status');
+const { ReadingWait, MANUAL_RETRY, supportedEngine: supportsReadingWait } = require('./reading-wait');
+const { renderReadingWait } = require('./reading-wait-ui');
 const { bindOverallSeek } = require('./overall-seek');
+const { bindTimelineKeys, getKeyboardSeekDeltaSeconds, isSpaceKeyEvent, KEYBOARD_SEEK_SECONDS, plainPlaybackKey } = require('./playback-keyboard');
 const { listeningMode, planListeningBuffer } = require('./listening-buffer');
 const { BufferingHint, renderBufferingHint } = require('./buffering-hint');
 const { kindFor, toggleFollowing, updateFollowButton } = require('./reading-follow');
@@ -108,7 +111,6 @@ const AZURE_SPEECH_OUTPUT_FORMAT = 'audio-24khz-48kbitrate-mono-mp3';
 const OPENROUTER_TTS_ENDPOINT = 'https://openrouter.ai/api/v1/audio/speech';
 const RECOMMENDED_SCRIPT_PATH = '%LOCALAPPDATA%\\note-reader-cosyvoice\\cosyvoice-wrapper.ps1';
 const SPEED_PRESETS = [1, 1.25, 1.5, 2, 1.1, 1.2, 1.3, 1.4];
-const KEYBOARD_SEEK_SECONDS = 5;
 const MATH_READING_LANGUAGES = ['english', 'chinese', 'skip'];
 const SETTINGS_LANGUAGES = Object.keys(LANGUAGES);
 const AUDIO_EXPORT_LOCATIONS = ['obsidian-attachment', 'note-folder', 'custom-folder'];
@@ -1806,26 +1808,6 @@ function formatProgressLabel(state) {
   return `${currentChunk} / ${totalChunks}`;
 }
 
-function isSpaceKeyEvent(event) {
-  return event && (event.code === 'Space' || event.key === ' ' || event.key === 'Spacebar');
-}
-
-function getKeyboardSeekDeltaSeconds(event) {
-  if (!event) {
-    return 0;
-  }
-
-  if (event.code === 'ArrowLeft' || event.key === 'ArrowLeft') {
-    return -KEYBOARD_SEEK_SECONDS;
-  }
-
-  if (event.code === 'ArrowRight' || event.key === 'ArrowRight') {
-    return KEYBOARD_SEEK_SECONDS;
-  }
-
-  return 0;
-}
-
 function isInteractiveKeyboardTarget(target) {
   if (!target || !target.tagName) {
     return false;
@@ -1835,7 +1817,7 @@ function isInteractiveKeyboardTarget(target) {
     return true;
   }
 
-  if (typeof target.closest === 'function' && target.closest('.cm-editor, .markdown-source-view, [contenteditable="true"]')) {
+  if (typeof target.closest === 'function' && target.closest('.cm-editor, .markdown-source-view, [contenteditable]:not([contenteditable="false"]), [role="textbox"], [role="combobox"], [role="listbox"], [role="menu"], [role="slider"], [role="spinbutton"]')) {
     return true;
   }
 
@@ -2487,9 +2469,8 @@ class CosyVoiceReaderPlugin extends Plugin {
         file: snapshot.file, sourceKind: 'markdown', sourceText: snapshot.sourceText,
         sourceOffset: snapshot.start, skipReadingPosition: snapshot.selection,
       })), message => new Notice(message));
-    registerPdfReadingMenu(this, Menu, getPdfSelectionContext, snapshot => this.runUserAction('Read PDF context', () =>
-      this.readPdfRange(snapshot.file, snapshot.context, snapshot.selection ? 'selection' : 'from-selection', snapshot.selection)
-    ), message => new Notice(message));
+    registerPdfReadingMenu(this, Menu, getPdfSelectionContext, snapshot =>
+      this.runUserAction('Read PDF context', () => this.readPdfMenuSnapshot(snapshot)), message => new Notice(message));
     await this.ensureCacheDir();
 
     this.registerView(VIEW_TYPE, (leaf) => new CosyVoiceReaderView(leaf, this));
@@ -2592,6 +2573,15 @@ class CosyVoiceReaderPlugin extends Plugin {
       }),
     });
 
+    this.addCommand({
+      id: 'retry-waiting-audio-part', name: translateInterface(this.settings.settingsLanguage, 'Retry current audio part', '重试当前朗读段'),
+      checkCallback: checking => {
+        const ticket = this.activeSession?.readingWait?.view()?.ticket;
+        if (!ticket) return false;
+        if (!checking) this.confirmReadingRetry(ticket);
+        return true;
+      },
+    });
     this.addCommand({
       id: 'pdf-outline-bookmarks', name: 'PDF outline and bookmarks',
       checkCallback: checking => {
@@ -3175,11 +3165,40 @@ class CosyVoiceReaderPlugin extends Plugin {
     this.readerViews.delete(view);
   }
 
-  renderReaderViews(playbackOnly = false) {
+  renderStatusBar(model) {
     if (this.statusBar && this.readerState) {
+      if (model && this.statusBar.ownerDocument) {
+        if (!this.waitStatusEl) { this.statusBar.setText(''); this.lastStatusBarLabel = null; }
+        this.waitStatusEl = renderReadingWait(this,this.statusBar,this.waitStatusEl,model,setIcon,true);
+        return;
+      }
+      if (this.waitStatusEl) { this.waitStatusEl.remove(); this.waitStatusEl=null; }
       const label = playbackStatusText(this.readerState, this.settings?.settingsLanguage, this.activeSession?.kind === 'audio-export');
       if (label !== this.lastStatusBarLabel) { this.statusBar.setText(label); this.lastStatusBarLabel = label; }
     }
+  }
+
+  refreshWaitControls() {
+    const model = this.activeSession?.readingWait?.view() || null;
+    this.renderStatusBar(model);
+    for (const v of this.readerViews || []) v.updateReadingWait?.(model);
+    for (const v of this.nativeToolbars?.toolbars?.values() || []) v.updateReadingWait?.(model);
+  }
+
+  confirmReadingRetry(ticket) {
+    const wait = this.activeSession?.readingWait;
+    if (!ticket || wait?.view()?.ticket !== ticket) return false;
+    const t = (en,zh)=>translateInterface(this.settings.settingsLanguage,en,zh);
+    new SettingsConfirmModal(this,t('Retry current audio part?','重试当前朗读段？'),
+      t('This cancels the local request and resends only the current audio part. A paid service may still charge for the first request.',
+        '将取消本机当前请求，只重新发送正在等待的这份音频文字。收费接口可能仍会对原请求计费。'),()=>{
+        if (!wait.retry(ticket)) new Notice(t('This request is no longer waiting; nothing was resent.','当前请求已结束或发生变化，没有重新发送。'));
+      },'Retry current audio part').open();
+    return true;
+  }
+
+  renderReaderViews(playbackOnly = false) {
+    this.renderStatusBar(this.activeSession?.readingWait?.view());
     this.dockedOutline?.update();
     this.miniOutline?.update();
     this.nativeToolbars?.render();
@@ -3226,8 +3245,10 @@ class CosyVoiceReaderPlugin extends Plugin {
     const mode = this.settings.readerOpenMode;
     const view = this.getReadingToolbarView();
     if (mode !== 'sidebar' && view) {
-      if (!this.nativeToolbars.toolbars.has(view)) this.nativeToolbars.toggle(view);
-      if (mode === 'toolbar') { await this.app.workspace.revealLeaf(view.leaf); return; }
+      if (mode === 'toolbar') await this.app.workspace.revealLeaf(view.leaf);
+      if (!this.nativeToolbars.toolbars.has(view)) this.nativeToolbars.toggle(view, mode === 'toolbar');
+      else if (mode === 'toolbar') this.nativeToolbars.toolbars.get(view).focusForPlayback();
+      if (mode === 'toolbar') return;
     }
     await this.activateControlView();
   }
@@ -3341,7 +3362,7 @@ class CosyVoiceReaderPlugin extends Plugin {
 
   toggleReadingToolbar() {
     const view = this.getReadingToolbarView();
-    if (view) this.nativeToolbars?.toggle(view);
+    if (view) this.nativeToolbars?.toggle(view, true);
     else new Notice(this.settings.settingsLanguage === 'chinese' ? '请先打开笔记、PDF、HTML 或网页。' : 'Open a note, PDF, HTML file or web page first.');
   }
 
@@ -3496,13 +3517,18 @@ class CosyVoiceReaderPlugin extends Plugin {
     } catch { return context; }
   }
 
-  async readPdfRange(file, context, scope, showControls = false) {
+  readPdfMenuSnapshot({file,context,selection}) {
+    return this.readPdfRange(file,context,selection ? 'selection' : 'from-selection',{keepLayout:true});
+  }
+
+  async readPdfRange(file, context, scope, controls = {}) {
     const valid = () => isPdfFile(file) && context?.selectedText?.trim()
       && context.filePath === getPdfFileIdentity(file) && context.fileMtime === getFileMtime(file);
     const reselect = () => new Notice(translateInterface(this.settings.settingsLanguage,
       'Select text in the current PDF again.', '请在当前 PDF 中重新选择文字。'));
     if (!valid()) { reselect(); return; }
-    if (scope === 'from-selection') return this.readCurrentPdf(file, { selectionContext: { ...context, strictMatch: true } });
+    if (scope === 'from-selection') return this.readCurrentPdf(file, { selectionContext: { ...context, strictMatch: true },
+      ...(controls.keepLayout ? { keepControls:true } : {}) });
     if (scope !== 'selection') return;
     if (!context.selectionLayout?.length) {
       new Notice(translateInterface(this.settings.settingsLanguage,
@@ -3511,7 +3537,7 @@ class CosyVoiceReaderPlugin extends Plugin {
       return;
     }
     const sequence = this.sequence, request = this.pdfRangeRequest = (this.pdfRangeRequest || 0) + 1;
-    if (showControls) await this.activateControlView();
+    if (!controls.keepLayout && (controls === true || controls.showControls)) await this.activateControlView();
     context = await this.withPdfSelectionMath(file, context);
     if (sequence !== this.sequence || request !== this.pdfRangeRequest) return;
     if (!valid()) { reselect(); return; }
@@ -4974,6 +5000,7 @@ class CosyVoiceReaderPlugin extends Plugin {
 
   notifySessionNavigation(session) {
     if (Number.isInteger(session?.requestedChunkIndex)) {
+      session.readingWait?.end(session.readingWait.target,false);
       this.playbackTimings?.begin('jumpToPlaying');
       session.preparationPool?.select(`${session.requestedChunkIndex}:${session.requestedPartIndex || 0}`);
       session.preparationPool?.pause(this.pauseRequested);
@@ -5490,7 +5517,7 @@ class CosyVoiceReaderPlugin extends Plugin {
       return;
     }
     if (isPdfFile(activeFile)) {
-      return this.readPdfRange(activeFile, this.getPdfSelectionForFile(activeFile), 'selection', true);
+      return this.readPdfRange(activeFile, this.getPdfSelectionForFile(activeFile), 'selection', { showControls:true });
     }
 
     const view = this.getActiveMarkdownView();
@@ -5668,6 +5695,8 @@ class CosyVoiceReaderPlugin extends Plugin {
 
   async runSpeechSession(session) {
     const timings = this.playbackTimings ||= new PlaybackTimings();
+    const wait = supportsReadingWait(session.speechEngine) && !session.settingsPreview && !['audio-export','voice-preview'].includes(session.kind)
+      ? session.readingWait = new ReadingWait(this,session,timings) : null;
     timings.begin('sessionToPlaying', session.preparationStarted);
     session.preparationLatencies = [];
     const pool = session.preparationPool = new PreparationPool({
@@ -5759,6 +5788,7 @@ class CosyVoiceReaderPlugin extends Plugin {
         const previousState = pool.state(key);
         const reused = Boolean(previousState);
         const waitStarted = timings.now();
+        const targetWait = previousState !== 'ready' ? wait?.begin(key) : null;
         const preparation = getPreparedChunk(index, part, true);
         if (!session.seekTarget) session.prepareAvailableChunks();
         this.updateStatus(`${session.engineLabel} preparing ${index + 1}/${session.totalChunks}`, {
@@ -5773,7 +5803,13 @@ class CosyVoiceReaderPlugin extends Plugin {
         });
         this.bufferingHint ||= new BufferingHint(this);
         this.bufferingHint.start(session);
-        const prepared = await this.waitForSessionOperation(session, preparation);
+        let prepared;
+        try { prepared = await this.waitForSessionOperation(session, preparation); }
+        catch (error) {
+          if (error?.[MANUAL_RETRY] && this.isActive(session)) continue;
+          throw error;
+        }
+        finally { wait?.end(targetWait,!!prepared); }
         if (!this.isActive(session)) {
           break;
         }
@@ -5841,6 +5877,7 @@ class CosyVoiceReaderPlugin extends Plugin {
         this.activeSession = null;
       }
     } finally {
+      wait?.dispose();
       session.prepareAvailableChunks = null;
       this.bufferingHint?.stop(session);
       pool.clear();
@@ -5941,7 +5978,7 @@ class CosyVoiceReaderPlugin extends Plugin {
     }
     let alignment;
     try {
-      alignment = await this.runSpeechEngine(inputPath, outputPath, session, speechEngine, context);
+      alignment = await this.runSpeechEngine(inputPath, outputPath, session, speechEngine, context, index + ':' + part);
     } catch (error) {
       if (speechEngine === 'system-tts' && this.settings.cleanupCache) await this.removeTempFile(outputPath);
       throw error;
@@ -5983,20 +6020,20 @@ class CosyVoiceReaderPlugin extends Plugin {
     return promise;
   }
 
-  runSpeechEngine(inputPath, outputPath, session, speechEngine = normalizeSpeechEngine(this.settings.speechEngine), context = {}) {
+  runSpeechEngine(inputPath, outputPath, session, speechEngine = normalizeSpeechEngine(this.settings.speechEngine), context = {}, partKey) {
     if (speechEngine === 'byok-tts') return this.runByokTts(inputPath, outputPath, session);
     if (speechEngine === 'system-tts') return this.runSystemTts(inputPath, outputPath, session);
     if (speechEngine === 'edge-tts') {
       return this.runEdgeTts(inputPath, outputPath, session);
     }
     if (speechEngine === 'azure-speech') {
-      return this.runAzureSpeech(inputPath, outputPath, session);
+      return this.runAzureSpeech(inputPath, outputPath, session, partKey);
     }
     if (speechEngine === 'openrouter-tts') {
-      return this.runOpenRouterTts(inputPath, outputPath, session, context);
+      return this.runOpenRouterTts(inputPath, outputPath, session, context, partKey);
     }
     if (speechEngine === 'mimo-tts') {
-      return this.runMimoTts(inputPath, outputPath, session);
+      return this.runMimoTts(inputPath, outputPath, session, partKey);
     }
 
     return this.runCosyVoice(inputPath, outputPath, session);
@@ -6265,15 +6302,34 @@ class CosyVoiceReaderPlugin extends Plugin {
 
     const { session, serviceLabel } = options;
     const maxAttempts = options.retryTemporaryFailures === true ? REMOTE_TTS_MAX_ATTEMPTS : 1;
-    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const wait = session.readingWait;
+    let manualError = null, manualTarget;
+    for (let attempt = 1; ; attempt += 1) {
+      // A closed socket may race a pause, a new navigation target, or a 429 on
+      // another request. Do not send the replacement until the target can resume.
+      if (manualError) {
+        while (wait.target === manualTarget && wait.currentKey(options.partKey)) {
+          const delay = (session.preparationPool?.cooldownUntil || 0) - wait.now();
+          if (!this.pauseRequested && delay <= 0) break;
+          await wait.waitForChange(this.pauseRequested ? 0 : delay);
+        }
+        if (wait.target !== manualTarget || !wait.currentKey(options.partKey)) throw manualError;
+      }
+      const trace = wait?.attempt(options.partKey,attempt,!!manualError);
       try {
-        await this.requestRemoteAudioOnce(options);
+        await this.requestRemoteAudioOnce(trace ? {...options,waitAttempt:trace} : options);
         return;
       } catch (error) {
-        session.waitHintError = true;
         if (!this.isActive(session)) {
           throw new Error('Reading stopped.');
         }
+        if (trace && error[MANUAL_RETRY]) {
+          manualError = error; manualTarget = trace.manualTarget;
+          continue;
+        }
+        session.waitHintError = true;
+        if (trace && error.code === 'ETIMEDOUT') wait.timings.count('httpTimeout');
+        if (trace && error.code === 'ECONNRESET') wait.timings.count('httpConnectionReset');
 
         if (error.statusCode === 429) {
           session.preparationPool?.throttle(error.retryAfterMs);
@@ -6284,7 +6340,7 @@ class CosyVoiceReaderPlugin extends Plugin {
           throw error;
         }
 
-        if (attempt === maxAttempts) {
+        if (manualError || attempt >= maxAttempts) {
           throw maxAttempts > 1
             ? createRemoteRetryExhaustedError(serviceLabel, error, attempt)
             : error;
@@ -6295,19 +6351,25 @@ class CosyVoiceReaderPlugin extends Plugin {
         const delayMs = Number.isFinite(retryAfterMs)
           ? Math.max(fallbackDelayMs, retryAfterMs)
           : fallbackDelayMs;
+        wait?.mark(trace,error.statusCode === 429 ? 'limited' : 'backoff');
+        if (trace) wait.timings.count('httpAutomaticRetry');
         await this.waitForRemoteRetry(session, delayMs);
+      } finally {
+        wait?.forget(trace);
       }
     }
   }
 
-  async requestRemoteAudioOnce({ endpoint, headers, body, outputPath, session, serviceLabel, expectedContentType, failureHint, decodeAudio }) {
+  async requestRemoteAudioOnce({ endpoint, headers, body, outputPath, session, serviceLabel, expectedContentType, failureHint, decodeAudio, waitAttempt }) {
     await new Promise((resolve, reject) => {
-      let settled = false;
+      const wait = session.readingWait;
+      let settled = false, gotResponse = false, closed = false, manualError = null;
       const finish = (callback, value) => {
-        if (settled) {
+        if (settled || (manualError && !closed)) {
           return;
         }
         settled = true;
+        if (waitAttempt) waitAttempt.cancel = null;
         this.currentRequests.delete(request);
         callback(value);
       };
@@ -6316,7 +6378,10 @@ class CosyVoiceReaderPlugin extends Plugin {
         method: 'POST',
         headers,
       }, (response) => {
+        gotResponse = true;
+        if (manualError || settled) { response.destroy(); return; }
         const statusCode = Number(response.statusCode) || 0;
+        wait?.mark(waitAttempt,statusCode === 200 ? 'receiving' : 'finishing');
         if (statusCode !== 200) {
           const error = createRemoteHttpError(
             serviceLabel,
@@ -6371,15 +6436,16 @@ class CosyVoiceReaderPlugin extends Plugin {
         }
 
         const chunks = [];
-        let totalBytes = 0;
+        let totalBytes = 0, bodyEnded = false;
         response.on('data', (chunk) => {
-          if (settled) {
+          if (settled || manualError) {
             return;
           }
+          if (waitAttempt) waitAttempt.activity = wait.now();
           totalBytes += chunk.length;
           if (totalBytes > REMOTE_TTS_MAX_AUDIO_BYTES) {
-            response.destroy();
             finish(reject, new Error(`${serviceLabel} response exceeded the 20 MB safety limit.`));
+            response.destroy();
             request.destroy();
             return;
           }
@@ -6390,13 +6456,20 @@ class CosyVoiceReaderPlugin extends Plugin {
           error.code = 'ECONNRESET';
           finish(reject, error);
         });
+        response.on('close', () => {
+          if (settled || bodyEnded || response.complete) return;
+          const error = new Error(serviceLabel + ' response closed before completion.');
+          error.code = 'ECONNRESET'; finish(reject,error);
+        });
         response.on('error', (error) => {
           finish(reject, error);
         });
         response.on('end', async () => {
-          if (settled) {
+          if (settled || manualError) {
             return;
           }
+          bodyEnded = true;
+          wait?.mark(waitAttempt,'finishing');
           if (!this.isActive(session)) {
             finish(reject, new Error('Reading stopped.'));
             return;
@@ -6424,15 +6497,26 @@ class CosyVoiceReaderPlugin extends Plugin {
         finish(reject, error);
       });
       request.on('close', () => {
-        if (!settled && !this.isActive(session)) {
-          finish(reject, new Error('Reading stopped.'));
+        closed = true;
+        if (manualError) finish(reject,manualError);
+        else if (!settled && !this.isActive(session)) finish(reject, new Error('Reading stopped.'));
+        else if (!settled && !gotResponse) {
+          const error = new Error(serviceLabel + ' connection closed before a response.');
+          error.code = 'ECONNRESET'; finish(reject,error);
         }
       });
+      if (waitAttempt) waitAttempt.cancel = () => {
+        if (settled || closed || manualError || request.destroyed) return false;
+        manualError = new Error('Audio request superseded by manual retry.');
+        manualError.name = 'AbortError'; manualError[MANUAL_RETRY] = true;
+        request.destroy(manualError);
+        return true;
+      };
       request.end(body);
     });
   }
 
-  async runAzureSpeech(inputPath, outputPath, session) {
+  async runAzureSpeech(inputPath, outputPath, session, partKey) {
     const settings = session.synthesisSettings || this.settings;
     const [text, subscriptionKey] = await Promise.all([
       fs.promises.readFile(inputPath, 'utf8'),
@@ -6445,6 +6529,7 @@ class CosyVoiceReaderPlugin extends Plugin {
     const body = buildAzureSpeechSsml(text, settings);
     await this.requestRemoteAudio({
       endpoint: new URL(buildAzureSpeechEndpoint(settings)),
+      partKey,
       headers: {
         Accept: 'audio/mpeg',
         'Content-Length': Buffer.byteLength(body, 'utf8'),
@@ -6502,7 +6587,7 @@ class CosyVoiceReaderPlugin extends Plugin {
     }
   }
 
-  async runMimoTts(inputPath, outputPath, session) {
+  async runMimoTts(inputPath, outputPath, session, partKey) {
     const settings = session.synthesisSettings || this.settings;
     if (settings.mimoConsent !== true) throw new Error('MiMo online processing consent is required.');
     const apiKey = normalizeCredentialSource(settings.mimoCredentialSource) === 'obsidian-secret'
@@ -6513,6 +6598,7 @@ class CosyVoiceReaderPlugin extends Plugin {
     const body = buildMimoRequestBody(text, settings);
     await this.requestRemoteAudio({
       endpoint: new URL(MIMO_ENDPOINT),
+      partKey,
       headers: { 'api-key': apiKey, Accept: 'application/json', 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
       body, outputPath, session,
       serviceLabel: 'MiMo TTS',
@@ -6523,7 +6609,7 @@ class CosyVoiceReaderPlugin extends Plugin {
     });
   }
 
-  async runOpenRouterTts(inputPath, outputPath, session, context = {}) {
+  async runOpenRouterTts(inputPath, outputPath, session, context = {}, partKey) {
     const settings = session.synthesisSettings || this.settings;
     const [text, apiKey] = await Promise.all([
       fs.promises.readFile(inputPath, 'utf8'),
@@ -6536,6 +6622,7 @@ class CosyVoiceReaderPlugin extends Plugin {
     const body = buildOpenRouterTtsRequestBody(text, settings, this.settings.openRouterContext === true ? context : {});
     await this.requestRemoteAudio({
       endpoint: new URL(OPENROUTER_TTS_ENDPOINT),
+      partKey,
       headers: {
         Accept: 'audio/mpeg',
         Authorization: `Bearer ${apiKey}`,
@@ -6860,9 +6947,8 @@ class CosyVoiceReaderPlugin extends Plugin {
 
   handleReaderKeydown(event, options = {}) {
     if (
-      !event ||
-      event.defaultPrevented ||
-      isInteractiveKeyboardTarget(event.target)
+      !plainPlaybackKey(event) || this.activeSession?.kind === 'audio-export' ||
+      (event.target !== options.seekSlider && isInteractiveKeyboardTarget(event.target))
     ) {
       return false;
     }
@@ -6886,6 +6972,7 @@ class CosyVoiceReaderPlugin extends Plugin {
       options.allowPause === false ||
       event.repeat ||
       !state.canPause ||
+      event.target?.closest?.('button, [role="button"], summary, a[href]') ||
       !isSpaceKeyEvent(event)
     ) {
       return false;
@@ -7110,6 +7197,7 @@ class CosyVoiceReaderPlugin extends Plugin {
 
       this.pauseRequested = !this.pauseRequested;
       this.activeSession?.preparationPool?.pause(this.pauseRequested);
+      this.activeSession?.readingWait?.pause(this.pauseRequested);
       this.playbackTimings?.suspend();
       this.updateStatus(this.pauseRequested ? 'CosyVoice paused' : 'CosyVoice waiting', {
         canPause: true,
@@ -7177,6 +7265,7 @@ class CosyVoiceReaderPlugin extends Plugin {
   async cancelSessionOperations(session, options = {}) {
     if (session) {
       session.stopped = true;
+      session.readingWait?.dispose();
       session.preparationPool?.clear();
       this.playbackTimings?.suspend();
       for (const controller of session.systemSpeechControllers || []) controller.abort();
@@ -7597,6 +7686,11 @@ class CosyVoiceReaderView extends ItemView {
     if (outlineFocus?.isConnected) outlineFocus.focus({ preventScroll: true });
   }
 
+  updateReadingWait(model) {
+    this.waitEl = renderReadingWait(this.plugin,this.panel?.header,this.waitEl,model,setIcon);
+    if (this.bufferingHintEl) this.bufferingHintEl.hidden = !!model;
+  }
+
   updatePanel(state, checkDocument) {
     const r = this.panel, plugin = this.plugin, session = plugin.activeSession, settings = plugin.settings;
     const lang = settings.settingsLanguage, zh = lang === 'chinese', exporting = session?.kind === 'audio-export';
@@ -7606,6 +7700,7 @@ class CosyVoiceReaderView extends ItemView {
     text(r.phase, preparationStatusText(state, lang) || label); text(r.source, state.source || '-');
     text(r.error, state.error || ''); r.error.hidden = !state.error; text(r.preview, state.currentText || '-');
     this.bufferingHintEl = renderBufferingHint(plugin, r.header, this.bufferingHintEl, setIcon);
+    this.updateReadingWait(session?.readingWait?.view());
     updateFollowButton(r.follow, plugin, kindFor(plugin)); r.locate.disabled = !session || exporting;
     r.previous.disabled = !state.canPreviousChunk || exporting; r.next.disabled = !state.canNextChunk || exporting;
     const canSeek = !exporting && (state.canSeek || state.canNextChunk || state.canPreviousChunk);
@@ -7680,6 +7775,7 @@ class CosyVoiceReaderView extends ItemView {
       'aria-label': this.translate('Current segment progress'),
     } });
     slider.disabled = !enabled;
+    bindTimelineKeys(slider, this.plugin);
     const begin = () => {
       if (slider.disabled) return;
       this.chunkSeekEditing = true;
@@ -7691,7 +7787,7 @@ class CosyVoiceReaderView extends ItemView {
       begin();
       try { slider.setPointerCapture(event.pointerId); } catch (_) { finish(); }
     });
-    slider.addEventListener('keydown', begin);
+    slider.addEventListener('keydown', event => { if (!event.defaultPrevented) begin(); });
     slider.addEventListener('blur', () => { finish(); this.render(); });
     slider.addEventListener('pointercancel', () => { finish(); this.render(); });
     slider.addEventListener('lostpointercapture', finish);
@@ -7847,6 +7943,7 @@ class CosyVoiceReaderView extends ItemView {
         pointerHandled = true;
         event.preventDefault();
         event.stopPropagation();
+        focusElementWithoutScroll(this.panel?.root || button);
         onClick(event);
       });
     }

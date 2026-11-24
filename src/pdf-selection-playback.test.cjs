@@ -103,3 +103,19 @@ test('all PDF range entry points reject missing layout and stale identities with
   await plugin.readPdfRange(file, current, 'from-selection');
   assert.deepEqual(calls[0], [file,{selectionContext:{...current,strictMatch:true}}]);
 });
+
+test('PDF context actions preserve the layout while explicit control commands still open it',async()=>{
+  const plugin=Object.create(loaded.exports.default.prototype),calls=[];
+  plugin.settings=loaded.exports.__test.createDefaultSettings();
+  const file={path:'public.pdf',name:'public.pdf',extension:'pdf',stat:{mtime:9}};
+  const context={filePath:file.path,fileMtime:9,selectedText:'Public sample.',selectionLayout:[{pageNumber:1,
+    viewport:{width:400,height:600},items:[{str:'Public sample.',width:65,height:10,transform:[10,0,0,10,30,300]}]}]};
+  plugin.readCurrentPdf=async(f,o)=>calls.push(['from',f,o]);
+  plugin.activateControlView=async()=>calls.push(['open']);
+  plugin.startReading=async(text,_name,o)=>calls.push(['selected',text,o.pdfSelection]);
+  await plugin.readPdfMenuSnapshot({file,context,selection:false});
+  await plugin.readPdfMenuSnapshot({file,context,selection:true});
+  assert.deepEqual(calls,[['from',file,{selectionContext:{...context,strictMatch:true},keepControls:true}],['selected','Public sample.',context]]);
+  await plugin.readPdfRange(file,context,'selection',{showControls:true});
+  assert.equal(calls[2][0],'open');assert.equal(calls[3][0],'selected');
+});

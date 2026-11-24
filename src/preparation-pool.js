@@ -20,6 +20,16 @@ class PlaybackTimings {
     this.endedAt = null;
   }
   suspend() { this.intent = null; this.endedAt = null; }
+  recordLongWait(sample) {
+    this.longWaits ||= [];
+    const row = {};
+    for (const key of ['ms','responseMs','receiveMs','retryWaitMs','otherMs','attempts','manualRetries','completed']) {
+      if (!Number.isFinite(sample[key]) || sample[key] < 0) return;
+      row[key] = Math.round(sample[key]);
+    }
+    this.longWaits.push(row);
+    if (this.longWaits.length > 8) this.longWaits.shift();
+  }
   ended() { this.endedAt = this.now(); }
   playing(started) {
     const now = this.now();
@@ -36,7 +46,8 @@ class PlaybackTimings {
       timings[name] = { count: sorted.length, p50: sorted[Math.ceil(sorted.length * .5) - 1],
         p95: sorted[Math.ceil(sorted.length * .95) - 1] };
     }
-    return { schema: 1, units: 'milliseconds', window: 128, counts: { ...this.counts }, timings };
+    return { schema: 1, units: 'milliseconds', window: 128, counts: { ...this.counts }, timings,
+      ...(this.longWaits?.length ? {longWaits:this.longWaits.map(row=>({...row}))} : {}) };
   }
 }
 

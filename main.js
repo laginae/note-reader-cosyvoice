@@ -422,6 +422,16 @@ var require_preparation_pool = __commonJS({
         this.intent = null;
         this.endedAt = null;
       }
+      recordLongWait(sample) {
+        this.longWaits || (this.longWaits = []);
+        const row = {};
+        for (const key of ["ms", "responseMs", "receiveMs", "retryWaitMs", "otherMs", "attempts", "manualRetries", "completed"]) {
+          if (!Number.isFinite(sample[key]) || sample[key] < 0) return;
+          row[key] = Math.round(sample[key]);
+        }
+        this.longWaits.push(row);
+        if (this.longWaits.length > 8) this.longWaits.shift();
+      }
       ended() {
         this.endedAt = this.now();
       }
@@ -443,7 +453,14 @@ var require_preparation_pool = __commonJS({
             p95: sorted[Math.ceil(sorted.length * 0.95) - 1]
           };
         }
-        return { schema: 1, units: "milliseconds", window: 128, counts: { ...this.counts }, timings };
+        return {
+          schema: 1,
+          units: "milliseconds",
+          window: 128,
+          counts: { ...this.counts },
+          timings,
+          ...this.longWaits?.length ? { longWaits: this.longWaits.map((row) => ({ ...row })) } : {}
+        };
       }
     };
     function cancelled() {
@@ -4764,12 +4781,13 @@ var require_settings_confirm = __commonJS({
     var { Modal: Modal2, Setting } = require("obsidian");
     var { translate } = require_i18n();
     var SettingsConfirmModal2 = class extends Modal2 {
-      constructor(plugin, title, description, action) {
+      constructor(plugin, title, description, action, actionLabel = "Reset settings") {
         super(plugin.app);
         this.plugin = plugin;
         this.title = title;
         this.description = description;
         this.action = action;
+        this.actionLabel = actionLabel;
       }
       onOpen() {
         const t = (en, zh) => translate(this.plugin.settings.settingsLanguage, en, zh);
@@ -4778,7 +4796,7 @@ var require_settings_confirm = __commonJS({
         new Setting(this.contentEl).addButton((button) => button.setButtonText(t("Cancel", "\u53D6\u6D88")).onClick(() => this.close())).addButton((button) => button.setButtonText(t("Confirm", "\u786E\u8BA4")).onClick(async () => {
           button.setDisabled(true);
           try {
-            await this.plugin.runUserAction("Reset settings", this.action);
+            await this.plugin.runUserAction(this.actionLabel, this.action);
             this.close();
           } finally {
             button.setDisabled(false);
@@ -15007,12 +15025,98 @@ var require_preparation_status = __commonJS({
   }
 });
 
+// src/playback-keyboard.js
+var require_playback_keyboard = __commonJS({
+  "src/playback-keyboard.js"(exports2, module2) {
+    "use strict";
+    var KEYBOARD_SEEK_SECONDS2 = 5;
+    function plainPlaybackKey2(event) {
+      return !!event && !event.defaultPrevented && !event.ctrlKey && !event.altKey && !event.metaKey && !event.shiftKey && !event.isComposing && event.keyCode !== 229;
+    }
+    function isSpaceKeyEvent2(event) {
+      return event && (event.code === "Space" || event.key === " " || event.key === "Spacebar");
+    }
+    function getKeyboardSeekDeltaSeconds2(event) {
+      if (event?.key === "ArrowLeft" || event?.code === "ArrowLeft") return -KEYBOARD_SEEK_SECONDS2;
+      if (event?.key === "ArrowRight" || event?.code === "ArrowRight") return KEYBOARD_SEEK_SECONDS2;
+      return 0;
+    }
+    var PDF_CONTROLS = [
+      "input",
+      "textarea",
+      "select",
+      "button",
+      "a",
+      "summary",
+      "label",
+      '[contenteditable]:not([contenteditable="false"])',
+      '[role="button"]',
+      '[role="textbox"]',
+      '[role="combobox"]',
+      '[role="slider"]',
+      '[role="menu"]',
+      '[role="dialog"]',
+      '[role="listbox"]',
+      '[role="spinbutton"]',
+      '[role="tree"]',
+      '[role="tablist"]',
+      '[role="grid"]',
+      '[role="toolbar"]',
+      ".pdf-toolbar",
+      ".pdf-sidebar",
+      ".pdf-findbar",
+      ".annotationEditorLayer",
+      ".annotationLayer",
+      ".cozy-mini-panel",
+      ".note-reader-native-toolbar"
+    ].join(",");
+    function visiblePopup(doc) {
+      return [...doc.querySelectorAll('.menu,.modal-container,[aria-modal="true"],[role="menu"]')].some((el) => !el.closest('[hidden],[aria-hidden="true"]') && el.getClientRects().length > 0);
+    }
+    function bindPdfPlaybackKeys(plugin, doc) {
+      const win = doc.defaultView;
+      const keydown = (event) => {
+        if (!plainPlaybackKey2(event)) return;
+        const space = isSpaceKeyEvent2(event), delta = getKeyboardSeekDeltaSeconds2(event);
+        if (!space && !delta) return;
+        const session = plugin.activeSession, view = plugin.app.workspace.activeLeaf?.view;
+        if (!session || session.stopped || session.kind === "audio-export" || session.sourceKind !== "pdf" || space && !plugin.readerState?.canPause || !view?.file?.path || view.file.path !== session.filePath || view.getViewType?.() !== "pdf" || view.contentEl?.ownerDocument !== doc) return;
+        const root = view.contentEl, target = event.composedPath?.()[0] || event.target;
+        if (target === doc.body || target === doc.documentElement) {
+          if (doc.activeElement !== doc.body && doc.activeElement !== doc.documentElement) return;
+        } else if (!target?.closest || !root.contains(target) || target.closest(PDF_CONTROLS) || !(root === target || target.matches(".pdf-container") || target.closest(".pdf-viewer-container,.pdfViewer,.page[data-page-number]"))) return;
+        if (visiblePopup(doc)) return;
+        if (space && !event.repeat) {
+          plugin.handleReaderKeydown(event);
+          return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        if (delta && (plugin.readerState?.canSeek || session.seekTarget)) plugin.seekCurrentAudioBySeconds(delta);
+      };
+      win.addEventListener("keydown", keydown, true);
+      return () => win.removeEventListener("keydown", keydown, true);
+    }
+    function bindTimelineKeys2(slider, plugin) {
+      slider.setAttribute("aria-keyshortcuts", "ArrowLeft ArrowRight");
+      slider.addEventListener("keydown", (event) => {
+        if (!slider.disabled && (plugin.readerState?.canSeek || plugin.activeSession?.seekTarget)) {
+          plugin.handleReaderKeydown(event, { seekSlider: slider, allowPause: false });
+        }
+      });
+    }
+    module2.exports = { KEYBOARD_SEEK_SECONDS: KEYBOARD_SEEK_SECONDS2, getKeyboardSeekDeltaSeconds: getKeyboardSeekDeltaSeconds2, plainPlaybackKey: plainPlaybackKey2, isSpaceKeyEvent: isSpaceKeyEvent2, bindPdfPlaybackKeys, bindTimelineKeys: bindTimelineKeys2 };
+  }
+});
+
 // src/overall-seek.js
 var require_overall_seek = __commonJS({
   "src/overall-seek.js"(exports2, module2) {
     "use strict";
+    var { bindTimelineKeys: bindTimelineKeys2 } = require_playback_keyboard();
     function bindOverallSeek2(slider, plugin, onRelease, preview = () => {
     }) {
+      bindTimelineKeys2(slider, plugin);
       let editing = false, owner = null, value = null, cancelled = false;
       const begin = () => {
         editing = true;
@@ -15164,6 +15268,69 @@ var require_buffering_hint = __commonJS({
   }
 });
 
+// src/reading-wait-ui.js
+var require_reading_wait_ui = __commonJS({
+  "src/reading-wait-ui.js"(exports2, module2) {
+    "use strict";
+    var { translate } = require_i18n();
+    function waitLabel(model, lang) {
+      const t = (en2, zh2) => translate(lang, en2, zh2);
+      const stages = {
+        preparing: ["Preparing audio", "\u6B63\u5728\u51C6\u5907\u97F3\u9891"],
+        response: ["Waiting for the speech service", "\u6B63\u5728\u7B49\u5F85\u8BED\u97F3\u63A5\u53E3\u8FD4\u56DE"],
+        receiving: ["Receiving audio", "\u6B63\u5728\u63A5\u6536\u97F3\u9891"],
+        finishing: ["Processing response", "\u6B63\u5728\u5904\u7406\u8FD4\u56DE\u7ED3\u679C"],
+        backoff: ["Waiting to retry", "\u6B63\u5728\u7B49\u5F85\u81EA\u52A8\u91CD\u8BD5"],
+        limited: ["Waiting for the rate limit to clear", "\u6B63\u5728\u7B49\u5F85\u63A5\u53E3\u89E3\u9664\u9650\u6D41"],
+        cancelling: ["Cancelling the current request", "\u6B63\u5728\u53D6\u6D88\u5F53\u524D\u8BF7\u6C42"]
+      };
+      const [en, zh] = stages[model.stage] || stages.preparing;
+      let label = t(en, zh);
+      if (model.attempt > 1 && ["response", "receiving"].includes(model.stage))
+        label += t(" (attempt {n})", "\uFF08\u7B2C {n} \u6B21\u8BF7\u6C42\uFF09").replace("{n}", model.attempt);
+      return label + t(" \xB7 {s}s elapsed", " \xB7 \u5DF2\u7B49 {s} \u79D2").replace("{s}", model.seconds);
+    }
+    function renderReadingWait2(plugin, parent, root, model, setIcon2, compact2 = false) {
+      if (!model || !parent?.ownerDocument) {
+        root?.remove();
+        return null;
+      }
+      if (!root || root.parentNode !== parent) {
+        root?.remove();
+        const doc = parent.ownerDocument;
+        root = doc.createElement("span");
+        root.className = "note-reader-long-wait";
+        const label2 = doc.createElement("span");
+        label2.setAttribute("role", "timer");
+        const button2 = doc.createElement("button");
+        button2.type = "button";
+        const icon = doc.createElement("span");
+        icon.setAttribute("aria-hidden", "true");
+        setIcon2(icon, "rotate-cw");
+        const caption = doc.createElement("span");
+        button2.append(icon, caption);
+        if (compact2) caption.hidden = true;
+        button2.addEventListener("click", () => {
+          if (!button2.disabled) plugin.confirmReadingRetry?.(root.retryTicket);
+        });
+        root.append(label2, button2);
+        parent.append(root);
+      }
+      const lang = plugin.settings.settingsLanguage, [label, button] = root.children;
+      const name = translate(lang, "Retry current part", "\u91CD\u8BD5\u5F53\u524D\u6BB5");
+      const text = waitLabel(model, lang);
+      if (label.textContent !== text) label.textContent = text;
+      root.retryTicket = model.ticket;
+      button.hidden = button.disabled = !model.ticket;
+      if (button.lastElementChild.textContent !== name) button.lastElementChild.textContent = name;
+      button.setAttribute("aria-label", name);
+      button.title = name;
+      return root;
+    }
+    module2.exports = { renderReadingWait: renderReadingWait2, waitLabel };
+  }
+});
+
 // src/native-toolbar.js
 var require_native_toolbar = __commonJS({
   "src/native-toolbar.js"(exports2, module2) {
@@ -15178,7 +15345,9 @@ var require_native_toolbar = __commonJS({
     var { captureHtmlOutline, htmlSectionText } = require_html_outline();
     var { playbackStatusText: playbackStatusText2 } = require_preparation_status();
     var { bindOverallSeek: bindOverallSeek2 } = require_overall_seek();
+    var { bindPdfPlaybackKeys, plainPlaybackKey: plainPlaybackKey2 } = require_playback_keyboard();
     var { renderBufferingHint: renderBufferingHint2 } = require_buffering_hint();
+    var { renderReadingWait: renderReadingWait2 } = require_reading_wait_ui();
     var { kindFor: kindFor2, toggleFollowing: toggleFollowing2, updateFollowButton: updateFollowButton2 } = require_reading_follow();
     function node(parent, tag, className = "") {
       const element = parent.ownerDocument.createElement(tag);
@@ -15201,7 +15370,7 @@ var require_native_toolbar = __commonJS({
         this.root.tabIndex = 0;
         this.root.addEventListener("keydown", (event) => this.handleKeydown(event));
         this.documentKeydown = (event) => {
-          if (this.view.getMode?.() !== "preview" || this.root.contains(event.target)) return;
+          if (this.view.getMode?.() !== "preview" || this.plugin.activeSession?.sourceKind === "pdf" || this.root.contains(event.target)) return;
           const doc = this.root.ownerDocument;
           const inReadingPane = this.view.contentEl.contains(event.target) || event.target === doc.body && this.plugin.app.workspace.activeLeaf?.view === this.view;
           if (inReadingPane) this.handleKeydown(event, true);
@@ -15343,7 +15512,7 @@ var require_native_toolbar = __commonJS({
         return this.plugin.runUserAction("Reading toolbar", action);
       }
       handleKeydown(event, readOnlyBody = false) {
-        if (!readOnlyBody && !this.root.contains(this.root.ownerDocument.activeElement) || this.plugin.activeSession?.kind === "audio-export" || event.isComposing || event.ctrlKey || event.altKey || event.metaKey || event.shiftKey || readOnlyBody && event.target.closest('button, [role="button"]') || event.target.closest('input, select, textarea, a, [contenteditable], [role="textbox"]')) return;
+        if (!readOnlyBody && !this.root.contains(this.root.ownerDocument.activeElement) || this.plugin.activeSession?.kind === "audio-export" || !plainPlaybackKey2(event) || readOnlyBody && event.target.closest('button, [role="button"]') || event.target.closest('input, select, textarea, a, [contenteditable], [role="textbox"]')) return;
         this.plugin.handleReaderKeydown(event, { allowPause: true, focusPanel: readOnlyBody ? null : this.root });
       }
       button(parent, icon, labels, action, focusToolbar = false) {
@@ -15352,7 +15521,9 @@ var require_native_toolbar = __commonJS({
         setIcon2(button, icon);
         this.labels.push([button, ...labels]);
         button.addEventListener("pointerdown", (event) => {
-          if (event.button === 0) event.preventDefault();
+          if (event.button !== 0) return;
+          event.preventDefault();
+          (focusToolbar ? this.root : button).focus({ preventScroll: true });
         });
         button.addEventListener("click", () => {
           if (button.disabled) return;
@@ -15360,6 +15531,10 @@ var require_native_toolbar = __commonJS({
           void this.action(action);
         });
         return button;
+      }
+      focusForPlayback() {
+        this.captureSelection();
+        this.root.focus({ preventScroll: true });
       }
       captureSelection() {
         if (this.isWeb) {
@@ -15378,9 +15553,9 @@ var require_native_toolbar = __commonJS({
         if (this.isHtml) return this.plugin.readCurrentHtml(this.view.file, scope);
         if (!this.isPdf) return this.plugin.readMarkdownView(this.view, scope, this.selection);
         const file = this.view.file;
-        if (scope === "entire") return this.plugin.readCurrentPdf(file);
-        if (scope === "glossary" || scope === "footnotes") return this.plugin.readCurrentPdf(file, { contentScope: scope });
-        return this.plugin.readPdfRange(file, this.plugin.getPdfSelectionForFile(file) || this.selection, scope);
+        if (scope === "entire") return this.plugin.readCurrentPdf(file, { keepControls: true });
+        if (scope === "glossary" || scope === "footnotes") return this.plugin.readCurrentPdf(file, { contentScope: scope, keepControls: true });
+        return this.plugin.readPdfRange(file, this.plugin.getPdfSelectionForFile(file) || this.selection, scope, { keepLayout: true });
       }
       refreshOutline() {
         if (this.isPdf || this.isWeb) {
@@ -15541,6 +15716,11 @@ var require_native_toolbar = __commonJS({
         this.status.textContent = state.error || (session ? [playbackStatusText2(state, this.plugin.settings.settingsLanguage, exporting), session.sourceLabel, current?.title].filter(Boolean).join(" \xB7 ") : "");
         this.status.hidden = !this.status.textContent;
         this.bufferingHintEl = renderBufferingHint2(this.plugin, this.root, this.bufferingHintEl, setIcon2);
+        this.updateReadingWait(session?.readingWait?.view());
+      }
+      updateReadingWait(model) {
+        this.waitEl = renderReadingWait2(this.plugin, this.root, this.waitEl, model, setIcon2);
+        if (this.bufferingHintEl) this.bufferingHintEl.hidden = !!model;
       }
       destroy() {
         this.sizeObserver?.disconnect();
@@ -15558,9 +15738,16 @@ var require_native_toolbar = __commonJS({
         this.plugin = plugin;
         this.toolbars = /* @__PURE__ */ new Map();
         this.actions = /* @__PURE__ */ new Map();
+        this.pdfKeys = /* @__PURE__ */ new Map();
       }
       sync() {
         const views = new Set(["markdown", "pdf", "html-view", "webviewer"].flatMap((type) => this.plugin.app.workspace.getLeavesOfType(type).map((leaf) => leaf.view)));
+        const pdfDocs = new Set([...views].filter((v) => v?.getViewType?.() === "pdf").map((v) => v.contentEl?.ownerDocument).filter((d) => d?.defaultView));
+        for (const [doc, remove] of this.pdfKeys) if (!pdfDocs.has(doc)) {
+          remove();
+          this.pdfKeys.delete(doc);
+        }
+        for (const doc of pdfDocs) if (!this.pdfKeys.has(doc)) this.pdfKeys.set(doc, bindPdfPlaybackKeys(this.plugin, doc));
         for (const [view, toolbar] of this.toolbars) if (!views.has(view)) {
           toolbar.destroy();
           this.toolbars.delete(view);
@@ -15570,19 +15757,23 @@ var require_native_toolbar = __commonJS({
           this.actions.delete(view);
         }
         for (const view of views) if (!this.actions.has(view) && typeof view.addAction === "function") {
-          const action = view.addAction("audio-lines", "Reading toolbar", () => this.toggle(view));
+          const action = view.addAction("audio-lines", "Reading toolbar", () => this.toggle(view, true));
           this.actions.set(view, action);
         }
         for (const [view, toolbar] of this.toolbars) if (toolbar.outlinePath !== view.file?.path) toolbar.refreshOutline();
         this.render();
       }
-      toggle(view) {
+      toggle(view, focus = false) {
         if (!view?.editor && !["pdf", "html-view", "webviewer"].includes(view?.getViewType?.()) && view?.file?.extension !== "pdf" || !view.contentEl?.parentElement) return;
         const old = this.toolbars.get(view);
         if (old) {
           old.destroy();
           this.toolbars.delete(view);
-        } else this.toolbars.set(view, new NativeReaderToolbar(this.plugin, view, () => this.toggle(view)));
+        } else {
+          const toolbar = new NativeReaderToolbar(this.plugin, view, () => this.toggle(view));
+          this.toolbars.set(view, toolbar);
+          if (focus) toolbar.focusForPlayback();
+        }
         this.render();
         this.plugin.miniOutline?.schedule();
       }
@@ -15608,6 +15799,8 @@ var require_native_toolbar = __commonJS({
         }
       }
       destroy() {
+        for (const remove of this.pdfKeys.values()) remove();
+        this.pdfKeys.clear();
         for (const toolbar of this.toolbars.values()) toolbar.destroy();
         for (const action of this.actions.values()) action.remove();
         this.toolbars.clear();
@@ -42312,6 +42505,171 @@ var require_pdf_outline_ui = __commonJS({
   }
 });
 
+// src/reading-wait.js
+var require_reading_wait = __commonJS({
+  "src/reading-wait.js"(exports2, module2) {
+    "use strict";
+    var SHOW_MS = 8e3;
+    var RETRY_MS = 15e3;
+    var MANUAL_RETRY2 = Symbol("retry-current-audio-part");
+    var supportedEngine = (engine) => ["mimo-tts", "openrouter-tts", "azure-speech"].includes(engine);
+    var ReadingWait2 = class {
+      constructor(plugin, session, timings, clock = {}) {
+        this.plugin = plugin;
+        this.session = session;
+        this.timings = timings;
+        this.now = () => timings.now();
+        this.schedule = clock.schedule || ((fn, delay) => setTimeout(fn, delay));
+        this.cancel = clock.cancel || ((id) => clearTimeout(id));
+        this.requests = /* @__PURE__ */ new Map();
+        this.gates = /* @__PURE__ */ new Set();
+      }
+      currentKey(key) {
+        return !!this.target && this.target.key === key && this.plugin.isActive(this.session) && !Number.isInteger(this.session.requestedChunkIndex) && !this.session.seekTarget;
+      }
+      stage() {
+        const rec = this.requests.get(this.target?.key);
+        if ((!rec || rec.stage === "backoff") && this.session.preparationPool?.cooldownUntil > this.now()) return "limited";
+        return rec?.stage || "preparing";
+      }
+      account() {
+        const t = this.target;
+        if (!t) return;
+        const now = this.now(), delta = Math.max(0, now - t.last);
+        if (!t.paused) {
+          t.ms += delta;
+          t.times[this.stage()] += delta;
+        }
+        t.last = now;
+      }
+      begin(key) {
+        this.end(this.target, false);
+        this.target = {
+          key,
+          last: this.now(),
+          ms: 0,
+          paused: !!this.plugin.pauseRequested,
+          times: { preparing: 0, response: 0, receiving: 0, finishing: 0, backoff: 0, limited: 0, cancelling: 0 },
+          attempts: this.requests.get(key)?.attempt || 0,
+          manual: 0
+        };
+        this.arm();
+        return this.target;
+      }
+      arm() {
+        this.cancel(this.timer);
+        this.timer = null;
+        if (!this.target || this.target.paused) return;
+        const target = this.target;
+        this.timer = this.schedule(() => {
+          if (this.target !== target) return;
+          this.account();
+          if (this.currentKey(target.key)) this.plugin.refreshWaitControls?.();
+          this.arm();
+        }, this.target.ms < SHOW_MS ? Math.max(1, SHOW_MS - this.target.ms) : 1e3);
+        this.timer?.unref?.();
+      }
+      pause(paused) {
+        if (!this.target || this.target.paused === paused) return;
+        this.account();
+        this.target.paused = paused;
+        this.wake();
+        this.arm();
+        this.plugin.refreshWaitControls?.();
+      }
+      end(target, completed) {
+        if (!target || target !== this.target) return;
+        this.account();
+        this.cancel(this.timer);
+        this.timer = null;
+        this.target = null;
+        this.wake();
+        if (target.ms >= SHOW_MS) {
+          const d = target.times;
+          this.timings.recordLongWait?.({
+            ms: Math.round(target.ms),
+            responseMs: Math.round(d.response),
+            receiveMs: Math.round(d.receiving),
+            retryWaitMs: Math.round(d.backoff + d.limited),
+            otherMs: Math.round(d.preparing + d.cancelling + d.finishing),
+            attempts: target.attempts,
+            manualRetries: target.manual,
+            completed: completed ? 1 : 0
+          });
+          this.plugin.refreshWaitControls?.();
+        }
+      }
+      attempt(key, attempt, manualUsed) {
+        if (typeof key !== "string" || !this.plugin.isActive(this.session)) return null;
+        this.account();
+        const rec = { key, attempt, manualUsed, stage: "response", activity: this.now(), cancel: null };
+        this.requests.set(key, rec);
+        if (this.target?.key === key) this.target.attempts = attempt;
+        return rec;
+      }
+      mark(rec, stage) {
+        if (!rec || this.requests.get(rec.key) !== rec) return;
+        this.account();
+        rec.stage = stage;
+        rec.activity = this.now();
+        if (stage !== "response" && stage !== "receiving") rec.cancel = null;
+      }
+      forget(rec) {
+        if (!rec || this.requests.get(rec.key) !== rec) return;
+        this.account();
+        this.requests.delete(rec.key);
+        rec.cancel = null;
+      }
+      view() {
+        const t = this.target;
+        if (!t || t.paused || this.plugin.pauseRequested || !this.currentKey(t.key)) return null;
+        this.account();
+        if (t.ms < SHOW_MS) return null;
+        const rec = this.requests.get(t.key), stage = this.stage();
+        const retry = rec?.cancel && !rec.manualUsed && (stage === "response" || stage === "receiving") && t.ms >= RETRY_MS && this.now() - rec.activity >= RETRY_MS && !(this.session.preparationPool?.cooldownUntil > this.now());
+        if (retry && t.ticket?.request !== rec) t.ticket = { request: rec };
+        return { stage, seconds: Math.floor(t.ms / 1e3), attempt: rec?.attempt || 0, ticket: retry ? t.ticket : null };
+      }
+      retry(ticket) {
+        if (!ticket || this.view()?.ticket !== ticket) return false;
+        const target = this.target, rec = ticket.request, cancel = rec.cancel;
+        if (!cancel()) return false;
+        target.manual++;
+        rec.manualTarget = target;
+        rec.manualUsed = true;
+        this.mark(rec, "cancelling");
+        this.plugin.refreshWaitControls?.();
+        return true;
+      }
+      wake() {
+        for (const done of [...this.gates]) done();
+      }
+      waitForChange(delay) {
+        return new Promise((resolve) => {
+          let timer;
+          const done = () => {
+            this.cancel(timer);
+            this.gates.delete(done);
+            resolve();
+          };
+          this.gates.add(done);
+          if (delay > 0) {
+            timer = this.schedule(done, Math.min(delay, 6e4));
+            timer?.unref?.();
+          }
+        });
+      }
+      dispose() {
+        this.end(this.target, false);
+        this.wake();
+        for (const rec of this.requests.values()) rec.cancel = null;
+        this.requests.clear();
+      }
+    };
+    module2.exports = { ReadingWait: ReadingWait2, MANUAL_RETRY: MANUAL_RETRY2, supportedEngine, SHOW_MS, RETRY_MS };
+  }
+});
+
 // src/locate-reading.js
 var require_locate_reading = __commonJS({
   "src/locate-reading.js"(exports2, module2) {
@@ -43473,7 +43831,10 @@ var { PdfOutlineModal, addPdfOutlineSettings } = require_pdf_outline_ui();
 var { readerRange } = require_reader_selection();
 var { getSpeechParts, planSpeechParts, adjacentSpeechPart, getSpeechPartTiming } = require_speech_parts();
 var { preparationStatusText, playbackStatusText } = require_preparation_status();
+var { ReadingWait, MANUAL_RETRY, supportedEngine: supportsReadingWait } = require_reading_wait();
+var { renderReadingWait } = require_reading_wait_ui();
 var { bindOverallSeek } = require_overall_seek();
+var { bindTimelineKeys, getKeyboardSeekDeltaSeconds, isSpaceKeyEvent, KEYBOARD_SEEK_SECONDS, plainPlaybackKey } = require_playback_keyboard();
 var { listeningMode, planListeningBuffer } = require_listening_buffer();
 var { BufferingHint, renderBufferingHint } = require_buffering_hint();
 var { kindFor, toggleFollowing, updateFollowButton } = require_reading_follow();
@@ -43524,7 +43885,6 @@ var AZURE_SPEECH_OUTPUT_FORMAT = "audio-24khz-48kbitrate-mono-mp3";
 var OPENROUTER_TTS_ENDPOINT = "https://openrouter.ai/api/v1/audio/speech";
 var RECOMMENDED_SCRIPT_PATH = "%LOCALAPPDATA%\\note-reader-cosyvoice\\cosyvoice-wrapper.ps1";
 var SPEED_PRESETS = [1, 1.25, 1.5, 2, 1.1, 1.2, 1.3, 1.4];
-var KEYBOARD_SEEK_SECONDS = 5;
 var MATH_READING_LANGUAGES = ["english", "chinese", "skip"];
 var SETTINGS_LANGUAGES = Object.keys(LANGUAGES);
 var AUDIO_EXPORT_LOCATIONS = ["obsidian-attachment", "note-folder", "custom-folder"];
@@ -44993,21 +45353,6 @@ function formatProgressLabel(state) {
   const totalChunks = Math.max(0, Math.floor(Number(state.totalChunks) || 0));
   return `${currentChunk} / ${totalChunks}`;
 }
-function isSpaceKeyEvent(event) {
-  return event && (event.code === "Space" || event.key === " " || event.key === "Spacebar");
-}
-function getKeyboardSeekDeltaSeconds(event) {
-  if (!event) {
-    return 0;
-  }
-  if (event.code === "ArrowLeft" || event.key === "ArrowLeft") {
-    return -KEYBOARD_SEEK_SECONDS;
-  }
-  if (event.code === "ArrowRight" || event.key === "ArrowRight") {
-    return KEYBOARD_SEEK_SECONDS;
-  }
-  return 0;
-}
 function isInteractiveKeyboardTarget(target) {
   if (!target || !target.tagName) {
     return false;
@@ -45015,7 +45360,7 @@ function isInteractiveKeyboardTarget(target) {
   if (target.isContentEditable) {
     return true;
   }
-  if (typeof target.closest === "function" && target.closest('.cm-editor, .markdown-source-view, [contenteditable="true"]')) {
+  if (typeof target.closest === "function" && target.closest('.cm-editor, .markdown-source-view, [contenteditable]:not([contenteditable="false"]), [role="textbox"], [role="combobox"], [role="listbox"], [role="menu"], [role="slider"], [role="spinbutton"]')) {
     return true;
   }
   const tagName = String(target.tagName).toLowerCase();
@@ -45553,10 +45898,7 @@ var CosyVoiceReaderPlugin = class extends Plugin {
         skipReadingPosition: snapshot.selection
       }
     )), (message) => new Notice(message));
-    registerPdfReadingMenu(this, Menu, getPdfSelectionContext, (snapshot) => this.runUserAction(
-      "Read PDF context",
-      () => this.readPdfRange(snapshot.file, snapshot.context, snapshot.selection ? "selection" : "from-selection", snapshot.selection)
-    ), (message) => new Notice(message));
+    registerPdfReadingMenu(this, Menu, getPdfSelectionContext, (snapshot) => this.runUserAction("Read PDF context", () => this.readPdfMenuSnapshot(snapshot)), (message) => new Notice(message));
     await this.ensureCacheDir();
     this.registerView(VIEW_TYPE, (leaf) => new CosyVoiceReaderView(leaf, this));
     this.registerView(DOCUMENT_VIEW_TYPE, (leaf) => new AccessibleReaderView(leaf, this));
@@ -45669,6 +46011,16 @@ var CosyVoiceReaderPlugin = class extends Plugin {
         await navigator.clipboard.writeText(JSON.stringify(this.playbackTimings?.snapshot() || {}, null, 2));
         new Notice(this.settings.settingsLanguage === "chinese" ? "\u5DF2\u590D\u5236\u672C\u5730\u7B49\u5F85\u7EDF\u8BA1\uFF08\u4E0D\u542B\u6B63\u6587\u6216\u5BC6\u94A5\uFF09\u3002" : "Local timing summary copied (no text or keys).");
       })
+    });
+    this.addCommand({
+      id: "retry-waiting-audio-part",
+      name: translateInterface(this.settings.settingsLanguage, "Retry current audio part", "\u91CD\u8BD5\u5F53\u524D\u6717\u8BFB\u6BB5"),
+      checkCallback: (checking) => {
+        const ticket = this.activeSession?.readingWait?.view()?.ticket;
+        if (!ticket) return false;
+        if (!checking) this.confirmReadingRetry(ticket);
+        return true;
+      }
     });
     this.addCommand({
       id: "pdf-outline-bookmarks",
@@ -46200,14 +46552,53 @@ var CosyVoiceReaderPlugin = class extends Plugin {
   unregisterReaderView(view) {
     this.readerViews.delete(view);
   }
-  renderReaderViews(playbackOnly = false) {
+  renderStatusBar(model) {
     if (this.statusBar && this.readerState) {
+      if (model && this.statusBar.ownerDocument) {
+        if (!this.waitStatusEl) {
+          this.statusBar.setText("");
+          this.lastStatusBarLabel = null;
+        }
+        this.waitStatusEl = renderReadingWait(this, this.statusBar, this.waitStatusEl, model, setIcon, true);
+        return;
+      }
+      if (this.waitStatusEl) {
+        this.waitStatusEl.remove();
+        this.waitStatusEl = null;
+      }
       const label = playbackStatusText(this.readerState, this.settings?.settingsLanguage, this.activeSession?.kind === "audio-export");
       if (label !== this.lastStatusBarLabel) {
         this.statusBar.setText(label);
         this.lastStatusBarLabel = label;
       }
     }
+  }
+  refreshWaitControls() {
+    const model = this.activeSession?.readingWait?.view() || null;
+    this.renderStatusBar(model);
+    for (const v of this.readerViews || []) v.updateReadingWait?.(model);
+    for (const v of this.nativeToolbars?.toolbars?.values() || []) v.updateReadingWait?.(model);
+  }
+  confirmReadingRetry(ticket) {
+    const wait = this.activeSession?.readingWait;
+    if (!ticket || wait?.view()?.ticket !== ticket) return false;
+    const t = (en, zh) => translateInterface(this.settings.settingsLanguage, en, zh);
+    new SettingsConfirmModal(
+      this,
+      t("Retry current audio part?", "\u91CD\u8BD5\u5F53\u524D\u6717\u8BFB\u6BB5\uFF1F"),
+      t(
+        "This cancels the local request and resends only the current audio part. A paid service may still charge for the first request.",
+        "\u5C06\u53D6\u6D88\u672C\u673A\u5F53\u524D\u8BF7\u6C42\uFF0C\u53EA\u91CD\u65B0\u53D1\u9001\u6B63\u5728\u7B49\u5F85\u7684\u8FD9\u4EFD\u97F3\u9891\u6587\u5B57\u3002\u6536\u8D39\u63A5\u53E3\u53EF\u80FD\u4ECD\u4F1A\u5BF9\u539F\u8BF7\u6C42\u8BA1\u8D39\u3002"
+      ),
+      () => {
+        if (!wait.retry(ticket)) new Notice(t("This request is no longer waiting; nothing was resent.", "\u5F53\u524D\u8BF7\u6C42\u5DF2\u7ED3\u675F\u6216\u53D1\u751F\u53D8\u5316\uFF0C\u6CA1\u6709\u91CD\u65B0\u53D1\u9001\u3002"));
+      },
+      "Retry current audio part"
+    ).open();
+    return true;
+  }
+  renderReaderViews(playbackOnly = false) {
+    this.renderStatusBar(this.activeSession?.readingWait?.view());
     this.dockedOutline?.update();
     this.miniOutline?.update();
     this.nativeToolbars?.render();
@@ -46256,11 +46647,10 @@ var CosyVoiceReaderPlugin = class extends Plugin {
     const mode = this.settings.readerOpenMode;
     const view = this.getReadingToolbarView();
     if (mode !== "sidebar" && view) {
-      if (!this.nativeToolbars.toolbars.has(view)) this.nativeToolbars.toggle(view);
-      if (mode === "toolbar") {
-        await this.app.workspace.revealLeaf(view.leaf);
-        return;
-      }
+      if (mode === "toolbar") await this.app.workspace.revealLeaf(view.leaf);
+      if (!this.nativeToolbars.toolbars.has(view)) this.nativeToolbars.toggle(view, mode === "toolbar");
+      else if (mode === "toolbar") this.nativeToolbars.toolbars.get(view).focusForPlayback();
+      if (mode === "toolbar") return;
     }
     await this.activateControlView();
   }
@@ -46384,7 +46774,7 @@ var CosyVoiceReaderPlugin = class extends Plugin {
   }
   toggleReadingToolbar() {
     const view = this.getReadingToolbarView();
-    if (view) this.nativeToolbars?.toggle(view);
+    if (view) this.nativeToolbars?.toggle(view, true);
     else new Notice(this.settings.settingsLanguage === "chinese" ? "\u8BF7\u5148\u6253\u5F00\u7B14\u8BB0\u3001PDF\u3001HTML \u6216\u7F51\u9875\u3002" : "Open a note, PDF, HTML file or web page first.");
   }
   getCurrentDocumentView() {
@@ -46539,7 +46929,10 @@ var CosyVoiceReaderPlugin = class extends Plugin {
       return context;
     }
   }
-  async readPdfRange(file, context, scope, showControls = false) {
+  readPdfMenuSnapshot({ file, context, selection }) {
+    return this.readPdfRange(file, context, selection ? "selection" : "from-selection", { keepLayout: true });
+  }
+  async readPdfRange(file, context, scope, controls = {}) {
     const valid = () => isPdfFile(file) && context?.selectedText?.trim() && context.filePath === getPdfFileIdentity(file) && context.fileMtime === getFileMtime(file);
     const reselect = () => new Notice(translateInterface(
       this.settings.settingsLanguage,
@@ -46550,7 +46943,10 @@ var CosyVoiceReaderPlugin = class extends Plugin {
       reselect();
       return;
     }
-    if (scope === "from-selection") return this.readCurrentPdf(file, { selectionContext: { ...context, strictMatch: true } });
+    if (scope === "from-selection") return this.readCurrentPdf(file, {
+      selectionContext: { ...context, strictMatch: true },
+      ...controls.keepLayout ? { keepControls: true } : {}
+    });
     if (scope !== "selection") return;
     if (!context.selectionLayout?.length) {
       new Notice(translateInterface(
@@ -46561,7 +46957,7 @@ var CosyVoiceReaderPlugin = class extends Plugin {
       return;
     }
     const sequence = this.sequence, request = this.pdfRangeRequest = (this.pdfRangeRequest || 0) + 1;
-    if (showControls) await this.activateControlView();
+    if (!controls.keepLayout && (controls === true || controls.showControls)) await this.activateControlView();
     context = await this.withPdfSelectionMath(file, context);
     if (sequence !== this.sequence || request !== this.pdfRangeRequest) return;
     if (!valid()) {
@@ -47904,6 +48300,7 @@ ${embed}
   }
   notifySessionNavigation(session) {
     if (Number.isInteger(session?.requestedChunkIndex)) {
+      session.readingWait?.end(session.readingWait.target, false);
       this.playbackTimings?.begin("jumpToPlaying");
       session.preparationPool?.select(`${session.requestedChunkIndex}:${session.requestedPartIndex || 0}`);
       session.preparationPool?.pause(this.pauseRequested);
@@ -48358,7 +48755,7 @@ ${embed}
       return;
     }
     if (isPdfFile(activeFile)) {
-      return this.readPdfRange(activeFile, this.getPdfSelectionForFile(activeFile), "selection", true);
+      return this.readPdfRange(activeFile, this.getPdfSelectionForFile(activeFile), "selection", { showControls: true });
     }
     const view = this.getActiveMarkdownView();
     if (!view) {
@@ -48534,6 +48931,7 @@ ${embed}
   }
   async runSpeechSession(session) {
     const timings = this.playbackTimings || (this.playbackTimings = new PlaybackTimings());
+    const wait = supportsReadingWait(session.speechEngine) && !session.settingsPreview && !["audio-export", "voice-preview"].includes(session.kind) ? session.readingWait = new ReadingWait(this, session, timings) : null;
     timings.begin("sessionToPlaying", session.preparationStarted);
     session.preparationLatencies = [];
     const pool = session.preparationPool = new PreparationPool({
@@ -48621,6 +49019,7 @@ ${embed}
         const previousState = pool.state(key);
         const reused = Boolean(previousState);
         const waitStarted = timings.now();
+        const targetWait = previousState !== "ready" ? wait?.begin(key) : null;
         const preparation = getPreparedChunk(index, part, true);
         if (!session.seekTarget) session.prepareAvailableChunks();
         this.updateStatus(`${session.engineLabel} preparing ${index + 1}/${session.totalChunks}`, {
@@ -48636,7 +49035,15 @@ ${embed}
         });
         this.bufferingHint || (this.bufferingHint = new BufferingHint(this));
         this.bufferingHint.start(session);
-        const prepared = await this.waitForSessionOperation(session, preparation);
+        let prepared;
+        try {
+          prepared = await this.waitForSessionOperation(session, preparation);
+        } catch (error) {
+          if (error?.[MANUAL_RETRY] && this.isActive(session)) continue;
+          throw error;
+        } finally {
+          wait?.end(targetWait, !!prepared);
+        }
         if (!this.isActive(session)) {
           break;
         }
@@ -48698,6 +49105,7 @@ ${embed}
         this.activeSession = null;
       }
     } finally {
+      wait?.dispose();
       session.prepareAvailableChunks = null;
       this.bufferingHint?.stop(session);
       pool.clear();
@@ -48796,7 +49204,7 @@ ${embed}
     }
     let alignment;
     try {
-      alignment = await this.runSpeechEngine(inputPath, outputPath, session, speechEngine, context);
+      alignment = await this.runSpeechEngine(inputPath, outputPath, session, speechEngine, context, index + ":" + part);
     } catch (error) {
       if (speechEngine === "system-tts" && this.settings.cleanupCache) await this.removeTempFile(outputPath);
       throw error;
@@ -48833,20 +49241,20 @@ ${embed}
     });
     return promise;
   }
-  runSpeechEngine(inputPath, outputPath, session, speechEngine = normalizeSpeechEngine(this.settings.speechEngine), context = {}) {
+  runSpeechEngine(inputPath, outputPath, session, speechEngine = normalizeSpeechEngine(this.settings.speechEngine), context = {}, partKey) {
     if (speechEngine === "byok-tts") return this.runByokTts(inputPath, outputPath, session);
     if (speechEngine === "system-tts") return this.runSystemTts(inputPath, outputPath, session);
     if (speechEngine === "edge-tts") {
       return this.runEdgeTts(inputPath, outputPath, session);
     }
     if (speechEngine === "azure-speech") {
-      return this.runAzureSpeech(inputPath, outputPath, session);
+      return this.runAzureSpeech(inputPath, outputPath, session, partKey);
     }
     if (speechEngine === "openrouter-tts") {
-      return this.runOpenRouterTts(inputPath, outputPath, session, context);
+      return this.runOpenRouterTts(inputPath, outputPath, session, context, partKey);
     }
     if (speechEngine === "mimo-tts") {
-      return this.runMimoTts(inputPath, outputPath, session);
+      return this.runMimoTts(inputPath, outputPath, session, partKey);
     }
     return this.runCosyVoice(inputPath, outputPath, session);
   }
@@ -49081,15 +49489,33 @@ ${embed}
     }
     const { session, serviceLabel } = options;
     const maxAttempts = options.retryTemporaryFailures === true ? REMOTE_TTS_MAX_ATTEMPTS : 1;
-    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const wait = session.readingWait;
+    let manualError = null, manualTarget;
+    for (let attempt = 1; ; attempt += 1) {
+      if (manualError) {
+        while (wait.target === manualTarget && wait.currentKey(options.partKey)) {
+          const delay = (session.preparationPool?.cooldownUntil || 0) - wait.now();
+          if (!this.pauseRequested && delay <= 0) break;
+          await wait.waitForChange(this.pauseRequested ? 0 : delay);
+        }
+        if (wait.target !== manualTarget || !wait.currentKey(options.partKey)) throw manualError;
+      }
+      const trace = wait?.attempt(options.partKey, attempt, !!manualError);
       try {
-        await this.requestRemoteAudioOnce(options);
+        await this.requestRemoteAudioOnce(trace ? { ...options, waitAttempt: trace } : options);
         return;
       } catch (error) {
-        session.waitHintError = true;
         if (!this.isActive(session)) {
           throw new Error("Reading stopped.");
         }
+        if (trace && error[MANUAL_RETRY]) {
+          manualError = error;
+          manualTarget = trace.manualTarget;
+          continue;
+        }
+        session.waitHintError = true;
+        if (trace && error.code === "ETIMEDOUT") wait.timings.count("httpTimeout");
+        if (trace && error.code === "ECONNRESET") wait.timings.count("httpConnectionReset");
         if (error.statusCode === 429) {
           session.preparationPool?.throttle(error.retryAfterMs);
           if (["queued", "synthesizing"].includes(this.readerState?.phase)) this.setReaderState({ preparationStatus: "rate-limited" });
@@ -49097,24 +49523,30 @@ ${embed}
         if (!isRetryableRemoteError(error)) {
           throw error;
         }
-        if (attempt === maxAttempts) {
+        if (manualError || attempt >= maxAttempts) {
           throw maxAttempts > 1 ? createRemoteRetryExhaustedError(serviceLabel, error, attempt) : error;
         }
         const fallbackDelayMs = REMOTE_TTS_RETRY_DELAYS_MS[attempt - 1] || REMOTE_TTS_RETRY_DELAYS_MS.at(-1);
         const retryAfterMs = Number(error.retryAfterMs);
         const delayMs = Number.isFinite(retryAfterMs) ? Math.max(fallbackDelayMs, retryAfterMs) : fallbackDelayMs;
+        wait?.mark(trace, error.statusCode === 429 ? "limited" : "backoff");
+        if (trace) wait.timings.count("httpAutomaticRetry");
         await this.waitForRemoteRetry(session, delayMs);
+      } finally {
+        wait?.forget(trace);
       }
     }
   }
-  async requestRemoteAudioOnce({ endpoint, headers, body, outputPath, session, serviceLabel, expectedContentType, failureHint, decodeAudio }) {
+  async requestRemoteAudioOnce({ endpoint, headers, body, outputPath, session, serviceLabel, expectedContentType, failureHint, decodeAudio, waitAttempt }) {
     await new Promise((resolve, reject) => {
-      let settled = false;
+      const wait = session.readingWait;
+      let settled = false, gotResponse = false, closed = false, manualError = null;
       const finish = (callback, value) => {
-        if (settled) {
+        if (settled || manualError && !closed) {
           return;
         }
         settled = true;
+        if (waitAttempt) waitAttempt.cancel = null;
         this.currentRequests.delete(request);
         callback(value);
       };
@@ -49122,7 +49554,13 @@ ${embed}
         method: "POST",
         headers
       }, (response) => {
+        gotResponse = true;
+        if (manualError || settled) {
+          response.destroy();
+          return;
+        }
         const statusCode = Number(response.statusCode) || 0;
+        wait?.mark(waitAttempt, statusCode === 200 ? "receiving" : "finishing");
         if (statusCode !== 200) {
           const error = createRemoteHttpError(
             serviceLabel,
@@ -49176,15 +49614,16 @@ ${embed}
           return;
         }
         const chunks = [];
-        let totalBytes = 0;
+        let totalBytes = 0, bodyEnded = false;
         response.on("data", (chunk) => {
-          if (settled) {
+          if (settled || manualError) {
             return;
           }
+          if (waitAttempt) waitAttempt.activity = wait.now();
           totalBytes += chunk.length;
           if (totalBytes > REMOTE_TTS_MAX_AUDIO_BYTES) {
-            response.destroy();
             finish(reject, new Error(`${serviceLabel} response exceeded the 20 MB safety limit.`));
+            response.destroy();
             request.destroy();
             return;
           }
@@ -49195,13 +49634,21 @@ ${embed}
           error.code = "ECONNRESET";
           finish(reject, error);
         });
+        response.on("close", () => {
+          if (settled || bodyEnded || response.complete) return;
+          const error = new Error(serviceLabel + " response closed before completion.");
+          error.code = "ECONNRESET";
+          finish(reject, error);
+        });
         response.on("error", (error) => {
           finish(reject, error);
         });
         response.on("end", async () => {
-          if (settled) {
+          if (settled || manualError) {
             return;
           }
+          bodyEnded = true;
+          wait?.mark(waitAttempt, "finishing");
           if (!this.isActive(session)) {
             finish(reject, new Error("Reading stopped."));
             return;
@@ -49227,14 +49674,27 @@ ${embed}
         finish(reject, error);
       });
       request.on("close", () => {
-        if (!settled && !this.isActive(session)) {
-          finish(reject, new Error("Reading stopped."));
+        closed = true;
+        if (manualError) finish(reject, manualError);
+        else if (!settled && !this.isActive(session)) finish(reject, new Error("Reading stopped."));
+        else if (!settled && !gotResponse) {
+          const error = new Error(serviceLabel + " connection closed before a response.");
+          error.code = "ECONNRESET";
+          finish(reject, error);
         }
       });
+      if (waitAttempt) waitAttempt.cancel = () => {
+        if (settled || closed || manualError || request.destroyed) return false;
+        manualError = new Error("Audio request superseded by manual retry.");
+        manualError.name = "AbortError";
+        manualError[MANUAL_RETRY] = true;
+        request.destroy(manualError);
+        return true;
+      };
       request.end(body);
     });
   }
-  async runAzureSpeech(inputPath, outputPath, session) {
+  async runAzureSpeech(inputPath, outputPath, session, partKey) {
     const settings = session.synthesisSettings || this.settings;
     const [text, subscriptionKey] = await Promise.all([
       fs.promises.readFile(inputPath, "utf8"),
@@ -49246,6 +49706,7 @@ ${embed}
     const body = buildAzureSpeechSsml(text, settings);
     await this.requestRemoteAudio({
       endpoint: new URL(buildAzureSpeechEndpoint(settings)),
+      partKey,
       headers: {
         Accept: "audio/mpeg",
         "Content-Length": Buffer.byteLength(body, "utf8"),
@@ -49304,7 +49765,7 @@ ${embed}
       throw safeByokRequestError(error);
     }
   }
-  async runMimoTts(inputPath, outputPath, session) {
+  async runMimoTts(inputPath, outputPath, session, partKey) {
     const settings = session.synthesisSettings || this.settings;
     if (settings.mimoConsent !== true) throw new Error("MiMo online processing consent is required.");
     const apiKey = normalizeCredentialSource(settings.mimoCredentialSource) === "obsidian-secret" ? await this.readObsidianSecret(settings.mimoSecretName, "MiMo API") : await this.readSecretFileOutsideVault(settings.mimoKeyPath, "MiMo API");
@@ -49313,6 +49774,7 @@ ${embed}
     const body = buildMimoRequestBody(text, settings);
     await this.requestRemoteAudio({
       endpoint: new URL(MIMO_ENDPOINT),
+      partKey,
       headers: { "api-key": apiKey, Accept: "application/json", "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) },
       body,
       outputPath,
@@ -49324,7 +49786,7 @@ ${embed}
       retryTemporaryFailures: true
     });
   }
-  async runOpenRouterTts(inputPath, outputPath, session, context = {}) {
+  async runOpenRouterTts(inputPath, outputPath, session, context = {}, partKey) {
     const settings = session.synthesisSettings || this.settings;
     const [text, apiKey] = await Promise.all([
       fs.promises.readFile(inputPath, "utf8"),
@@ -49336,6 +49798,7 @@ ${embed}
     const body = buildOpenRouterTtsRequestBody(text, settings, this.settings.openRouterContext === true ? context : {});
     await this.requestRemoteAudio({
       endpoint: new URL(OPENROUTER_TTS_ENDPOINT),
+      partKey,
       headers: {
         Accept: "audio/mpeg",
         Authorization: `Bearer ${apiKey}`,
@@ -49647,7 +50110,7 @@ ${embed}
     }
   }
   handleReaderKeydown(event, options = {}) {
-    if (!event || event.defaultPrevented || isInteractiveKeyboardTarget(event.target)) {
+    if (!plainPlaybackKey(event) || this.activeSession?.kind === "audio-export" || event.target !== options.seekSlider && isInteractiveKeyboardTarget(event.target)) {
       return false;
     }
     const seekDeltaSeconds = getKeyboardSeekDeltaSeconds(event);
@@ -49663,7 +50126,7 @@ ${embed}
       return true;
     }
     const state = this.readerState || createReaderState();
-    if (options.allowPause === false || event.repeat || !state.canPause || !isSpaceKeyEvent(event)) {
+    if (options.allowPause === false || event.repeat || !state.canPause || event.target?.closest?.('button, [role="button"], summary, a[href]') || !isSpaceKeyEvent(event)) {
       return false;
     }
     event.preventDefault();
@@ -49862,6 +50325,7 @@ ${embed}
       }
       this.pauseRequested = !this.pauseRequested;
       this.activeSession?.preparationPool?.pause(this.pauseRequested);
+      this.activeSession?.readingWait?.pause(this.pauseRequested);
       this.playbackTimings?.suspend();
       this.updateStatus(this.pauseRequested ? "CosyVoice paused" : "CosyVoice waiting", {
         canPause: true,
@@ -49924,6 +50388,7 @@ ${embed}
   async cancelSessionOperations(session, options = {}) {
     if (session) {
       session.stopped = true;
+      session.readingWait?.dispose();
       session.preparationPool?.clear();
       this.playbackTimings?.suspend();
       for (const controller of session.systemSpeechControllers || []) controller.abort();
@@ -50326,6 +50791,10 @@ var CosyVoiceReaderView = class extends ItemView {
       this.sidebarOutline.list.scrollTop = outlineScroll;
     if (outlineFocus?.isConnected) outlineFocus.focus({ preventScroll: true });
   }
+  updateReadingWait(model) {
+    this.waitEl = renderReadingWait(this.plugin, this.panel?.header, this.waitEl, model, setIcon);
+    if (this.bufferingHintEl) this.bufferingHintEl.hidden = !!model;
+  }
   updatePanel(state, checkDocument) {
     const r = this.panel, plugin = this.plugin, session = plugin.activeSession, settings = plugin.settings;
     const lang = settings.settingsLanguage, zh = lang === "chinese", exporting = session?.kind === "audio-export";
@@ -50341,6 +50810,7 @@ var CosyVoiceReaderView = class extends ItemView {
     r.error.hidden = !state.error;
     text(r.preview, state.currentText || "-");
     this.bufferingHintEl = renderBufferingHint(plugin, r.header, this.bufferingHintEl, setIcon);
+    this.updateReadingWait(session?.readingWait?.view());
     updateFollowButton(r.follow, plugin, kindFor(plugin));
     r.locate.disabled = !session || exporting;
     r.previous.disabled = !state.canPreviousChunk || exporting;
@@ -50433,6 +50903,7 @@ var CosyVoiceReaderView = class extends ItemView {
       "aria-label": this.translate("Current segment progress")
     } });
     slider.disabled = !enabled;
+    bindTimelineKeys(slider, this.plugin);
     const begin = () => {
       if (slider.disabled) return;
       this.chunkSeekEditing = true;
@@ -50450,7 +50921,9 @@ var CosyVoiceReaderView = class extends ItemView {
         finish();
       }
     });
-    slider.addEventListener("keydown", begin);
+    slider.addEventListener("keydown", (event) => {
+      if (!event.defaultPrevented) begin();
+    });
     slider.addEventListener("blur", () => {
       finish();
       this.render();
@@ -50606,6 +51079,7 @@ var CosyVoiceReaderView = class extends ItemView {
         pointerHandled = true;
         event.preventDefault();
         event.stopPropagation();
+        focusElementWithoutScroll(this.panel?.root || button);
         onClick(event);
       });
     }

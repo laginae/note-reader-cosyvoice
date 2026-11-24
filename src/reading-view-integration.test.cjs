@@ -43,16 +43,19 @@ test('PDF context queries are silent, including ribbon entry; explicit note acti
 
 test('ribbon preference opens sidebar, toolbar or both; PDF cannot use a stale note toolbar', async () => {
   const plugin = fixture(), view = { file: { path: 'public.md', extension: 'md' }, leaf: {} };
-  let current = view.file, panels = 0, bars = 0;
+  let current = view.file, panels = 0, bars = 0, focused = 0;
   plugin.getActiveMarkdownView = () => view; plugin.getCurrentReadableFile = () => current;
   plugin.activateControlView = async () => { panels++; };
-  plugin.nativeToolbars = { toolbars: new Map(), toggle(v) { bars++; this.toolbars.set(v, {}); } };
+  plugin.nativeToolbars = { toolbars: new Map(), toggle(v, focus) {
+    bars++; const toolbar = { focusForPlayback() { focused++; } }; this.toolbars.set(v, toolbar);
+    if (focus) toolbar.focusForPlayback();
+  } };
   await plugin.openPreferredReader(); assert.equal(panels, 1); assert.equal(bars, 0);
   plugin.settings.readerOpenMode = 'toolbar'; await plugin.openPreferredReader(); await plugin.openPreferredReader();
-  assert.equal(bars, 1); assert.equal(panels, 1);
+  assert.equal(bars, 1); assert.equal(panels, 1); assert.equal(focused, 2);
   plugin.settings.readerOpenMode = 'both'; await plugin.openPreferredReader(); assert.equal(panels, 2);
   current = { path: 'public.pdf' }; plugin.settings.readerOpenMode = 'toolbar'; await plugin.openPreferredReader();
-  assert.equal(panels, 3); assert.equal(bars, 1);
+  assert.equal(panels, 3); assert.equal(bars, 1); assert.equal(focused, 2);
 });
 
 test('opening body text is local and requires neither API consent nor a configured voice', async () => {
